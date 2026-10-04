@@ -55,12 +55,12 @@ class NioIoDriverTest extends Test:
       */
     private val liveWatchReads = 25
 
-    /** Poll `cond` on the fiber scheduler (never a thread block) until it holds or `bound` elapses; returns whether it held. */
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
+    /** Poll `cond` on the fiber scheduler (never a thread block) until it holds. There is no deadline: a condition that never holds is a hang,
+      * which the leaf timeout reports with kyo-test's driver dump, so a slow or loaded machine can delay a leaf but never fail it.
+      */
+    private def awaitCondition(cond: => Boolean)(using Frame): Unit < Async =
         Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
+            if cond then Loop.done(())
             else Async.sleep(2.millis).andThen(Loop.continue(()))
         }
     end awaitCondition
@@ -323,9 +323,7 @@ class NioIoDriverTest extends Test:
 
         // First call arms the probe and returns false; the probe stages the 3 bytes and latches peerClosed on the FIN, so a later call reads true.
         assert(!driver.isPeerClosed(handle), "the first isPeerClosed arms the probe and returns false (not observed yet)")
-        awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { latched =>
-            assert(latched, "the probe must latch peerClosed after the peer FIN while backpressured")
-        }.andThen {
+        awaitCondition(driver.isPeerClosed(handle)).andThen {
             val p1 = new IOPromise[Closed, ReadOutcome]
             driver.awaitRead(handle, p1.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
             p1.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get
@@ -368,10 +366,10 @@ class NioIoDriverTest extends Test:
             // The watch was armed, not dead: closing the peer now latches it. Without this, a probe that never ran would report false just as
             // happily and the reads above would prove nothing.
             sv.close()
-            awaitCondition(5.seconds)(driver.isPeerClosed(handle)).map { latched =>
+            awaitCondition(driver.isPeerClosed(handle)).map { _ =>
                 driver.closeHandle(handle)
                 driver.close()
-                assert(latched, "the standing FIN watch was not live: the peer FIN never latched peerClosed")
+                succeed
             }
         }
     }
@@ -392,7 +390,7 @@ class NioIoDriverTest extends Test:
         discard(sv.write(ByteBuffer.wrap(Array.fill[Byte](chunks * 2 * bufSize)(7))))
 
         assert(!driver.isPeerClosed(handle), "the first isPeerClosed arms the probe and returns false")
-        awaitCondition(2.seconds)(driver.stagedBytes(handle) >= chunks * bufSize).map { _ =>
+        awaitCondition(driver.stagedBytes(handle) >= chunks * bufSize).map { _ =>
             val staged = driver.stagedBytes(handle)
             sv.close()
             driver.closeHandle(handle)
@@ -427,16 +425,14 @@ class NioIoDriverTest extends Test:
         writer.start()
 
         // Each poll arms a probe (isPeerClosed) and checks staging; once staging reaches the cap the probe stops arming and consuming.
-        awaitCondition(5.seconds) {
+        awaitCondition {
             discard(driver.isPeerClosed(handle))
             driver.stagedBytes(handle) >= cap
-        }.map { capped =>
-            val staged = driver.stagedBytes(handle)
+        }.map { _ =>
             val closed = driver.isPeerClosed(handle)
             writer.interrupt()
             driver.closeHandle(handle)
             driver.close()
-            assert(capped, s"the probe must stage up to the cap ($cap); stagedBytes=$staged")
             assert(!closed, s"a FIN behind the staging cap must not be observed; isPeerClosed=$closed")
         }
     }
@@ -452,7 +448,7 @@ class NioIoDriverTest extends Test:
         // Backpressured: the peer sends [1,2,3] and a probe stages them. The pump then re-arms and takes over, so the fresh [4,5,6] arrives through
         // the pump's read path. The staged bytes must be delivered first (the pre-read staging drain), then the fresh socket bytes.
         discard(sv.write(ByteBuffer.wrap(Array[Byte](1, 2, 3))))
-        awaitCondition(2.seconds) {
+        awaitCondition {
             discard(driver.isPeerClosed(handle))
             driver.stagedBytes(handle) >= 3
         }.andThen {
@@ -485,8 +481,8 @@ class NioIoDriverTest extends Test:
       * window between awaitRead's staging pre-check (which saw Absent) and armRead installing the pump cell. The staged bytes then sit
       * against an armed read that nothing completes: the socket is empty so the selector never fires again, and no path re-checks staging
       * after the arm. Each iteration re-runs the race; the randomized sub-selector-latency spin scans the alignment between the probe's
-      * dispatch and the arm so the overlap lands within the iteration budget. A bounded read that never completes while stagedBytes is
-      * non-empty is the strand.
+      * dispatch and the arm so the overlap lands within the iteration budget. A read that never completes is the strand, reported by the leaf
+      * timeout.
       *
       * `encode` turns the plaintext the peer sends into its wire bytes: identity for plain TCP, one wrapped TLS record for TLS. On the TLS
       * leaf the probe therefore stages CIPHERTEXT and delivery must route it through the engine (feed + unwrap); reads always assert the
@@ -504,15 +500,12 @@ class NioIoDriverTest extends Test:
         val iterations = 600
         val rng        = new java.util.Random(0x57a11)
 
-        def readBytes(iter: Int, bound: Duration): Maybe[Array[Byte]] < Async =
+        def readBytes(iter: Int): Array[Byte] < Async =
             val p = new IOPromise[Closed, ReadOutcome]
             driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
-            Abort.run[Closed | Timeout](Async.timeout(bound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
-                case Result.Success(ReadOutcome.Bytes(span)) => Present(span.toArray)
-                case Result.Failure(_: Timeout)              => Absent
-                case other                                   =>
-                    assert(false, s"iteration $iter: unexpected read outcome $other")
-                    Absent
+            awaitOutcome(p).map {
+                case Result.Success(ReadOutcome.Bytes(span)) => span.toArray
+                case other                                   => fail(s"iteration $iter: unexpected read outcome $other")
             }
         end readBytes
 
@@ -528,17 +521,9 @@ class NioIoDriverTest extends Test:
                     // probe re-armed as a standing FIN watch holding OP_READ (the n == 0 re-install after the staging read drains the socket).
                     discard(driver.isPeerClosed(handle))
                     discard(sv.write(ByteBuffer.wrap(encode(sentinel))))
-                    awaitCondition(4.seconds)(driver.stagedBytes(handle) >= 1).map { staged =>
-                        assert(
-                            staged,
-                            s"iteration $iter: the probe never staged the sentinel " +
-                                s"(pendingRead=${driver.hasPendingRead(handle)}, staged=${driver.stagedBytes(handle)}, " +
-                                s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}, " +
-                                s"peerClosed=${handle.peerClosed})"
-                        )
-                    }.andThen {
-                        readBytes(iter, 4.seconds).map { got =>
-                            assert(got.exists(_.toList == sentinel.toList), s"iteration $iter: sentinel drain got $got")
+                    awaitCondition(driver.stagedBytes(handle) >= 1).andThen {
+                        readBytes(iter).map { got =>
+                            assert(got.toList == sentinel.toList, s"iteration $iter: sentinel drain got ${got.toList}")
                         }
                     }.andThen {
                         // The race: fresh bytes toward a socket whose standing probe holds OP_READ, then a pump arm on this carrier.
@@ -549,17 +534,7 @@ class NioIoDriverTest extends Test:
                             if received.length >= payload.length then
                                 assert(received.toList == payload.toList, s"iteration $iter: payload round-trip got ${received.toList}")
                                 Loop.done(())
-                            else
-                                readBytes(iter, 2.seconds).map {
-                                    case Present(bytes) => Loop.continue(received ++ bytes)
-                                    case Absent         =>
-                                        assert(
-                                            false,
-                                            s"iteration $iter: read never completed with stagedBytes=${driver.stagedBytes(handle)}; " +
-                                                "staged grace-probe bytes stranded against an armed read"
-                                        )
-                                        Loop.done(())
-                                }
+                            else readBytes(iter).map(bytes => Loop.continue(received ++ bytes))
                         }
                     }.andThen(Loop.continue(iter + 1))
             }
@@ -712,17 +687,9 @@ class NioIoDriverTest extends Test:
     // detachForUpgrade vs awaitRead: a read the upgrade sweep missed must still be failed
     // -----------------------------------------------------------------------
 
-    /** Bounded await on a read promise: Present(outcome) when it completes, Absent when nothing completes it within `bound`. */
-    private def awaitOutcome(p: IOPromise[Closed, ReadOutcome], bound: Duration)(using
-        Frame,
-        kyo.test.AssertScope
-    ): Maybe[Result[Closed, ReadOutcome]] < Async =
-        Abort.run[Closed | Timeout](Async.timeout(bound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
-            case Result.Success(outcome)        => Present(Result.succeed(outcome))
-            case Result.Failure(_: Timeout)     => Absent
-            case Result.Failure(closed: Closed) => Present(Result.fail(closed))
-            case Result.Panic(e)                => Present(Result.panic(e))
-        }
+    /** A read promise's outcome. A promise nothing completes is the strand these leaves pin, reported by the leaf timeout (see [[awaitCondition]]). */
+    private def awaitOutcome(p: IOPromise[Closed, ReadOutcome])(using Frame): Result[Closed, ReadOutcome] < Async =
+        Abort.run[Closed](p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)
 
     "an awaitRead armed after detachForUpgrade is failed, not stranded" in {
         val driver       = NioIoDriver.init()
@@ -745,17 +712,9 @@ class NioIoDriverTest extends Test:
             val p = new IOPromise[Closed, ReadOutcome]
             driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
             driver.armUpgradeProducerRead(handle)
-            awaitOutcome(p, 10.seconds).map {
-                case Present(Result.Failure(_)) => succeed
-                case Absent                     =>
-                    assert(
-                        false,
-                        "read armed after detachForUpgrade was stranded: nothing completed it " +
-                            s"(arm=${driver.readArmState(handle)}, pendingRead=${driver.hasPendingRead(handle)}, " +
-                            s"interest=${driver.interestOpsFor(handle.channel)}, upgrading=${handle.upgrading})"
-                    )
-                case other =>
-                    assert(false, s"unexpected outcome $other")
+            awaitOutcome(p).map {
+                case Result.Failure(_) => succeed
+                case other             => fail(s"unexpected outcome $other")
             }
         }
     }
@@ -780,32 +739,18 @@ class NioIoDriverTest extends Test:
             driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
             handle.upgrading = true
             discard(sv.write(ByteBuffer.wrap(flight)))
-            awaitCondition(2.seconds) {
+            awaitCondition {
                 !driver.hasPendingRead(handle) && driver.readArmState(handle) == "pump" && !handle.upgradeSalvage.get().isEmpty
-            }.map { orphaned =>
-                assert(
-                    orphaned,
-                    "salvage-consumed orphan state not reached " +
-                        s"(pendingRead=${driver.hasPendingRead(handle)}, arm=${driver.readArmState(handle)}, " +
-                        s"salvage=${handle.upgradeSalvage.get().size})"
-                )
             }.andThen {
                 driver.detachForUpgrade(handle)
-                awaitOutcome(p, 10.seconds).map {
-                    case Present(Result.Failure(_)) =>
+                awaitOutcome(p).map {
+                    case Result.Failure(_) =>
                         val salvaged = driver.drainUpgradeSalvage(handle)
                         assert(
                             salvaged.exists(_.toList == flight.toList),
                             s"the peer flight must survive in the upgrade salvage; got $salvaged"
                         )
-                    case Absent =>
-                        assert(
-                            false,
-                            "salvage-consumed read was stranded: detach failed nothing " +
-                                s"(arm=${driver.readArmState(handle)}, pendingRead=${driver.hasPendingRead(handle)})"
-                        )
-                    case other =>
-                        assert(false, s"unexpected outcome $other")
+                    case other => fail(s"unexpected outcome $other")
                 }
             }
         }
@@ -845,25 +790,11 @@ class NioIoDriverTest extends Test:
                             // has one (a producer arm at minimum). Joining the arm fiber first pins the set as already-landed, so this
                             // producer arm is deterministically that next transfer for whichever ordering the race produced.
                             driver.armUpgradeProducerRead(handle)
-                            awaitOutcome(p, 10.seconds).map {
-                                case Present(_) =>
-                                    handle.upgrading = false
-                                    handle.handshakeReading = false
-                                    discard(driver.drainUpgradeSalvage(handle))
-                                    Loop.continue(iter + 1)
-                                case Absent =>
-                                    val armBefore = driver.readArmState(handle)
-                                    driver.armUpgradeProducerRead(handle)
-                                    awaitOutcome(p, 1.seconds).map { retry =>
-                                        assert(
-                                            false,
-                                            s"iteration $iter: read arm racing detach was stranded " +
-                                                s"(arm=$armBefore, pendingRead=${driver.hasPendingRead(handle)}, " +
-                                                s"interest=${driver.interestOpsFor(handle.channel)}, " +
-                                                s"secondProducerArmCompleted=${retry.isDefined})"
-                                        )
-                                        Loop.done(())
-                                    }
+                            awaitOutcome(p).map { _ =>
+                                handle.upgrading = false
+                                handle.handshakeReading = false
+                                discard(driver.drainUpgradeSalvage(handle))
+                                Loop.continue(iter + 1)
                             }
                         }
                     }
@@ -888,12 +819,7 @@ class NioIoDriverTest extends Test:
             driver.armUpgradeProducerRead(handle)
             driver.rebuildSelector()
             discard(driver.start())
-            awaitCondition(4.seconds)(driver.hasPendingRead(handle)).map { applied =>
-                assert(
-                    applied,
-                    "the deferred producer arm never applied: the rebuild swallowed its wakeup and the new selector parked indefinitely"
-                )
-            }
+            awaitCondition(driver.hasPendingRead(handle)).andThen(succeed)
         }
     }
 
@@ -926,10 +852,10 @@ class NioIoDriverTest extends Test:
                 val barrierRead = new IOPromise[Closed, ReadOutcome]
                 driver.awaitRead(barrier, barrierRead.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
                 discard(barrierPeer.write(ByteBuffer.wrap(Array[Byte](1))))
-                awaitOutcome(barrierRead, 10.seconds).map { dispatched =>
+                awaitOutcome(barrierRead).map { dispatched =>
                     assert(
-                        dispatched.exists(_.isSuccess),
-                        s"the barrier read never dispatched, so the pre-CAS arm was never exposed to a poll cycle: $dispatched"
+                        dispatched.isSuccess,
+                        s"the barrier read must dispatch its byte, exposing the pre-CAS arm to a poll cycle: $dispatched"
                     )
                     assert(
                         !p.done(),
@@ -938,10 +864,9 @@ class NioIoDriverTest extends Test:
                 }
             }.andThen {
                 driver.detachForUpgrade(handle)
-                awaitOutcome(p, 10.seconds).map {
-                    case Present(Result.Failure(_)) => succeed
-                    case Absent                     => assert(false, "pre-CAS arm was stranded: the detach sweep did not fail it")
-                    case other                      => assert(false, s"unexpected outcome $other")
+                awaitOutcome(p).map {
+                    case Result.Failure(_) => succeed
+                    case other             => fail(s"unexpected outcome $other")
                 }
             }
         }
@@ -964,30 +889,20 @@ class NioIoDriverTest extends Test:
             handle.upgrading = true
             driver.detachForUpgrade(handle)
             driver.armUpgradeProducerRead(handle)
-            awaitCondition(2.seconds)(driver.hasPendingRead(handle)).map { applied =>
-                assert(applied, "the producer arm was never applied on the poll carrier")
-            }.andThen {
+            awaitCondition(driver.hasPendingRead(handle)).andThen {
                 val p = new IOPromise[Closed, ReadOutcome]
                 driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
-                awaitOutcome(p, 10.seconds).map {
-                    case Present(Result.Failure(_)) => succeed
-                    case Absent                     => assert(false, "the stray mid-handshake arm was stranded")
-                    case other                      => assert(false, s"unexpected outcome $other")
+                awaitOutcome(p).map {
+                    case Result.Failure(_) => succeed
+                    case other             => fail(s"unexpected outcome $other")
                 }
             }.andThen {
                 discard(sv.write(ByteBuffer.wrap(Array[Byte](0x16, 3, 1))))
-                awaitCondition(2.seconds) {
+                awaitCondition {
                     handle.upgradeHandoff.get() match
                         case NioHandle.UpgradeHandoff.Carryover(bytes) => bytes.nonEmpty
                         case _                                         => false
-                }.map { delivered =>
-                    assert(
-                        delivered,
-                        "the producer lost the read to the stray arm: the peer flight never reached the upgrade handoff " +
-                            s"(handoff=${handle.upgradeHandoff.get()}, pendingRead=${driver.hasPendingRead(handle)}, " +
-                            s"arm=${driver.readArmState(handle)})"
-                    )
-                }
+                }.andThen(succeed)
             }
         }
     }
@@ -1012,27 +927,19 @@ class NioIoDriverTest extends Test:
             handle.upgrading = true
             handle.handshakeReading = true
             discard(sv.write(ByteBuffer.wrap(flight)))
-            awaitCondition(2.seconds) {
+            awaitCondition {
                 handle.upgradeHandoff.get() match
                     case NioHandle.UpgradeHandoff.Carryover(bytes) => bytes.length == flight.length
                     case _                                         => false
-            }.map { consumed =>
-                assert(
-                    consumed,
-                    s"the producer dispatch never delivered the flight (handoff=${handle.upgradeHandoff.get()}, arm=${driver.readArmState(handle)})"
-                )
             }.andThen {
-                awaitOutcome(p, 10.seconds).map {
-                    case Present(Result.Failure(_)) =>
+                awaitOutcome(p).map {
+                    case Result.Failure(_) =>
                         handle.upgradeHandoff.get() match
                             case NioHandle.UpgradeHandoff.Carryover(bytes) =>
                                 assert(bytes.toList == flight.toList, s"handoff bytes ${bytes.toList} != ${flight.toList}")
                             case other =>
-                                assert(false, s"the flight must stay staged in the handoff; got $other")
-                    case Absent =>
-                        assert(false, "read consumed by the producer dispatch was stranded: nothing completed it")
-                    case other =>
-                        assert(false, s"unexpected outcome $other")
+                                fail(s"the flight must stay staged in the handoff; got $other")
+                    case other => fail(s"unexpected outcome $other")
                 }
             }
         }
@@ -1172,17 +1079,11 @@ class NioIoDriverTest extends Test:
             assert(driver.registerChannel(handle), "the channel must register with the selector")
             // Gate until the selector has consumed the registration wakeup (wakeupPending cleared by a select() return) and re-parked idle
             // with the channel registered, so the close below is the ONLY thing that can drive the deregistration pass.
-            awaitCondition(5.seconds)(!driver.wakeupPending.get() && client.isRegistered()).map { parked =>
-                assert(parked, "the selector never parked idle with the channel registered")
+            awaitCondition(!driver.wakeupPending.get() && client.isRegistered()).andThen {
                 driver.closeHandle(handle)
                 // closeHandle wakes the selector, so the cancelled key is deregistered within a poll cycle. Without the wake the idle selector never
                 // runs the pass and this times out for the right reason: the cancelled key, and its fd, leak in CLOSE_WAIT.
-                awaitCondition(10.seconds)(!client.isRegistered()).map { deregistered =>
-                    assert(
-                        deregistered,
-                        "closeHandle left the channel registered on an idle selector: the cancelled key and its fd leak (CLOSE_WAIT) until an unrelated wakeup"
-                    )
-                }
+                awaitCondition(!client.isRegistered()).andThen(succeed)
             }
         }
     }
