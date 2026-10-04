@@ -7,7 +7,7 @@ import kyo.internal.CdpTypes.*
 /** Typed CDP wrapper tests for [[CdpBackend]] companion methods.
   *
   * Tests use paired [[JsonRpcTransport.inMemory]] transports with a fake-server [[JsonRpcHandler]] to exercise each wrapper without a live
-  * browser process. The server handles `Browser.getVersion` (required by the Q-002 probe in initUnscoped) plus the method under test.
+  * browser process. The server handles `Browser.getVersion` (required by the connect probe in initUnscoped) plus the method under test.
   *
   * "Valid response" cases: server returns the correctly-typed value; wrapper must decode and return it.
   * "Decode failure" cases: server returns [[BadResult]] (serializes to `{}`), which is missing required fields for typed responses.

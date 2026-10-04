@@ -21,7 +21,7 @@ import kyo.*
   *     tree state), DOM mutations between `Runtime.evaluate` and `requestNode` cannot invalidate the handle, so concurrent `Browser.click`
   *     calls on the same tab do not race on `DOM.querySelector("invalid response")`.
   *   - **Handle release**: the handle is released via `Runtime.releaseObject` once `describeNode` returns; the release is awaited inline so
-  *     it drains before the surrounding scope's `CdpClient.close` runs (a fire-and-forget release racing with tab teardown leaves the
+  *     it drains before the surrounding scope's `CdpBackend.close` runs (a fire-and-forget release racing with tab teardown leaves the
   *     request in flight and forces `close` to wait its full grace period).
   *
   * @see
@@ -64,7 +64,7 @@ private[kyo] object Resolver:
                                     case Present(objectId) =>
                                         // `Scope.run + Scope.ensure` runs the release on success AND on Abort/Panic /
                                         // interruption, so the JS handle drains even if `describeByObjectId` aborts mid-flight
-                                        // (otherwise the handle leaks until tab teardown, forcing `CdpClient.close` to wait
+                                        // (otherwise the handle leaks until tab teardown, forcing `CdpBackend.close` to wait
                                         // its full grace period). Plain `Sync.ensure` does NOT fire on Abort short-circuits
                                         // see the equivalent dialog-handler restore comment at `Browser.withDialogs`.
                                         Scope.run {
@@ -229,7 +229,7 @@ private[kyo] object Resolver:
         }
 
     /** Synchronous release of a CDP `objectId` handle. Awaits Chrome's response so the request drains before the surrounding scope's
-      * `CdpClient.close` runs; otherwise a fire-and-forget release racing with tab teardown leaves the request in flight and forces `close`
+      * `CdpBackend.close` runs; otherwise a fire-and-forget release racing with tab teardown leaves the request in flight and forces `close`
       * to wait out its full grace period. Any release failure is swallowed via `Abort.run` because a stale handle past tab close is
       * harmless (Chrome GCs the JS object on execution-context teardown anyway).
       */

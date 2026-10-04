@@ -4,18 +4,14 @@ import kyo.*
 import kyo.JsonRpcIdStrategy
 import kyo.internal.CdpTypes.*
 
-/** Behavior-equivalent replacement for the deleted `CdpClient.decodeCdpMessage` tests.
-  *
-  * `CdpClient.decodeCdpMessage` no longer exists; its 7 wire-shape assertions are preserved here by feeding the same malformed wire
-  * shapes through [[JsonRpcTransport.inMemory]] at the [[CdpBackend]] / [[JsonRpcHandler]] boundary and asserting the same failure modes:
+/** Wire-shape tests for inbound CDP frames: malformed and edge-case frames are fed through [[JsonRpcTransport.inMemory]] at the
+  * [[CdpBackend]] / [[JsonRpcHandler]] boundary, asserting each failure mode:
   *
   *   - CDP error responses surface as [[BrowserProtocolErrorException]] to the pending caller.
   *   - Malformed envelopes surface as [[BrowserProtocolErrorException]] (via [[JsonRpcError.invalidRequest]]) when an id matches, or are
   *     silently dropped (caller times out) when the id is absent.
   *   - Non-Object and truly-malformed JSON frames are silently dropped by the envelope schema.
-  *   - Non-whitelisted events are silently dropped by the [[JsonRpcHandler]] unknown-method policy.
-  *
-  * Wire shape coverage: 7 wire shapes, same failure modes pinned.
+  *   - Notifications with no registered route are silently dropped by the [[JsonRpcHandler]] unknown-method policy.
   */
 class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
 
@@ -53,7 +49,7 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
         }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 1. CDP error-response pipeline; well-formed (was decodeCdpMessage case 1)
+    // 1. CDP error-response pipeline; well-formed
     // ─────────────────────────────────────────────────────────────────────────
 
     "CDP error-response pipeline: well-formed error surfaces as BrowserProtocolErrorException" in {
@@ -80,7 +76,7 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 2. CDP error-response pipeline; malformed error fallback (was case 2)
+    // 2. CDP error-response pipeline; malformed error fallback
     // ─────────────────────────────────────────────────────────────────────────
 
     "CDP error-response pipeline: malformed-envelope response surfaces as BrowserProtocolErrorException" in {
@@ -124,10 +120,10 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 3. Error-id branch (4a): well-formed error at a different method
+    // 3. Error-id branch: well-formed error at a different method
     // ─────────────────────────────────────────────────────────────────────────
 
-    "decodeCdpMessage: error-id branch surfaces BrowserProtocolErrorException (4a)" in {
+    "inbound frame: error-id branch surfaces BrowserProtocolErrorException" in {
         // Same shape as case 1; verifies the same pipeline at a different method site.
         Scope.run {
             val errorMethod = JsonRpcRoute.request[AttachParams, AttachResult](
@@ -152,10 +148,10 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 4. Malformed error JSON fallback (4b): malformed at a different method
+    // 4. Malformed error JSON fallback: malformed at a different method
     // ─────────────────────────────────────────────────────────────────────────
 
-    "decodeCdpMessage: malformed error JSON falls back to BrowserProtocolErrorException (4b)" in {
+    "inbound frame: malformed error JSON falls back to BrowserProtocolErrorException" in {
         // Same shape as case 2; verifies the fallback pipeline at a different method site.
         Scope.run {
             mkBackendAndServerTransport().map { (backend, serverTransport) =>
@@ -189,12 +185,12 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 5. Non-Object frame returns Skip (was case 4c: `[1, 2, 3]`)
+    // 5. Non-Object frame (`[1, 2, 3]`) is dropped
     // ─────────────────────────────────────────────────────────────────────────
 
-    "decodeCdpMessage: non-Object frame (JSON array) is silently dropped" in {
+    "inbound frame: non-Object frame (JSON array) is silently dropped" in {
         // A Malformed envelope with no id (Absent) is skipped silently by the endpoint.
-        // The pending call times out. Equivalent to old `Exchange.Message.Skip` for `[1, 2, 3]`.
+        // The pending call times out.
         Scope.run {
             mkBackendAndServerTransport().map { (backend, serverTransport) =>
                 val callFiber = Fiber.initUnscoped(
@@ -230,11 +226,11 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 6. Truly malformed JSON returns Skip (was case 4d: `not-json`)
+    // 6. Truly malformed JSON (`not-json`) is dropped
     // ─────────────────────────────────────────────────────────────────────────
 
-    "decodeCdpMessage: truly malformed JSON is silently dropped" in {
-        // Same as case 5. Equivalent to old `Exchange.Message.Skip` for `not-json`.
+    "inbound frame: truly malformed JSON is silently dropped" in {
+        // Same shape as the non-Object frame: no id, so nothing to correlate and the pending call times out.
         Scope.run {
             mkBackendAndServerTransport().map { (backend, serverTransport) =>
                 val callFiber = Fiber.initUnscoped(
@@ -265,12 +261,11 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 7. Non-whitelisted event is NOT emitted (was case 5 in original)
+    // 7. A notification with no registered route is NOT emitted
     // ─────────────────────────────────────────────────────────────────────────
 
-    "eventWhitelist: non-whitelisted notification is silently dropped by the endpoint" in {
+    "unregistered notification is silently dropped by the endpoint" in {
         // An unregistered notification method is handled by `JsonRpcUnknownMethodPolicy.minimal` which discards it.
-        // Equivalent to the old `Exchange.Message.Skip` for a non-whitelisted event.
         Scope.run {
             val getTargetsMethod = JsonRpcRoute.request[CdpNoParams, GetTargetsResult](
                 "Target.getTargets"

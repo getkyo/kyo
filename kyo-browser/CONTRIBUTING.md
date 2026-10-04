@@ -20,14 +20,14 @@ eval, because cross-CDP polling aliases or desyncs the in-page observer
 that constraint, the module silently stops catching the flickers it exists to
 catch. The settlement section below is the deepest in this guide for that reason.
 
-The module now also carries a visual-QA surface (captures, geometry/style reads,
+The module also carries a visual-QA surface (captures, geometry/style reads,
 element discovery, frame recording, plus viewport/scroll/emulation/highlight/console
-controls). It is built on the same settlement spine: the new settling reads
+controls). It is built on the same settlement spine: the settling reads
 re-sample through the in-page stability loop and map a settled-absent element to the
-twin return (the `SettleRead` scaladoc); captures hold the page still (await fonts,
+twin return (`SettleRead.scala`); captures hold the page still (await fonts,
 freeze animations, loop to two byte-identical frames) and are settlement-transparent
-because every injected overlay carries `data-kyo-internal` (the `HoldStill` scaladoc,
-`MutationSettlement.installObserver`). The settlement section documents both halves.
+because every injected overlay carries `data-kyo-internal` (`HoldStill.scala`,
+`MutationSettlement.scala`). The settlement section documents both halves.
 
 ## Table of contents
 
@@ -44,14 +44,14 @@ because every injected overlay carries `data-kyo-internal` (the `HoldStill` scal
 The public surface is one opaque type: `opaque type Browser <: Async =
 Env[BrowserTab] & Async` (`Browser.scala`). The `Env` is hidden so callers
 cannot extract or share the tab directly, and so two fibers cannot accidentally
-share a single CDP tab (the "Concurrent forks" section of the `Browser` scaladoc). Because there is no safe
+share a single CDP tab (`Browser.scala`). Because there is no safe
 default split for a single CDP session, the compiler refuses to derive an
 `Isolate` automatically, so concurrent combinators demand an explicit one.
 
-The module sits on top of `kyo-http`: the CDP transport is built on
-`HttpClient.webSocket`, so the layer above kyo-browser in the stack is the
-WebSocket client and below it is the Chrome process (`kyo-browser` in `build.sbt`,
-`CdpBackend.initUnscoped` in `internal/CdpBackend.scala`).
+The module sits on top of `kyo-jsonrpc` and `kyo-http`: CDP is JSON-RPC over a
+WebSocket, so `CdpBackend` opens the connection with `JsonRpcHttpTransport.webSocket`
+and drives it with an embedded `JsonRpcHandler`. Below kyo-browser in the stack is
+the Chrome process (`build.sbt`, `internal/CdpBackend.scala`).
 
 Internally the stack layers top-down, each layer composing the one below it:
 
@@ -60,46 +60,61 @@ Internally the stack layers top-down, each layer composing the one below it:
 | Public API | `Browser` (`Browser.scala`) | Actions, reads, assertions, scoped wrappers, visual-QA surface |
 | Settlement / readiness | `Actionability`, `MutationSettlement`, `NavigationWatcher`, `BrowserAssertion` / `StabilitySampler`, `SettleRead`, `HoldStill` | The auto-wait gates plus the settle-this-read and hold-still-capture helpers |
 | Resolution / eval | `Resolver`, `BrowserEval`, `DiscoverJs` | `Selector` to typed `NodeRef`; page-side JS eval; the injected element-introspection probe |
-| Typed CDP commands | `CdpBackend` (`internal/CdpBackend.scala`) | One `private[kyo]` method per CDP endpoint |
-| Transport / multiplexing | `CdpClient` (the `CdpBackend` scaladoc) | WebSocket exchange, dialog routing, frame fan-out |
+| Typed CDP commands and events | `CdpBackend` (`internal/CdpBackend.scala`) | One `private[kyo]` method per CDP endpoint; per-session event dispatchers, dialog handling |
+| Transport / multiplexing | `JsonRpcHandler` (kyo-jsonrpc), embedded in `CdpBackend` | Framing, request correlation, per-call timeout, in-flight cap, notification routing, close |
 | Process | `BrowserLauncher`, `SharedChrome`, `ChromeDownloader` | Spawn / share / provision Chrome |
 
-`CdpBackend` wraps each CDP endpoint as a raw `sender.send(...)` plus a typed JSON
-decode, so call sites in `Browser` never write string-literal CDP calls
-(`CdpBackend.send`). `CdpClient` is the transport beneath it: it
-pairs each outbound command with its response over a single WebSocket via
-`Exchange`, routes dialogs, fans out frame events, and bounds in-flight commands
-(the `CdpBackend` scaladoc). A single relay fiber inside `CdpClient.init`
-owns the WebSocket: an outbound stream pumps the `outbound` channel into `ws.put`,
-a receiver pumps `ws.stream` into the `inbound` channel, and `Async.race(sender,
-receiver)` runs both (`CdpBackend.initUnscoped`).
+`CdpBackend` wraps each CDP endpoint as a typed `send[P, R]` (or `sendUnit[P]` when
+the reply carries nothing), so call sites in `Browser` never write string-literal CDP
+calls. `send` stamps the CDP `sessionId` onto the outbound envelope as JSON-RPC
+extras and recovers every engine failure into the `BrowserReadException` tree: a
+closed endpoint, a transport or lifecycle error, and a request timeout become
+`BrowserConnectionLostException`; a CDP error reply becomes
+`BrowserProtocolErrorException` carrying the method, message and code. The embedded
+`JsonRpcHandler` owns everything below that: wire framing, correlating each reply
+with its call, the per-call `requestTimeout`, the in-flight cap
+(`CdpBackend.maxInFlight`), the drain barrier, and graceful close. `CdpBackend`
+itself owns what is CDP-specific: the per-session dispatcher tables for frame,
+download, screencast and console events, the dialog handler and recorder tables,
+and the dialog drainer fiber that answers `Page.handleJavaScriptDialog`
+(`internal/CdpBackend.scala`).
+
+`CdpBackend.init` proves the connection before returning it: it issues one
+`Browser.getVersion` call, and a lost connection on that probe surfaces as
+`BrowserSetupFailedException` up front rather than as a hang on the first real
+command. `close(gracePeriod)` drains in-flight calls for up to `gracePeriod`, then
+falls back to `closeNow`; both wait for the dialog drainer to stop before
+returning, so a new `CdpBackend` on the same Chrome never overlaps a still-open
+first connection, which makes Chrome drop events on the new one.
 
 `BrowserLauncher` is the process layer: it spawns Chrome with
 `--remote-debugging-port=0`, polls `${user-data-dir}/DevToolsActivePort` for the
 address Chrome writes, and returns the `ws://127.0.0.1:<port><path>` URL the
-transport connects to (`BrowserLauncher.launch`, `BrowserLauncher.pollDevToolsActivePort`). `SharedChrome`
-shares only the WebSocket URL (each caller still makes its own `CdpClient`),
+transport connects to (`internal/BrowserLauncher.scala`). `SharedChrome`
+shares only the WebSocket URL (each caller still makes its own `CdpBackend`),
 launching Chrome lazily inside a long-lived fiber held open by `Async.never` and
-torn down when the kyo scheduler shuts down (the `SharedChrome` scaladoc).
+torn down when the kyo scheduler shuts down (`internal/SharedChrome.scala`).
 `ChromeDownloader` is the binary-provisioning layer below launch: it downloads and
 caches `chrome-headless-shell` from Google's Chrome-for-Testing archive, derives
 the platform tuple from `kyo.System.operatingSystem` / `kyo.System.architecture`,
 and aborts on `linux-arm64` because no artifact is published
-(the `ChromeDownloader` scaladoc).
+(`internal/ChromeDownloader.scala`).
 
 `BrowserTab` is the per-session handle the `Browser` effect carries. It holds the
-`targetId`, `sessionId`, the shared `CdpClient`, the isolated `browserContextId`,
-and per-tab atomic state (frame contexts, root frame, console/response
-registration guards, the viewport and emulation overrides, download policy). Its
-`session` field is the `client.withSession(sessionId)` pair every CDP call issues
-against (`BrowserTab` in `internal/BrowserTab.scala`). `BrowserTabSetup.attachAndSetupTab` is
+`targetId`, `sessionId`, the connection's `CdpBackend`, the isolated
+`browserContextId`, and per-tab atomic state (frame contexts, root frame,
+console/response registration guards, the viewport and emulation overrides,
+download policy). Its `session` field is `backend.withSession(sessionId)`, the
+session-bound view every CDP call issues against: it shares the endpoint and every
+dispatcher table with the connection and differs only in the `sessionId` it stamps
+(`internal/BrowserTab.scala`). `BrowserTabSetup.attachAndSetupTab` is
 the single entry point that creates a fresh isolated browser context, attaches a CDP
 target, and installs the per-tab trackers; it is the one place the four-layer
 containment (process / context / tab / iframe) is assembled from the bottom
-(`BrowserTabSetup` in `internal/BrowserTab.scala`). Every action path
+(`internal/BrowserTab.scala`). Every action path
 depends on four CDP domains (Page, Runtime, DOM, Network) being enabled;
 `enableDomains` fires them with `Async.zip` to amortise the round-trip, then
-enables focus emulation (`BrowserTabSetup.enableDomains`).
+enables focus emulation (`internal/BrowserTab.scala`).
 
 Element resolution is centralised in `Resolver`: it maps a `Selector` to a typed
 `NodeRef` via the `objectId + requestNode` pipeline (`Runtime.evaluate` ->
@@ -107,16 +122,16 @@ Element resolution is centralised in `Resolver`: it maps a `Selector` to a typed
 method resolves through (the `Resolver` scaladoc, `Resolver.resolveOne`).
 
 **Representative call flow.** `Browser.run(launch)` is the lifecycle end to end:
-launch Chrome -> connect a `CdpClient` -> attach and setup a tab -> run the body
+launch Chrome -> connect a `CdpBackend` -> attach and setup a tab -> run the body
 bound to that tab, all under one internal `Scope.run` so the caller's effect row
-does not carry `Scope` (`Browser.run`). `click` is the representative
+does not carry `Scope` (`Browser.scala`). `click` is the representative
 action flow: dependency direction is top-down through the layers, a public
 `Browser.*` action composes the actionability and settlement gates -> `Resolver` /
-`BrowserEval` -> `CdpBackend` typed wrappers -> `CdpClient.send` transport ->
-Chrome (`Browser.click`). Internal callers reach the hidden
+`BrowserEval` -> `CdpBackend` typed wrappers -> `JsonRpcHandler.call` transport ->
+Chrome (`Browser.scala`). Internal callers reach the hidden
 `Env[BrowserTab]` only through `Browser.use` (read the tab) and `Browser.runOn`
 (bind a tab), which wrap `Env.use` / `Env.run` so internal code never sees the
-opaque type's underlying `Env` (`Browser.use`, `Browser.runOn`).
+opaque type's underlying `Env` (`Browser.scala`).
 
 CDP domain wrappers that need extra typing beyond `CdpBackend` live in the
 `kyo.internal.cdp` sub-package: `Accessibility` wraps `Accessibility.getFullAXTree`
@@ -127,23 +142,25 @@ with a custom polymorphic `Schema`, and `PageDownload` wraps
 ### Visibility and cross-platform split
 
 All transport and protocol internals live under `kyo.internal` and are
-`private[kyo]`: `CdpBackend`, `CdpClient`, the wire helpers (`CdpWire`'s
+`private[kyo]`: `CdpBackend`, the wire helpers (`CdpWire`'s
 `CdpBase64Decode` / `CdpEvalDecoder` / `ExceptionDetailsFormat`), and `BrowserTab`
 are visible to `Browser` and internal helpers but not to external callers; only
 `kyo.Browser` and the `BrowserException` hierarchy are public
-(`CdpBackend`, `BrowserTab`).
+(`internal/CdpBackend.scala`, `internal/BrowserTab.scala`).
 
 Almost all source is cross-platform: every file under
 `kyo-browser/shared/src/main/scala/kyo/**` (the entire `Browser` API plus all
-`internal` modules) compiles on JVM, JS, and Native; platform code is the
-exception, not the rule (`BrowserLauncher.spawnChrome`). The only
+`internal` modules) compiles on JVM, JS, Native, and Wasm; platform code is the
+exception, not the rule (`internal/BrowserLauncher.scala`). The only
 platform-specific main source is `BrowserLauncherPlatform`, a one-method seam
 (`registerShutdownHook`). JVM and Native share one implementation under
 `jvm-native/src/main` that registers a `Runtime.addShutdownHook` thread to
 SIGTERM-kill a leaked Chrome; the split exists because that hook is a JVM/Native
-runtime ABI with no JS equivalent (`BrowserLauncherPlatform.registerShutdownHook` in `jvm-native/src/main/scala/kyo/internal/BrowserLauncherPlatform.scala`).
-The JS copy is a no-op: JS has no JVM shutdown hooks, so process lifecycle is left
-to the JS runtime, which is why the seam is split rather than living in `shared/`
+runtime ABI with no JS equivalent
+(`jvm-native/src/main/scala/kyo/internal/BrowserLauncherPlatform.scala`).
+The JS and Wasm copy under `js-wasm/src/main` is a no-op: those runtimes have no
+shutdown hooks, so process lifecycle is left to the host runtime, which is why the
+seam is split rather than living in `shared/`
 (`js-wasm/src/main/scala/kyo/internal/BrowserLauncherPlatform.scala`).
 
 ## Transparent settlement (the headline invariant)
@@ -151,10 +168,10 @@ to the JS runtime, which is why the seam is split rather than living in `shared/
 ### The goal
 
 Browser automation usually fails not on the action itself but on the action firing
-before the page is ready (the `Browser` scaladoc). `Browser` answers this so that
+before the page is ready (`Browser.scala`). `Browser` answers this so that
 callers never write `Async.sleep`: every interaction and every assertion
 auto-waits for an observable settled state, and the wait happens automatically
-inside the operation (the same scaladoc). A contributor who adds a new method
+inside the operation (`Browser.scala`). A contributor who adds a new method
 without wiring it into the right settlement mechanism reintroduces exactly the
 race the module exists to remove.
 
@@ -169,16 +186,16 @@ readiness check that fronts every interaction (`Browser.click`, `Browser.fill`).
 / `check` / `select` / `dragAndDrop` / `focus` / `setFiles`).** Each interaction
 is wrapped as `Actionability.withRetry { Actionability.withActionable(selector,
 ...) { ref => ... } }`. The actionability gate is the per-attempt readiness check;
-`withRetry` is the surrounding poll loop (`Browser.click`, `Browser.fill`).
+`withRetry` is the surrounding poll loop (`Browser.scala`).
 `Actionability.check` runs seven sub-checks (attached -> fillable -> visible ->
 scroll-into-view -> stable -> hittable -> enabled) inside ONE `Runtime.evaluate`,
 ordered so the earliest failure wins, so a detached node surfaces as
 `Reason.NotAttached`, not `Reason.NotVisible`; success returns an `ActionableRef`
 carrying the rect center so the caller does not need a second round-trip
-(the `Actionability` scaladoc). The stability sub-check samples the bounding rect
+(`Actionability.scala`). The stability sub-check samples the bounding rect
 across two ~16ms ticks driven by `setTimeout`, NOT `requestAnimationFrame`, because
 RAF callbacks stall on Chromium right after a JS dialog is dismissed, hanging the
-`awaitPromise=true` eval forever (the stability comment in `Actionability.buildJs`).
+`awaitPromise=true` eval forever (`Actionability.scala`).
 
 **2. Mutation settlement (state-changing actions: `click` / `fill` / `check` /
 `select` / `press` / `uncheck`, plus `setViewport` / `resetViewport` / `scrollTo` /
@@ -207,11 +224,11 @@ below. `afterAction` is not the only entry point. `MutationSettlement.waitForSta
 is the strict no-action wait backing `Browser.waitForStable`: it installs the
 observer with no action, runs the same single-eval quiescence loop with
 `overallDeadline = timeout`, and ABORTS `BrowserAssertionTimedOutException` on
-timeout rather than swallowing it (`MutationSettlement.waitForStable`).
+timeout rather than swallowing it (`MutationSettlement.scala`).
 `MutationSettlement.settleForCapture` is the best-effort sibling: identical loop, but
 it recovers the timeout to `()` instead of aborting, so the hold-still capture path
 can pre-settle the DOM and proceed even when the page never fully quiesces
-(its scaladoc). Strict `waitForStable` vs best-effort
+(`MutationSettlement.scala`). Strict `waitForStable` vs best-effort
 `settleForCapture` is the load-bearing distinction: a read or assertion must surface
 a never-quiesced page as a typed failure; a capture must still produce an image.
 
@@ -352,7 +369,7 @@ observer callback filters them out via the `data-kyo-internal` attribute
   target is the untagged parent (`document.body` / `document.head`), and the tagged
   node is in `addedNodes` / `removedNodes`. The record is transparent only when EVERY
   added AND removed node is (or is within) a tagged subtree, so a mixed batch that also
-  moves a real node still arms the gate (the same callback).
+  moves a real node still arms the gate (`MutationSettlement.scala`).
 
 Both branches matter: the first makes mutations inside an overlay transparent, the
 second makes overlay INJECTION and REMOVAL transparent. Without the second branch the
@@ -373,10 +390,10 @@ eval returns the token to Scala; the `Scope.acquireRelease` release closure clos
 it, so removal fires on success, failure, AND interruption but targets exactly the node
 this invocation injected.
 
-This replaced an earlier shared-single-slot design (each overlay wrote its node into one
-`window.__kyo*` slot and read it back to remove). Under nesting or interleaving the inner
-inject overwrote the slot, the inner exit deleted it, and the outer exit then found the
-slot `undefined` and leaked its node permanently. A leaked freeze `<style>` is the worst
+A shared single slot (each overlay writing its node into one `window.__kyo*` slot and
+reading it back to remove) breaks under nesting or interleaving: the inner inject
+overwrites the slot, the inner exit deletes it, and the outer exit finds the slot
+`undefined` and leaks its node permanently. A leaked freeze `<style>` is the worst
 case: it pauses the whole page indefinitely. So the recipe for ANY new injected overlay
 is: mint a per-handle token in the inject JS, tag the node with both `data-kyo-internal`
 (for settlement transparency) and the unique `data-kyo-token`, return the token, and
@@ -410,15 +427,15 @@ and have it silently no-op. The compiler enforces the split (`Browser.withConfig
 | `captureHoldStillTimeout` | `1s` | Total best-effort hold-still bound per capture (`SessionConfig.default`) |
 | `captureHoldStillInterval` | `50ms` | Inter-capture pacing in the two-identical-frames loop (`SessionConfig.default`) |
 
-The two `captureHoldStill*` knobs are the only ones the visual-QA surface added; the
-hold-still loop reads both from `configLocal` (`HoldStill.holdStillFrame`). The `8s`
+The hold-still loop reads both `captureHoldStill*` knobs from `configLocal`
+(`HoldStill.scala`). The `8s`
 `retrySchedule` budget is deliberately generous to accommodate SPA hydration
 (React/Vue/Angular shells painted before content); callsites that want fail-fast
 should install a tighter schedule via `withConfig(_.retrySchedule(...))`
-(the `Browser.SessionConfig` scaladoc). `withTimeout(d)` is the shortcut that caps both
+(`Browser.scala`). `withTimeout(d)` is the shortcut that caps both
 `retrySchedule` and `loadSchedule` at `maxDuration(d)`; it bounds the retry budget,
 it does NOT abort the way `Async.timeout` does, so a failure to settle within `d`
-aborts with the usual typed assertion timeout (`Browser.withTimeout`).
+aborts with the usual typed assertion timeout (`Browser.scala`).
 
 Three knobs have `Duration.Zero` opt-outs:
 
@@ -475,48 +492,48 @@ interaction retry loop (the `MutationSettlement` scaladoc, `MutationSettlement.a
 
 The visual-QA surface turns `Browser` into a screenshot / inspection tool. Every
 member nests under the existing `Browser` opaque type or the `BrowserException`
-hierarchy; the visual-QA surface adds no new top-level types. The surface groups into four
+hierarchy; the visual-QA surface has no top-level types of its own. The surface groups into four
 jobs plus controls.
 
 ### SEE: captures
 
-| Method | Returns | Settlement | Citation |
-|--------|---------|------------|----------|
-| `screenshot(format, quality)` | `Image` | hold-still; live viewport, no clip | `Browser.screenshot` |
-| `screenshotRegion(x, y, width, height, format, quality)` | `Image` | hold-still; `captureBeyondViewport = true`; non-positive size aborts pre-CDP | `Browser.screenshotRegion` |
-| `screenshotElement(selector, format, quality, transparentBackground)` | `Image` | `Actionability.withRetry` auto-wait, then hold-still | `Browser.screenshotElement` |
-| `screenshotFullPage(maxBands, format, quality)` | `Chunk[Image]` | freeze ONCE, hold-still per band; `bandCount > maxBands` aborts pre-capture | `Browser.screenshotFullPage` |
+| Method | Returns | Settlement |
+|--------|---------|------------|
+| `screenshot(format, quality)` | `Image` | hold-still; live viewport, no clip |
+| `screenshotRegion(x, y, width, height, format, quality)` | `Image` | hold-still; `captureBeyondViewport = true`; non-positive size aborts pre-CDP |
+| `screenshotElement(selector, format, quality, transparentBackground)` | `Image` | `Actionability.withRetry` auto-wait, then hold-still |
+| `screenshotFullPage(maxBands, format, quality)` | `Chunk[Image]` | freeze ONCE, hold-still per band; `bandCount > maxBands` aborts pre-capture |
 
-`screenshot` dropped the legacy `1280x720` crop: it now captures whatever viewport
-`setViewport` / `withViewport` last established (`Browser.screenshot`).
+`screenshot` applies no crop of its own: it captures whatever viewport
+`setViewport` / `withViewport` last established (`Browser.scala`).
 `screenshotElement` auto-waits inside `Actionability.withRetry` (channel
 `BrowserElementException`, never widened): it resolves, box-stability-checks (two
 `getBoundingClientRect` samples ~16ms apart agreeing within 1px), scrolls into view,
 re-reads the post-scroll rect for the clip, then captures ONCE outside the retry so a
-capture failure never re-enters the retry channel (`Browser.screenshotElement`).
+capture failure never re-enters the retry channel (`Browser.scala`).
 `transparentBackground = true` sets `Emulation.setDefaultBackgroundColorOverride` to
 fully transparent for the shot, cleared via `Scope.acquireRelease`
-(`Browser.withTransparentBackground`). `screenshotFullPage` reads content/viewport height in one
+(`Browser.scala`). `screenshotFullPage` reads content/viewport height in one
 eval, computes `bandCount = ceil(content / viewport)` in CSS px (DPR-independent), and
-freezes once around the band loop (`Browser.screenshotFullPage`).
+freezes once around the band loop (`Browser.scala`).
 `screenshotMarks(marks, maxMarks, format, quality)` overlays numbered badges at each
 element's top-left corner inside a single `data-kyo-internal` token-tagged subtree,
 injected once inside the frozen scope; `marks.size > maxMarks` aborts pre-capture
-(`Browser.screenshotMarks`).
+(`Browser.scala`).
 
 ### VERIFY: settling reads
 
 These re-sample through `SettleRead.settle` (the settle-on-reads helper) until the
 value holds constant, then map a settled-absent element to the read's twin return:
 
-| Method | Returns | Settled-absent | Citation |
-|--------|---------|----------------|----------|
-| `boundingRect(selector)` | `Maybe[Bounds]` | `Absent` (twin `boundingBox`); authoritative geometry from `DOM.getBoxModel` after the JS rect stabilizes | `Browser.boundingRect` |
-| `computedStyles(selector, properties)` | `Map[String, String]` | abort `BrowserElementNotFoundException` (twin `attribute`) | `Browser.computedStyles` |
-| `computedStyle(selector, property)` | `String` | inherited; DELEGATES to `computedStyles(selector, Span(property))` | `Browser.computedStyle` |
-| `inViewport(selector)` | `Boolean` | abort `BrowserElementNotFoundException` (twin `isVisible`) | `Browser.inViewport` |
-| `scrollPosition` | `ScrollPosition` | n/a (page always has a scroll position) | `Browser.scrollPosition` |
-| `waitForStable(timeout)` | `Unit` | n/a; STRICT quiescence wait, aborts `BrowserAssertionTimedOutException` on timeout | `Browser.waitForStable` |
+| Method | Returns | Settled-absent |
+|--------|---------|----------------|
+| `boundingRect(selector)` | `Maybe[Bounds]` | `Absent`; authoritative geometry from `DOM.getBoxModel` after the JS rect stabilizes |
+| `computedStyles(selector, properties)` | `Map[String, String]` | abort `BrowserElementNotFoundException` (twin `attribute`) |
+| `computedStyle(selector, property)` | `String` | inherited; DELEGATES to `computedStyles(selector, Span(property))` |
+| `inViewport(selector)` | `Boolean` | abort `BrowserElementNotFoundException` (twin `isVisible`) |
+| `scrollPosition` | `ScrollPosition` | n/a (page always has a scroll position) |
+| `waitForStable(timeout)` | `Unit` | n/a; STRICT quiescence wait, aborts `BrowserAssertionTimedOutException` on timeout |
 
 `waitForStable` is the strict on-demand quiescence wait (delegates to
 `MutationSettlement.waitForStable`); it is the only VERIFY entry that does NOT route
@@ -527,23 +544,23 @@ than re-issuing the read (`Browser.computedStyle`).
 
 ### DISCOVER: element introspection
 
-| Method | Returns | Settled-absent | Citation |
-|--------|---------|----------------|----------|
-| `elementAt(x, y)` | `Maybe[ElementInfo]` | `Absent`; negative coords abort `BrowserInvalidArgumentException` pre-eval | `Browser.elementAt` |
-| `element(selector)` | `Maybe[ElementInfo]` | `Absent` (twin `boundingRect`) | `Browser.element` |
-| `elements(selector = Selector.all)` | `Chunk[ElementInfo]` | `Chunk.empty` via `locateCount` empty-fast-path (twin `textAll`) | `Browser.elements` |
-| `ElementInfo.leaves(elems)` | `Chunk[ElementInfo]` | pure filter, no `Frame`, no effect row | `Browser.ElementInfo.leaves` |
+| Method | Returns | Settled-absent |
+|--------|---------|----------------|
+| `elementAt(x, y)` | `Maybe[ElementInfo]` | `Absent`; negative coords abort `BrowserInvalidArgumentException` pre-eval |
+| `element(selector)` | `Maybe[ElementInfo]` | `Absent` (twin `boundingRect`) |
+| `elements(selector = Selector.all)` | `Chunk[ElementInfo]` | `Chunk.empty` via `locateCount` empty-fast-path (twin `textAll`) |
+| `ElementInfo.leaves(elems)` | `Chunk[ElementInfo]` | pure filter, no `Frame`, no effect row |
 
 All three reads go through one injected idempotent in-page helper, `DiscoverJs`, gated
 by `window.__kyoDiscoverInstalled`: it exposes `window.__kyoDiscoverProbe(el)`
 (returning the `ElementInfo` wire shape: tag, id, classes, truncated text, rect-derived
 `Bounds`, and the `visible` / `inViewport` / `topmost` / `interactive` flags) and
 `window.__kyoUniqueSelector(el)` (an id-anchored-else-nth-of-type CSS path)
-(`DiscoverJs` scaladoc and `DiscoverJs.scala`). `elements` defaults to the net-new `Selector.all` constructor
-(`SelectorNode.Css("*")`, `Selector.all` in `internal/Selector.scala`). `ElementInfo.leaves` is PURE:
+(`DiscoverJs.scala`). `elements` defaults to the `Selector.all` constructor
+(`SelectorNode.Css("*")`, `internal/Selector.scala`). `ElementInfo.leaves` is PURE:
 it keeps elements that are not an ancestor of any other in the chunk, decided from the
 unique `selector` path (A is an ancestor of B when B's `selector` starts with A's
-`selector + " > "`), with no `Frame` or effect row (`Browser.ElementInfo.leaves`).
+`selector + " > "`), with no `Frame` or effect row (`Browser.scala`).
 
 `elementAt` returns `Absent` not only when no element occupies the point but also when
 the hit element IS `document.documentElement` or `document.body`: a point that lands on
@@ -554,50 +571,46 @@ bare page chrome is treated as "no discoverable element there"
 
 `screenshotFrames(maxDurationMs, maxFrames, format, quality)(body)` records a screencast
 WHILE `body` runs and returns `(Chunk[ScreenshotFrame], A)` events-first, the canonical
-`record*` shape (`Browser.screenshotFrames`). It imposes NO settlement: the caller drives
+`record*` shape (`Browser.scala`). It imposes NO settlement: the caller drives
 the visual change. It drives `Page.startScreencast` / `Page.screencastFrame` (event) /
 `Page.screencastFrameAck` (per frame) / `Page.stopScreencast` through a per-session
 dispatcher (see [Recorders](#recorders-onconsole--recordconsole--screenshotframes)).
 `Webp` has no screencast codec, so it maps to `jpeg` and the call still succeeds
-(`Browser.screenshotFrames`). Two caps protect against an unbounded recording, checked
+(`Browser.scala`). Two caps protect against an unbounded recording, checked
 frame-count-first: the frame cap reports `(maxFrames, frame-count)` and the duration cap
 reports `(maxDurationMs, elapsed-ms)`, so the abort's two numbers always share one unit
-(the same method).
+(`Browser.scala`).
 
 ### Controls
 
-| Method | Visibility | Settlement | Citation |
-|--------|-----------|------------|----------|
-| `setViewport(width, height, deviceScaleFactor)` | PUBLIC | settles after | `Browser.setViewport` |
-| `resetViewport` | PUBLIC | settles after | `Browser.resetViewport` |
-| `withViewport(width, height, deviceScaleFactor)(body)` | PUBLIC | settles on apply, LIFO restore | `Browser.withViewport` |
-| `scrollTo(x, y)` | PUBLIC | settles after | `Browser.scrollTo` |
-| `scrollToElement(selector)` | PUBLIC | `Actionability.withRetry`, settles after | `Browser.scrollToElement` |
-| `withEmulation(colorScheme, media, reducedMotion)(body)` | PUBLIC | settles on apply, LIFO restore | `Browser.withEmulation` |
-| `withHighlights(annotations)(body)` | PUBLIC | settlement-transparent overlay | `Browser.withHighlights` |
+| Method | Visibility | Settlement |
+|--------|-----------|------------|
+| `setViewport(width, height, deviceScaleFactor)` | PUBLIC | settles after |
+| `resetViewport` | PUBLIC | settles after |
+| `withViewport(width, height, deviceScaleFactor)(body)` | PUBLIC | settles on apply, LIFO restore |
+| `scrollTo(x, y)` | PUBLIC | settles after |
+| `scrollToElement(selector)` | PUBLIC | `Actionability.withRetry`, settles after |
+| `withEmulation(colorScheme, media, reducedMotion)(body)` | PUBLIC | settles on apply, LIFO restore |
+| `withHighlights(annotations)(body)` | PUBLIC | settlement-transparent overlay |
 
-`setViewport` / `resetViewport` are now PUBLIC and settle after via
-`MutationSettlement.afterAction` (`Browser.setViewport`, `Browser.resetViewport`). `setViewport` gained a
+`setViewport` / `resetViewport` are PUBLIC and settle after via
+`MutationSettlement.afterAction` (`Browser.scala`). `setViewport` takes a
 `deviceScaleFactor: Double` (DPR), threaded into `ViewportParams.deviceScaleFactor` (a
 `Double` wire field) and cached on the tab as `BrowserTab.ViewportOverride(width,
 height, dpr)` so nested `withViewport` calls restore the prior DPR
-(`ViewportParams` in `internal/CdpTypes.scala`, `BrowserTab.ViewportOverride`,
-`Browser.setViewport`). `scrollTo(x, y)` is the new coordinate form; the old
-selector-form scroll is renamed `scrollToElement` and auto-waits via
+(`internal/CdpTypes.scala`, `internal/BrowserTab.scala`, `Browser.scala`).
+`scrollTo(x, y)` is the coordinate form;
+`scrollToElement` is the selector form and auto-waits via
 `Actionability.withRetry` (channel `BrowserElementException`)
-(`Browser.scrollTo`, `Browser.scrollToElement`). `withEmulation` and `withHighlights` are documented under
+(`Browser.scala`). `withEmulation` and `withHighlights` are documented under
 [Emulation](#emulation) and the [overlay teardown invariant](#overlay-teardown-per-handle-token-never-a-shared-global-slot)
 above.
 
-### New value types and exception leaf
+### Value types and the capture-cap exception
 
-All nest under `Browser`: `Bounds` (with `right` / `bottom` / `area` derived
-accessors, `Browser.Bounds`), `ScrollPosition` (`Browser.ScrollPosition`), `ElementInfo` (+ the
-companion `leaves`, `Browser.ElementInfo`), `Annotation` (`Browser.Annotation`), `ScreenshotFrame`
-(`Browser.ScreenshotFrame`), `ConsoleMessage` (reshaped: `text` / `location: Maybe[String]` / `offsetMs:
-Long`, `Browser.ConsoleMessage`), `ConsoleLevel` (extended 3 -> 5: `Log, Info, Warn, Error, Debug`,
-`Browser.ConsoleLevel`), `ColorScheme` (`Browser.ColorScheme`), `MediaType` (`Browser.MediaType`), `ScreenshotFormat`
-(pre-existing, `Browser.ScreenshotFormat`). The one new exception is
+The surface's value types all nest under `Browser` (`Browser.scala`); `Bounds`
+carries `right` / `bottom` / `area` as derived accessors, and `ElementInfo` has the
+pure companion `leaves`. Its one exception is
 `BrowserCaptureLimitExceededException(operation, limit, reached)`, a read-channel leaf
 extending `BrowserReadException` (so an `Abort[BrowserReadException]` row catches a
 capture cap exactly like any other read failure), raised by `screenshotFullPage` /
@@ -605,37 +618,39 @@ capture cap exactly like any other read failure), raised by `screenshotFullPage`
 
 ### Recorders: onConsole / recordConsole / screenshotFrames
 
-Console recording mirrors the existing download precedent: `onConsole` is the
+Console recording mirrors the download pair: `onConsole` is the
 subscriber, `recordConsole` is the convenience built on it, exactly as `onDownload` /
-`recordDownloads` (`Browser.onConsole`, `Browser.recordConsole`, `Browser.onDownload`, `Browser.recordDownloads`). `screenshotFrames` is a
-third recorder over the same template (`Browser.screenshotFrames`). All four share one
+`recordDownloads` (`Browser.scala`). `screenshotFrames` is a
+third recorder over the same template (`Browser.scala`). All four share one
 shape:
 
-- A per-session dispatcher on the `CdpClient` keyed by CDP session id
+- A per-session dispatcher in one of `CdpBackend`'s event tables
   (`downloadEventDispatchers`, `consoleEventDispatchers`, `screencastEventDispatchers`),
-  registered BEFORE the body runs (the dispatcher fields of `CdpBackend`).
+  keyed by CDP session id and installed with `installSessionEntry` BEFORE the body
+  runs (`internal/CdpBackend.scala`, `Browser.scala`).
 - A bounded unscoped `Channel` plus a forked drainer fiber: the dispatcher offers
   best-effort onto the channel (swallowing `Abort[Closed]` so a full or closed channel
-  drops the event rather than parking the CDP reader), and the drainer fiber applies the
-  user handler `f`, isolating `f`'s effect row `S` from the dispatcher's `Sync`-only
-  type (`Browser.onDownload`).
+  drops the event rather than holding up the notifications queued behind it), and the
+  drainer fiber applies the user handler `f`, isolating `f`'s effect row `S` from the
+  dispatcher's `Sync`-only type.
 - `(using Frame, Isolate[S, Sync, S])` and a row of `Browser & Async & Abort[BrowserReadException] & S`
   (the `Async` is for the drainer fiber) (`Browser.onDownload`, `Browser.onConsole`).
-- Teardown (dispatcher restore + channel close) wired with `Scope.run { Scope.ensure(restore).andThen(Scope.ensure(channel.close)) }`
-  so it fires on success, failure, AND interruption; the caller's row does NOT carry
-  `Scope` (`Browser.onDownload`).
+- Teardown (dispatcher restore + channel close) bound to an inner `Scope.run`:
+  `installSessionEntry` registers the restore as the release of a
+  `Scope.acquireRelease`, and the channel close is a `Scope.ensure`, so both fire on
+  success, failure, AND interruption; the caller's row does NOT carry `Scope`.
 
 Two recorder-specific invariants are load-bearing. First, structural-abort recovery to
 `Absent`: a `consoleAPICalled` whose CDP `type` is one of the 8 structural variants
 aborts inside `decodeConsoleApiCalled`, and `consoleEventToMessage` recovers that abort
-to a dropped event so it never poisons the reader fiber (`Browser.consoleEventToMessage`,
-`Browser.decodeConsoleApiCalled`). Second, the per-frame ack runs in a DETACHED fiber: the screencast
-dispatcher issues `Page.screencastFrameAck` from a `Fiber.initUnscoped` so the reader
-fiber stays `< Sync` (the ack carries `Async`; Chrome keeps delivering once it sees the
-ack) (`Browser.screenshotFrames`). The awaited `Page.stopScreencast` on teardown is
+to a dropped event so it never fails the notification route (`Browser.scala`).
+Second, the per-frame ack runs in a DETACHED fiber: the screencast
+dispatcher issues `Page.screencastFrameAck` from a `Fiber.initUnscoped` so the
+dispatcher stays `< Sync` (the ack carries `Async`; Chrome keeps delivering once it sees
+the ack) (`Browser.scala`). The awaited `Page.stopScreencast` on teardown is
 bounded by the send's own request timeout, so it never hangs a silent Chrome; a future
 fire-and-forget refactor of the stop must preserve that bound
-(the same method).
+(`Browser.scala`).
 
 The two console paths use DIFFERENT spellings in DIFFERENT decoders, which never
 collide: the drain path (`consoleLogs` -> `decodeConsoleMessage`) reads the JS shim's
@@ -678,18 +693,18 @@ REPLACE is an open design question, not yet resolved; do not assume composition.
 
 Every effectful `Browser` method declares an explicit return type of the form
 `A < (Browser & Abort[BrowserReadException])` and takes `Frame` as the trailing
-`using` parameter (for example `Browser.text`, `Browser.attribute`). `BrowserReadException` is the
+`using` parameter (`Browser.scala`). `BrowserReadException` is the
 catch-all error row a new method aborts with; the hierarchy is built so that
 `BrowserMutationException` and `BrowserAssertionException` extend it, so an
 `Abort[BrowserReadException]` channel catches every browser failure except
 lifecycle/setup. New element/assertion exceptions must keep extending up to
-`BrowserReadException` (`BrowserReadException`, `BrowserMutationException`, `BrowserAssertionException` in `BrowserException.scala`). The new capture-cap
+`BrowserReadException` (`BrowserException.scala`). The capture-cap
 leaf `BrowserCaptureLimitExceededException` follows the rule: it extends
-`BrowserReadException` directly (`BrowserCaptureLimitExceededException`).
+`BrowserReadException` directly (`BrowserException.scala`).
 
 ### Exception hierarchy
 
-The hierarchy layers two axes (the sealed traits at the top of `BrowserException.scala`):
+The hierarchy layers two axes (`BrowserException.scala`):
 
 - An operation-row spine: `BrowserReadException` <- `BrowserMutationException` <-
   `BrowserAssertionException`. This controls which `Abort[...]` rows catch what.
@@ -703,32 +718,32 @@ concrete exception is a `final case class ... (using Frame) extends
 BrowserException(<rendered message>) with <markers> derives CanEqual`: the message
 is rendered in the `extends` clause from the case fields, and `derives CanEqual` is
 mandatory so the typed error can be pattern-matched in `Abort.recover`
-(`BrowserElementNotFoundException`, `BrowserCaptureLimitExceededException`). An exception with more than one
+(`BrowserException.scala`). An exception with more than one
 construction path gets a companion `object` of named smart constructors rather than
 overloaded `apply`s with bare strings; each constructor names the failure kind and
-formats the message (the `BrowserProtocolErrorException` and `BrowserAssertionTimedOutException` companions). A single-construction
+formats the message (`BrowserException.scala`). A single-construction
 leaf like `BrowserCaptureLimitExceededException` needs no companion
-(`BrowserCaptureLimitExceededException`).
+(`BrowserException.scala`).
 
 `BrowserAssertionTimedOutException` is constructed via the `(expected, actual)`
 two-arg overload that auto-derives `check` from the enclosing method name through
 the implicit `Frame.calleeName`, so `assertVisible` failures already read
 `"assertVisible"` without the call site passing the name. New `assert*` / `waitFor*`
 methods rely on this rather than repeating the method name as a string literal
-(the `BrowserAssertionTimedOutException` companion, `Browser.assertPageTextOrder`).
+(`BrowserException.scala`, `Browser.scala`).
 
 A method that only validates an argument before any CDP call aborts
 `BrowserInvalidArgumentException("<methodName>", <message>)` with the public method
 name as the first field, distinguishing "called the API wrong" from a runtime
 failure. `setFiles` and `setDownloadBehavior` gate absolute-path arguments, and the
-new captures/discovery gate their numeric arguments the same way: `screenshotRegion`
+captures and discovery reads gate their numeric arguments the same way: `screenshotRegion`
 rejects non-positive size, `elementAt` rejects negative coordinates, both BEFORE any
-CDP call (`Browser.setFiles`, `Browser.setDownloadBehavior`, `Browser.screenshotRegion`, `Browser.elementAt`). When a public read decodes wire
+CDP call (`Browser.scala`). When a public read decodes wire
 JSON, a malformed or unexpected payload is surfaced as a typed `Abort`
 (`BrowserProtocolErrorException.decodeFailure` / `BrowserAssertionTimedOutException`)
 rather than thrown, with the method name passed as the diagnostic tag; `consoleLogs`
 and the settling reads (`boundingRect`, `elements`, ...) all do this
-(`Browser.evalJson`, `Browser.boundingRect`, `Browser.elements`).
+(`Browser.scala`).
 
 ### The return-type discriminator
 
@@ -737,25 +752,24 @@ the question the method asks, not by convenience.
 
 | Method kind | Return type | Selector miss behaviour | Examples / citation |
 |-------------|-------------|-------------------------|----------|
-| Geometry / discovery read (absence is legitimate) | `Maybe[...]` | `Absent` / `Maybe.empty`, no abort | `boundingRect`, `element`, `elementAt`, `role`, `accessibleName` (all on `Browser`) |
-| Content read requiring the element to exist | bare value (`String`, `Int`, `Map`) | abort `BrowserElementNotFoundException` via `selectorNodeDescription(Selector.toNode(selector))` | `text`, `attribute`, `value`, `computedStyles`, `inViewport` (all on `Browser`) |
+| Geometry / discovery read (absence is legitimate) | `Maybe[...]` | `Absent` / `Maybe.empty`, no abort | `boundingRect`, `element`, `elementAt`, `role`, `accessibleName` (`Browser.scala`) |
+| Content read requiring the element to exist | bare value (`String`, `Int`, `Map`) | abort `BrowserElementNotFoundException` via `selectorNodeDescription(Selector.toNode(selector))` | `text`, `attribute`, `value`, `computedStyles`, `inViewport` (`Browser.scala`) |
 | Existence question ("is X here?") | `Boolean` | `false`, the negative answer IS the answer | `exists` (`Browser.exists`) |
-| Property predicate ("is X visible/enabled?") | `Boolean` | abort `BrowserElementNotFoundException` (property is undefined without an element) | `isVisible`, `isEnabled`, `isChecked`, `inViewport` (all on `Browser`) |
+| Property predicate ("is X visible/enabled?") | `Boolean` | abort `BrowserElementNotFoundException` (property is undefined without an element) | `isVisible`, `isEnabled`, `isChecked`, `inViewport` (`Browser.scala`) |
 | Count read | `Int` | `0`, not an abort | `count` (retries CDP transients), `countNow` (point-in-time) (`Browser.count`, `Browser.countNow`) |
-| Bulk read (`*All` / discovery collection) | `Chunk[...]` | `Chunk.empty` via a single round-trip empty-fast-path before the retry loop | `textAll`, `attributeAll`, `elements` (all on `Browser`) |
+| Bulk read (`*All` / discovery collection) | `Chunk[...]` | `Chunk.empty` via a single round-trip empty-fast-path before the retry loop | `textAll`, `attributeAll`, `elements` (`Browser.scala`) |
 
 The discriminator twins are the high-value pairs: `exists` returns `false` on miss,
-`isVisible` aborts on miss (`Browser.exists`, `Browser.isVisible`); `count` retries
+`isVisible` aborts on miss (`Browser.scala`); `count` retries
 `BrowserMutationException` CDP transients, `countNow` is the explicit no-retry
-point-in-time variant (`Browser.count`, `Browser.countNow`). The `<read>` vs `<read>Now` naming
+point-in-time variant (`Browser.scala`). The `<read>` vs `<read>Now` naming
 distinguishes "retry CDP transients" from "point-in-time, surface transients
 immediately." The visual-QA reads extend the SAME twin rule through `SettleRead.settle`:
 a settling read maps a stable-absent element to its twin return (settling `Maybe`
 -> `Absent`; must-exist -> typed abort; collection -> empty). `boundingRect` is the
-settling `Maybe` (twin of the removed `boundingBox`), `inViewport` is the property
+settling `Maybe`, `inViewport` is the property
 predicate that aborts (twin `isVisible`), and `elements` is the settling collection that
-empties (twin `textAll`) (`Browser.boundingRect`, `Browser.inViewport`, `Browser.elements`,
-the `SettleRead` scaladoc).
+empties (twin `textAll`) (`Browser.scala`, `SettleRead.scala`).
 
 Element presence is modeled in the return type via `Maybe[NodeRef]` /
 `Chunk[NodeRef]`, never a string sentinel; `Resolver` is the single resolution
@@ -787,13 +801,13 @@ A `with*` method is a scoped wrapper returning `A < (Browser & S)` (or `&
 Abort[BrowserReadException] & S`) that takes the body as a trailing by-name `A <
 (Browser & S)` parameter and restores the prior state on body exit (success,
 failure, OR interruption). Pure-config wrappers use `Local.let` (`withConfig`,
-`Browser.withConfig`); tab/resource wrappers use `Scope.run` +
-`Scope.acquireRelease` / `Scope.ensure` (`withViewport`, `Browser.withViewport`).
+`Browser.scala`); tab/resource wrappers use `Scope.run` +
+`Scope.acquireRelease` / `Scope.ensure` (`withViewport`, `Browser.scala`).
 A `with*` wrapper over per-tab sticky CDP state caches the prior value on the
 `BrowserTab` (`tab.viewportOverride`, `tab.emulationOverride`, `tab.downloadPolicy`),
 and on exit re-applies the prior `Present(...)` override or clears/resets to the
 launch-time default on `Absent`, so nested `with*` calls compose
-(`Browser.withViewport`, the `BrowserTab` fields). `withEmulation`
+(`Browser.scala`, `internal/BrowserTab.scala`). `withEmulation`
 follows the identical cache-and-restore shape; see [Emulation](#emulation) for its
 restore-to-host behavior. The scoped overlay wrappers (`withHighlights`, the freeze
 style, `screenshotMarks`) are a distinct case: they hold NO `BrowserTab` cache and
@@ -806,12 +820,13 @@ per-session handler before `action` runs and tears it down via `Scope.run` /
 `Scope.ensure`, plus a `record*[A, S](body: ...)` convenience implemented on top
 that captures events into an `AtomicRef[Chunk[Event]]` and returns `(Chunk[Event],
 A)`. The two pairs are `onDownload` / `recordDownloads` and `onConsole` /
-`recordConsole`; new event surfaces add both (`Browser.onDownload`, `Browser.onConsole`).
-Per-session handler/recorder registries on the `CdpClient` are updated through
-`getAndUpdate` capturing the previous map, and the restore closure re-installs the
-prior entry (`Present`) or removes the key (`Absent`), giving LIFO nesting; the
-restore is wired with `Scope.run(Scope.ensure(restore).andThen(...))` so it fires on
-success, failure, AND interruption (`Browser.withDownloads`). See
+`recordConsole`; new event surfaces add both (`Browser.scala`).
+Per-session handler/recorder registries on the `CdpBackend` are updated only through
+`installSessionEntry`: it captures the previous map with `getAndUpdate`, and its
+release re-installs the prior entry (`Present`) or removes the key (`Absent`), giving
+LIFO nesting. The install is a `Scope.acquireRelease` run inside an inner
+`Scope.run`, so the restore fires on success, failure, AND interruption
+(`Browser.scala`). See
 [Recorders](#recorders-onconsole--recordconsole--screenshotframes) for the full
 dispatcher / channel / drainer shape `screenshotFrames` shares.
 
@@ -819,12 +834,12 @@ A `waitFor*` read is the read-flavour twin of an `assert*` method: it returns th
 matched value (`String` / `Int`) instead of `Unit`, takes a `predicate` plus an
 optional `schedule`, and provides a convenience overload that uses equality against
 `expected` (delegating `_ == expected`). New retrying reads supply both forms
-(`Browser.waitForText`, `Browser.waitForCount`). An assertion method is named `assert*`,
+(`Browser.scala`). An assertion method is named `assert*`,
 returns `Unit`, delegates to a `BrowserAssertion.*` helper that retries the
 predicate against the active retry schedule, and raises
 `BrowserAssertionTimedOutException` on exhaustion; every `assert*` accepts an
 optional `schedule: Maybe[Schedule] = Absent` per-call override
-(for example `Browser.assertVisible`, `Browser.assertPageTextOrder`). Note the distinction from the visual-QA settling
+(`Browser.scala`). Note the distinction from the visual-QA settling
 reads: `assert*` / `waitFor*` REQUIRE the predicate to hold (a non-match is a typed
 timeout), whereas a `SettleRead`-backed read accepts whatever value settles and maps
 absence to its twin return; `waitForStable` is the strict whole-page quiescence wait,
@@ -854,22 +869,27 @@ Following the screenshot/viewport family (`CdpBackend.captureScreenshot`, `CdpBa
 
 1. In `CdpTypes.scala`, add a `final private[kyo] case class ...Params(...) derives
    Schema` for the request and (if the reply carries data) a `...Result(...) derives
-   Schema`, placed under the comment block for the owning CDP domain. The visual-QA
-   surface adds several here: `SetEmulatedMediaParams`, `StartScreencastParams`,
-   `ScreencastFrameAckParams`, the screencast/console wires, plus two fields on
-   `ScreenshotParams` (`captureBeyondViewport`, `fromSurface`)
-   (`SetEmulatedMediaParams`, `StartScreencastParams`, `ScreenshotParams` in `CdpTypes.scala`).
-2. In `CdpBackend.scala`, add a `private[kyo] def` under the matching `// ---
-   <Domain> domain ---` banner. For a command that returns data, decode via
-   `.map(decodeOrFail[Result](_, "Domain.method"))` (`CdpBackend.send`); for a
-   fire-and-forget command, end in `.unit` (the new `setEmulatedMedia` /
-   `startScreencast` / `screencastFrameAck` all do, `CdpBackend.setEmulatedMedia`, `CdpBackend.startScreencast`, `CdpBackend.screencastFrameAck`).
-3. The wrapper's effect row is always `... < (Async & Abort[BrowserReadException])`
-   and its first param is `sender: CdpSender` (the trait, never the concrete
-   `CdpClient`), with `(using Frame)` (the typed wrappers in the `CdpBackend` companion).
-4. The `method` string passed to both `send` and `decodeOrFail` is the literal CDP
-   method name and must match exactly; it is what `decodeOrFail` reports in
-   `BrowserProtocolErrorException` on a CDP error reply (`CdpBackend.send`).
+   Schema`, placed under the comment block for the owning CDP domain. A command with
+   no parameters takes `CdpNoParams()`.
+2. In `CdpBackend.scala`, add a `private[kyo] def` to the companion, under the
+   matching `// --- <Domain> domain ---` banner where one exists. Its body is one
+   call: `backend.send[Params, Result]("Domain.method", params)` for a command whose
+   reply carries data (the engine decodes the reply through `Schema[Result]`), or
+   `backend.sendUnit[Params]("Domain.method", params)` for a command whose reply is
+   discarded.
+3. The wrapper's first parameter is `backend: CdpBackend`, it takes `(using Frame)`,
+   and its effect row is always `... < (Async & Abort[BrowserReadException])`. A
+   tab-scoped command (Page, Runtime, DOM, Emulation, Input, Network) is sent
+   through `tab.session`, the session-bound backend, so Chrome applies it to that
+   tab's target; only browser-level `Target.*` commands may go through the
+   connection-level backend.
+4. The `method` string is the literal CDP method name and must match exactly; it is
+   what `BrowserProtocolErrorException` reports on a CDP error reply.
+5. A command whose reply stands for something the browser now holds (a browser
+   context, an override) uses `backend.acquire` instead of `send`, passing the
+   release, as `acquireBrowserContext` does. `acquire` registers the release on the
+   scope before issuing the call, so an interrupt between the call and its reply
+   still releases what Chrome created.
 
 ### Add a new public read/action method
 
@@ -880,11 +900,11 @@ Following `history` / `cookies` / `reload` (`Browser.history`, `Browser.cookies`
 2. Write the `Browser` method with return type `T < (Browser &
    Abort[BrowserReadException])` (a read returns a typed value / `Chunk`; an action
    returns `Unit`). Resolve the active tab with `Env.use[BrowserTab] { tab => ... }`
-   and issue the call against `tab.session` (the session-scoped client), not
-   `tab.client` (`Browser.cookies`).
+   and issue the call against `tab.session` (the session-bound backend), not
+   `tab.backend` (`Browser.scala`).
 3. Map the CDP wire result into a public value type at the boundary; do not leak
-   wire case classes outward (`CookieWire.toCookie` in `Browser.cookies`;
-   `CdpBase64Decode.decodeScreenshotImage` for `screenshot` in `Browser.screenshot`).
+   wire case classes outward (`CookieWire.toCookie` for cookies,
+   `CdpBase64Decode.decodeScreenshotImage` for `screenshot`, both in `Browser.scala`).
 4. An action method returns `Unit` and ends at the `CdpBackend` call
    (`Browser.collectGarbage`).
 5. A read that does NOT go through `CdpBackend` (page-side state) goes through
@@ -895,8 +915,8 @@ Following `history` / `cookies` / `reload` (`Browser.history`, `Browser.cookies`
    `SettleRead.settle`).
 6. A filtering/convenience overload delegates to the canonical method rather than
    re-issuing the CDP call (`consoleLogs(level)` delegates to `consoleLogs`,
-   `Browser.consoleLogs`; `computedStyle` delegates to `computedStyles`,
-   `Browser.computedStyle`).
+   `Browser.scala`; `computedStyle` delegates to `computedStyles`,
+   `Browser.scala`).
 
 ### Add a new scoped `with*` wrapper
 
@@ -906,8 +926,7 @@ it on exit, following `withViewport` (`Browser.withViewport`):
 1. If the wrapper needs to remember prior state, add an `AtomicRef` field to
    `BrowserTab` and initialise it in `mkBrowserTab`. The existing override caches are
    `viewportOverride: AtomicRef[Maybe[ViewportOverride]]` and `emulationOverride:
-   AtomicRef[Maybe[EmulatedMediaState]]` (`BrowserTab.viewportOverride`, `BrowserTab.emulationOverride`),
-   initialised in `BrowserTabSetup.mkBrowserTab` (`internal/BrowserTab.scala`).
+   AtomicRef[Maybe[EmulatedMediaState]]` (`internal/BrowserTab.scala`).
 2. Signature shape: `def with...[A, S](args...)(body: A < (Browser & S))(using
    Frame): A < (Browser & Abort[BrowserReadException] & S)` (`Browser.withViewport`).
 3. Body: `Env.use[BrowserTab] { tab => Scope.run { tab.<ref>.get.map { prior =>
@@ -925,59 +944,49 @@ it on exit, following `withViewport` (`Browser.withViewport`):
 6. Variant: a settlement-transparent overlay wrapper (`withHighlights`) caches NO
    tab state. It injects a `data-kyo-internal` node carrying a unique `data-kyo-token`,
    returns the token from the inject eval, and removes by token in the release. Never a
-   shared global slot (`Browser.withHighlights`; see the
+   shared global slot (`Browser.scala`; see the
    [overlay teardown invariant](#overlay-teardown-per-handle-token-never-a-shared-global-slot)).
 
 ### Add a new CDP event with per-session fan-out
 
-For a CDP event Chrome pushes with no request id, routed to per-tab subscribers
-without stalling the reader, following the `Page.downloadWillBegin` /
-`downloadProgress` path and its two siblings (`screencastEventDispatchers` for
-`Page.screencastFrame`, `consoleEventDispatchers` for `Runtime.consoleAPICalled` /
-`exceptionThrown`) (the dispatcher fields and the `build*Method` notification handlers of `CdpBackend`):
+For a CDP event Chrome pushes with no request id, routed to per-tab subscribers,
+following the `Page.downloadWillBegin` / `Page.downloadProgress` path and its
+siblings (`Page.screencastFrame`, `Runtime.consoleAPICalled` /
+`Runtime.exceptionThrown`) (`internal/CdpBackend.scala`):
 
-1. Add a per-session dispatcher registry field to `CdpClient`'s constructor and
-   initialise it in `CdpClient.init`. The three event registries are
-   `downloadEventDispatchers` / `screencastEventDispatchers` / `consoleEventDispatchers`,
-   each `AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]`
-   (the `CdpBackend` constructor fields), initialised in `CdpBackend.initUnscoped` and
-   threaded into the notification handlers and both
-   `new CdpBackend(...)` constructions (`CdpBackend.initUnscoped`, `CdpBackend.withSession`).
-2. Add the event's method name(s) to `eventWhitelist`; un-whitelisted events are
-   dropped so the bounded event channel cannot fill when nobody is subscribed
-   (the notification methods registered in `CdpBackend.initUnscoped`). Only five CDP event methods are whitelisted
-   (`Page.downloadWillBegin`, `Page.downloadProgress`, `Page.screencastFrame`,
-   `Runtime.consoleAPICalled`, `Runtime.exceptionThrown`); everything else is dropped
-   so Page/Network/Runtime lifecycle chatter cannot fill the bounded event channel and
-   stall the reader (the same registration).
-3. In `decodeCdpMessage`'s no-id whitelisted branch, route via `dispatchOrPush`: when a
-   per-session dispatcher is registered it consumes the event (`Exchange.Message.Skip`),
-   else the event is pushed to `exchange.events` (`Exchange.Message.Push`). The routing
-   is mutually exclusive (dispatch OR push, never both), and each domain dispatches to
-   its own registry map (`CdpBackend.dispatchEvent`, `CdpBackend.buildDownloadWillMethod` and its siblings).
-4. Frame-context-style events that should NEVER reach the events channel (consumed
-   only inline) use a separate registry (`frameEventDispatchers`) and an
-   UNCONDITIONAL dispatch arm placed before the whitelist check, always ending in
-   `Exchange.Message.Skip` (`CdpBackend.buildFrameCreatedMethod`, `CdpBackend.buildFrameDestroyedMethod`).
-5. Add a typed wire case class for the event's `params` in the relevant file (for
-   example `DownloadWillBeginWire` / `DownloadProgressWire` in `PageDownload.scala`,
-   or the screencast/console wires in
-   `CdpTypes.scala`) and a private `parse...Event` decoder in `Browser` that
-   decodes `CdpEventParams[Wire]` from `ev.paramsJson`, returning `Maybe[PublicEvent]`
-   (`Absent` on the wrong method or a decode failure, never an abort)
-   (`Browser.parseDownloadEvent`, `Browser.parseScreencastFrame`, `Browser.parseConsoleEvent`).
-6. Add the public subscriber method (`onDownload` / `onConsole`) that registers a
-   `CdpEvent.Generic => Unit < Sync` handler into the registry BEFORE the body runs,
-   drains events through a bounded unscoped `Channel` plus a forked drainer fiber (to
-   isolate the user handler's effect row `S` from the dispatcher's `Sync`-only type),
-   and unregisters via `Scope.ensure` inside an inner `Scope.run`. Requires `(using
-   Frame, Isolate[S, Sync, S])` (`Browser.onDownload`, `Browser.onConsole`).
-7. The dispatcher handler must never block the CDP reader fiber: it offers to the
-   channel best-effort and swallows `Abort[Closed]` (a full or closed channel drops
-   the event rather than parking the reader) (`Browser.onDownload`, `Browser.onConsole`).
-   When the handler itself needs to issue a CDP command (the screencast per-frame ack),
-   it forks a DETACHED fiber so the reader fiber stays `< Sync`
-   (`Browser.screenshotFrames`).
+1. Add a typed wire case class for the event's `params` (the download wires live in
+   `internal/cdp/PageDownload.scala`, the screencast and console wires in
+   `CdpTypes.scala`). The engine decodes the event once, into this wire.
+2. Add a per-session dispatcher registry, an
+   `AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]`, as a `CdpBackend`
+   constructor field. Create it in both `initUnscoped` overloads (the WebSocket one
+   and the transport-injecting test seam) and pass it through `withSession`, which
+   shares every registry with the connection and changes only `sessionId`.
+3. Add a `build...Method` that returns
+   `JsonRpcRoute.notification[Wire]("Domain.event")` and hands the decoded wire to
+   `dispatchEvent`, keyed by the sessionId read from the message's extras. Register
+   the route in the `JsonRpcHandler.init` route list of both `initUnscoped`
+   overloads. An event with no registered route is dropped by the engine
+   (`JsonRpcUnknownMethodPolicy.minimal`), so Page/Network/Runtime lifecycle chatter
+   costs nothing. `dispatchEvent` drops an event no session has a handler for;
+   download events instead go to every registered handler when no session matches,
+   because Chrome emits browser-level download events without the tab's sessionId.
+4. Project the wire to the public event in a private `parse...Event` in `Browser`
+   that pattern-matches `ev.params` on the wire type and returns
+   `Maybe[PublicEvent]`: `Absent` for any other wire, never an abort.
+5. Add the public subscriber method (`onDownload` / `onConsole`) that installs a
+   `CdpEvent.Generic => Unit < Sync` handler with `installSessionEntry` BEFORE the
+   body runs, drains events through a bounded unscoped `Channel` plus a forked drainer
+   fiber (to isolate the user handler's effect row `S` from the dispatcher's
+   `Sync`-only type), and runs all of it inside an inner `Scope.run` so the restore
+   fires on exit. Requires `(using Frame, Isolate[S, Sync, S])`.
+6. Keep the dispatcher short. The engine runs a connection's notification handlers
+   one at a time in arrival order, and a request handler waits behind every
+   notification that arrived before it, so a slow dispatcher delays every event
+   after it. The handler offers to the channel best-effort and swallows
+   `Abort[Closed]` (a full or closed channel drops the event). When it must issue a
+   CDP command (the screencast per-frame ack), it forks a DETACHED fiber so the
+   handler itself stays `< Sync`.
 
 ### Add a new recorder
 
@@ -989,66 +998,85 @@ and `withDialogs.recorded` (`Browser.recordConsole`, `Browser.recordDownloads`, 
    (`onConsole` / `onDownload`) with a capture handler that appends each event to an
    internal `AtomicRef[Chunk]`, then return `(collected.get, result)`. No new registry
    or channel bookkeeping (`Browser.recordConsole`, `Browser.recordDownloads`).
-2. Lower-level form (when the event is delivered by the CDP reader fiber rather than
-   a subscriber method): register an `AtomicRef[Chunk[Event]]` into a per-session
-   recorder registry on `CdpClient` (for example `CdpBackend.dialogRecorders`),
-   restore the previous registry entry via `Scope.ensure`, and
-   return `(recorder.get, result)`. The reader fiber appends in arrival order
-   (`Browser.withDialogs.recorded`).
-3. For the lower-level form, add the append site in `CdpClient` where the reader
-   decodes the event (for example `recordDialogEvent` decodes `CdpEventParams[Wire]`
-   and appends a typed `Browser.<Event>` to the per-session recorder, no-op when none
-   is registered). The recorder is a passive observer and must NOT influence any
-   auto-handler decision (`CdpBackend.handleDialogOpening`).
+2. Lower-level form (when the event is consumed inside `CdpBackend` rather than by a
+   subscriber method): install an `AtomicRef[Chunk[Event]]` into a per-session
+   recorder registry on `CdpBackend` (`dialogRecorders` is the precedent) with
+   `installSessionEntry`, and return `(recorder.get, result)`.
+3. For the lower-level form, add the append in the event's route handler in
+   `CdpBackend`, as `handleDialogOpening` does: it maps the decoded wire to a typed
+   `Browser.<Event>` and appends it to the session's recorder, a no-op when none is
+   registered. The recorder is a passive observer and must NOT influence any
+   auto-handler decision: `handleDialogOpening` enqueues the auto-handler's answer
+   before it touches the recorder.
 4. A recorder's signature requires `(using Frame, Isolate[S, Sync, S])` and returns
    `(Chunk[Event], A) < (Browser & Async & Abort[BrowserReadException] & S)`; arrival
-   order is preserved because the single per-session fiber/reader serialises appends
-   (`Browser.recordDownloads`, `Browser.recordConsole`). `screenshotFrames` is the screencast variant
-   of this shape: it adds a poison cell so a frame/duration cap aborts after `body`
-   returns rather than mid-stream (`Browser.screenshotFrames`).
+   order is preserved because the engine runs notification handlers one at a time and
+   a subscriber's single drainer fiber serialises appends. `screenshotFrames` is the
+   screencast variant of this shape: it adds a poison cell so a frame/duration cap
+   aborts after `body` returns rather than mid-stream.
 
 ## Testing
 
 ### Base classes
 
-A suite that needs a working `Browser` effect extends `BrowserTest`, the
-integration-test base class (`BrowserTest` in `shared/src/test/scala/kyo/BrowserTest.scala`).
-`BrowserTest` itself extends `BaseChromeTest`, which extends the module base
-`BaseBrowserTest`, so every browser suite transitively gets the chrome-platform
-pre-flight, the decode helpers and `orFail`. A suite that
-does NOT boot Chrome (pure parsing, wire/decoder, schema, percent-encode, snapshot,
-downloader) extends `BaseBrowserTest` directly, never `BrowserTest`: examples are
-`StabilitySamplerTest`, `CdpBackendDecoderTest`, `BrowserExceptionHierarchyTest`
-(`shared/src/test/scala/kyo/internal/StabilitySamplerTest.scala`,
-`shared/src/test/scala/kyo/BrowserExceptionHierarchyTest.scala`). Runnable demos
-live in `shared/src/test/scala/demo` and extend `KyoApp` (not a test base); they are
-example programs, not assertions, so they never go through the test
-harness (`QuickstartApp` in `shared/src/test/scala/demo/QuickstartDemo.scala`).
+The module's test bases form one chain, and a suite extends the cheapest one that
+covers it:
+
+- `BaseBrowserTest` (a `kyo.test.Test[Any]`) carries the suite config and the
+  CDP/decode helpers, and launches nothing. Its config runs a suite's leaves
+  sequentially, because they all drive one per-suite Chrome and concurrent leaves
+  produce protocol errors and timeouts; it disables `failOnNoAssertion`, because
+  browser leaves verify through `Browser.assert*` and typed fail paths the assertion
+  counter does not see; and it disables the socket and file-descriptor leak checks,
+  because the shared Chrome's CDP socket and stdio pipes stay open for the whole run.
+  A suite that never opens a browser (wire/decoder, schema, selector, launcher,
+  exception hierarchy, downloader) extends this directly
+  (`shared/src/test/scala/kyo/BaseBrowserTest.scala`).
+- `BaseChromeTest` adds the Chrome lifecycle in `aroundLeaf`: the
+  unsupported-platform cancel, the pre-launch of the shared Chrome, and the
+  transient-failure retry (see
+  [Platform gates and transient failures](#platform-gates-and-transient-failures)).
+  A suite that drives Chrome without the fixtures below, such as
+  `BrowserRunSharedJvmTest`, extends it (`shared/src/test/scala/kyo/BaseChromeTest.scala`).
+- `BrowserTest` adds the fixtures and the cold-boot warm-up, and is the base for any
+  suite that needs a working `Browser` effect
+  (`shared/src/test/scala/kyo/BrowserTest.scala`).
+
+Runnable demos live in `shared/src/test/scala/demo` and extend `KyoApp`, not a test
+base; they are example programs, not assertions.
 
 ### Fixtures
 
 | Fixture | What it boots | When to use |
 |---------|---------------|-------------|
 | `withBrowser(body)` | shared Chrome, fresh tab via `Browser.run(url)` | universal SUT entry (`BrowserTest.withBrowser`) |
-| `withBrowserOnLocalhost(body)` | tab navigated to `http://localhost:$port/json/version` | cookie/storage tests that need a real origin (`data:` URLs carry no cookies) (`BrowserTest.withBrowserOnLocalhost`) |
+| `withBrowserOnLocalhost(body)` | tab navigated to `http://127.0.0.1:$port/json/version` (IPv4, because the DevTools server does not listen on `::1`) | cookie/storage tests that need a real origin (`data:` URLs carry no cookies) (`BrowserTest.scala`) |
 | `withBrowserOnLocalhostIframe(outerHtml, innerHtml)(body)` | localhost server serving `/parent` and `/child`, tab on parent | real same-origin iframe lifecycle (srcdoc does not fire the same `Page.frameAttached` events) (`BrowserTest.withBrowserOnLocalhostIframe`) |
 | `withLocalhostServer(handlers*)(f)` | localhost HTTP server on an OS-assigned port at `127.0.0.1` (NOT Chrome) | ad-hoc page fixtures, released when the surrounding `Scope` exits (`BrowserTest.withLocalhostServer`) |
 | `page(html)` / `srcdocPage(outer, srcdoc)` / `onPage(html)(body)` | `data:text/html;...` URLs, no I/O | one-shot scenarios that do not need a real origin (`BrowserTest.page`, `BrowserTest.srcdocPage`, `BrowserTest.onPage`) |
 
 `onPage` is sugar for `Browser.goto(page(html)).andThen(body)` with a by-name `body`
-so timing measurements inside it run after navigation (`BrowserTest.onPage`).
-`withBrowser` returns an effect carrying `Async & Scope & Abort[BrowserReadException
-| BrowserSetupException]` (`BrowserTest.withBrowser`).
+so timing measurements inside it run after navigation (`BrowserTest.scala`).
+`withBrowser` returns an effect carrying
+`Async & Scope & Abort[BrowserReadException | BrowserSetupException]`
+(`BrowserTest.scala`).
 
 ### Shared Chrome and the cold-boot reality
 
-The SUT's Chrome is shared across all callers in a run via `SharedChrome.init`,
-which returns the WebSocket debug URL and launches Chrome only on first call; only
-the URL is shared, each caller makes its own `CdpClient` / `Browser.run(url)`
-(`SharedChrome.init` in `shared/src/main/scala/kyo/internal/SharedChrome.scala`). Chrome is held open
-by a detached fiber that parks on `Async.never`; when the kyo scheduler shuts down
-the fiber is interrupted and finalizers destroy Chrome and its temp user-data dir. A
-test never tears Chrome down itself (the `SharedChrome` scaladoc).
+The SUT's Chrome is shared across all callers in a run via `SharedChrome`, which
+launches Chrome on first use and hands out its WebSocket debug URL; only the URL is
+shared, each caller makes its own `CdpBackend` through `Browser.run(url)`
+(`shared/src/main/scala/kyo/internal/SharedChrome.scala`). Chrome is held open by a
+detached fiber that parks on `Async.never`; when the kyo scheduler shuts down the
+fiber is interrupted and finalizers destroy Chrome and its temp user-data dir. A
+test never tears Chrome down itself.
+
+The fixtures enter through `SharedChrome.withUrl`, which relaunches a Chrome that is
+gone (a lost connection or a failed launch replaces the shared instance) and
+retries the call once, but only if the failure came before the caller's body
+started. A failure inside the body propagates, because the body may already have
+acted on state outside the browser. `BrowserTest` runs its warm-up and any fixture
+navigation before marking the body started, so those are covered by the relaunch.
 
 The first integration call pays a ~2.8s cold-Chrome boot. `BrowserTest` absorbs it
 with a one-time `warmupGate` (CAS-once `AtomicBoolean`, fires `Browser.eval("1+1")`
@@ -1058,25 +1086,24 @@ timing assertions that include the first call's boot (`BrowserTest.warmupGate`).
 
 ### Timeouts and forking
 
-Default per-test timeout is 120s (from `TestBase.timeout` in kyo-test), with
-`Duration.Infinity` under debug. A Chrome-heavy suite raises it explicitly:
-`BrowserRunSharedJvmTest` sets `override def timeout = 3.minutes`,
-`CdpBackendLifecycleJvmTest` sets `2.minutes`. Override `timeout` when a suite does
-multiple sequential Chrome round-trips under full-suite load
-(`kyo-test/api/shared/src/main/scala/kyo/test/internal/TestBase.scala`,
-`jvm/src/test/scala/kyo/BrowserRunSharedJvmTest.scala`).
+The default per-leaf timeout is kyo-test's 120s, with `Duration.Infinity` under a
+debugger (`kyo-test/api/shared/src/main/scala/kyo/test/internal/TestBase.scala`).
+A suite whose leaves do several sequential Chrome boots or round-trips under
+full-suite load overrides `timeout`, as `BrowserRunSharedJvmTest` does with
+`3.minutes`. The shared-Chrome pre-launch in `BaseChromeTest.aroundLeaf` runs
+outside the leaf timeout, so a cold Chrome download never counts against it.
 
 kyo-browser JVM tests use per-suite JVM forking: each suite gets its own JVM and its
 own `SharedChrome`, via a `Test / testGrouping` that wraps every defined test in its
 own `Tests.SubProcess`. The reason is cross-suite Chrome-state degradation over 700+
-tests (the `kyo-browser` `jvmSettings` in `build.sbt`). `Test / parallelExecution := false` and `Test /
+tests (`build.sbt`). `Test / parallelExecution := false` and `Test /
 testForkedParallel := false` on JVM serialize the per-suite forks because running
 them concurrently starves the Chrome processes and a dead Chrome cascades; new
-browser suites must not assume any cross-suite parallelism (the same settings).
+browser suites must not assume any cross-suite parallelism (`build.sbt`).
 Native tests set only `Test / parallelExecution := false` (no per-suite forking
 grouping): suites are serialized so each owns the shared Chrome WebSocket channel in
 turn. JS sets the `CommonJSModule` linker kind and no Chrome-serialization knob
-(the `kyo-browser` `nativeSettings` and `jsSettings` in `build.sbt`).
+(`build.sbt`).
 
 ### Platform gates and transient failures
 
@@ -1111,32 +1138,33 @@ with Chrome leaves.
 
 ### Platform-split test suites
 
-A platform-specific test suite lives in `jvm/src/test`, `js/src/test`, or
+A platform-specific test suite lives in `jvm/src/test`, `js-wasm/src/test`, or
 `native/src/test` ONLY when the behavior is genuinely platform-bound, and the
 scaladoc states the reason; a JVM-only suite documents why it cannot move to
-`shared/` (the `BrowserLauncherJvmTest` scaladoc in `jvm/src/test/scala/kyo/internal/BrowserLauncherJvmTest.scala`).
+`shared/` (`jvm/src/test/scala/kyo/internal/BrowserLauncherJvmTest.scala`).
 JVM-only suites that need a real Chrome subprocess or kyo-http `HttpServer` carry the
 `JvmTest` name suffix and live under `jvm/src/test`: `BrowserRunSharedJvmTest`
-(Chrome boot is JVM/Native-only), `CdpBackendLifecycleJvmTest` (fault-injecting CDP
-fixture built on `HttpServer`) (the `BrowserRunSharedJvmTest` scaladoc in `jvm/src/test/scala/kyo/BrowserRunSharedJvmTest.scala`,
-`jvm/src/test/scala/kyo/internal/CdpBackendLifecycleJvmTest.scala`). The same
-logical contract is split across all three platform test trees when its
-implementation differs per platform: `BrowserLauncherPlatformTest` exists in `jvm/`,
-`js-wasm/`, and `native/`, each pinning that platform's distinct `BrowserLauncherPlatform`
-(JVM installs a real shutdown hook; JS and Native are no-ops)
-(the `BrowserLauncherPlatformTest` scaladoc in `native/src/test/scala/kyo/internal/BrowserLauncherPlatformTest.scala`).
+(Chrome boot is JVM/Native-only) and `CdpBackendLifecycleJvmTest`, whose
+`CdpBackendFixtureServer` is a fault-injecting CDP WebSocket server built on
+`HttpServer` (echo, crash after the first frame, slow replies, drop mid-request)
+(`jvm/src/test/scala/kyo/BrowserRunSharedJvmTest.scala`,
+`jvm/src/test/scala/kyo/internal/CdpBackendLifecycleJvmTest.scala`). One logical
+contract is split across platform test trees when what each platform can observe
+differs: `BrowserLauncherPlatformTest` exists in `jvm/`, `native/`, and `js-wasm/`.
+JVM and Native run the same `jvm-native` hook installer, but only the JVM suite can
+inspect the registered hook (through `java.lang.ApplicationShutdownHooks`
+reflection) and prove, in a sub-JVM, that it kills its process at exit; the Native
+suite proves the registration runs, and the `js-wasm` suite pins the no-op.
 
 ### Decode helpers
 
-CDP/wire tests use the `BaseBrowserTest` decode helpers rather than re-deriving JSON:
-`decode[A]` for a bare payload, `decodeCdpResult[A]` for a full `{id, result,
-error}` envelope (the dispatcher carrier is the entire wire frame)
-(`BaseBrowserTest.decode`, `BaseBrowserTest.decodeCdpResult`). Outer effect results are folded with
-the `orFail(label)` extension, which fails the test on `Failure` / `Panic` and
-prefixes panics with `PANIC: ` so a programming bug is visually distinct from an
-expected typed-failure path. JVM fixture suites wrap the whole body in
-`Abort.run[...](...).orFail("Outer")` (`BaseBrowserTest.orFail`,
-`CdpBackendLifecycleJvmTest`).
+CDP/wire tests use the `BaseBrowserTest` decode helpers rather than re-deriving
+JSON: `decode[A]` for a bare payload, `decodeCdpResult[A]` for a full `{id, result,
+error}` envelope. Outer effect results are folded with the `orFail(label)`
+extension, which fails the test on `Failure` / `Panic` and prefixes panics with
+`PANIC: ` so a programming bug is visually distinct from an expected typed-failure
+path. The `CdpBackendLifecycleJvmTest` fixture leaves wrap the whole body in
+`Abort.run[...](...).orFail("Outer")` (`shared/src/test/scala/kyo/BaseBrowserTest.scala`).
 
 ### Deterministic timing: gate on barriers, never sleeps
 
@@ -1165,15 +1193,21 @@ gated on an observable signal, not a `Thread.sleep` or `Async.sleep`:
   side-effect: `waitForNetworkIdle` returns only after a scheduled `fetch` resolves,
   and the test asserts `#status` flipped to `"done"`
   (`BrowserNetworkTest` "waitForNetworkIdle waits for pending fetch to complete").
-- When a test must wait for an internal fiber/atomic to reach a state, it uses a
-  bounded `Loop` + `Async.delay` poll on an observable signal (`relay.done`,
-  `inFlight.get`, fiber-done) with an attempt cap, NOT a fixed sleep. The relay-crash
-  test polls `client.relay.done` at 50ms intervals up to 20 attempts (<=1s)
-  (`CdpBackendLifecycleJvmTest` "close after relay fiber crashed externally does not throw").
-- For elapsed-duration checks that ARE legitimate (a behavioural upper bound, e.g.
-  "close falls back to closeNow well before the server's 10s delay"), tests use the
-  `Test.timed` helper (monotonic clock) and assert a generous margin, not an exact
-  value (`CdpBackendLifecycleJvmTest` "close(gracePeriod) falls back to closeNow when in-flight send is slow").
+- Event arrival is gated on the event itself: the download leaves complete a
+  `Promise` from the subscriber when the terminal `Progress(state == "completed")`
+  event arrives, and read the file only after it
+  (`shared/src/test/scala/kyo/BrowserDownloadTest.scala`). Asserting that something
+  does NOT happen is the one place a bounded sampling loop is right: the
+  no-download leaves check for the file a fixed number of times at a fixed period
+  and fail the moment it appears.
+- A behavioural upper bound is asserted through the outcome, not a measured
+  duration. `CdpBackendLifecycleJvmTest`'s "close(gracePeriod) falls back to
+  closeNow when in-flight send is slow" leaf holds a call in flight against a
+  fixture that replies after 10s, closes with a 500ms grace, and asserts the
+  in-flight call ended in `BrowserConnectionLostException`: had close waited out the
+  server, the call would have succeeded, so the result shape proves the fallback
+  with no clock in the assertion
+  (`jvm/src/test/scala/kyo/internal/CdpBackendLifecycleJvmTest.scala`).
 
 ### Retry schedules in tests
 
@@ -1182,9 +1216,9 @@ Flaky-but-correct assertions are bounded by a retry SCHEDULE installed via
 cap) and `slow` (200ms x 15, ~3s cap) helpers: use `tight` for assertions that
 should settle in an animation frame or for fast negative tests, `slow` for scenarios
 gated on Chrome/page warmup. The cap is a ceiling, not a sleep: the assertion fires
-as soon as it holds (`BrowserTest.tight`, `BrowserTest.slow`). Reaching for a longer retry
+as soon as it holds (`BrowserTest.scala`). Reaching for a longer retry
 schedule usually masks a missing settle barrier rather than fixing a real flake; the
-fix is asserting on the right gate, not widening the budget (the comment above `BrowserTest.tight`).
+fix is asserting on the right gate, not widening the budget (`BrowserTest.scala`).
 
 ## Adding a new method: decision checklist
 
@@ -1220,23 +1254,23 @@ Run through this before writing a new `Browser` method.
      `StabilitySampler`; name it `assert*` (returns `Unit`) or `waitFor*` (returns
      the matched value), provide the optional `schedule: Maybe[Schedule] = Absent`
      override, and for `waitFor*` supply both the predicate form and the equality
-     convenience overload (`Browser.assertText`, the `Browser.waitForText` overloads).
+     convenience overload (`Browser.scala`).
    - Settling read (geometry / style / discovery): route through `SettleRead.settle`,
      mapping settled-absent to the twin return; do NOT call `BrowserAssertion.withStability`
      directly (`Browser.boundingRect`, `SettleRead.settle`).
    - Capture: wrap the base capture in `HoldStill.withHoldStill` (or
      `withFrozenPage` + `holdStillFrame` for multi-band); it is best-effort and never
      aborts on timeout (`HoldStill.withFrozenPage`, `HoldStill.holdStillFrame`, `HoldStill.withHoldStill`).
-   - Recorder: register a per-session dispatcher, drain through a bounded `Channel` +
-     forked drainer fiber, restore via `Scope.ensure`; events-first return
-     (`Browser.onConsole`, `Browser.recordConsole`).
+   - Recorder: install a per-session dispatcher with `installSessionEntry`, drain
+     through a bounded `Channel` + forked drainer fiber inside an inner `Scope.run`;
+     events-first return (`Browser.scala`).
    - Pure read: page-side state through `BrowserEval.evalJs`, CDP-backed read through
      a `CdpBackend` wrapper against `tab.session` (`Browser.consoleLogs`, `Browser.cookies`).
 5. **If a new wait must catch a fast in-page transient, keep the entire loop inside
    one `awaitPromise=true` eval.** Never split it into separate `Runtime.evaluate`
-   polls (the `MutationSettlement.awaitQuiescence` and `StabilitySampler` scaladocs). The
+   polls (`MutationSettlement.scala`, `StabilitySampler.scala`). The
    hold-still capture loop is the documented exception (each iteration is a full CDP
-   round-trip) (the `HoldStill` scaladoc).
+   round-trip) (`HoldStill.scala`).
 6. **Do not widen the actionability retry channel.** It is narrowed to
    `BrowserElementException` on purpose; widening it back to
    `BrowserMutationException` blows the mutation timeout budget
@@ -1247,24 +1281,22 @@ Run through this before writing a new `Browser` method.
    `BrowserMutationException` <- `BrowserAssertionException`) plus one or more topical
    markers; `final case class ... derives CanEqual` with the message rendered in the
    `extends` clause; smart constructors for multi-path construction, none for a
-   single-construction leaf (the row and marker traits in `BrowserException.scala`,
-   `BrowserProtocolErrorException.decodeFailure`). Validate args before any CDP call with
-   `BrowserInvalidArgumentException("<methodName>", ...)` (`Browser.setFiles`, `Browser.elementAt`,
-   `Browser.screenshotRegion`).
+   single-construction leaf (`BrowserException.scala`). Validate args before any CDP
+   call with `BrowserInvalidArgumentException("<methodName>", ...)` (`Browser.scala`).
 8. **Map wire to public types at the boundary.** Do not leak wire case classes;
    surface decode failures as `BrowserProtocolErrorException.decodeFailure`
    (`Browser.cookies`, `Browser.consoleLogs`).
 9. **Decide visibility deliberately.** Hide a raw CDP setter behind a scoped `with*`
    wrapper and mark it `private[kyo]` ONLY when the bare setter is genuinely test-only
-   (the download setters, `Browser.allowDownloads`, `Browser.setDownloadBehavior`). `setViewport` / `resetViewport`
+   (the download setters, `Browser.scala`). `setViewport` / `resetViewport`
    are the counter-example: they are PUBLIC because they settle after, so the sticky
-   state they leave is observably quiesced (`Browser.setViewport`, `Browser.resetViewport`). Either way,
+   state they leave is observably quiesced (`Browser.scala`). Either way,
    follow the cache-and-restore recipe so a scoped wrapper composes with LIFO restore
-   on success, failure, AND interruption (`Browser.withViewport`). For an injected
+   on success, failure, AND interruption (`Browser.scala`). For an injected
    overlay, use the per-handle `data-kyo-token` teardown, never a shared global slot
-   (`Browser.withHighlights`).
+   (`Browser.scala`).
 10. **Add cross-platform tests under `shared/src/test`.** Extend `BrowserTest` for a
-    Chrome-backed suite, `BaseBrowserTest` for a pure suite. Gate every wait on a barrier, not a
-    sleep; split into a platform tree only when the behavior is genuinely
-    platform-bound and document why (`BrowserTest`,
-    the `BrowserLauncherJvmTest` scaladoc).
+    Chrome-backed suite, `BaseBrowserTest` for a suite that never opens a browser.
+    Gate every wait on a barrier, not a sleep; split into a platform tree only when
+    the behavior is genuinely platform-bound and document why (`BrowserTest.scala`,
+    `jvm/src/test/scala/kyo/internal/BrowserLauncherJvmTest.scala`).

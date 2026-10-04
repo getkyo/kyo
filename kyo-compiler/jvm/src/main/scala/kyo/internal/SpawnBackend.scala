@@ -123,7 +123,7 @@ private[kyo] object SpawnBackend:
 
     /** A bounded readiness round-trip so a worker that cannot start (e.g. an unusable classpath, whose
       * publication never sees a subscriber and would otherwise retry forever) or hangs surfaces as
-      * InitializationFailed here, not as a forever-retrying publish on the caller's first real op. A
+      * `CompilerWorkerReadyException` here, not as a forever-retrying publish on the caller's first real op. A
       * `DidClose` probe is cheap and idempotent on the worker; if no reply arrives within the bound the
       * worker is taken as failed to start.
       */
@@ -163,7 +163,7 @@ private[kyo] object SpawnBackend:
                     s"-Dkyo.internal.WorkerFlags.options=${config.scalacOptions.mkString(" ")}"
                 ) ++
                 Chunk("-cp", targetClasspath, "kyo.internal.CompilerWorker")
-        // The worker is spawned unscoped: its lifetime is owned by this backend's `close` (and the
+        // Unsafe: the worker is spawned unscoped: its lifetime is owned by this backend's `close` (and the
         // pool's close-on-evict finalizer), not by an enclosing scope.
         //
         // The fork and the error translation are one unsafe step, so the process reaches `init`'s bracket from

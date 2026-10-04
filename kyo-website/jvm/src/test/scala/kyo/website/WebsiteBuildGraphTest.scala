@@ -81,10 +81,9 @@ class WebsiteBuildGraphTest extends WebsiteTest:
     }
 
     // scalameta must appear ONLY in the kyo-website .jvmSettings block, never in the
-    // shared/js/bundle source trees. The grep is scoped to import/dependency forms so prose
-    // mentions of "scalameta" in scaladoc comments (e.g. DocsMarkdown.scala:11) do not trigger it.
-    // Pattern: `import scala.meta` (import form) or `org.scalameta` (libraryDependencies form).
-    // This mirrors the flexmark guard at lines 39-57 exactly.
+    // shared/js/bundle source trees. The grep is scoped to import/dependency forms
+    // (`import scala.meta`, `org.scalameta`) so prose mentions of "scalameta" in scaladoc
+    // comments do not trigger it, the same shape as the flexmark guard.
     "scalameta JVM-only import grep" - {
 
         "zero scalameta in kyo-website/shared" in {

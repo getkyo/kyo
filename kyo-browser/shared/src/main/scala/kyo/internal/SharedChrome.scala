@@ -5,7 +5,7 @@ import kyo.*
 /** A Chrome instance shared across all callers in a JVM/Node/Native run.
   *
   * Only the WebSocket URL is shared. Each [[run]] opens its own connection and tab through `Browser.run(url)`; this avoids
-  * resource-lifecycle issues that arise when a single `CdpClient` is shared across many scopes.
+  * resource-lifecycle issues that arise when a single `CdpBackend` is shared across many scopes.
   *
   * Chrome is launched inside a long-lived background fiber that holds the scope open with `Async.never`. When the kyo scheduler shuts down
   * (JVM exit, Node exit, Native exit), the fiber is interrupted and the scope's finalizers run, destroying Chrome and cleaning up its temp

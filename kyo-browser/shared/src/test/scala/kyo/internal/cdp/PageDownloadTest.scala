@@ -37,9 +37,6 @@ class PageDownloadTest extends kyo.BrowserTest:
         assert(PageDownload.nativeDownloadPath(System.OS.MacOS, "/tmp/dl") == "/tmp/dl")
     }
 
-    // Rewired from session.exchange.events (removed with the old CdpClient)
-    // to Browser.onDownload (the production subscription API using CdpBackend.downloadEventDispatchers).
-
     "setDownloadBehavior(Allow) causes CDP to emit Page.downloadWillBegin on a download" in {
         withBrowser {
             for
@@ -105,7 +102,7 @@ class PageDownloadTest extends kyo.BrowserTest:
     }
 
     // The PageDownload wrapper must surface BrowserConnectionException as a typed Abort (never a raw string / panic) when the
-    // protocol call fails; e.g. issued against a CdpClient whose WebSocket has been closed.
+    // protocol call fails; e.g. issued against a CdpBackend whose WebSocket has been closed.
     "setDownloadBehavior propagates BrowserConnectionException via typed Abort on a closed client" in {
         SharedChrome.init.map { wsUrl =>
             for

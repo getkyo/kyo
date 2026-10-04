@@ -1945,8 +1945,8 @@ object Browser:
     def title(using Frame): String < (Browser & Abort[BrowserReadException]) =
         BrowserEval.evalJs(ProbesJs.titleJs)
 
-    /** Captures the live current viewport (whatever `setViewport` / `withViewport` last established, else the natural viewport). The legacy
-      * `1280x720` crop is dropped; this method no longer clips. Hold-still capture is the TARGET convention: animations are paused via a
+    /** Captures the live current viewport (whatever `setViewport` / `withViewport` last established, else the natural viewport), with no
+      * clip of its own. The capture holds the page still: animations are paused via a
       * `data-kyo-internal` freeze stylesheet, fonts are awaited, and the capture loops until two consecutive frames are byte-identical or the
       * `captureHoldStillTimeout` elapses.
       */

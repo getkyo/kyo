@@ -85,7 +85,7 @@ class CdpBackendSmokeTest extends BrowserTest:
         }
     }
 
-    "send writes wire bytes that match legacy CDP envelope shape" in {
+    "send writes wire bytes that match the CDP envelope shape" in {
         AtomicRef.init[Maybe[Maybe[Structure.Value]]](Absent).map { capturedExtrasRef =>
             val navigateMethod = JsonRpcRoute.request[NavigateParams, NavigateResult](
                 "Page.navigate"
@@ -313,9 +313,9 @@ class CdpBackendSmokeTest extends BrowserTest:
     }
 
     // A Page.screencastFrame notification with NO registered screencast handler is dropped: dispatchEvent's
-    // `case Absent => Kyo.unit` arm. This is safe by construction because Browser.startScreencast registers the
-    // handler first (Browser.scala) and there is no shared event stream into which an un-dispatched frame could be
-    // pushed (the pre-port push-on-no-handler path no longer exists). The endpoint stays usable afterwards.
+    // `case Absent => Kyo.unit` arm. This is safe by construction because Browser.screenshotFrames registers the
+    // handler before it starts the screencast, and there is no shared event stream into which an un-dispatched frame
+    // could be pushed. The endpoint stays usable afterwards.
     "Page.screencastFrame with no registered handler is dropped and the endpoint stays usable" in {
         Scope.run {
             mkBackendWithServer().map { (backend, serverEndpoint) =>

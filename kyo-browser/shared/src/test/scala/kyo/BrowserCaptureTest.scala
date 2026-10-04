@@ -248,7 +248,7 @@ class BrowserCaptureTest extends BrowserTest:
     // ---- screenshot captures the live viewport size.
     //
     // Set the viewport to 390x844 then take a screenshot. The returned Image bytes must decode to
-    // dimensions 390x844, confirming the live-viewport path (NOT the legacy 1280x720 crop).
+    // dimensions 390x844, confirming the capture follows the live viewport rather than a fixed size.
     // PNG dimensions live at bytes 16-23 of the IHDR chunk (bytes 16-19 = width, 20-23 = height,
     // big-endian int32).
 

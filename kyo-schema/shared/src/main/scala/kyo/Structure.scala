@@ -684,7 +684,7 @@ object Structure:
           * reads via the public `def fieldType` accessor; constructs via the by-name
           * companion `apply`.
           *
-          * The Reader loop uses the canonical Codec.Reader contract at `Codec.scala:63-130`:
+          * The Reader loop uses the canonical `Codec.Reader` contract:
           * `hasNextField()` is the loop predicate (returns Boolean), `fieldParse()` advances
           * the cursor past the field name (returns Unit), and `lastFieldName()` returns the
           * just-parsed field name.

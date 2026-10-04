@@ -109,7 +109,7 @@ class BrowserExceptionTest extends BrowserTest:
 
     // ---- Reason sealed-trait hierarchy unit tests ----
 
-    "Reason.NotAttached.description matches legacy getMessage suffix" in {
+    "Reason.NotAttached.description matches the getMessage suffix" in {
         val reason = Reason.NotAttached
         val ex     = BrowserElementNotActionableException("#btn", reason)
         // Pin the description string so error messages don't silently regress.

@@ -170,7 +170,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         }
     }
 
-    "no thread leak after a kill: close kills the worker and every later op fails with a typed Fatal" in {
+    "no thread leak after a kill: close kills the worker and every later op fails with a typed CompilerTransportException" in {
         withDriver { driver =>
             for
                 backend <- scopedSpawn(spawnConfig(), driver, 0)
@@ -188,7 +188,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
                 alive <- backend.process.isAlive
                 _ = assert(!alive, "worker process must be dead after close")
 
-                // Every op after the kill fails with a typed Fatal and none hangs (the closed exchange
+                // Every op after the kill fails with a typed CompilerTransportException and none hangs (the closed exchange
                 // fails them immediately rather than parking).
                 r1 <- Abort.run[CompilerException](backend.run(Request.Compile(uri, "object A")))
                 r2 <- Abort.run[CompilerException](backend.run(Request.Completions(uri, "object B {}", 0)))

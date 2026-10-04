@@ -16,7 +16,7 @@ private[kyo] object CdpBackendFixtureServer:
           */
         case Echo
 
-        /** Accept one inbound frame, reply, then close 1006. Reproduces a relay fiber crash. */
+        /** Accept one inbound frame, reply, then close 1006: the peer drops the connection under a live backend. */
         case CrashAfterFirstFrame
 
         /** Every inbound frame waits `delay` before reply. Reproduces a stuck closeOrderly grace period. */
@@ -72,7 +72,7 @@ private[kyo] object CdpBackendFixtureServer:
         }
 
     /** Slow-response loop: always responds to Browser.getVersion immediately; applies the delay for all other requests. This ensures the
-      * Q-002 probe in [[CdpBackend.initUnscoped]] succeeds so the fixture can test subsequent slow sends.
+      * connect probe in [[CdpBackend.initUnscoped]] succeeds so the fixture can test subsequent slow sends.
       */
     private def loopSlow(ws: HttpWebSocket, delay: Duration)(using
         Frame
@@ -84,7 +84,7 @@ private[kyo] object CdpBackendFixtureServer:
             case _ => Kyo.unit
         }
 
-    /** B1 helper: respond to Browser.getVersion probe immediately (so initUnscoped succeeds), then crash on the next frame. */
+    /** Respond to Browser.getVersion probe immediately (so initUnscoped succeeds), then crash on the next frame. */
     private def crashAfterFirst(ws: HttpWebSocket)(using
         Frame
     ): Unit < (Async & Abort[Closed]) =
@@ -100,7 +100,7 @@ private[kyo] object CdpBackendFixtureServer:
                 ws.close(1006, "fixture-crash")
         }
 
-    /** B3 helper: respond to Browser.getVersion probe (initUnscoped succeeds), then drop the next frame. */
+    /** Respond to Browser.getVersion probe (initUnscoped succeeds), then drop the next frame. */
     private def dropOnFirst(ws: HttpWebSocket)(using
         Frame
     ): Unit < (Async & Abort[Closed]) =
@@ -120,7 +120,7 @@ private[kyo] object CdpBackendFixtureServer:
 
     /** Decode the request, extract `id` via [[FixtureIdEnvelope]] (permissive Maybe[Int]), send a proper reply.
       *
-      * For `Browser.getVersion` requests, returns a valid [[BrowserVersionResult]] JSON so the Q-002 probe in [[CdpBackend.initUnscoped]]
+      * For `Browser.getVersion` requests, returns a valid [[BrowserVersionResult]] JSON so the connect probe in [[CdpBackend.initUnscoped]]
       * succeeds. For `Target.getTargets` requests, returns `{"targetInfos":[]}` (an empty but schema-valid response). For all other
       * requests, returns `{"id":id,"result":{}}`.
       */
@@ -158,7 +158,7 @@ private[kyo] object CdpBackendFixtureServer:
             case Absent => Kyo.unit
         }
 
-    /** Drives B1's external relay-crash trigger. */
+    /** Closes the fixture's side of the connection with 1006, dropping it under a live backend. */
     private def forceClose(wsRef: AtomicRef[Maybe[HttpWebSocket]])(using
         Frame
     ): Unit < Async =
@@ -191,10 +191,10 @@ class CdpBackendLifecycleJvmTest extends kyo.BaseBrowserTest:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // close after relay fiber crashed externally
+    // close after the peer dropped the connection
     // ─────────────────────────────────────────────────────────────────────────
 
-    "close after relay fiber crashed externally does not throw" in {
+    "close after the peer dropped the connection does not throw" in {
         Abort.run[BrowserConnectionException | BrowserSetupException] {
             Scope.run {
                 CdpBackendFixtureServer.start(CdpBackendFixtureServer.Behavior.Echo).map { fixture =>
@@ -210,7 +210,7 @@ class CdpBackendLifecycleJvmTest extends kyo.BaseBrowserTest:
                             closeRes <- Abort.run[Timeout](Async.timeout(5.seconds)(backend.close(30.seconds)))
                         yield closeRes match
                             case Result.Success(_)          => succeed
-                            case Result.Failure(_: Timeout) => fail("backend.close hung after relay crash")
+                            case Result.Failure(_: Timeout) => fail("backend.close hung after the peer dropped the connection")
                             case Result.Panic(ex)           => fail(s"Panic from backend.close: ${ex.getMessage}")
                     }
                 }

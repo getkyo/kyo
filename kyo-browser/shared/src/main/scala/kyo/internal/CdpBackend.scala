@@ -11,7 +11,7 @@ import kyo.kernel.ContextEffect
 /** Runtime CDP backend built atop a [[JsonRpcHandler]]. Owns the per-connection
   * dispatcher tables (frame-event / download-event / dialog handlers / dialog
   * recorders), the dialog drainer fiber, the lastEvaluateParams diagnostic, the
-  * per-session JsonRpcExtrasEncoder, and the 5 CDP notification handlers. Wire framing,
+  * per-session JsonRpcExtrasEncoder, and the CDP notification routes. Wire framing,
   * codec dispatch, request correlation, per-call timeout, in-flight metering,
   * drain signal, graceful close, and malformed-envelope routing are owned by the
   * embedded [[JsonRpcHandler]].
@@ -32,7 +32,7 @@ final private[kyo] class CdpBackend private[kyo] (
 
     /** Typed CDP call. Records lastEvaluateParams on Runtime.evaluate, stamps
       * sessionId via JsonRpcExtrasEncoder, recovers engine errors to kyo-browser's
-      * typed BrowserReadException tree (INV-017).
+      * typed BrowserReadException tree.
       */
     private[kyo] def send[P: Schema, R: Schema](method: String, params: P)(using
         Frame
@@ -54,8 +54,8 @@ final private[kyo] class CdpBackend private[kyo] (
                 ))
             } {
                 Abort.recover[JsonRpcError] {
-                    // Timeout: code -32800 is how the engine surfaces a requestTimeout expiry.
-                    // Map it to BrowserConnectionLostException to preserve legacy CdpClient.submit semantics.
+                    // The engine surfaces a requestTimeout expiry as code -32800. A Chrome that stops answering is a lost
+                    // connection to every caller, so it maps to BrowserConnectionLostException, not a protocol error.
                     case e: JsonRpcCustomError if e.code == -32800 =>
                         Abort.fail(BrowserConnectionLostException(
                             s"Request timeout: $method",
@@ -135,8 +135,7 @@ final private[kyo] class CdpBackend private[kyo] (
 
     /** Session-scoped fork. All dispatcher tables and the endpoint are shared
       * with the parent; only the sessionId field differs. JsonRpcExtrasEncoder is
-      * recomputed per-call from this field, so the wire byte shape is
-      * identical to the legacy CdpClient.withSession.
+      * recomputed per-call from this field.
       */
     private[kyo] def withSession(sid: SessionId): CdpBackend =
         new CdpBackend(
@@ -198,9 +197,9 @@ end CdpBackend
 
 /** Static helpers + named constants + `init` / `initUnscoped` for [[CdpBackend]].
   *
-  * Hosts the 28 typed CDP method wrappers (each a two-line body delegating to
-  * `backend.send[P, R]` or `backend.sendUnit[P]`), plus the 5 notification handler
-  * builders, dialog drainer, and the Q-002 `Browser.getVersion` connect-probe.
+  * Hosts the typed CDP method wrappers (each a one-call body delegating to
+  * `backend.send[P, R]` or `backend.sendUnit[P]`), the notification route
+  * builders, the dialog drainer, and the `Browser.getVersion` connect probe.
   */
 private[kyo] object CdpBackend:
 
@@ -209,10 +208,7 @@ private[kyo] object CdpBackend:
       */
     private[kyo] val RuntimeEvaluateMethod = "Runtime.evaluate"
 
-    /** Per-connection in-flight cap. Carried verbatim from
-      * CdpClient.scala:206; the engine binds this to
-      * `Config.maxInFlight = Present(8)`.
-      */
+    /** Per-connection in-flight cap, passed to the JSON-RPC engine as its `maxInFlight`. */
     private[kyo] val maxInFlight: Int = 8
 
     /** Scope-bound init: closes the backend on scope exit. */
@@ -291,7 +287,7 @@ private[kyo] object CdpBackend:
                 lastEvaluateParams,
                 sessionId = Absent
             )
-            // Q-002 ratified probe: Browser.getVersion proves the WS handshake
+            // Connect probe: Browser.getVersion proves the WS handshake
             // + one CDP round-trip is live. Closed -> BrowserSetupFailedException
             // surfaces an upfront typed error rather than a delayed hang.
             _ <- Abort.recover[BrowserReadException] {
@@ -360,7 +356,7 @@ private[kyo] object CdpBackend:
       *   - context-destroyed (`Cannot find context with specified id`) -> [[BrowserIFrameInvalidException]],
       *     via the shared [[recoverContextDestroyed]] wrapper.
       *   - unreturnable-value (`Object couldn't be returned by value`, e.g. a JS `Symbol`) -> an
-      *     `undefined` [[EvalResult]], mirroring the legacy empty-string semantics for that case.
+      *     `undefined` [[EvalResult]], so a value CDP cannot return by value reads as `undefined` rather than failing the eval.
       */
     private[kyo] def runtimeEvaluate(backend: CdpBackend, params: EvalParams)(using
         Frame
@@ -721,7 +717,7 @@ private[kyo] object CdpBackend:
 
     /** Dialog drainer: consumes dialogQueue, allocates negative ids from
       * dialogIdCounter (disjoint from JsonRpcIdStrategy.SequentialInt's positive
-      * allocator, per INV-018), and writes Page.handleJavaScriptDialog
+      * allocator, so a dialog reply can never be correlated with a pending call), and writes Page.handleJavaScriptDialog
       * fire-and-forget via endpoint.sendUnmatched.
       *
       * The spawn is the bracket's acquire, so the drainer is owed its stop to the scope its endpoint lives in from the step it is
@@ -761,9 +757,7 @@ private[kyo] object CdpBackend:
             }.unit
         }
 
-    /** Reads sessionId from JsonRpcRoute.Context.extras (RI-001 path:
-      * JsonRpcEndpointImpl.scala:911-916 constructs JsonRpcRoute.Context with env.extras).
-      */
+    /** Reads the CDP sessionId from `JsonRpcRoute.Context.extras`, where the JSON-RPC endpoint puts the inbound message's extras. */
     private def readSessionIdFromExtras(extras: Maybe[Structure.Value]): Maybe[SessionId] =
         extras match
             case Present(Structure.Value.Record(fields)) =>
@@ -778,8 +772,7 @@ private[kyo] object CdpBackend:
       *
       * Auto-dismiss is the test-stability-critical edge case: every test that
       * triggers an alert without explicit dialog handling relies on it to
-      * avoid hang. The behavior here is byte-equivalent to
-      * CdpClient.decodeCdpMessage's dialog-opening branch.
+      * avoid hang.
       */
     private def handleDialogOpening(
         dialogHandlers: AtomicRef[Dict[String, (Boolean, String)]],
@@ -837,12 +830,9 @@ private[kyo] object CdpBackend:
     /** Same dispatch shape as dispatchEvent but for download events; carries the decoded typed Wire as
       * `CdpEvent.Generic.params` (no JSON round-trip).
       *
-      * Behavior-preservation note: the pre-port CdpClient routed download events with no session or
-      * no matching session handler into the shared exchange.events stream, where any registered
-      * session consumer (via Browser.onDownload) could observe them. The new code preserves this by
-      * broadcasting to all registered handlers when no session-specific handler is found. In practice
-      * Chrome sends Page.downloadWillBegin events without a sessionId when using the browser-level
-      * download path, so the broadcast path is the common case.
+      * An event with no handler for its session goes to every registered handler instead of being dropped. Chrome sends
+      * download events on the browser-level download path without a sessionId, or with a browser-level one that differs
+      * from the tab's CDP session, so a session-keyed lookup alone would drop the common case.
       */
     private def dispatchDownloadEvent(
         downloadEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
@@ -857,10 +847,6 @@ private[kyo] object CdpBackend:
             _     <- table.get(key) match
                 case Present(h) => h(ev)
                 case Absent     =>
-                    // No session-specific handler found. Broadcast to all registered handlers to
-                    // preserve pre-port behavior where unmatched events reached exchange.events
-                    // consumers. This handles Chrome emitting events without a sessionId or with a
-                    // browser-level sessionId that differs from the tab's CDP session.
                     val allHandlers = table.foldLeft(Chunk.empty[CdpEvent.Generic => Unit < Sync]) { (acc, _, h) => acc.append(h) }
                     Kyo.foreachDiscard(allHandlers)(h => h(ev))
         yield ()

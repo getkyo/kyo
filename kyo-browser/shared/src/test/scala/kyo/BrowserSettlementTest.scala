@@ -809,7 +809,7 @@ class BrowserSettlementTest extends BrowserTest:
     }
 
     // -------------------------------------------------------------------------
-    // Same-URL Browser.goto after a typed failure (B1)
+    // Same-URL Browser.goto after a typed failure
     //
     // Repro for the GitHubNotFoundRecoveryDemo finding: after `Browser.goto(url)` with the default `failOnHttpError=true`
     // raises BrowserNavigationFailedException on a 4xx response, Chrome HAS fully loaded the page at `url`. A follow-up

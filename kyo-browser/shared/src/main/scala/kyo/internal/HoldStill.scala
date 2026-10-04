@@ -2,10 +2,10 @@ package kyo.internal
 
 import kyo.*
 
-/** Hold-still capture: a TARGET convention (the legacy `Browser.screenshot` is a plain direct
-  * capture that predates hold-still; each public capture method that adopts this convention notes
-  * it in scaladoc). This helper wraps any base capture thunk and is best-effort: it NEVER aborts
-  * on timeout (returns the last frame). Order of operations:
+/** Hold-still capture, the convention every public still-image capture follows (`screenshotFrames` records the page as it moves
+  * instead). This helper wraps any
+  * base capture thunk and is best-effort: it NEVER aborts on timeout (returns the last frame).
+  * Order of operations:
   *
   *   1. Best-effort `settleForCapture` (pre-capture DOM settle, proceeds on timeout).
   *   2. Await `document.fonts.ready` via `evalJsAwaiting` (the expression returns a Promise).

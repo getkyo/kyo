@@ -847,21 +847,22 @@ that confirms the fixture actually emits those classes
 
 - Substring counting uses a local `countOccurrences` helper
   (`WebsiteGeneratorTest.countOccurrences`, `SiteAppTest.countOccurrences`).
-- `DocsMarkdown` JVM tests transpile then render through helper pipelines
-  (`transpileHtml`), reusing them rather than re-wiring per leaf
-  (`DocsMarkdownTest`). Token-highlight assertions match the
-  rendered HTML span shape with HTML-encoding
-  (`assert(html.contains("tok-keyword\">val</"), ...)`,
-  `DocsMarkdownTest`).
+- `DocsMarkdown` JVM tests transpile then render through `DocsMarkdownTest`'s
+  `transpileHtml` helpers (one for the default link base, one taking a
+  `DocsMarkdownRender.LinkBase`), reusing them rather than re-wiring per leaf.
+  Token-highlight assertions match the rendered HTML span shape with HTML-encoding
+  (`assert(html.contains("tok-keyword\">val</"), ...)`).
 - Determinism/idempotence is pinned by emitting twice and asserting byte-identical
   output (`assert(html1 == html2, "index.html must be byte-identical across two
   emits")`, `WebsiteGeneratorTest` "idempotent re-emit produces byte-identical files", `ChromeParityTest` "same Markdown gives byte-identical article in two runRenderPage calls").
-- Forward-progress guards assert a wall-clock bound with a generous budget
-  (`assert(elapsed < 30000L, ...)`, `DocsMarkdownTest`).
+- A forward-progress regression (an input that once hung the tokenizer, such as a
+  lone `/` in a scala fence) transpiles that input and asserts on the output; it
+  carries no wall-clock bound, so a reintroduced hang fails as the leaf's timeout.
 - Type-level contracts are asserted with an explicit type annotation that fails to
-  compile if the effect row widens
-  (`val _: String => Frame ?=> UI < Sync = h => LandingApp.body(h)`,
-  `LandingAppTest`, `WebsiteContentTest`).
+  compile if the type changes: an effect row that must not widen
+  (`val _: String => Frame ?=> UI < Sync = h => LandingApp.body(h)` in
+  `LandingAppTest`), or a content field's type (`val _: String = c.intro` in
+  `WebsiteContentTest`).
 
 ## Adding a new X: decision checklist
 

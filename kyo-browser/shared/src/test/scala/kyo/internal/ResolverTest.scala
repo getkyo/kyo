@@ -189,7 +189,7 @@ class ResolverTest extends kyo.BrowserTest:
     // ── Release-on-Abort coverage ─────────────────────────────────────
 
     // Direct fault-injection between `describeByObjectId` and `releaseObjectQuiet` would require seams
-    // into `Resolver`'s private internals or a mock `CdpClient`. The implementation uses
+    // into `Resolver`'s private internals or a mock `CdpBackend`. The implementation uses
     // `Scope.run + Scope.ensure(releaseObjectQuiet(...))(describeByObjectId(...))`, which fires the
     // release on success AND on Abort/Panic / interruption. We exercise the Abort-after-resolve path
     // end-to-end against a real Chromium: a successful `resolveOne` is followed by an injected

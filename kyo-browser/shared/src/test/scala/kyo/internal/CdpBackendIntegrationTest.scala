@@ -7,11 +7,7 @@ import kyo.internal.SharedChrome
 // Test-local: CDP's Target.closeTarget reply is `{"success":true}` (older Chrome) or `{}` (newer).
 final case class CloseTargetResult(success: Maybe[Boolean] = Absent) derives Schema
 
-/** Integration tests for [[CdpBackend]] against a live browser via [[SharedChrome]].
-  *
-  * Mechanical rename of the former `CdpClientTest`: `CdpClient.init` -> `CdpBackend.init`, `CdpClient.initUnscoped` ->
-  * `CdpBackend.initUnscoped`, raw-string sends replaced with typed [[CdpBackend]] wrappers.
-  */
+/** Integration tests for [[CdpBackend]] against a live browser via [[SharedChrome]]. */
 class CdpBackendIntegrationTest extends BrowserTest:
 
     override def timeout = 2.minutes

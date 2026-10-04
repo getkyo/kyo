@@ -7,12 +7,7 @@ import kyo.BrowserIFrameInvalidException.Reason as IFrameReason
 import kyo.JsonRpcIdStrategy
 import kyo.internal.SharedChrome
 
-/** [[CdpBackend]] lifecycle, close, and connection tests.
-  *
-  * Mechanical rename of the former `CdpClientLifecycleTest`: `CdpClient.init/initUnscoped` -> `CdpBackend.init/initUnscoped`,
-  * `tab.client` -> `tab.backend`, raw-string sends replaced with typed [[CdpBackend]] wrappers. Tests that exercised `CdpClient`-specific
-  * internals (relay fiber, inFlight counter, drainSignal) are adapted to the equivalent [[CdpBackend]] / [[JsonRpcHandler]] APIs.
-  */
+/** [[CdpBackend]] lifecycle, close, and connection tests against the shared Chrome. */
 class CdpBackendLifecycleTest extends kyo.BrowserTest:
 
     override def timeout = 2.minutes
@@ -70,7 +65,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
 
     "initUnscoped with bad URL fails fast with BrowserSetupException or BrowserConnectionException" in {
         // initUnscoped waits for the WebSocket connect to resolve before returning the backend (the
-        // Q-002 probe gate), so an unreachable URL surfaces as Abort failure from init
+        // Browser.getVersion connect probe), so an unreachable URL surfaces as Abort failure from init
         // itself rather than blocking the first send. 127.0.0.1:0 is OS-rejected immediately.
         // The failure is one of the two specific types this path can raise: a setup failure (connect
         // rejected before any session) or a connection failure (BrowserConnectionLostException, a

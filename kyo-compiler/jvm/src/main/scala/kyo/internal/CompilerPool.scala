@@ -69,14 +69,14 @@ final private[kyo] class CompilerPool(
     /** Resolves-or-creates the instance single-flight, then runs the op: the per-instance mutex is
       * held inside the global semaphore; a `Response.Failed` surfaces as a typed Abort.
       *
-      * The op is bounded by `stuckTimeout`, the leg-3 reclaim of the cancellation ladder: a normal pc
-      * op is sub-second, so a run that outlasts `stuckTimeout` is a genuinely-stuck instance whose
-      * cooperative cancel was defeated. On timeout the inner fiber is interrupted (releasing the
-      * per-instance mutex and the global permit), the instance is removed from the cache so its
-      * close-on-evict finalizer reclaims the worker (Spawn: `destroyForcibly`; Local: a best-effort
-      * `shutdown`, the documented `isolate=false` cost), and the op fails `Fatal`. The next op for this
-      * config recreates a fresh instance via the single-flight create. A normal fiber interrupt aborts
-      * the timeout rather than firing it, so the leg-1 cleanup still runs and no reclaim happens.
+      * The op is bounded by `stuckTimeout`: a normal pc op is sub-second, so a run that outlasts
+      * `stuckTimeout` is a genuinely-stuck instance whose cooperative cancel was defeated. On timeout the
+      * inner fiber is interrupted (releasing the per-instance mutex and the global permit), the instance
+      * is removed from the cache so its close-on-evict finalizer reclaims the worker (Spawn:
+      * `destroyForcibly`; Local: a best-effort `shutdown`, the documented `isolate=false` cost), and the
+      * op fails with `CompilerUnresponsiveException`. The next op for this config recreates a fresh
+      * instance via the single-flight create. A caller's fiber interrupt aborts the timeout rather than
+      * firing it, so the backend's own interrupt cleanup runs and no reclaim happens.
       */
     private def run(config: Compiler.Config, request: Request)(using Frame): Response < (Async & Abort[CompilerException]) =
         resolve(config).map { instance =>
@@ -101,8 +101,8 @@ final private[kyo] class CompilerPool(
                 }
         }
 
-    /** Single-flight resolve: the live instance if present, else create one under the per-config
-      * create mutex (concurrent first-ops serialize; the winner creates and inserts).
+    /** Single-flight resolve: the live instance if present, else the first op inserts a `Promise` for
+      * the config and creates the instance while concurrent first-ops await that `Promise`.
       */
     private def resolve(config: Compiler.Config)(using Frame): Instance < (Async & Abort[CompilerException]) =
         Sync.Unsafe.defer {

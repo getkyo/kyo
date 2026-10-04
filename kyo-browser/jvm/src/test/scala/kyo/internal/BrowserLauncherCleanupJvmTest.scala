@@ -42,7 +42,7 @@ class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
 
     // Hang-guard only: must exceed the legitimate worst-case runtime of any single test so it fires
     // solely on a true hang, never on a correct-but-slow run. Worst case ≈ Chrome launch (≤90s
-    // launchTimeout) + CdpClient close grace (≤30s) + cleanup poll (≤90s, see the `waitUntil` calls
+    // launchTimeout) + CdpBackend close grace (≤30s) + cleanup poll (≤90s, see the `waitUntil` calls
     // below) + overhead ≈ 220s. 6 minutes leaves a comfortable margin while still bounding a real hang.
     override def timeout = 6.minutes
 
@@ -176,7 +176,7 @@ class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
                     val pids = captured.map(_._1)
                     // Bounded poll: SIGTERM/SIGKILL takes a moment to drop the process. The contract is
                     // "no zombie", not "fast cleanup": 90s is the upper bound on macOS for a Chrome process
-                    // tree to fully die after destroyForcibly() under full-suite load. CdpClient.close uses a
+                    // tree to fully die after destroyForcibly() under full-suite load. CdpBackend.close uses a
                     // 30-second grace internally; the wait must be larger than that grace plus the OS reaping
                     // window when the host is saturated by preceding tests' I/O.
                     val allDead = waitUntil(90000) { () =>

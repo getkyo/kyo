@@ -24,7 +24,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
         p
     end completed
 
-    /** Constructs a CompilerPool with a fresh semaphore and createLocks but a caller-supplied
+    /** Constructs a CompilerPool with a fresh semaphore and stream-id counter but a caller-supplied
       * instances cache. The MediaDriver is null: the pool only threads it to SpawnBackend.init, which
       * is never called when the instances cache is pre-seeded with stubs.
       */
@@ -157,14 +157,14 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
         }
     }
 
-    "effectiveIsolate: version-mismatch with isolate=false routes to SpawnBackend (a worker that cannot start fails InitializationFailed)" in {
+    "effectiveIsolate: version-mismatch with isolate=false routes to SpawnBackend (a worker that cannot start fails with a CompilerInitializationFailure)" in {
         Scope.run {
             val settings =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
 
             // Non-own version + isolate=false -> effectiveIsolate=true -> SpawnBackend. minConfig has an
             // empty classpath, so the spawned worker cannot load kyo.internal.CompilerWorker and the readiness
-            // probe fails: a worker-start InitializationFailed.
+            // probe fails: a worker-start CompilerInitializationFailure.
             val mismatchCfg = minConfig("mismatch", version = "3.0.0")
             // Own version + isolate=false -> effectiveIsolate=false -> LocalBackend (no worker spawned).
             val localCfg = minConfig("local", version = CompilerPool.ownVersion)
@@ -177,7 +177,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                     makePoolWithDriver(settings, instances).map { pool =>
                         for
                             // Version mismatch routes to SpawnBackend; the empty-classpath worker cannot
-                            // start, so the readiness probe surfaces a worker-start InitializationFailed.
+                            // start, so the readiness probe surfaces a worker-start CompilerInitializationFailure.
                             cMismatch   <- pool.compiler(mismatchCfg)
                             resMismatch <- Abort.run[CompilerException](cMismatch.compile(Compiler.Uri("m.scala"), "object M"))
                             _ = resMismatch match
@@ -193,7 +193,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                                     )
 
                             // Own version with isolate=false must NOT spawn a worker (route to LocalBackend),
-                            // so it never produces a worker-start InitializationFailed.
+                            // so it never produces a worker-start CompilerInitializationFailure.
                             cLocal   <- pool.compiler(localCfg)
                             resLocal <- Abort.run[CompilerException](cLocal.compile(Compiler.Uri("l.scala"), "object L"))
                             _ = resLocal match
@@ -419,7 +419,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                                                             s"unexpected A cause: '${cause.getMessage}'"
                                                         )
                                                     case other =>
-                                                        assert(false, s"A should fail Fatal; got $other")
+                                                        assert(false, s"A should fail with CompilerExecutionException; got $other")
                                             yield ()
                                         }
                                     }
@@ -618,7 +618,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
         }
     }
 
-    "stuck-op reclaim (leg 3): a hung op times out, the instance is evicted and closed, and the config recreates" in {
+    "stuck-op reclaim: a hung op times out, the instance is evicted and closed, and the config recreates" in {
         Scope.run {
             Channel.initUnscoped[String](4).map { closedCh =>
                 val cfg          = minConfig("stuck")
@@ -626,7 +626,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                 val settings     =
                     Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
 
-                // A backend whose op never returns: only the leg-3 timeout can end it. Its close-on-evict
+                // A backend whose op never returns: only the stuck-op timeout can end it. Its close-on-evict
                 // finalizer signals the channel, so the test observes the reclaim deterministically.
                 val hangingBackend = new Backend:
                     def run(request: Request)(using Frame): Response < (Async & Abort[CompilerException]) =
@@ -647,7 +647,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
 
                                         // (a) under virtual time: the hung op is bounded by Async.timeout(stuckTimeout). A
                                         // forked advancer drives the virtual clock so the timeout fires deterministically, and
-                                        // the elapsed check reads virtual time, not the wall clock. The reclaim Fatal proves the
+                                        // the elapsed check reads virtual time, not the wall clock. The CompilerUnresponsiveException proves the
                                         // timeout fired (the hang can never fail on its own); elapsed proves it bounded the hang
                                         // rather than failing instantly. Only leg (a) is virtualized: legs (b)/(c) below run on
                                         // the real clock, so the fresh op there can never race the advancer.

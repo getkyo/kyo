@@ -243,21 +243,21 @@ class LocalBackendTest extends kyo.test.Test[Any]:
             blocked = new CompletableFuture[String]()
             fiber <- Fiber.initUnscoped(LocalBackend.bridge(blocked))
             // Gate on the fiber actually reaching the cancel-protected await before interrupting: the
-            // bridge registers a `handle` dependent on `blocked`, so a positive dependent count proves
-            // the `Sync.ensure` finalizer is in scope and the await is entered. Without this gate the
+            // bridge registers a `whenComplete` dependent on `blocked`, so a positive dependent count proves
+            // `Async.fromCompletableFuture`'s cancel finalizer is in scope and the await is entered. Without this gate the
             // interrupt could land before the finalizer registers, so no cancel would ever fire.
             reached <- pollUntil(500, 10.millis)(blocked.getNumberOfDependents() > 0)
             _ = assert(reached, "the bridge must register on the pc future (reach its await) before the interrupt")
             _ <- fiber.interrupt
             _ <- Abort.run[Throwable](fiber.get)
-            // The `Sync.ensure` finalizer can run a hair after `fiber.get` observes the interrupt
+            // The cancel finalizer can run a hair after `fiber.get` observes the interrupt
             // result, so poll (bounded) for the cancel rather than asserting once and racing it.
             cancelled <- pollUntil(500, 10.millis)(blocked.isCancelled)
             _ = assert(cancelled, "a fiber interrupt must cancel the bridged pc future via cf.cancel(true)")
         yield ()
     }
 
-    "the real bridge maps an exceptionally-completed pc future to a typed Fatal, never an escaped panic" in {
+    "the real bridge maps an exceptionally-completed pc future to a typed CompilerExecutionException, never an escaped panic" in {
         for
             failed = new CompletableFuture[String]()
             _      = failed.completeExceptionally(new RuntimeException("pc boom"))
