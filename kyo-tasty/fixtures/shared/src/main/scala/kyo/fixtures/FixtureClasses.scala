@@ -63,6 +63,9 @@ lazy val lazyValue: String = "computed lazily"
 // Method with default params
 def methodWithDefaults(x: Int = 1, y: Int = 2): Int = x + y
 
+// Method with several parameter lists, one of them a using clause
+def multiList(a: Int)(b: String, c: Long)(using d: Boolean): String = s"$a$b$c$d"
+
 // Generic class
 class GenericBox[A](val content: A)
 

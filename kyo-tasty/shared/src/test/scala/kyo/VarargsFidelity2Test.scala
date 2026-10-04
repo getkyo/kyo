@@ -47,7 +47,7 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
                 repeatedParams.nonEmpty,
                 "Expected at least one repeated parameter in the classpath. " +
                     "On JS/Native: VarargFixture.concat(xs: String*) should contribute one. " +
-                    "Check that VarargFixture.tasty bytes are correct in Embedded.scala and are added to " +
+                    "Check that project/TastyFixturesGen.scala embeds VarargFixture.tasty and that it is added to " +
                     "the embedded fixture set in TestClasspaths.withClasspath on JS/Native."
             )
             succeed

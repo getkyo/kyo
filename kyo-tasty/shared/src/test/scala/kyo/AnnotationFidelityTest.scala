@@ -25,7 +25,7 @@ class AnnotationFidelityTest extends kyo.test.Test[Any]:
                     annotated.size >= 1,
                     s"Expected >= 1 symbol annotated with scala.deprecated but found ${annotated.size}. " +
                         s"Embedded fixtures include AnnotatedFixture with @deprecated symbols. " +
-                        s"If this fails, check that AnnotatedFixture TASTy bytes are in Embedded.scala and TestClasspaths loads them."
+                        s"If this fails, check that project/TastyFixturesGen.scala embeds AnnotatedFixture and TestClasspaths loads it."
                 )
                 succeed
             }

@@ -39,7 +39,7 @@ class OpaqueTypeFidelityTest extends kyo.test.Test[Any]:
                     fail(
                         s"classpath.findSymbol(kyo.fixtures.Micros) returned Absent. " +
                             s"Related fullNameIndex keys: ${relatedKeys.mkString(", ")}. " +
-                            "Check that OpaqueFixture TASTy bytes are in Embedded.scala and TestClasspaths loads them."
+                            "Check that project/TastyFixturesGen.scala embeds OpaqueFixture and TestClasspaths loads it."
                     )
         }
     }

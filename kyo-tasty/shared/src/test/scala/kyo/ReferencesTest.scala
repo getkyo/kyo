@@ -20,6 +20,9 @@ class ReferencesTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
+    // The fixtures' TASTy records each source path relative to the build root.
+    private val fixtureSources = "kyo-tasty/fixtures/shared/src/main/scala/kyo/fixtures/"
+
     private val someTraitPickle =
         Tasty.Pickle("some-trait", Tasty.Version(28, 3, 0), Span.from(kyo.fixtures.Embedded.someTraitTasty))
 
@@ -149,7 +152,7 @@ class ReferencesTest extends kyo.test.Test[Any]:
                         case None    => fail("expected CrossFileModule.value in the fixture classpath")
                     Tasty.references(valueSym).map { refs =>
                         assert(
-                            refs == Chunk(Tasty.SourceRange("CrossFileModuleUser.scala", 8, 22, 8, 43)),
+                            refs == Chunk(Tasty.SourceRange(s"${fixtureSources}CrossFileModuleUser.scala", 8, 22, 8, 43)),
                             s"expected exactly the CrossFileModule.value use site in CrossFileModuleUser.useIt; got $refs"
                         )
                         succeed
@@ -376,7 +379,7 @@ class ReferencesTest extends kyo.test.Test[Any]:
                         s"expected exactly 2 distinct 'value' symbols (CrossFileTarget.value, CrossFileTarget2.value); got $valueSymbols"
                     )
                     val targetValue = valueSymbols.find { v =>
-                        v.sourcePosition.exists(_.sourceFile == "CrossFileTarget.scala")
+                        v.sourcePosition.exists(_.sourceFile == s"${fixtureSources}CrossFileTarget.scala")
                     }.get
                     val target2Value = valueSymbols.find(_.id != targetValue.id).get
                     assert(
@@ -389,12 +392,13 @@ class ReferencesTest extends kyo.test.Test[Any]:
                         refsTarget2 <- Tasty.references(target2Value)
                     yield
                         assert(
-                            refsTarget.map(_.sourceFile).toSet == Set("CrossFileUser.scala", "CrossFileUser2.scala"),
+                            refsTarget.map(_.sourceFile).toSet ==
+                                Set(s"${fixtureSources}CrossFileUser.scala", s"${fixtureSources}CrossFileUser2.scala"),
                             s"expected CrossFileTarget.value's use sites in exactly CrossFileUser.scala and " +
                                 s"CrossFileUser2.scala; got ${refsTarget.map(_.sourceFile)}"
                         )
                         assert(
-                            refsTarget2.map(_.sourceFile).toSet == Set("CrossFileUser3.scala"),
+                            refsTarget2.map(_.sourceFile).toSet == Set(s"${fixtureSources}CrossFileUser3.scala"),
                             s"expected CrossFileTarget2.value's use site in exactly CrossFileUser3.scala; got ${refsTarget2.map(_.sourceFile)}"
                         )
                         succeed

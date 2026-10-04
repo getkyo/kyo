@@ -2121,7 +2121,16 @@ lazy val `kyo-tasty` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            doctestPredef := Seq("import kyo.*", "import kyo.Tasty.*")
+            doctestPredef := Seq("import kyo.*", "import kyo.Tasty.*"),
+            // Every platform embeds the JVM compile's fixture bytes, so all four test the same fixtures.
+            Test / sourceGenerators += Def.task {
+                val _ = (`kyo-tasty-fixtures-internal`.jvm / Compile / products).value
+                TastyFixturesGen.generate(
+                    (`kyo-tasty-fixtures-internal`.jvm / Compile / classDirectory).value,
+                    baseDirectory.value / ".." / "shared" / "src" / "test" / "resources",
+                    (Test / sourceManaged).value
+                )
+            }.taskValue
         )
         .jvmSettings(
             mimaCheck(false),

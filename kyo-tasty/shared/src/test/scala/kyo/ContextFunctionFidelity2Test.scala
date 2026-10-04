@@ -54,7 +54,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
             assert(
                 ctxFnCount > 0,
                 s"Expected at least one ContextFunction in classpath symbol types; found 0. " +
-                    s"Check that ContextFunctionFixture TASTy bytes are in Embedded.scala and TestClasspaths loads them."
+                    s"Check that project/TastyFixturesGen.scala embeds ContextFunctionFixture and TestClasspaths loads it."
             )
             succeed
         }

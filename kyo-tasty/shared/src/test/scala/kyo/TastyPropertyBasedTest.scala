@@ -11,7 +11,7 @@ package kyo
   * dependencies. Properties are implemented using scala.util.Random with a fixed seed
   * (SEED = 0xc0ffee42L) for reproducibility. 100 random inputs per property.
   *
-  * Cross-platform: uses embedded fixture bytes from Embedded.scala. No filesystem required.
+  * Cross-platform: uses the embedded fixture bytes in `kyo.fixtures.Embedded`. No filesystem required.
   */
 class TastyPropertyBasedTest extends kyo.test.Test[Any]:
 

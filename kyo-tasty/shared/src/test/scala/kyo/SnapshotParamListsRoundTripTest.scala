@@ -14,7 +14,7 @@ import scala.collection.mutable
   *   2. A no-arg method round-trips with paramListIds == Chunk(Chunk.empty).
   *   3. A minor=11 snapshot header is rejected with TastyError.SnapshotVersionMismatch.
   *   4. The raw bytes of a written snapshot contain the "PLISTS__" tag.
-  *   5. Multi-parameter-list round-trip (marked ignore: no multi-list fixture exists yet).
+  *   5. A method with several parameter lists, one a using clause, keeps each list and its parameters through write+read.
   *
   * Cross-platform: all leaves target shared/src/test (JVM, JS, Native).
   */
@@ -233,14 +233,33 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // No multi-parameter-list method exists in the current fixture set.
-    // The fixture (FixtureClasses.scala) only defines single-list and no-arg methods.
-    // To activate: add a fixture method with multiple parameter lists, re-embed the TASTy bytes,
-    // and remove the .ignore annotation.
-    "multi_list_method_roundtrip".ignore(
-        "No multi-parameter-list method in embedded fixture set."
-    ) in {
-        fail("Not yet active")
+    // kyo.fixtures.multiList is `def multiList(a: Int)(b: String, c: Long)(using d: Boolean)`.
+    "multi_list_method_roundtrip" in {
+        val digest = Array[Byte](0xd0.toByte, 0xd1.toByte, 0xd2.toByte, 0xd3.toByte, 0xd4.toByte, 0xd5.toByte, 0xd6.toByte, 0xd7.toByte)
+        def paramNames(classpath: Tasty.Classpath): Maybe[Chunk[Chunk[String]]] =
+            classpath.symbols.collect { case m: Tasty.Symbol.Method if m.name.asString == "multiList" => m }.headOption match
+                case Some(m) => Maybe.Present(m.paramListIds.map(_.map(id => classpath.symbol(id).map(_.name.asString).getOrElse("?"))))
+                case None    => Maybe.Absent
+        TestClasspaths.withClasspath(TestClasspaths.kyoTastyFixtures)(Tasty.classpath).map { coldCp =>
+            Abort.run[TastyError] {
+                SnapshotReader.readFromBytes(SnapshotWriter.serializeToBytes(coldCp, digest), "<multi-list>").map { warmCp =>
+                    (paramNames(coldCp), paramNames(warmCp))
+                }
+            }.map {
+                case Result.Success((Maybe.Present(cold), warm)) =>
+                    assert(
+                        cold == Chunk(Chunk("a"), Chunk("b", "c"), Chunk("d")),
+                        s"multiList must decode as three parameter lists (a)(b, c)(d), got $cold"
+                    )
+                    assert(warm == Maybe.Present(cold), s"the snapshot must keep the parameter lists: cold=$cold warm=$warm")
+                case Result.Success((Maybe.Absent, _)) =>
+                    fail("kyo.fixtures.multiList is not in the fixture classpath")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+            }
+        }
     }
 
 end SnapshotParamListsRoundTripTest
