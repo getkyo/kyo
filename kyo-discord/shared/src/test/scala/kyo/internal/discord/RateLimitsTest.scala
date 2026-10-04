@@ -85,10 +85,14 @@ class RateLimitsTest extends kyo.test.Test[Any]:
                 def call(global: Boolean) = limits.acquire(messages, global, 10.seconds, method)
                 call(true).andThen(call(true)).andThen(call(false)).andThen(Clock.now).map { bypassed =>
                     Fiber.initUnscoped(call(true).andThen(Clock.now)).map { third =>
-                        // The third call is queued on the limiter before the clock moves, so its time is the refill's.
-                        val queued = Loop.foreach(limits.globalWaiters.map(n => if n == 1 then Loop.done(()) else Loop.continue))
-                        queued.andThen(control.advance(1.second)).andThen(third.get).map { at =>
-                            assert((bypassed, at) == (Instant.Epoch, Instant.Epoch + 1.second))
+                        // The third call is queued on the limiter before the clock moves, so its time is the refill's. The limiter
+                        // can only be polled for its waiters, so the wait polls with a suspension between reads. Its refill timer arms
+                        // its first one-second sleep on a fiber of its own: advancing before that sleep is armed puts the refill a
+                        // second past the advance, and the queued call is never admitted.
+                        val queued = assertEventually(limits.globalWaiters.map(_ == 1))
+                        queued.andThen(control.awaitPendingSleeper(1.second)).andThen(control.advance(1.second)).andThen(third.get).map {
+                            at =>
+                                assert((bypassed, at) == (Instant.Epoch, Instant.Epoch + 1.second))
                         }
                     }
                 }
