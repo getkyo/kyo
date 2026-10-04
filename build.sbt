@@ -3713,10 +3713,15 @@ lazy val `kyo-pod` =
                     if (daemonTests.isEmpty) Seq.empty
                     else
                         Seq("podman", "docker").map { runtime =>
+                            // Both forks run the same classes, and sbt keys a forked suite's results by the name the
+                            // fork reports: without the label one runtime's results overwrite the other's, and a
+                            // failure on one runtime drops out of the summary behind the other's pass.
+                            val labelled = baseFork(Map("KYO_POD_RUNTIME" -> runtime))
+                                .withRunJVMOptions(javaOptionsValue :+ s"-Dkyo.test.forkLabel=$runtime")
                             Tests.Group(
                                 name = s"container#$runtime",
                                 tests = daemonTests,
-                                runPolicy = Tests.SubProcess(baseFork(Map("KYO_POD_RUNTIME" -> runtime)))
+                                runPolicy = Tests.SubProcess(labelled)
                             )
                         }
                 // Suites that never reach a daemon keep a fork each and stay parallel; they contend for nothing.

@@ -25,13 +25,28 @@ import scala.concurrent.duration.Duration
   * runner and surfaced as [[TestResult.Failed]] events.
   */
 final private[internal] class SbtTask(
-    val taskDef: TaskDef,
+    suiteDef: TaskDef,
     baseOverlay: RunConfig => RunConfig,
     testClassLoader: ClassLoader,
     results: java.util.concurrent.ConcurrentLinkedQueue[TestReport],
     completed: java.util.Set[String],
-    forked: Boolean
+    forked: Boolean,
+    forkLabel: kyo.Maybe[String] = kyo.Maybe.empty
 ) extends Task:
+
+    /** The suite as sbt files its results: under `<class>#<label>` in a labelled fork. sbt keys a forked suite's results by this name
+      * alone, so two forks that run one class under the class name overwrite each other's results, and a failure in one disappears
+      * from the summary behind the other's. Loading and the runner's bookkeeping use the class name, `suiteDef`.
+      */
+    val taskDef: TaskDef =
+        forkLabel.fold(suiteDef) { label =>
+            new TaskDef(
+                s"${suiteDef.fullyQualifiedName()}#$label",
+                suiteDef.fingerprint(),
+                suiteDef.explicitlySpecified(),
+                suiteDef.selectors()
+            )
+        }
 
     def tags(): Array[String] = Array.empty
 
@@ -44,7 +59,7 @@ final private[internal] class SbtTask(
         if forked then LeakCheck.registerCarrierThread()
         val report = runSuite()
         results.add(report)
-        discard(completed.add(taskDef.fullyQualifiedName()))
+        discard(completed.add(suiteDef.fullyQualifiedName()))
         emitEvents(report, eventHandler)
         Array.empty[Task]
     end execute
@@ -52,7 +67,7 @@ final private[internal] class SbtTask(
     // Unsafe: Reflective bridge. sbt's ClassLoader gives us a raw Class[?]; we coerce it to the parameterized form expected by the runner.
     // The erasure is safe because sbt's SuiteFingerprint scanner already verified the suite extends TestBase.
     private def runSuite(): TestReport =
-        val raw = testClassLoader.loadClass(taskDef.fullyQualifiedName())
+        val raw = testClassLoader.loadClass(suiteDef.fullyQualifiedName())
         // Unsafe: the SuiteFingerprint match confirms the class extends TestBase
         val nextClass = raw.asInstanceOf[Class[? <: kyo.test.internal.TestBase[?]]]
         // Unsafe: Frame.internal at the sbt edge. sbt's Task.execute has no caller Frame to propagate, and

@@ -212,6 +212,33 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
         assert(!failure.getMessage.contains(classOf[NextSuiteA].getName), failure.getMessage): Unit
     }
 
+    // sbt files a forked suite's results under the name its task reports, so two forks that run the same class under one name
+    // overwrite each other's results. A labelled fork reports under `<class>#<label>`.
+
+    test("a labelled fork reports its suite and every event under the labelled name, and still runs the suite") {
+        val runner  = new SbtRunner(Array.empty, Array.empty, getClass.getClassLoader, forked = false, forkLabel = kyo.Present("podman"))
+        val handler = new CapturingEventHandler
+        val task    = runner.tasks(Array(taskDefFor(classOf[NextSingleLeafSuite])))(0)
+        task.execute(handler, loggers)
+        val labelled = classOf[NextSingleLeafSuite].getName + "#podman"
+        assert(task.taskDef().fullyQualifiedName() == labelled, task.taskDef().fullyQualifiedName()): Unit
+        assert(handler.events.map(_.fullyQualifiedName()) == List(labelled), s"got ${handler.events}"): Unit
+        assert(handler.events.forall(_.status() eq Status.Success), s"got ${handler.events}"): Unit
+    }
+
+    test("a labelled fork's suite counts as run by its own name") {
+        val runner = new SbtRunner(Array.empty, Array.empty, getClass.getClassLoader, forked = false, forkLabel = kyo.Present("podman"))
+        runner.tasks(Array(taskDefFor(classOf[NextSuiteA])))(0).execute(new CapturingEventHandler, loggers)
+        val summary = runner.done()
+        assert(summary.startsWith("kyo-test: 1 tests, 1 passed"), summary): Unit
+    }
+
+    test("an unlabelled fork reports under the class name") {
+        val runner = new SbtRunner(Array.empty, Array.empty, getClass.getClassLoader, forked = false, forkLabel = kyo.Absent)
+        val task   = runner.tasks(Array(taskDefFor(classOf[NextSingleLeafSuite])))(0)
+        assert(task.taskDef().fullyQualifiedName() == classOf[NextSingleLeafSuite].getName): Unit
+    }
+
     private def runnerWritingTo(bytes: java.io.ByteArrayOutputStream, forked: Boolean): SbtRunner =
         new SbtRunner(Array.empty, Array.empty, getClass.getClassLoader, forked, new java.io.PrintStream(bytes, true, "UTF-8"))
 

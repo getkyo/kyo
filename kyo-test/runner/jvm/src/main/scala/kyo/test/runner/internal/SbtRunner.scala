@@ -26,7 +26,8 @@ final private[runner] class SbtRunner(
     val remoteArgs: Array[String],
     val testClassLoader: ClassLoader,
     forked: Boolean = LeakCheck.isForked,
-    summaryOut: java.io.PrintStream = java.lang.System.out
+    summaryOut: java.io.PrintStream = java.lang.System.out,
+    forkLabel: kyo.Maybe[String] = SbtRunner.forkLabel
 ) extends Runner:
 
     private val parsedArgs: Args.Result = Args.parse(args)
@@ -106,7 +107,7 @@ final private[runner] class SbtRunner(
             case Args.Result.Ok(_) =>
                 discoveryErrors.set(SuiteDiscovery.discoverDetailed(testClassLoader).errors)
                 taskDefs.foreach(td => discard(selected.add(td.fullyQualifiedName())))
-                taskDefs.map(td => new SbtTask(td, baseOverlay, testClassLoader, results, completed, forked))
+                taskDefs.map(td => new SbtTask(td, baseOverlay, testClassLoader, results, completed, forked, forkLabel))
             case _ =>
                 Array.empty
         end match
@@ -207,5 +208,13 @@ final private[runner] class SbtRunner(
             val violations = kyo.internal.Diagnostics.drainViolations()
             if violations.nonEmpty then throw new TeardownViolationCheck.Detected(violations)
     end runEndOfRunChecks
+
+end SbtRunner
+
+private[runner] object SbtRunner:
+
+    /** The label a build gives a fork that runs the same suites as another fork, from the `kyo.test.forkLabel` system property. */
+    def forkLabel: kyo.Maybe[String] =
+        kyo.Maybe(java.lang.System.getProperty("kyo.test.forkLabel")).filter(_.nonEmpty)
 
 end SbtRunner

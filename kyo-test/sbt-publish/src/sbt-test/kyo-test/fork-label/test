@@ -1,0 +1,5 @@
+# Each fork's results are filed under its own label, so the failing fork stays listed beside the cancelled one.
+> checkResults
+
+# And the failing fork still fails the task.
+-> test
