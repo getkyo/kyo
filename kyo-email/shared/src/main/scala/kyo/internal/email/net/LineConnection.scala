@@ -190,10 +190,10 @@ private[kyo] object LineConnection:
             case _: NetTlsProviderUnavailableException => leaf(Kind.TlsSetup)
             case _: NetTlsConfigException              => leaf(Kind.TlsSetup)
             case _: NetBackendUnavailableException     => leaf(Kind.BackendUnavailable)
-            // The module never sets a socket buffer size, and its connections are TCP, which kyo-net can always upgrade.
+            // The module never sets a socket buffer size or a grace window, and its connections are TCP, which kyo-net can always upgrade.
             case _: NetUnixConnectException | _: NetUnixConnectTimeoutException | _: NetBindException |
                 _: NetSocketOptionUnsupportedException | _: NetStdioUnsupportedException | _: NetStdioAlreadyOpenException |
-                _: NetNotUpgradableException | _: NetAlreadyDetachedException => unreachable
+                _: NetNotUpgradableException | _: NetAlreadyDetachedException | _: NetConfigException => unreachable
             // kyo-net's driver-internal leaves are `private[net]`, so each is matched through its sealed parent after every named sibling:
             // `NetConnectionIoException` reaches a caller only as the cause inside a public leaf, and `NetDriverUnsupportedException` only
             // as a panic.
