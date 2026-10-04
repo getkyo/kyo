@@ -84,7 +84,11 @@ class TransportHandshakeTimeoutTest extends Test:
             // handshake parks; the deadline reaps it and closes the accepted fd. The await is bounded by a generous guard so a regression
             // (no reap, i.e. the deadline was not honored) fails rather than hangs.
             val serverTls =
-                NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 150.millis)
+                NetTlsConfig(
+                    certChainPath = Present(certPath),
+                    privateKeyPath = Present(keyPath),
+                    handshakeTimeout = 150.millis
+                )
             val transport = NetPlatform.transport
             transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
                 // Guards the listener if `transport.connect` itself were to fail before the trailing `listener.close()` below.
@@ -121,7 +125,11 @@ class TransportHandshakeTimeoutTest extends Test:
         // never a sleep-as-synchronization.
         TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
             val serverTls =
-                NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 60.millis)
+                NetTlsConfig(
+                    certChainPath = Present(certPath),
+                    privateKeyPath = Present(keyPath),
+                    handshakeTimeout = 60.millis
+                )
             val transport = NetPlatform.transport
             // One transport serves both roles: handshakeTimeout arms ONLY the server accept-handshake reap (it rides serverTls on the
             // listener), while the client connects with the default 30s connectTimeout, so the loopback connect completes well before any
@@ -172,7 +180,11 @@ class TransportHandshakeTimeoutTest extends Test:
             // pacer's reap (below) falls due ~10s after its accept; the leaf observes the reap and the round-trip by awaiting them directly, so a
             // genuine no-reap or lost echo hangs until the suite's per-leaf cap rather than racing an in-test ceiling.
             val serverTls =
-                NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 10.seconds)
+                NetTlsConfig(
+                    certChainPath = Present(certPath),
+                    privateKeyPath = Present(keyPath),
+                    handshakeTimeout = 10.seconds
+                )
             val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
             val transport = NetPlatform.transport
             transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
@@ -299,7 +311,8 @@ class TransportHandshakeTimeoutTest extends Test:
         given Frame   = Frame.internal
         val transport = NetPlatform.transport
         transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { silentListener =>
-            val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"), handshakeTimeout = 150.millis)
+            val clientTls =
+                NetTlsConfig(trustAll = true, sniHostname = Present("localhost"), handshakeTimeout = 150.millis)
             Abort.run[NetException | Closed | Timeout](
                 Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", silentListener.port, clientTls).safe.get)
             ).map { outcome =>
@@ -324,6 +337,45 @@ class TransportHandshakeTimeoutTest extends Test:
                 end match
             }
         }
+    }
+
+    // The server completes handshakes, so only the client's own zero deadline can fail this one.
+    "a zero client handshake deadline fails the handshake with NetTlsHandshakeTimeoutException" - eachBackendTls {
+        (transport, serverTls, clientTls) =>
+            for
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls)(conn => conn.close()).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
+                outcome  <- Abort.run[NetException](
+                    transport.connectTls("127.0.0.1", listener.port, clientTls.copy(handshakeTimeout = Duration.Zero)).safe.get
+                )
+            yield outcome match
+                case Result.Failure(e: NetTlsHandshakeTimeoutException) => assert(e.timeout == Duration.Zero)
+                case Result.Success(conn)                               =>
+                    conn.close()
+                    fail("a zero client handshake deadline let the handshake complete")
+                case other => fail(s"expected NetTlsHandshakeTimeoutException(${Duration.Zero}), got $other")
+            end for
+    }
+
+    "a zero server handshake deadline reaps every accepted handshake, so no connection reaches the handler" - eachBackendTls {
+        (transport, serverTls, clientTls) =>
+            for
+                handled  <- AtomicInt.init
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls.copy(handshakeTimeout = Duration.Zero)) { conn =>
+                    import AllowUnsafe.embrace.danger
+                    discard(handled.unsafe.incrementAndGet())
+                    conn.close()
+                }.safe.get
+                _       <- Scope.ensure(Sync.defer(listener.close()))
+                outcome <- Abort.run[NetException](transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
+                count   <- handled.get
+            yield
+                outcome.foreach(_.close())
+                assert(
+                    outcome.isFailure && count == 0,
+                    s"a zero server handshake deadline let a handshake through: $outcome, handled $count"
+                )
+            end for
     }
 
 end TransportHandshakeTimeoutTest

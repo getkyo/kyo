@@ -209,7 +209,11 @@ class JsIoDriverTest extends kyo.net.Test:
         given Frame = Frame.internal
         val grace   = 200.millis
         // Small inbound channel so two chunks overflow it.
-        val config = kyo.net.NetConfig(channelCapacity = 1, readChunkSize = 64, peerCloseGrace = grace)
+        val config = kyo.net.NetConfig(
+            channelCapacity = 1,
+            readChunkSize = 64.bytes,
+            peerCloseGrace = kyo.net.NetConfig.Grace.init(grace).getOrThrow
+        )
         // Capture the accepted (server) connection: with its ReadPump parked on the full cap-1 channel the client FIN is observable only through the
         // peer-close grace poll, so the captured connection's close is the reclaim oracle, validating that the transport threads the grace and
         // its clock. The client is a raw Node socket, so the accepted side's grace is the only sleep on the controlled clock.
