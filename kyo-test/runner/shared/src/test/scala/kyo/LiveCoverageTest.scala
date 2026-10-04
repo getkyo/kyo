@@ -194,6 +194,74 @@ private object LiveCoverageFixtures:
         }
     end RetryRepeatSuite
 
+    // ── 14. decorators on a group reach its leaves ────────────────────────────────────────────
+
+    class GroupPendingUntilFixedSuite extends TestBase[Any]:
+        "g".pendingUntilFixed("known") - {
+            "still broken" in assert(1 == 2)
+        }
+    end GroupPendingUntilFixedSuite
+
+    class GroupTimeoutSuite extends TestBase[Any]:
+        override protected def timeout: Duration = 2.seconds
+        "g".timeout(50.millis) - {
+            "never completes" in Async.never
+        }
+    end GroupTimeoutSuite
+
+    class NestedTimeoutSuite extends TestBase[Any]:
+        override protected def timeout: Duration = 2.seconds
+        "outer".timeout(60.millis) - {
+            "inner".timeout(40.millis) - {
+                "inner bound" in Async.never
+                "own bound".timeout(30.millis) in Async.never
+            }
+            "outer bound" in Async.never
+        }
+    end NestedTimeoutSuite
+
+    val groupRetryCounter: AtomicInteger = new AtomicInteger(0)
+
+    class GroupRetrySuite extends TestBase[Any]:
+        "g".retry(1) - {
+            "fails once" in Sync.defer(groupRetryCounter.incrementAndGet()).map(n => assert(n > 1, s"attempt $n"))
+        }
+    end GroupRetrySuite
+
+    val groupTimesCounter: AtomicInteger = new AtomicInteger(0)
+
+    class GroupTimesSuite extends TestBase[Any]:
+        "g".times(3) - {
+            "counted" in Sync.defer(groupTimesCounter.incrementAndGet()).andThen(succeed)
+        }
+    end GroupTimesSuite
+
+    class GroupFocusSuite extends TestBase[Any]:
+        "g".focus - {
+            "focused" in succeed
+        }
+        "outside" in succeed
+    end GroupFocusSuite
+
+    class GroupTagSuite extends TestBase[Any]:
+        "outer".tagged("a") - {
+            "inner".tagged("b") - {
+                "both tags" in succeed
+            }
+            "outer tag" in succeed
+        }
+        "untagged" in succeed
+    end GroupTagSuite
+
+    class GroupHandleSuite extends TestBase[Env[Int]]:
+        "g".handle[Env[Int]]([A] => (b: A < (Env[Int] & Async & Abort[Any] & Scope)) => Env.run(42)(b)) - {
+            "reads env" in Env.get[Int].map(v => assert(v == 42))
+            "inner" - {
+                "reads env nested" in Env.get[Int].map(v => assert(v == 42))
+            }
+        }
+    end GroupHandleSuite
+
 end LiveCoverageFixtures
 
 /** Live-path execution tests for kyo-test-runner behaviors.
@@ -480,6 +548,79 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
                 LiveCoverageFixtures.retryRepeatCounter.get() == 4,
                 s"expected retryRepeatCounter == 4 (2 outer * 2 per retry) but got ${LiveCoverageFixtures.retryRepeatCounter.get()}"
             )
+        }
+    }
+
+    // ── 14. decorators on a group reach its leaves ────────────────────────────────────────────
+
+    private def resultsOf(report: kyo.test.TestReport): Map[Chunk[String], TestResult] =
+        report.suiteReports.flatMap(_.leafResults).toMap
+
+    "group decorators" - {
+        "pendingUntilFixed on a group reports its failing leaf Pending" in {
+            discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.GroupPendingUntilFixedSuite])).map { report =>
+                assert(report.pending == 1 && report.failed == 0, s"$report")
+            }
+        }
+
+        "timeout on a group bounds its leaf" in {
+            discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.GroupTimeoutSuite])).map { report =>
+                assert(resultsOf(report).values.toList == List(TestResult.TimedOut(50.millis)), s"$report")
+            }
+        }
+
+        "the nearest timeout wins: the leaf's own, then the inner group's, then the outer group's" in {
+            discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.NestedTimeoutSuite])).map { report =>
+                assert(
+                    resultsOf(report) == Map(
+                        Chunk("outer", "inner", "inner bound") -> TestResult.TimedOut(40.millis),
+                        Chunk("outer", "inner", "own bound")   -> TestResult.TimedOut(30.millis),
+                        Chunk("outer", "outer bound")          -> TestResult.TimedOut(60.millis)
+                    ),
+                    s"$report"
+                )
+            }
+        }
+
+        "retry on a group retries its leaf" in {
+            LiveCoverageFixtures.groupRetryCounter.set(0)
+            discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.GroupRetrySuite])).map { report =>
+                assert(report.passed == 1 && LiveCoverageFixtures.groupRetryCounter.get() == 2, s"$report")
+            }
+        }
+
+        "times on a group repeats its leaf" in {
+            LiveCoverageFixtures.groupTimesCounter.set(0)
+            discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.GroupTimesSuite])).map { report =>
+                assert(report.passed == 1 && LiveCoverageFixtures.groupTimesCounter.get() == 3, s"$report")
+            }
+        }
+
+        "focus on a group focuses its leaves and skips the rest" in {
+            discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.GroupFocusSuite])).map { report =>
+                assert(
+                    resultsOf(report).view.mapValues(_.getClass.getSimpleName).toMap ==
+                        Map(Chunk("g", "focused") -> "Passed", Chunk("outside") -> "Skipped"),
+                    s"$report"
+                )
+            }
+        }
+
+        "tags on nested groups accumulate on their leaves" in {
+            def excluding(tag: String) = RunConfig.default.copy(filter = TestFilter(tagsExclude = Set(tag)))
+            for
+                excludeB <- discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.GroupTagSuite], excluding("b")))
+                excludeA <- discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.GroupTagSuite], excluding("a")))
+            yield
+                assert(resultsOf(excludeB).keySet == Set(Chunk("outer", "outer tag"), Chunk("untagged")), s"$excludeB")
+                assert(resultsOf(excludeA).keySet == Set(Chunk("untagged")), s"$excludeA")
+            end for
+        }
+
+        "handle on a group discharges the effect for every leaf it contains" in {
+            discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.GroupHandleSuite])).map { report =>
+                assert(report.passed == 2 && report.failed == 0, s"$report")
+            }
         }
     }
 

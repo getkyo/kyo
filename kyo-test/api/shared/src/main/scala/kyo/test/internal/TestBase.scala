@@ -578,8 +578,8 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
                         case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(builder.name, "condition false")
                         case _                              =>
                             // `-` is ALWAYS a group: register the RAW `S0`-shaped block so its nested `-`/`in` calls fire during
-                            // discovery descent. `transform` is applied per descended leaf by the runner. Leaves use `in`.
-                            regCtx.visitGroupWithBuilder[S0](builder.name, builder, body)
+                            // discovery descent, and `transform` wraps each leaf they register. Leaves use `in`.
+                            regCtx.visitGroupWithTransform[S0](builder.name, builder, transform, body)
         end -
 
         /** Always-leaf form of the enriched terminal (deferred body, `transform` peels `S0` to baseline), honoring the builder's terminal

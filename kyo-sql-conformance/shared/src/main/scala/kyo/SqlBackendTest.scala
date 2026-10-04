@@ -34,11 +34,9 @@ trait SqlBackendTest extends kyo.test.Test[Any]:
       * When no backend is available it registers a single FAILING leaf rather than zero leaves, so a run with no reachable engine is RED
       * rather than a green run with no coverage.
       *
-      * `pendingUntilFixed` marks the generated leaves, which is the shape a defect present on EVERY backend needs. The decorator has to be
-      * applied here, on each leaf this registers, because the enclosing group does not pass it down: a group written
-      * `"...".pendingUntilFixed(r) - { forEachBackend() { ... } }` registers ordinary leaves and reports plain failures. Reach for it only
-      * when every backend is wrong in the same way; a defect on one engine and not the other belongs in [[agreeAcrossBackends]], whose leaf
-      * can state the disagreement.
+      * `pendingUntilFixed` marks the generated leaves, which is the shape a defect present on EVERY backend needs. Reach for it only when
+      * every backend is wrong in the same way; a defect on one engine and not the other belongs in [[agreeAcrossBackends]], whose leaf can
+      * state the disagreement.
       *
       * `where` restricts the leaves to backends with a capability. Use it in complementary pairs, one call per side, so every backend is
       * claimed by exactly one leaf; it reads a descriptor FLAG, never an engine name.

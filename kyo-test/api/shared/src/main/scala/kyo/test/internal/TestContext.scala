@@ -63,6 +63,10 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
     private[test] def builderFor(path: Chunk[String]): Maybe[TestBuilder] =
         Maybe(builderByPath.get(path))
 
+    // The groups whose bodies are running, outermost first. A leaf registered inside them takes their decorators (merged under its own)
+    // and runs inside their `.handle` transforms, so a decorator on a group applies to every leaf it contains.
+    private val enclosingGroups: ListBuffer[TestContext.GroupFrame] = ListBuffer.empty
+
     // ── Entry points: visitLeaf and visitGroup ────────────────────────────────────────────────
 
     /** Register a leaf `-` node (body contains no nested `-` calls).
@@ -89,7 +93,7 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
         name: String,
         body: => Unit < (S & Async & Abort[Any] & Scope)
     ): Unit =
-        visitGroupImpl(name, Maybe.empty, () => body)
+        visitGroupImpl(name, Maybe.empty, Maybe.empty, () => body)
 
     /** Register a group `-` node with TestBuilder metadata. */
     def visitGroupWithBuilder[S](
@@ -97,7 +101,16 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
         builder: TestBuilder,
         body: => Unit < (S & Async & Abort[Any] & Scope)
     ): Unit =
-        visitGroupImpl(name, Maybe(builder), () => body)
+        visitGroupImpl(name, Maybe(builder), Maybe.empty, () => body)
+
+    /** Register a group `-` node produced by `.handle`: `transform` discharges `S` around each leaf the group contains. */
+    def visitGroupWithTransform[S](
+        name: String,
+        builder: TestBuilder,
+        transform: [A] => (A < (S & Async & Abort[Any] & Scope)) => A < (Async & Abort[Any] & Scope),
+        body: => Unit < (S & Async & Abort[Any] & Scope)
+    ): Unit =
+        visitGroupImpl(name, Maybe(builder), Maybe(leaf => transform[Unit](leaf)), () => body)
 
     private def visitLeafImpl(
         name: String,
@@ -108,7 +121,11 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
         val myIndex = nextChildIndex.getAndIncrement()
         val mine    = pathStack.get().append(myIndex)
         nameStack += name
-        builderOpt match
+        val inherited = enclosingGroups.toList.flatMap(_.builder.toList)
+        val effective =
+            if inherited.isEmpty then builderOpt
+            else Maybe(inherited.foldRight(builderOpt.getOrElse(TestBuilder(name)))(TestContext.inherit))
+        effective match
             case Maybe.Present(builder) => builderByPath.put(Chunk.from(nameStack), builder): Unit
             case _                      => ()
         try
@@ -116,11 +133,13 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
                 if discovery then
                     producedLeaf.set(Maybe.Present((Chunk.from(nameStack), TestResult.Passed(Duration.Zero))))
                 else
+                    // Innermost group first, so each transform sees the row the groups inside it left.
+                    val wraps = enclosingGroups.toList.reverse.flatMap(_.wrap.toList)
                     // Unsafe: S is phantom in <[+A, -S]; issue #903 forbids statically widening
                     // `Unit < (S & baseline)` to `Unit < baseline` at the call site, but the runtime
                     // value is always the baseline computation (discharged by .handle or S = Any).
                     val baselineBody: AssertScope => Unit < (Async & Abort[Any] & Scope) =
-                        as => body(as).asInstanceOf[Unit < (Async & Abort[Any] & Scope)]
+                        as => wraps.foldLeft(body(as).asInstanceOf[Unit < (Async & Abort[Any] & Scope)])((leaf, wrap) => wrap(leaf))
                     // The runner discharges the buffered baseline-row body via a single terminal Fiber#toFuture.
                     pendingBodies += ((Chunk.from(nameStack), baselineBody))
                 end if
@@ -133,6 +152,7 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
     private def visitGroupImpl(
         name: String,
         builderOpt: Maybe[TestBuilder],
+        wrap: Maybe[Unit < (Async & Abort[Any] & Scope) => Unit < (Async & Abort[Any] & Scope)],
         body: () => Any
     ): Unit =
         if producedLeaf.get().isDefined then return
@@ -145,7 +165,9 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
         try
             if mine == target || target.startsWith(mine) then
                 if mine == target then wasGroup.set(true)
-                descend(myIndex, body)
+                enclosingGroups += TestContext.GroupFrame(builderOpt, wrap)
+                try descend(myIndex, body)
+                finally enclosingGroups.remove(enclosingGroups.size - 1): Unit
             else () // SKIP: diverged path
         finally
             if nameStack.nonEmpty then nameStack.remove(nameStack.size - 1): Unit
@@ -233,6 +255,25 @@ end TestContext
 
 object TestContext:
     private val tl: ThreadLocal[TestContext | Null] = new ThreadLocal[TestContext | Null]()
+
+    final private case class GroupFrame(
+        builder: Maybe[TestBuilder],
+        wrap: Maybe[Unit < (Async & Abort[Any] & Scope) => Unit < (Async & Abort[Any] & Scope)]
+    )
+
+    /** `inner`'s decorators over `outer`'s: tags and focus accumulate, and for every other field the nearest declaration wins. `ignore` and
+      * `onlyIf` are not carried, since a group evaluates them at its `-` and a leaf under an ignored or false-`only` group never registers.
+      * `repeat` treats 1 as unset, its default.
+      */
+    private[test] def inherit(outer: TestBuilder, inner: TestBuilder): TestBuilder =
+        inner.copy(
+            tags = outer.tags ++ inner.tags,
+            focus = outer.focus || inner.focus,
+            pendingUntilFixed = inner.pendingUntilFixed.orElse(outer.pendingUntilFixed),
+            timeout = inner.timeout.orElse(outer.timeout),
+            retrySchedule = inner.retrySchedule.orElse(outer.retrySchedule),
+            repeat = if inner.repeat != 1 then inner.repeat else outer.repeat
+        )
 
     def setForInstantiation(ctx: TestContext): Unit = tl.set(ctx)
 

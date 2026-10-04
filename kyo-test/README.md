@@ -222,6 +222,21 @@ class DecoratedTest extends Test[Any]:
 end DecoratedTest
 ```
 
+A decorator on a group applies to every leaf the group contains, at any depth. Tags and `focus` accumulate from the outermost group down; for `pendingUntilFixed`, `timeout`, `retry` and `times` the nearest declaration wins, so a leaf's own value overrides its group's and an inner group overrides an outer one. `.ignore` and `.only(cond)` on a group decide whether the group registers at all, so its leaves are never reached.
+
+```scala
+class GroupDecoratedTest extends Test[Any]:
+    "settlement".timeout(5.seconds).tagged("db") - {
+        "posts a transfer" in {
+            assert(Account(1, "ada", 0L).balanceCents == 0L)
+        }
+        "a slow reconciliation".timeout(30.seconds) in {
+            assert(true)
+        }
+    }
+end GroupDecoratedTest
+```
+
 ### Selection: `focus`, `ignore`, `only`, `tagged`, `slow`
 
 `.focus` restricts the run to focused leaves only (everything else reports `Skipped`), the way you isolate one test while iterating. `.ignore` (optionally `.ignore(reason)`) marks a leaf as ignored: its body never runs and it reports `Ignored`, recording the optional reason; use it both to disable a test and to mark one whose body is not written yet. `.only(cond)` registers the leaf only when `cond` is true at registration; a false condition reports `Skipped`. `.tagged("name", ...)` attaches tags for filtering at run time; `.slow` is shorthand for `.tagged("slow")`.
