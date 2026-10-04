@@ -46,8 +46,9 @@ set -uo pipefail
 #
 # Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
 # NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX,
-# JS_TEST_BATCH, WASM_TEST_BATCH, and CONTAINER_SWEEP from the environment; mutates none of them (the nativeLink
-# invocations append -XX:ActiveProcessorCount when NATIVE_LINK_CPUS is set). The
+# JS_TEST_BATCH, WASM_TEST_BATCH, and CONTAINER_SWEEP from the environment; mutates none of them except
+# JAVA_OPTS, which gains the sbt server switches below (the nativeLink invocations also append
+# -XX:ActiveProcessorCount when NATIVE_LINK_CPUS is set). The
 # caller (a CI workflow, or build.sh --env podman-ci) owns the environment, so
 # this one runner is correct in every environment.
 
@@ -645,6 +646,13 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     if exit_is 2 && calls_count 0; then record ok "unknown action exits 2 before any sbt"
     else record no "unknown action exits 2 before any sbt"; fi
 
+    # 54. Every sbt the runner starts tolerates a failed boot socket and starts no server.
+    run_runner JVM test "$PASS_BODY"
+    if calls_count 3 && [ "$(grep -cF -- '-Dsbt.server.forcestart=true -Dsbt.server.autostart=false' "$HEAP")" -eq 3 ] \
+       && exit_is 0
+    then record ok "every sbt gets the boot socket and server switches"
+    else record no "every sbt gets the boot socket and server switches"; fi
+
     # Negative control: a deliberately wrong expectation MUST flip FAIL,
     # proving the harness is not vacuous. Not counted in the scenario total.
     run_runner JVM test 'exit 0'
@@ -652,7 +660,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 58 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 59 ]
     exit $?
 fi
 
@@ -675,6 +683,13 @@ POLL_INTERVAL=${POLL_INTERVAL:-10}
 # Backoff base in seconds between dependency-resolution retries, scaled by attempt number. The self-test
 # overrides it to 0 so the retry path runs instantly.
 RESOLVE_BACKOFF=${RESOLVE_BACKOFF:-20}
+
+# sbt's boot socket and server exist for clients attaching to a running sbt (`sbt --client`, BSP), which
+# this runner never has. On Windows each is a named pipe whose ACL ipcsocket 1.8.0 builds from a SID held
+# in memory the GC may already have freed (Win32SecurityLibrary.getOwnerSID and getLogonSID), so creating
+# one fails intermittently with ERROR_INVALID_ACL (1336), and sbt exits 2 when the boot socket fails.
+# forcestart lets sbt continue without the boot socket; autostart=false never creates the server.
+export JAVA_OPTS="${JAVA_OPTS:-} -Dsbt.server.forcestart=true -Dsbt.server.autostart=false"
 
 # Space-separated module names (e.g. "kyo-schema-tests", which links every serialization format
 # into one binary) whose SOLO native-link optimize peak needs an isolated, fresh-heap sbt driver.
