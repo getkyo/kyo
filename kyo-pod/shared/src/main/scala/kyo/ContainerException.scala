@@ -65,7 +65,7 @@ final case class ContainerBackendUnavailableException(backend: String, reason: S
 
 /** A daemon operation exceeded the configured timeout. */
 final case class ContainerTimeoutException(operation: String, duration: Duration)(using Frame)
-    extends ContainerBackendException(s"Operation timed out after ${duration}: $operation") derives CanEqual
+    extends ContainerBackendException(s"Operation timed out after ${duration.show}: $operation") derives CanEqual
 
 /** The selected backend does not implement the requested operation (e.g., CRIU checkpoint on the Shell backend). */
 final case class ContainerNotSupportedException(operation: String, detail: String)(using Frame)

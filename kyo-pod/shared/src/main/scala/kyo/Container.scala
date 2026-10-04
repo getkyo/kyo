@@ -140,8 +140,8 @@ final class Container private[kyo] (
     def waitForExit(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         waitForExit(Duration.Infinity)
 
-    /** Block until the container exits and return its exit code, giving up after `timeout`. Pass `Duration.Infinity` to wait
-      * indefinitely (equivalent to the no-arg overload).
+    /** Block until the container exits and return its exit code, giving up after `timeout` with a [[ContainerTimeoutException]]. Pass
+      * `Duration.Infinity` to wait indefinitely (equivalent to the no-arg overload).
       */
     def waitForExit(timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         pendingExit.get.map {

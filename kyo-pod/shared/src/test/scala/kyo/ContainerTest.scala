@@ -327,8 +327,7 @@ class ContainerTest extends BasePodTest:
         "Timeout message includes duration and operation" in {
             val ex  = ContainerTimeoutException("pull image", 30.seconds)
             val msg = ex.getMessage
-            assert(msg.contains("pull image"), s"expected operation in '$msg'")
-            assert(msg.contains("30"), s"expected duration in '$msg'")
+            assert(msg.contains("Operation timed out after 30.seconds: pull image"), s"unexpected message '$msg'")
         }
 
         // leaf exception coverage

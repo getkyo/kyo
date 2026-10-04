@@ -606,9 +606,7 @@ final private[kyo] class HttpContainerBackend(
             Abort.run[Timeout](Async.timeout(timeout)(call)).map {
                 case Result.Success(code) => code
                 case Result.Failure(_)    =>
-                    Abort.fail[ContainerException](
-                        ContainerBackendException(s"waitForExit for ${id.value} exceeded $timeout")
-                    )
+                    Abort.fail[ContainerException](ContainerTimeoutException(s"waitForExit for ${id.value}", timeout))
                 case Result.Panic(ex) =>
                     Abort.fail[ContainerException](
                         ContainerBackendException(s"waitForExit panicked for ${id.value}", ex)

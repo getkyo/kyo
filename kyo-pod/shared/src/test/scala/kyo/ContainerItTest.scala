@@ -683,6 +683,25 @@ class ContainerItTest extends BasePodTest:
                 }
             }
         }
+
+        "a wait that outlives its timeout fails as a timeout naming the duration" - runBackends {
+            val timeout = 30.seconds
+            Container.init(alpinePersistent(alpine)).map { c =>
+                Clock.withTimeControl { control =>
+                    for
+                        wait   <- Fiber.initUnscoped(Abort.run[ContainerException](c.waitForExit(timeout)))
+                        _      <- control.awaitPendingSleeper(timeout)
+                        _      <- control.advance(timeout)
+                        result <- wait.get
+                    yield result match
+                        case Result.Failure(e: ContainerTimeoutException) =>
+                            assert(e.duration == timeout)
+                            assert(e.getMessage.contains("after 30.seconds"), s"unexpected message '${e.getMessage}'")
+                        case other => fail(s"expected ContainerTimeoutException, got $other")
+                    end for
+                }
+            }
+        }
     }
 
     // =========================================================================
