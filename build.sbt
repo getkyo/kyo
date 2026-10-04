@@ -95,8 +95,9 @@ Global / concurrentRestrictions := {
     // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
     // podman fork and a docker fork (KYO_POD_RUNTIME pinning), so this bounds container-daemon
     // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon); real
-    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). CI caps at 2; locally cores/2.
-    val forkLimit = if (isCI) 2 else 1 max cores / 2
+    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). 2 everywhere: each fork's heap
+    // is 5GB (Test / javaOptions), so the cap is what bounds the forks' memory on any machine.
+    val forkLimit = 2
     Seq(
         Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
         Tags.limit(Tags.Update, if (updateLimit != "0") updateLimit.toInt else 1),
@@ -260,12 +261,12 @@ lazy val `kyo-settings` = Seq(
     // workload, only compile and the Scala.js/Wasm linker, whose large graph needs COH's header
     // savings to fit the driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
     Test / javaOptions += "-XX:-UseCompactObjectHeaders",
-    // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
-    // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
-    // classpaths under globalK-way leaf concurrency). Pin an explicit fork heap on CI; with the
-    // ForkedTestGroup cap at 2, two 5GB forks plus the floor-less driver fit the 16GB box. Local dev
-    // keeps the auto-scaling default so small machines are not over-committed.
-    Test / javaOptions ++= (if (sys.env.contains("CI")) Seq("-Xmx5g") else Nil),
+    // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM: 4GB on the 16GB CI
+    // runners, too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
+    // classpaths under globalK-way leaf concurrency), and 24GB on a 96GB workstation, where a few
+    // concurrent forks saturate the machine. With the ForkedTestGroup cap at 2, two 5GB forks plus the
+    // driver fit a 16GB box.
+    Test / javaOptions += "-Xmx5g",
     doctestPredef := Seq("import kyo.*"),
     // Scala 3.9 modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
     // dedups naturally. Scala 3.3 modules must NOT have kyo-doctest on the Test
