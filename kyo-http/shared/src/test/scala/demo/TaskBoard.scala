@@ -155,7 +155,7 @@ object TaskBoardClient extends KyoApp:
             server <- HttpServer.init(HttpServerConfig.default.port(0))(list, create, update, delete)
             _      <- Console.printLine(s"TaskBoardClient started server on http://localhost:${server.port}")
 
-            baseUrl = s"http://localhost:${server.port}"
+            baseUrl <- Abort.get(HttpClientConfig.BaseUrl.init(s"http://localhost:${server.port}"))
 
             // CRUD operations
             _ <- HttpClient.withConfig(_.baseUrl(baseUrl).timeout(5.seconds)) {

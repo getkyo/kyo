@@ -33,9 +33,8 @@ object SearchDemo extends KyoApp:
     private val userAgent = Seq("User-Agent" -> "kyo-ui-demo/1.0 (https://github.com/getkyo/kyo)")
 
     private def searchWikipedia(query: String): Chunk[Hit] < (Async & Abort[HttpException]) =
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val url     = s"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=$encoded&srlimit=8&format=json"
-        HttpClient.getJson[WikiResponse](url, headers = userAgent).map { resp =>
+        val params = Seq("action" -> "query", "list" -> "search", "srsearch" -> query, "srlimit" -> "8", "format" -> "json")
+        HttpClient.getJson[WikiResponse]("https://en.wikipedia.org/w/api.php", headers = userAgent, query = params).map { resp =>
             Chunk.from(resp.query.search.map(h => Hit(h.title, cleanSnippet(h.snippet))))
         }
     end searchWikipedia

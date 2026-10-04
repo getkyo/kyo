@@ -589,7 +589,7 @@ To work with containers created outside the current scope, attach by ID or name:
 ```scala doctest:expect=skipped
 for
     summaries <- Container.list(all = true)
-    selected <- summaries.find(_.names.exists(_.contains("redis"))) match
+    selected  <- summaries.find(_.names.exists(_.contains("redis"))) match
         case Some(summary) => summary.attach
         case None          => Container.attach(Container.Id("redis"))
     logs <- selected.logsText

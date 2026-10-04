@@ -4,7 +4,7 @@ Module-specific guide for kyo-mime. Read the repository-root [CONTRIBUTING.md](.
 
 ## What kyo-mime is
 
-kyo-mime reads and writes the header grammars mail and HTTP share: `MediaType` (RFC 2045 section 5.1, RFC 9110 section 8.3.1), `Disposition` (RFC 2183, RFC 6266), `Parameters` (RFC 2231, RFC 8187) and `Multipart` (RFC 2046 section 5.1.1). Its public surface is package `kyo.mime`, reached with `import kyo.mime.*` (the way kyo-net and kyo-crypto keep their packages): the four objects, the failure types `MimeException` and its three leaves, and `MimeException.Violation`. The lexical rules they share (tokens, quoted strings, CFWS, comments, attribute characters) are `kyo.internal.mime.Grammar`. The module depends on kyo-schema (for the `Schema` of `MediaType` and `Disposition`) and nothing else; every operation is a pure function.
+kyo-mime reads and writes the header grammars mail and HTTP share: `MediaType` (RFC 2045 section 5.1, RFC 9110 section 8.3.1), `Disposition` (RFC 2183, RFC 6266), `Parameters` (RFC 2231, RFC 8187) and `Multipart` (RFC 2046 section 5.1.1). The four objects are package `kyo.mime`, reached with `import kyo.mime.*` (the way kyo-net and kyo-crypto keep their packages). The failure types `MimeException`, its three leaves and `MimeException.Violation` are package `kyo`, with every other kyo failure type, so a caller handling them needs only `import kyo.*`. The lexical rules they share (tokens, quoted strings, CFWS, comments, attribute characters) are `kyo.internal.mime.Grammar`. The module depends on kyo-schema (for the `Schema` of `MediaType` and `Disposition`) and nothing else; every operation is a pure function.
 
 ## The invariant: read everything the RFCs allow, write nothing that can break a line
 

@@ -112,21 +112,33 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def onInboundClosedDuringRead(handle: Handle, bytes: Span[Byte])(using AllowUnsafe, Frame): Unit = ()
 
-    /** Tear down a listener: cancel its pending accept and close its listen fd via `closeFd`, sequenced so that no accept registration for
-      * `handle` can ever run against a RECYCLED fd number. The default (readiness drivers, where `cancel` clears the accept state
-      * synchronously) cancels and then closes the fd immediately, today's behavior. The io_uring driver overrides this to run the whole
-      * teardown on its reap carrier BEHIND any accept arm still queued on the engine FIFO: that arm preps its SQE while the fd still names
-      * the listener's socket, the prepped SQEs are flushed, and only then does `closeFd` release the fd number for reuse. Without that
-      * sequencing, a queued arm outlives the fd close, preps an accept against whatever socket RECYCLED the number (typically the next
-      * listener), and each such ghost accept steals one incoming connection for the closed listener's handler.
+    /** Release `handle`'s fd outside the handle's own close: take the handle's one-shot fd-close claim and, if it is won, run `closeFd`, on the
+      * carrier that arms the handle's fd-keyed operations. That carrier is what makes a freed number unreachable: an arm is applied there and
+      * rejected once the claim is taken, so no arm runs between the claim and `close(fd)`, and an arm after it never resolves the number the
+      * kernel may have given to another socket. The poller claims inline (its registrations apply on the poll carrier after the claim) and
+      * runs `closeFd` only once its poll carrier has applied the fd's closing withdrawal, so no interest change for the fd reaches the kernel
+      * alongside the close; io_uring claims on its reap carrier behind the engine FIFO; a driver that keys nothing by fd number runs
+      * `closeFd` directly.
       *
-      * `closeFd` runs whatever the cancel does: cancelling fails promises, whose callbacks run inline, and a throw from one of them must
+      * Abstract, as is [[closeListener]]: a wrapping driver that inherited a default would silently drop the wrapped driver's ordering, so
+      * every driver and every wrapper states its own.
+      */
+    def releaseFd(handle: Handle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit
+
+    /** Tear down a listener: cancel its pending accept and release its listen fd through [[releaseFd]], so no accept registration for
+      * `handle` can ever run against a RECYCLED fd number. The accept loop can re-arm after the cancel (its closed check is not atomic with the
+      * close), and the release's claim is what rejects that late arm. The poller withdraws the fd as closing rather than cancelling it live,
+      * since the close removes its kernel interest and an EV_DELETE could otherwise run alongside it. On io_uring the whole teardown runs on its
+      * reap carrier BEHIND any accept
+      * arm still queued on the engine FIFO: that arm preps its SQE while the fd still names the listener's socket, the prepped SQEs are
+      * flushed, and only then is the fd number released for reuse. Without that sequencing, a queued arm outlives the fd close, preps an accept
+      * against whatever socket RECYCLED the number (typically the next listener), and each such ghost accept steals one incoming connection for
+      * the closed listener's handler.
+      *
+      * The release runs whatever the cancel does: cancelling fails promises, whose callbacks run inline, and a throw from one of them must
       * not leave the listen fd open with its release never reported.
       */
-    def closeListener(handle: Handle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
-        try cancel(handle)
-        finally closeFd()
-    end closeListener
+    def closeListener(handle: Handle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit
 
     /** Whether a read for `handle` is still in flight at the OS layer (a kernel-owned recv that cannot be cancelled). True only on the io_uring
       * completion driver, whose `awaitRead` submits a recv SQE: after a STARTTLS `detachForUpgrade` that recv stays kernel-owned and will consume

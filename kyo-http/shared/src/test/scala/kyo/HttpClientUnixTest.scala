@@ -139,10 +139,10 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             assert(url.unixSocket == Present("%2Ftmp%2Ftest.sock"))
         }
 
-        "empty socket path" in {
-            val url = HttpUrl.parse("http+unix:///path").getOrThrow
-            assert(url.unixSocket == Present(""))
-            assert(url.path == "/path")
+        "an empty socket path is refused, since there is no socket to connect to" in {
+            assert(HttpUrl.parse("http+unix:///path") match
+                case Result.Failure(e: HttpUrlParseException) => e.reason == HttpUrlParseException.Reason.EmptyHost
+                case _                                        => false)
         }
 
         "fragment is stripped from path" in {
@@ -265,7 +265,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     val rawRoute = HttpRoute.getRaw("").response(_.bodyText)
@@ -292,7 +292,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
                         val rawRoute  = HttpRoute.getRaw("").response(_.bodyText)
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, rawRoute, HttpRequest(HttpMethod.OPTIONS, parsedUrl))(identity)
@@ -377,7 +377,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(

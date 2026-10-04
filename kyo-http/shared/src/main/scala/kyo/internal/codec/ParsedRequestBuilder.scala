@@ -43,8 +43,12 @@ final private[kyo] class ParsedRequestBuilder(using AllowUnsafe):
 
     // -- Fixed metadata setters --
 
+    // Flags layout: bits 0 to 7 the boolean flags below, bits 8 to 14 the method ordinal, bit 15 the HTTP/1.0 version.
     def setMethod(ordinal: Int): Unit =
-        flags = (flags & 0x00ff) | (ordinal << 8)
+        flags = (flags & 0x80ff) | ((ordinal & 0x7f) << 8)
+
+    def setHttp10(http10: Boolean): Unit =
+        if http10 then flags = flags | 0x8000 else flags = flags & ~0x8000
 
     def setChunked(chunked: Boolean): Unit =
         if chunked then flags = flags | 1 else flags = flags & ~1

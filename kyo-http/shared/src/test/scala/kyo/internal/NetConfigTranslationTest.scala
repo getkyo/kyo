@@ -122,16 +122,16 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
                 .readChunkSize(2048)
             val result = NetConfigTranslation.toNetConfig(http)
             assert(result.channelCapacity == 7)
-            assert(result.readChunkSize == 2048)
+            assert(result.readChunkSize == 2.kib)
         }
 
         "maps no deadline: NetConfig carries none, so neither can be dropped here" in {
             // The handshake deadline travels on NetTlsConfig and the connect deadline is the connect operation's own parameter, so this
             // translator has only the connection shape to carry. Asserting the field list keeps a re-added timeout from silently
-            // reappearing in a config half the call sites ignore. peerCloseGrace is intentionally not mapped: kyo-http keeps NetConfig's
-            // finite default (it wants the reclaim).
+            // reappearing in a config half the call sites ignore. peerCloseGrace and closeFlushGrace are intentionally not mapped: kyo-http
+            // keeps NetConfig's finite defaults (it wants both reclaims).
             val fields = NetConfigTranslation.toNetConfig(HttpTransportConfig.default).productElementNames.toList
-            assert(fields == List("channelCapacity", "readChunkSize", "soRcvBuf", "soSndBuf", "peerCloseGrace"))
+            assert(fields == List("channelCapacity", "readChunkSize", "soRcvBuf", "soSndBuf", "peerCloseGrace", "closeFlushGrace"))
         }
 
         "does not map maxHeaderSize: kyo.net.NetConfig has no such field (HTTP-parser concern, kept in kyo-http)" in {
@@ -139,13 +139,18 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
             val http   = HttpTransportConfig.default.maxHeaderSize(4096)
             val result = NetConfigTranslation.toNetConfig(http)
             assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
-            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
+            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize.bytes)
         }
 
         "default input maps the connection-shape fields from HttpTransportConfig.default" in {
             val result = NetConfigTranslation.toNetConfig(HttpTransportConfig.default)
             assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
-            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
+            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize.bytes)
+        }
+
+        "a zero channel capacity and a zero read chunk size are carried as given, for kyo-net to apply" in {
+            val result = NetConfigTranslation.toNetConfig(HttpTransportConfig.default.channelCapacity(0).readChunkSize(0))
+            assert((result.channelCapacity, result.readChunkSize) == (0, ByteSize.Zero))
         }
 
         "the server handshake deadline reaches the TLS config, including Infinity" in {

@@ -30,7 +30,10 @@ class LinuxDiskTest extends kyo.test.Test[Any]:
     "LinuxDisk.statvfsInto" - {
 
         "an LP64 statvfs image decodes total and free at offsets 1/2/4" in {
-            val cell = new MachineHandles.DiskStore(Stat.initScope("ldtest-statvfs-lp64"), MachineHandles.byteBoundaries)
+            val cell = MachineHandlesOwners.retain(new MachineHandles.DiskStore(
+                Stat.initScope("ldtest-statvfs-lp64"),
+                MachineHandles.byteBoundaries
+            ))
             val stub = new LinuxBindings:
                 def statvfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int =
                     out.set(0, 512L)     // f_bsize -- must never be read as the block size
@@ -59,7 +62,7 @@ class LinuxDiskTest extends kyo.test.Test[Any]:
                     end if
                 end statvfs
                 def sysconf(name: Int)(using AllowUnsafe): Long = 100L
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 val brokenOut   = Buffer.alloc[Long](16)
                 val okOut       = Buffer.alloc[Long](16)
@@ -83,7 +86,7 @@ class LinuxDiskTest extends kyo.test.Test[Any]:
     "LinuxHandles.diskStore retention" - {
 
         "the steady disk read consults the store map zero times between mount changes" in {
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 val first  = handles.diskStore("ldtest-diskstore-idempotent")
                 val second = handles.diskStore("ldtest-diskstore-idempotent")
@@ -112,7 +115,7 @@ class LinuxDiskTest extends kyo.test.Test[Any]:
                     0
                 end statvfs
                 def sysconf(name: Int)(using AllowUnsafe): Long = 100L
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 val out   = Buffer.alloc[Long](16)
                 val cell  = handles.diskStore("mnt_my disk")

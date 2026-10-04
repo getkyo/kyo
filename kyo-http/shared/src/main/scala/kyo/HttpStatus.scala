@@ -30,6 +30,21 @@ sealed abstract class HttpStatus(val code: Int) derives CanEqual:
     def isServerError: Boolean   = code >= 500 && code < 600
     def isError: Boolean         = code >= 400
 
+    /** Whether a response with this status cannot contain content (RFC 9110 sections 6.4.1, 15.3.5 and 15.4.5): every 1xx, 204 and 304.
+      * Such a response ends at its head, whatever Content-Length or Transfer-Encoding it declares.
+      */
+    def forbidsContent: Boolean = HttpStatus.forbidsContent(code)
+
+    /** Whether this status is an interim response (RFC 9110 section 15.2): a 1xx other than 101, which precedes the final response to
+      * the same request. A 101 is final, since the connection switches protocol after it.
+      */
+    def isInterim: Boolean = HttpStatus.isInterim(code)
+
+    /** Whether this status accepts a request to leave HTTP on its connection: 101 answers an Upgrade (RFC 9110 section 7.8), and any 2xx
+      * answers a CONNECT by switching to tunnel mode (section 9.3.6).
+      */
+    def acceptsUpgrade: Boolean = HttpStatus.acceptsUpgrade(code)
+
     /** Human-readable name (e.g. "Not Found", "Internal Server Error"). */
     def name: String = this match
         case HttpStatus.Custom(c) => c.toString
@@ -115,9 +130,23 @@ object HttpStatus:
         case _   => Absent
     end standard
 
+    // The rules on a bare code, for a parser that holds the code before any HttpStatus exists: building one allocates a Custom for a
+    // non-standard code. The predicates of the same names on HttpStatus delegate here, so each rule has one definition.
+
+    private[kyo] def isValid(code: Int): Boolean = code >= 100 && code <= 599
+
+    private[kyo] def forbidsContent(code: Int): Boolean =
+        (code >= 100 && code < 200) || code == Success.NoContent.code || code == Redirect.NotModified.code
+
+    private[kyo] def isInterim(code: Int): Boolean =
+        code >= 100 && code < 200 && code != Informational.SwitchingProtocols.code
+
+    private[kyo] def acceptsUpgrade(code: Int): Boolean =
+        code == Informational.SwitchingProtocols.code || (code >= 200 && code < 300)
+
     /** Resolve an HTTP status code. Returns the known enum case if one exists, otherwise wraps in `Custom`. */
     def apply(code: Int): HttpStatus =
-        require(code >= 100 && code <= 599, s"Invalid HTTP status code: $code")
+        require(isValid(code), s"Invalid HTTP status code: $code")
         standard(code) match
             case Present(s) => s
             case Absent     => Custom(code)

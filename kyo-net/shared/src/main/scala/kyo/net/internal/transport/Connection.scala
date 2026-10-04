@@ -40,8 +40,13 @@ final private[kyo] class Connection[Handle] private (
     private val upgradeClaimed: AtomicBoolean.Unsafe,
     private val canRelease: () => Boolean,
     private val teardown: AtomicRef.Unsafe[Connection.Teardown],
-    private val onClose: () => Unit
+    private val onClose: () => Unit,
+    private val closeFlushGrace: Duration,
+    private val clock: Clock
 ) extends kyo.net.Connection:
+
+    // The close-flush grace timer of the close in progress, read cross-carrier by the WritePump's re-entry that disarms it.
+    @volatile private var closeFlushTimer: Maybe[Fiber.Unsafe[Unit, Any]] = Absent
 
     /** The connection's close signal (see [[kyo.net.Connection.onClosing]]). Completed once in `closeFn`'s win-the-close branch. */
     private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
@@ -141,6 +146,10 @@ final private[kyo] class Connection[Handle] private (
     /** Check if connection is still open. */
     def isOpen(using AllowUnsafe): Boolean = state.get().isOpen
 
+    private[kyo] def isReleased(using AllowUnsafe): Boolean = teardown.get() == Connection.Teardown.Released
+
+    private[kyo] def writeState(using AllowUnsafe): WriteState = writePump.current
+
     /** Close the connection. Closes channels and handle. Idempotent.
       *
       * While the connection is `Upgrading` the close is routed to the in-flight upgrade instead (see [[upgradeAbandon]]): the fd belongs to that
@@ -218,6 +227,37 @@ final private[kyo] class Connection[Handle] private (
         else Fiber.Unsafe.fromResult(Result.succeed(Absent))
         end if
     end detachForUpgrade
+
+    /** Bounds a close's outbound flush ([[kyo.net.NetConfig.closeFlushGrace]]). A peer that has stopped reading never lets the WritePump
+      * finish, so its re-entry into `closeFn` never comes and the fd is held for the life of the process. Each expiry compares the pump's
+      * state with the one the window started from: the same parked instance means a whole window without one byte written, and the handle
+      * is released with the unwritten tail dropped. Any write re-arms, so a slow peer that keeps reading is never cut. Releasing cancels the
+      * driver registration, which fails the parked writable and tears the pump down.
+      */
+    private def armCloseFlushGrace(seen: WriteState)(using AllowUnsafe, Frame): Unit =
+        val timer = clock.unsafe.sleep(closeFlushGrace)
+        closeFlushTimer = Present(timer)
+        timer.onComplete { _ =>
+            if teardown.get() == Connection.Teardown.ReleaseRequested then
+                val now     = writePump.current
+                val stalled = now.eq(seen) &&
+                    (now match
+                        case WriteState.AwaitingWritable(_, _) | WriteState.Backpressured(_, _) => true
+                        case _                                                                  => false)
+                if !stalled then armCloseFlushGrace(now)
+                else if teardown.compareAndSet(Connection.Teardown.ReleaseRequested, Connection.Teardown.AwaitingInFlight) then
+                    Log.live.unsafe.debug(
+                        s"close flush grace (${closeFlushGrace.show}) elapsed with no write progress on ${driver.handleLabel(handle)}; releasing"
+                    )
+                    releaseHandle()
+                end if
+        }
+        // Publish-then-recheck: a flush that finished between the arm and the publish disarmed the previous timer, not this one.
+        if teardown.get() != Connection.Teardown.ReleaseRequested then disarmCloseFlushGrace()
+    end armCloseFlushGrace
+
+    private def disarmCloseFlushGrace()(using allow: AllowUnsafe, frame: Frame): Unit =
+        closeFlushTimer.foreach(t => discard(t.interruptDiscard(Result.Panic(Interrupted(frame, "close flush finished")))))
 
     private def releaseHandle()(using AllowUnsafe, Frame): Unit =
         if canRelease() && teardown.compareAndSet(Connection.Teardown.AwaitingInFlight, Connection.Teardown.Released) then
@@ -309,6 +349,7 @@ private[kyo] object Connection:
         driver: IoDriver[Handle],
         channelCapacity: Int,
         grace: Duration = Duration.Infinity,
+        closeFlushGrace: Duration = Duration.Infinity,
         onClose: () => Unit = () => (),
         canRelease: () => Boolean = () => true,
         clock: Clock = Clock.live
@@ -365,15 +406,18 @@ private[kyo] object Connection:
                 // closing the fd there would race the in-flight write and drop the tail. The WritePump re-entry below is the real
                 // "outbound fully flushed" signal.
                 val outboundDrained = outbound.closeAwaitEmpty()
-                // Tear the handle down synchronously when the outbound channel is already empty (the common idle case): nothing is queued to
-                // flush, so do not wait for the WritePump's async take-Closed re-entry. This makes close() reach driver.closeHandle within its
-                // own call, so the transport's close() (which closes every still-registered connection just before the pool teardown) reclaims
-                // the fd while the driver's reap loop is still alive, instead of leaving the teardown to race an async re-entry. When the
-                // outbound has queued writes, the drain fiber is still pending, so the WritePump re-entry below flushes the tail first.
-                if outboundDrained.done() then
+                // Tear the handle down synchronously when nothing is left to write (the common idle case): do not wait for the WritePump's
+                // async take-Closed re-entry. This makes close() reach driver.closeHandle within its own call, so the transport's close()
+                // (which closes every still-registered connection just before the pool teardown) reclaims the fd while the driver's reap loop
+                // is still alive, instead of leaving the teardown to race an async re-entry. An empty channel alone is not enough: the pump
+                // may hold a span it took but has not finished writing (parked on a full socket), and releasing then drops that span's tail.
+                // Otherwise the WritePump re-entry below flushes first, bounded by the close-flush grace.
+                val pumpState = self.writePump.current
+                if outboundDrained.done() && !pumpState.holdsSpan then
                     // ReleaseRequested -> AwaitingInFlight: the WRITE-side drain is done; attempt the gated release.
                     discard(teardown.compareAndSet(Connection.Teardown.ReleaseRequested, Connection.Teardown.AwaitingInFlight))
                     self.releaseHandle()
+                else if closeFlushGrace.isFinite then self.armCloseFlushGrace(pumpState)
                 end if
             else if state.get() == Connection.State.Closing then
                 // Re-entrant close after closeFn itself initiated the close (the state is Closing).
@@ -384,9 +428,10 @@ private[kyo] object Connection:
                 // finished, so advance to AwaitingInFlight and tear down the handle. This re-entry, not
                 // the drain fiber, is what bounds close(): a half-close that can drain reaches it after
                 // the flush, and a full close whose outbound can never drain reaches it once the peer's
-                // RST or the Scope's driver.close fails the parked writable, so close() never waits forever.
+                // RST, the Scope's driver.close or the close-flush grace fails the parked writable, so close() never waits forever.
                 discard(teardown.compareAndSet(Connection.Teardown.ReleaseRequested, Connection.Teardown.AwaitingInFlight))
                 self.releaseHandle()
+                self.disarmCloseFlushGrace()
             end if
 
         val readPump  = new ReadPump(handle, driver, inbound, closeFn, grace, clock)
@@ -405,7 +450,9 @@ private[kyo] object Connection:
             AtomicBoolean.Unsafe.init(false),
             canRelease,
             teardown,
-            onClose
+            onClose,
+            closeFlushGrace,
+            clock
         )
         self
     end init

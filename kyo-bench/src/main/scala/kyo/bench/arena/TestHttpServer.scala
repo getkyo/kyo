@@ -13,6 +13,7 @@ import java.io.InputStreamReader
 import java.io.PrintStream
 import java.io.PrintWriter
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.URL
 import scala.util.Success
@@ -33,9 +34,10 @@ object TestHttpServer:
     // Each HTTP benchmark forks its own server process; a hardcoded port made those
     // processes collide (a second bind silently failed, then a process exit left the
     // survivors' clients with Connection-refused). Allocate a fresh ephemeral port per
-    // server instead.
+    // server instead. Probed on the loopback address, where the server listens: with SO_REUSEADDR a wildcard probe can
+    // return a port another process listens on at 127.0.0.1, and the client's connect then reaches that listener.
     private def freePort(): Int =
-        val socket = new ServerSocket(0)
+        val socket = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())
         try socket.getLocalPort
         finally socket.close()
     end freePort
@@ -88,7 +90,7 @@ object TestHttpServer:
             redirect(process.getInputStream, System.out)
             redirect(process.getErrorStream, System.err)
 
-            val serverUrl = s"http://localhost:$port/ping"
+            val serverUrl = s"http://127.0.0.1:$port/ping"
             if !waitForServer(serverUrl, port) then
                 throw new RuntimeException("Server failed to start")
 
@@ -145,7 +147,7 @@ object TestHttpServer:
                         end try
                 end try
                 ()
-            }.listen(port).andThen { result =>
+            }.listen(port, "127.0.0.1").andThen { result =>
                 if !result.succeeded then
                     log(port, s"Failed to start server: ${result.cause}")
             }

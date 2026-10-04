@@ -92,11 +92,8 @@ Before you begin, make sure you have the following installed:
 
 ### Configuring Java Options
 
-The sbt JVM is configured by the checked-in `.jvmopts`, so no environment setup is needed. The sbt launcher appends `.jvmopts` after `JAVA_OPTS`, so a flag set in both takes the `.jvmopts` value, and an `-Xmx` in `JAVA_OPTS` has no effect.
+The sbt JVM is configured by the checked-in `.jvmopts`, so no environment setup is needed. It carries every flag except the heap:
 
-#### Explanation of Parameters
-
-- `-Xmx12G`: maximum heap of 12GB.
 - `-Xss10M`: thread stack size of 10MB.
 - `-XX:+UseG1GC`: the G1 garbage collector.
 - `-XX:+UseCompactObjectHeaders`: compact object headers (a JDK 25 flag).
@@ -104,14 +101,18 @@ The sbt JVM is configured by the checked-in `.jvmopts`, so no environment setup 
 - `-XX:ReservedCodeCacheSize=256M`: 256MB reserved for compiled code.
 - `-Dfile.encoding=UTF-8`: UTF-8 file encoding.
 
-#### Adjusting These Values
+#### The sbt Heap
 
-To change the heap for one run, pass it on the command line, which the launcher places after `.jvmopts`:
+The driver heap is chosen in one place, `scripts/sbt-heap-lib.sh`, by the role the sbt process plays: `compile`, `docs`, `test-jvm`, `run`, `link`, `publish` or `tool`. Each role's value is what that driver measured as needing on a 16GB CI runner, clamped to the memory of the machine it runs on. CI and `scripts/build.sh` start every sbt through it, and the `checks` workflow fails on a heap set anywhere else (`scripts/sbt-heap-check.sh`).
+
+A bare `sbt` carries no heap flag, so the JVM picks a quarter of physical memory. For the heap CI uses, start sbt through `scripts/sbt.sh` with a role; for any other heap, add `-J-Xmx`, which the launcher places after the role's:
+
 ```sh
+scripts/sbt.sh compile 'kyo-coreJVM/Test/compile'
 sbt -J-Xmx8G 'kyo-coreJVM/test'
 ```
 
-`JAVA_OPTS` still carries flags that `.jvmopts` does not set, such as `-Xms`.
+A heap in `JAVA_OPTS` is placed before these and has no effect when a role is set. `SBT_OPTS` is placed after them, so `scripts/sbt.sh`, `scripts/ci-test.sh` and `scripts/build.sh` clear it.
 
 ### How to Build Locally
 
@@ -177,11 +178,14 @@ sbt '+kyoJS/test'  # Runs JS tests
 sbt '+kyoNative/Test/compile' # Compiles Native code
 ```
 
-Format before submitting. A bare `scalafmtAll` or `scalafmtCheckAll` reaches only the JVM projects, so name all four platform aggregates, as CI does:
+Formatting needs no setup. Outside CI the build formats as it goes: compiling formats a module's Scala sources, and `doctest` formats a README's scala blocks before validating them. The first time sbt loads a clone, it also sets the repository's `core.hooksPath` to `scripts/hooks`, so every push, from the main checkout or any worktree, runs `scripts/format.sh --check --changed` and is blocked if it leaves a file unformatted. A `core.hooksPath` you set to another directory yourself is kept, and sbt warns on load that the format hook is not active; a hook of your own in `.git/hooks` stops running once the build sets the path.
+
+`scripts/format.sh` formats what CI checks: the sources of all four platform aggregates (a bare `scalafmtAll` reaches only the JVM projects), the build definition, and the scala blocks of every README. `--changed` limits it to the files that differ from `origin/main`, and `--check` fails if anything would change:
 ```sh
-sbt kyoJVM/scalafmtAll kyoJS/scalafmtAll kyoNative/scalafmtAll kyoWasm/scalafmtAll scalafmtSbt
+scripts/format.sh             # format the whole tree
+scripts/format.sh --changed   # format only what this branch changed
 ```
-CI runs this command and fails if it leaves a diff.
+CI runs `scripts/format.sh --check` and fails if it changes a file.
 
 ### Running CI in Your Fork
 
@@ -961,7 +965,7 @@ A test must pass or fail on the code's behavior, never on how fast the machine r
 - **Ordering / monotonicity**: `assert(b >= a)` across successive reads, or that entries arrived in order.
 - **State / count**: `assert(consumed + remaining == total)`, `assert(peerClosedFlag)`.
 
-**Virtual time** (`Clock.withTimeControl`): the clock advances only when the test tells it to, so sleeps, delays, timeouts, schedules, and stopwatches become exact. Drive a sleeping effect by forking it alongside an advancer and joining; assert exact durations (`elapsed == 5.seconds`, never `>= 5.seconds`). `TimeControl` gives `set`, `advance`, and `awaitPendingSleepers(n)` (advance only after `n` sleepers register, so the tick count is exact rather than a function of interleaving).
+**Virtual time** (`Clock.withTimeControl`): the clock advances only when the test tells it to, so sleeps, delays, timeouts, schedules, and stopwatches become exact. Drive a sleeping effect by forking it alongside an advancer and joining; assert exact durations (`elapsed == 5.seconds`, never `>= 5.seconds`). `TimeControl` gives `set`, `advance`, `awaitPendingSleepers(n)` (advance only after `n` sleepers register, so the tick count is exact rather than a function of interleaving), and `awaitPendingSleeper(duration)` (advance only after the sleep armed for that duration registers). When other timers can share the clock (a request deadline, a pool's idle timer), fence on the duration: any of them satisfies a count before the sleep under test is armed.
 
 ```scala
 Clock.withTimeControl { control =>

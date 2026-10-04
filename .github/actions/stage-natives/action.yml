@@ -3,9 +3,9 @@ description: >-
   Restore, stage and save the vendored native trees an FFI build links: BoringSSL, Aeron, SQLite
   and DoltLite. Each tree is cached under a key made of the files that determine its content, so
   a job pays the network fetch and the cmake build only when a pin changes; on a hit the staging
-  script takes its stamp fast path, which costs a stamp read and an arch assertion. The cache is
-  saved right after staging rather than post-job, so a job that later fails on a test still leaves
-  a minutes-long build cached. Checkout is the caller's responsibility, as is the MSVC environment
+  script takes its stamp fast path, which costs a stamp read and an arch assertion. On a push to
+  main the cache is saved right after staging rather than post-job, so a job that later fails on a
+  test still leaves a minutes-long build cached; no other run saves. Checkout is the caller's responsibility, as is the MSVC environment
   on Windows.
 inputs:
   os-archs:
@@ -191,25 +191,27 @@ runs:
         # One tree serves every os-arch: SQLite is C source the FFI plugin compiles per platform.
         [ "$STAGE_SQLITE" != true ] || bash kyo-sql-sqlite/scripts/build-sqlite.sh
 
-    - if: ${{ inputs.stage == 'true' && inputs.boringssl == 'true' && runner.os != 'Windows' && steps.restore-boringssl.outputs.cache-hit != 'true' }}
+    # Saves only on a push to main, as every cache in this repository: an entry written on any other ref
+    # is readable by nothing but that ref, and the budget is shared. See .github/actions/caches.
+    - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.stage == 'true' && inputs.boringssl == 'true' && runner.os != 'Windows' && steps.restore-boringssl.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
       with:
         path: kyo-net/build/boringssl/staged
         key: ${{ steps.restore-boringssl.outputs.cache-primary-key }}
 
-    - if: ${{ inputs.stage == 'true' && inputs.aeron == 'true' && steps.restore-aeron.outputs.cache-hit != 'true' }}
+    - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.stage == 'true' && inputs.aeron == 'true' && steps.restore-aeron.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
       with:
         path: kyo-aeron/build/aeron/staged
         key: ${{ steps.restore-aeron.outputs.cache-primary-key }}
 
-    - if: ${{ inputs.stage == 'true' && inputs.sqlite == 'true' && steps.restore-sqlite.outputs.cache-hit != 'true' }}
+    - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.stage == 'true' && inputs.sqlite == 'true' && steps.restore-sqlite.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
       with:
         path: kyo-sql-sqlite/build/sqlite/staged
         key: ${{ steps.restore-sqlite.outputs.cache-primary-key }}
 
-    - if: ${{ inputs.stage == 'true' && inputs.doltlite == 'true' && runner.os != 'Windows' && steps.restore-doltlite.outputs.cache-hit != 'true' }}
+    - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.stage == 'true' && inputs.doltlite == 'true' && runner.os != 'Windows' && steps.restore-doltlite.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
       with:
         path: kyo-sql-doltlite/build/doltlite/staged
