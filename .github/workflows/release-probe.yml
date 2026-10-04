@@ -44,9 +44,6 @@ jobs:
     # one. release-setup stages the natives for whichever architecture it runs on.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       # Full history: a pull request diffs against the main commit its merge ref is built on.
       - uses: actions/checkout@v7.0.1
@@ -66,7 +63,7 @@ jobs:
             exit 0
           fi
           base="$(git rev-parse HEAD^1)"
-          sbt -Dplatform=JVM \
+          scripts/sbt.sh tool -Dplatform=JVM \
             "testKyo --phase publish --dry-run --plan-file target/publish-plan-jvm $base JVM" \
             "testKyo --phase publish --dry-run --plan-file target/publish-plan-js $base JS"
           {
@@ -83,7 +80,7 @@ jobs:
         shell: bash
         env:
           PLAN: ${{ steps.plan.outputs.jvm }}
-        run: sbt -Dplatform=JVM "ffiCompileAll${PLAN:+ $PLAN}"
+        run: scripts/sbt.sh tool -Dplatform=JVM "ffiCompileAll${PLAN:+ $PLAN}"
       - name: Build publishable artifacts (JVM)
         if: steps.plan.outputs.scoped != 'true' || steps.plan.outputs.jvm != ''
         shell: bash
@@ -91,9 +88,9 @@ jobs:
           PLAN: ${{ steps.plan.outputs.jvm }}
         run: |
           if [ -n "$PLAN" ]; then
-            sbt -Dplatform=JVM "testKyo --phase publish --modules ${PLAN// /,} JVM"
+            scripts/sbt.sh publish -Dplatform=JVM "testKyo --phase publish --modules ${PLAN// /,} JVM"
           else
-            sbt -Dplatform=JVM +publishLocal
+            scripts/sbt.sh publish -Dplatform=JVM +publishLocal
           fi
       # The half of the publish job's guard a single host can answer: completeness needs every
       # producer's artifacts pooled, so the full ffiPackagingCheckAll cannot pass on a pull request.
@@ -107,10 +104,10 @@ jobs:
           JS_PLAN: ${{ steps.plan.outputs.js }}
         run: |
           if [ "$SCOPED" != true ] || [ -n "$JVM_PLAN" ]; then
-            sbt -Dplatform=JVM "ffiPackagingFormatCheckAll${JVM_PLAN:+ $JVM_PLAN}"
+            scripts/sbt.sh tool -Dplatform=JVM "ffiPackagingFormatCheckAll${JVM_PLAN:+ $JVM_PLAN}"
           fi
           if [ "$SCOPED" != true ] || [ -n "$JS_PLAN" ]; then
-            sbt -Dplatform=JS "ffiPackagingFormatCheckAll${JS_PLAN:+ $JS_PLAN}"
+            scripts/sbt.sh tool -Dplatform=JS "ffiPackagingFormatCheckAll${JS_PLAN:+ $JS_PLAN}"
           fi
       # The darwin producer cross-builds by prefixing ffiCompileAll with a build-level append, and no
       # pull request runs that producer: release.yml triggers only on a main push, a tag, or a
@@ -124,4 +121,4 @@ jobs:
         shell: bash
         env:
           PLAN: ${{ steps.plan.outputs.jvm }}
-        run: sbt -Dplatform=JVM 'set ThisBuild / ffiCFlags ++= Seq("-DKYO_FFI_PROBE=1")' "ffiCompileAll${PLAN:+ $PLAN}"
+        run: scripts/sbt.sh tool -Dplatform=JVM 'set ThisBuild / ffiCFlags ++= Seq("-DKYO_FFI_PROBE=1")' "ffiCompileAll${PLAN:+ $PLAN}"
