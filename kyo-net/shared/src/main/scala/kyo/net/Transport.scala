@@ -169,6 +169,21 @@ object Transport:
             connectTimeout > Duration.Zero || connectTimeout == Duration.Infinity,
             s"connectTimeout must be positive or Infinity: $connectTimeout"
         )
+
+    /** The failure for a TCP `port` outside 0 to 65535, which every TCP connect and listen checks on entry, before any socket exists.
+      *
+      * A port is 16 bits in a socket address. The posix transport writes only the low 16 bits, so 70000 would reach port 4464 and -1 port
+      * 65535; the JDK throws instead, and the transports read a negative port as their Unix-socket marker.
+      */
+    private[net] def portOutOfRange(port: Int): Boolean = port < 0 || port > 65535
+
+    private[net] def refusedConnect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+        Fiber.Unsafe.fromResult(Result.fail(NetConnectException(host, port, PortRange)))
+
+    private[net] def refusedBind(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Listener, Abort[NetException]] =
+        Fiber.Unsafe.fromResult(Result.fail(NetBindException(host, port, PortRange)))
+
+    private val PortRange = "a port is 0 to 65535"
 end Transport
 
 /** A bound server socket returned by [[Transport.listen]] / [[Transport.listenUnix]], accepting connections and dispatching each to the handler

@@ -123,15 +123,21 @@ final private[kyo] class JsTransport private (
         Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
-        val socket = NodeNet.asInstanceOf[js.Dynamic].connect(port, host)
-        connectSocket(socket, host, port, tcpNoDelay = true, connectEvent = "connect", connectTimeout, config)
+        if kyo.net.Transport.portOutOfRange(port) then kyo.net.Transport.refusedConnect(host, port)
+        else
+            val socket = NodeNet.asInstanceOf[js.Dynamic].connect(port, host)
+            connectSocket(socket, host, port, tcpNoDelay = true, connectEvent = "connect", connectTimeout, config)
+        end if
     end connect
 
     def listen(host: String, port: Int, backlog: Int, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
-        val server = NodeNet.asInstanceOf[js.Dynamic].createServer()
-        listenServer(server, host, port, backlog, tcpNoDelay = true, connectionEvent = "connection", handler, config)
+        if kyo.net.Transport.portOutOfRange(port) then kyo.net.Transport.refusedBind(host, port)
+        else
+            val server = NodeNet.asInstanceOf[js.Dynamic].createServer()
+            listenServer(server, host, port, backlog, tcpNoDelay = true, connectionEvent = "connection", handler, config)
+        end if
     end listen
 
     def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: kyo.net.NetConfig)(using
@@ -139,9 +145,10 @@ final private[kyo] class JsTransport private (
         Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
+        if kyo.net.Transport.portOutOfRange(port) then kyo.net.Transport.refusedConnect(host, port)
         // Honor a NetTlsConfig.tlsProvider pin: JS terminates TLS with Node's tls module, so it serves only the "node" implementation. A pin to
         // any other provider fails closed rather than silently using Node under a different provider's name (config truthfulness).
-        if tls.tlsProvider.exists(_ != "node") then
+        else if tls.tlsProvider.exists(_ != "node") then
             Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(host, port, rejectNonNodeProvider(tls))))
         // Verifying client with no reference identity: fail closed before connecting. An empty host gives the TLS layer nothing to check the
         // server certificate's name against, so a chain-valid certificate with no name bound would otherwise be accepted (RFC 9525 6.1, the
@@ -205,6 +212,7 @@ final private[kyo] class JsTransport private (
     def listenTls(host: String, port: Int, backlog: Int, tls: NetTlsConfig, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+        if kyo.net.Transport.portOutOfRange(port) then return kyo.net.Transport.refusedBind(host, port)
         // Honor a NetTlsConfig.tlsProvider pin: JS terminates TLS with Node's tls module, so a server pinned to any non-"node" provider fails
         // closed rather than silently serving with Node under another provider's name (config truthfulness).
         if tls.tlsProvider.exists(_ != "node") then

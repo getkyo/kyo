@@ -202,6 +202,7 @@ final private[kyo] class NioTransport private (
         frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
+        if kyo.net.Transport.portOutOfRange(port) then return kyo.net.Transport.refusedConnect(host, port)
         val promise = new IOPromise[NetException, Connection[NioHandle]]
 
         // Hoisted so the catch can close it: channel.connect throws UnresolvedAddressException (DNS failure) / IOException AFTER the channel is
@@ -356,6 +357,7 @@ final private[kyo] class NioTransport private (
     def listen(host: String, port: Int, backlog: Int, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
     )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+        if kyo.net.Transport.portOutOfRange(port) then return kyo.net.Transport.refusedBind(host, port)
         val promise = new IOPromise[NetException, NetListener]
 
         // Hoisted so the catch can close it: bind throws (e.g. address-already-in-use) after the server channel is open, and that catch otherwise
@@ -515,6 +517,7 @@ final private[kyo] class NioTransport private (
         frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
+        if kyo.net.Transport.portOutOfRange(port) then return kyo.net.Transport.refusedConnect(host, port)
         val promise = new IOPromise[NetException, Connection[NioHandle]]
 
         // Arm the connect-deadline for the TCP phase, as the plaintext path does. connectTimeout bounds the connect whether or not the
@@ -1123,6 +1126,7 @@ final private[kyo] class NioTransport private (
     def listenTls(host: String, port: Int, backlog: Int, tls: NetTlsConfig, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
     )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+        if kyo.net.Transport.portOutOfRange(port) then return kyo.net.Transport.refusedBind(host, port)
         val promise = new IOPromise[NetException, NetListener]
 
         // Hoisted so the catch can close it: bind throws (e.g. address-already-in-use) after the server channel is open, and that catch otherwise

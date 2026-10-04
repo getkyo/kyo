@@ -256,7 +256,8 @@ final private[net] class PosixTransport private[posix] (
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
-        connectResolving(host, port, nodelay = true, tls = Absent, connectTimeout = connectTimeout, config = config)
+        if kyo.net.Transport.portOutOfRange(port) then kyo.net.Transport.refusedConnect(host, port)
+        else connectResolving(host, port, nodelay = true, tls = Absent, connectTimeout = connectTimeout, config = config)
     end connect
 
     /** Connect a non-blocking TCP socket to `host:port`, then drive a client TLS handshake before completing. */
@@ -267,14 +268,17 @@ final private[net] class PosixTransport private[posix] (
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
         // The engine host is both the SNI name sent and the reference identity the server certificate is checked against, so an
         // `sniHostname` replaces the connect host for both, as the JDK and Node clients do.
-        connectResolving(
-            host,
-            port,
-            nodelay = true,
-            tls = Present((tls, tls.sniHostname.getOrElse(host))),
-            connectTimeout = connectTimeout,
-            config = config
-        )
+        if kyo.net.Transport.portOutOfRange(port) then kyo.net.Transport.refusedConnect(host, port)
+        else
+            connectResolving(
+                host,
+                port,
+                nodelay = true,
+                tls = Present((tls, tls.sniHostname.getOrElse(host))),
+                connectTimeout = connectTimeout,
+                config = config
+            )
+        end if
     end connectTls
 
     /** Resolve `host` (numeric / loopback inline, otherwise through the offloaded-blocking [[HostResolver]]) and then drive the connect.
@@ -889,13 +893,15 @@ final private[net] class PosixTransport private[posix] (
     def listen(host: String, port: Int, backlog: Int, config: kyo.net.NetConfig)(
         handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
-        listenResolving(host, port, backlog, handler, tls = Absent, config = config)
+        if kyo.net.Transport.portOutOfRange(port) then kyo.net.Transport.refusedBind(host, port)
+        else listenResolving(host, port, backlog, handler, tls = Absent, config = config)
 
     /** Listen for TLS TCP connections on `host:port`; each accepted connection drives a server handshake before reaching the handler. */
     def listenTls(host: String, port: Int, backlog: Int, tls: NetTlsConfig, config: kyo.net.NetConfig)(
         handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
-        listenResolving(host, port, backlog, handler, tls = Present(tls), config = config)
+        if kyo.net.Transport.portOutOfRange(port) then kyo.net.Transport.refusedBind(host, port)
+        else listenResolving(host, port, backlog, handler, tls = Present(tls), config = config)
 
     /** Resolve the bind `host` (numeric / loopback inline, otherwise through the offloaded-blocking [[HostResolver]]) and then bind + listen.
       *
