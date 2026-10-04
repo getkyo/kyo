@@ -90,6 +90,18 @@ class WhatsAppExceptionTest extends BaseWhatsAppTest:
         assert(!e.getMessage.contains(token.value))
     }
 
+    "an empty secret redacts nothing" in {
+        assert(Graph.redact("", "token expired") == "token expired")
+    }
+
+    "an app access token echoed percent-encoded is redacted, in either hex case" in {
+        val secret = "123|abc def"
+        assert(
+            Graph.redact(secret, s"raw=$secret upper=123%7Cabc%20def lower=123%7cabc%20def") ==
+                "raw=<redacted> upper=<redacted> lower=<redacted>"
+        )
+    }
+
     "WhatsAppUnexpectedStatusException names the method and the status, and nothing else" in {
         assert(WhatsAppUnexpectedStatusException("downloadFrom", HttpStatus(404)).getMessage.contains(
             "WhatsApp downloadFrom answered HTTP 404 without a Graph error body."

@@ -1,6 +1,7 @@
 package kyo.internal.whatsapp
 
 import kyo.*
+import kyo.internal.PercentEncoding
 import scala.reflect.TypeTest
 
 /** The one request path of the Cloud API, on the config and HTTP client of a `WhatsApp`.
@@ -171,8 +172,8 @@ private[kyo] object Graph:
     private[kyo] def leafFor(token: WhatsAppToken, method: String, err: Methods.GraphError.Detail, retryAfter: Maybe[Duration] = Absent)(
         using Frame
     ): WhatsAppApiException =
-        val description = redact(token, err.message)
-        val details     = err.error_data.flatMap(_.details).map(redact(token, _))
+        val description = redact(token.value, err.message)
+        val details     = err.error_data.flatMap(_.details).map(redact(token.value, _))
         val subcode     = err.error_subcode
         val traceId     = err.fbtrace_id
         err.code match
@@ -200,9 +201,18 @@ private[kyo] object Graph:
         end match
     end leafFor
 
-    /** Meta's text with every occurrence of the token's value replaced, for an answer that echoes the request. */
-    private[kyo] def redact(token: WhatsAppToken, text: String): String =
-        text.replace(token.value, "<redacted>")
+    /** Meta's text with every occurrence of `secret` replaced, raw and percent-encoded as a URL component with hex in either case, for an
+      * answer that echoes the request. An empty secret is skipped because `replace` would match it between every character.
+      */
+    private[kyo] def redact(secret: String, text: String): String =
+        if secret.isEmpty then text
+        else
+            val upper = PercentEncoding.encode(secret, PercentEncoding.Mode.Component)
+            Chunk(secret, upper, PercentEscape.replaceAllIn(upper, _.matched.toLowerCase))
+                .distinct.sortBy(-_.length).foldLeft(text)(_.replace(_, "<redacted>"))
+    end redact
+
+    private val PercentEscape = "%[0-9A-F]{2}".r
 
     private def within[F >: WhatsAppOtherApiException](method: String, leaf: WhatsAppApiException)(using
         Frame,
