@@ -28,6 +28,9 @@ PODMAN_LOG="$STUBDIR/podman.log"
 CITEST_LOG="$STUBDIR/citest.log"
 ENV_LOG="$STUBDIR/env.log"
 
+# build.sh reads the native tree list from $SCRIPT_DIR/stage-natives.sh.
+ln -s "$SELF_DIR/stage-natives.sh" "$STUBDIR/stage-natives.sh"
+
 # Write a podman stub that records its argv and the environment, then exits.
 make_podman_stub() {
     local exit_code="${1:-0}"
@@ -202,6 +205,51 @@ if podman_log_has "-e NATIVE_HEAVY=kyo-foo" && podman_log_has "-e NATIVE_LINK_CP
 then record ok "a host pool-env override reaches the container"
 else record no "a host pool-env override reaches the container"; fi
 
+# 15. podman-ci stages every native tree CI stages. The list is read from the script both build.sh and the
+# stage-natives action run, so a tree added there is covered here without an edit.
+make_podman_stub 0; reset_logs
+run_build --env podman-ci test JVM >/dev/null 2>&1 || true
+trees=$("$SELF_DIR/stage-natives.sh" --trees 2>/dev/null)
+missing=""
+for t in $trees; do
+    flag="STAGE_$(printf '%s' "$t" | tr '[:lower:]' '[:upper:]')=1"
+    podman_log_has "-e $flag" || missing="$missing $flag"
+done
+# SQLite and DoltLite pinned by name as well: they are the trees CI stages that podman-ci once left out, which failed
+# kyo-sql-sqliteJVM/ffiCompile on a missing sqlite3.h.
+for flag in STAGE_SQLITE=1 STAGE_DOLTLITE=1; do
+    podman_log_has "-e $flag" || missing="$missing $flag"
+done
+if [ -n "$trees" ] && [ -z "$missing" ]
+then record ok "podman-ci stages every native tree stage-natives.sh lists"
+else record no "podman-ci stages every native tree stage-natives.sh lists (trees='$trees' missing:$missing)"; fi
+
+# 16. an explicit opt-out still reaches the container under podman-ci.
+make_podman_stub 0; reset_logs
+STAGE_SQLITE=0 run_build --env podman-ci test JVM >/dev/null 2>&1 || true
+if podman_log_has "-e STAGE_SQLITE=0" && podman_log_lacks "-e STAGE_SQLITE=1"
+then record ok "podman-ci honours an explicit STAGE_SQLITE=0"
+else record no "podman-ci honours an explicit STAGE_SQLITE=0"; fi
+
+# 17. plain podman stages nothing it was not asked to.
+make_podman_stub 0; reset_logs
+run_build --env podman test JVM >/dev/null 2>&1 || true
+staged=""
+for t in $trees; do
+    flag="STAGE_$(printf '%s' "$t" | tr '[:lower:]' '[:upper:]')=1"
+    podman_log_lacks "-e $flag" || staged="$staged $flag"
+done
+if [ -n "$trees" ] && [ -z "$staged" ]
+then record ok "plain podman leaves every native tree off"
+else record no "plain podman leaves every native tree off (staged:$staged)"; fi
+
+# 18. the container stages through stage-natives.sh rather than its own per-tree script calls.
+make_podman_stub 0; reset_logs
+run_build --env podman-ci test JVM >/dev/null 2>&1 || true
+if podman_log_has "bash scripts/stage-natives.sh" && podman_log_lacks "build-sqlite.sh" && podman_log_lacks "build-boringssl.sh"
+then record ok "the container stages through scripts/stage-natives.sh"
+else record no "the container stages through scripts/stage-natives.sh"; fi
+
 # Negative control: a deliberately wrong check must flip FAIL to prove the harness
 # is not vacuous. Not counted in the scenario total.
 make_podman_stub 0; reset_logs
@@ -211,5 +259,5 @@ then echo "  SELFTEST-BUG: negative control passed (vacuous harness)"; FAIL=$((F
 
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 14 ]
+[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 18 ]
 exit $?

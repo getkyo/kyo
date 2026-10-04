@@ -27,11 +27,11 @@ set -uo pipefail
 #                     legs; provisioning switches to apk and takes sbt from the release tarball,
 #                     because both staging scripts refuse a cross-OS build and the linux-musl-*
 #                     natives can only be produced on a genuine musl host.
-#   STAGE_BORINGSSL=1 build the vendored BoringSSL before the command (kyo-net TLS).
-#   STAGE_AERON=1     build the pinned Aeron C library before the command (kyo-aeron).
-#   STAGE_SQLITE=1    fetch the pinned SQLite C source before the command (kyo-sql-sqlite).
-#   STAGE_DOLTLITE=1  stage the pinned DoltLite library before the command (kyo-sql-doltlite).
-#                     Both derive their os-arch from the container's own host, musl included.
+#   STAGE_<TREE>=1|0  stage, or skip, one vendored native tree before the command, for each tree
+#                     scripts/stage-natives.sh --trees names (BORINGSSL, AERON, DOLTLITE, SQLITE).
+#                     podman-ci defaults every tree on, as CI's test legs do; plain podman defaults
+#                     every tree off. The staging scripts derive their os-arch from the container's
+#                     own host, musl included.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -85,13 +85,24 @@ done
 case "$ENV_KIND" in direct|podman|podman-ci) ;; *) die_usage "unknown env '$ENV_KIND'" ;; esac
 case "$ARCH" in native|x86|arm) ;; *) die_usage "unknown arch '$ARCH'" ;; esac
 
-# The CI setup action stages BoringSSL and Aeron unconditionally (kyo-aeronJVM's ffiCompile links
-# -laeron_driver_static and the kyo-net TLS tests link real libssl/libcrypto), so the CI-faithful
-# env stages them by default too. An explicit STAGE_*=0 still opts out; plain podman keeps them
-# opt-in since they add several minutes of one-off toolchain and build work.
+# The native trees come from scripts/stage-natives.sh, the script the container runs and CI's stage-natives action
+# runs, so the CI-faithful env cannot fall behind the trees CI stages. podman-ci defaults each tree on, as CI's test
+# legs do; plain podman defaults each off, since a tree adds minutes of one-off toolchain and build work. Every flag is
+# resolved here and forwarded explicitly, because the script treats an unset flag as on.
+if [ "$ENV_KIND" != direct ]; then
+    if [ "$ENV_KIND" = podman-ci ]; then stage_default=1; else stage_default=0; fi
+    NATIVE_TREES=$(bash "$SCRIPT_DIR/stage-natives.sh" --trees) || exit 1
+    for tree in $NATIVE_TREES; do
+        stage_var="STAGE_$(printf '%s' "$tree" | tr '[:lower:]' '[:upper:]')"
+        case "${!stage_var:-$stage_default}" in
+            true | 1) printf -v "$stage_var" 1 ;;
+            false | 0) printf -v "$stage_var" 0 ;;
+            *) die_usage "$stage_var='${!stage_var}' is not true/1 or false/0" ;;
+        esac
+    done
+fi
+
 if [ "$ENV_KIND" = podman-ci ]; then
-    STAGE_BORINGSSL="${STAGE_BORINGSSL:-1}"
-    STAGE_AERON="${STAGE_AERON:-1}"
     # GitHub runners always carry a container runtime, which the container-backed suites
     # (kyo-sql, kyo-pod) auto-detect and use to launch sibling DB containers. The CI-faithful
     # env therefore defaults the socket passthrough on, pointing at the podman VM's own
@@ -291,12 +302,11 @@ if [ "$node_ok" != 1 ]; then
 fi'
     fi
     # BoringSSL build toolchain (cmake + Go + a C toolchain), only when STAGE_BORINGSSL=1 builds the vendored BoringSSL so kyo-net's
-    # TLS tests run against real libssl/libcrypto instead of cancelling. Heavy, so off by default.
+    # TLS tests run against real libssl/libcrypto instead of cancelling. Heavy, which is why plain podman stages nothing unasked.
     [ "${STAGE_BORINGSSL:-}" = 1 ] && bssl_pkgs="cmake golang-go build-essential git clang libunwind-dev"
     [ "${STAGE_BORINGSSL:-}" = 1 ] && apk_bssl_pkgs="cmake go build-base git clang libunwind-dev linux-headers perl"
     # SQLite staging fetches and unpacks one source zip, so it needs only curl + unzip, neither of which every base
-    # image carries. Far lighter than the two above, but opt-in for the same reason: only a command touching
-    # kyo-sql-sqlite needs it, and that module's ffiLibraries hard-errors without it rather than degrading.
+    # image carries. kyo-sql-sqlite's ffiLibraries hard-errors without the staged tree rather than degrading.
     [ "${STAGE_SQLITE:-}" = 1 ] && sqlite_pkgs="curl unzip"
     [ "${STAGE_SQLITE:-}" = 1 ] && apk_sqlite_pkgs="curl unzip"
     # DoltLite downloads a published library where upstream has one and builds the pinned tag from source
@@ -305,7 +315,7 @@ fi'
     [ "${STAGE_DOLTLITE:-}" = 1 ] && apk_doltlite_pkgs="curl unzip git build-base tcl linux-headers"
     # Aeron build toolchain (a C toolchain + git for the pinned clone), only when STAGE_AERON=1 stages the static Aeron C library so
     # kyo-aeron's shim has an archive to link. uuid-dev supplies the libuuid.so link target the driver needs and that no base image
-    # preinstalls. The staged tree is gitignored, so any container command touching kyo-aeron needs this. Heavy, so off by default.
+    # preinstalls. The staged tree is gitignored, so any container command touching kyo-aeron needs this.
     local aeron_setup=""
     if [ "${STAGE_AERON:-}" = 1 ]; then
         aeron_pkgs="build-essential git uuid-dev"
@@ -455,19 +465,13 @@ run_in_container() {
         # Sharing the daemon's own /tmp makes the two views agree, so the generated path resolves identically on both.
         args+=(-v /tmp:/tmp)
     fi
-    # Forward the BoringSSL-staging flag; when set the container builds the vendored BoringSSL before the command so kyo-net's TLS tests run
-    # against real libssl/libcrypto instead of cancelling.
-    [ -n "${STAGE_BORINGSSL:-}" ] && envs+=(-e "STAGE_BORINGSSL=$STAGE_BORINGSSL")
-    # Forward the libaeron-staging flag; when set the container builds the pinned Aeron C library before the command so kyo-aeron's
-    # ffiCompile finds the staged archive instead of failing to link. Both staging scripts derive the os-arch from the container's
-    # own host (musl included), so neither is passed one here: a hand-computed "linux-$(uname -m)" is wrong on an Alpine image.
-    [ -n "${STAGE_AERON:-}" ] && envs+=(-e "STAGE_AERON=$STAGE_AERON")
-    # Forward the SQLite-staging flag; when set the container fetches the pinned SQLite source before the command, so
-    # kyo-sql-sqlite's ffiCompile finds the staged tree instead of failing on the source file it cannot open.
-    [ -n "${STAGE_SQLITE:-}" ] && envs+=(-e "STAGE_SQLITE=$STAGE_SQLITE")
-    # Forward the DoltLite-staging flag, for the same reason as SQLite: without it that module's ffiCompile fails
-    # on the header and archive it cannot find.
-    [ -n "${STAGE_DOLTLITE:-}" ] && envs+=(-e "STAGE_DOLTLITE=$STAGE_DOLTLITE")
+    # Every tree's flag, on or off, since stage-natives.sh stages a tree whose flag is unset. No os-arch is passed: the staging
+    # scripts derive it from the container's own host (musl included), where a hand-computed "linux-$(uname -m)" is wrong on Alpine.
+    local tree stage_var
+    for tree in $NATIVE_TREES; do
+        stage_var="STAGE_$(printf '%s' "$tree" | tr '[:lower:]' '[:upper:]')"
+        envs+=(-e "$stage_var=${!stage_var}")
+    done
     # Forward the kyo-net per-backend test isolation flag (KYO_NET_ONLY=<backend>), the per-TLS-provider isolation flag
     # (KYO_NET_TLS_ONLY=<provider>), and the success-leaves-only flag (KYO_NET_SUCCESS_ONLY=1) so a podman run can
     # validate/sample a single (backend x provider) cell in isolation. Unset by default (all backends/providers), so a normal run is unaffected.
@@ -537,7 +541,7 @@ run_in_container() {
     local run_id; run_id=$(basename "$snap")
     # `sh`, not `bash`: a musl JDK image ships busybox sh and no bash, and provisioning is what
     # installs bash there, so a bash entrypoint cannot get far enough to install it. This prelude is
-    # POSIX throughout; the two staging scripts genuinely need bash and are invoked as `bash <script>`
+    # POSIX throughout; the staging scripts genuinely need bash and are invoked as `bash <script>`
     # below, by which point the package step has provided it.
     podman "${args[@]}" "${envs[@]}" "$CONTAINER_IMAGE" \
         sh -c "set -e
@@ -547,10 +551,7 @@ trap 'rm -rf \"\$TMPDIR\"' EXIT
 $provision
 mkdir -p /work/$run_id && cd /work/$run_id && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
-    && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh; fi \
-    && if [ \"\${STAGE_AERON:-}\" = 1 ]; then bash kyo-aeron/scripts/build-aeron.sh; fi \
-    && if [ \"\${STAGE_SQLITE:-}\" = 1 ]; then bash kyo-sql-sqlite/scripts/build-sqlite.sh; fi \
-    && if [ \"\${STAGE_DOLTLITE:-}\" = 1 ]; then bash kyo-sql-doltlite/scripts/build-doltlite.sh; fi \
+    && bash scripts/stage-natives.sh \
     && if [ \"\${STAGE_JSDOM:-}\" = 1 ]; then npm install --no-save --no-fund --no-audit jsdom@^30; fi
 if $inner; then __rc=0; else __rc=\$?; fi
 if [ -d /output ]; then find . -type d \\( -name scoverage-report -o -name scoverage-data \\) -exec cp -r --parents {} /output/ \\; 2>/dev/null || true; fi

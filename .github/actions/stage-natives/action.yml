@@ -162,9 +162,8 @@ runs:
         esac
 
     # Every enabled script runs, hit or miss: on a hit it takes the stamp fast path, which is what
-    # asserts a restored archive really is the requested arch. Windows ships no BoringSSL native,
-    # an explicit skip rather than a silent one: a bare exit here would ship the kyonet_boringssl
-    # stub and the TLS tests would cancel with no signal. build-doltlite.sh declines Windows itself.
+    # asserts a restored archive really is the requested arch. The tree list and the platform skips
+    # live in scripts/stage-natives.sh, which scripts/build.sh's CI-faithful env runs too.
     - name: Stage vendored natives
       if: ${{ inputs.stage == 'true' }}
       shell: bash
@@ -174,22 +173,7 @@ runs:
         STAGE_AERON: ${{ inputs.aeron }}
         STAGE_SQLITE: ${{ inputs.sqlite }}
         STAGE_DOLTLITE: ${{ inputs.doltlite }}
-      run: |
-        set -euo pipefail
-        # An empty list iterates once with no argument, which every script takes as its host.
-        for arch in ${OS_ARCHS:-""}; do
-          if [ "$STAGE_BORINGSSL" = true ]; then
-            if [ "$RUNNER_OS" = Windows ]; then
-              echo "Windows ships no BoringSSL native (NIO + JDK TLS by ruling); skipping."
-            else
-              bash kyo-net/build/boringssl/build-boringssl.sh $arch
-            fi
-          fi
-          [ "$STAGE_AERON" != true ] || bash kyo-aeron/scripts/build-aeron.sh $arch
-          [ "$STAGE_DOLTLITE" != true ] || bash kyo-sql-doltlite/scripts/build-doltlite.sh $arch
-        done
-        # One tree serves every os-arch: SQLite is C source the FFI plugin compiles per platform.
-        [ "$STAGE_SQLITE" != true ] || bash kyo-sql-sqlite/scripts/build-sqlite.sh
+      run: bash scripts/stage-natives.sh
 
     # Saves only on a push to main, as every cache in this repository: an entry written on any other ref
     # is readable by nothing but that ref, and the budget is shared. See .github/actions/caches.
