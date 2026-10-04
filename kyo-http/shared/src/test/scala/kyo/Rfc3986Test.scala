@@ -179,10 +179,10 @@ class Rfc3986Test extends BaseHttpTest:
         assert(result.isFailure, s"Empty string should fail to parse, got: $result")
     }
 
-    "Section 4.1 - Invalid URL produces error" in {
-        val result = HttpUrl.parse("not a url at all ://")
-        // The implementation catches exceptions and wraps in Result.fail; either outcome is valid
-        assert(result.isSuccess || result.isFailure) // parse does not throw; result is defined
+    "Section 3.1 - text before :// that is not a scheme is refused" in {
+        assert(HttpUrl.parse("not a url at all ://") match
+            case Result.Failure(e: HttpUrlParseException) => e.reason == HttpUrlParseException.Reason.InvalidScheme
+            case _                                        => false)
     }
 
     // ==================== fromUri (path-only parsing) ====================

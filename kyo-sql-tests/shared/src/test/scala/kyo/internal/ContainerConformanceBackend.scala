@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.db.Backend
 
 /** A kyo descriptor whose engine runs in a Linux container this process provisions.
   *
@@ -10,9 +11,9 @@ import kyo.*
   * A container that fails to start is a panic, not a typed failure: the leaf reports red with the cause, and the published contract stays
   * free of kyo-pod.
   */
-abstract class ContainerConformanceBackend extends SqlConformanceBackend:
+abstract class ContainerConformanceBackend(backend: Backend) extends SqlConformanceBackend(backend):
 
-    /** The container this engine runs in, shared across leaves by descriptor id. */
+    /** The container this engine runs in, shared across leaves. */
     def containerConfig: Container.Config
 
     override def reachable: Boolean = !Platform.isWindows && ContainerRuntimeProbe.reachable

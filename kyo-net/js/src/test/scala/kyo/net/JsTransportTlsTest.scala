@@ -315,7 +315,7 @@ class JsTransportTlsTest extends Test:
         }
     }
 
-    /** Runs `f` over a transport whose clock is controlled and never advanced, so no connection's `peerCloseGrace` can end during it: a
+    /** Runs `f` over a transport whose clock is controlled and never advanced, so no connection's `closeFlushGrace` can end during it: a
       * graceful close that completes did so because Node reported the output flushed, never because the grace destroyed the socket.
       */
     private def onFrozenClock[A](f: JsTransport => A < (Async & Abort[NetException]))(using Frame): A < (Async & Abort[NetException]) =
@@ -440,7 +440,9 @@ class JsTransportTlsTest extends Test:
         val transport =
             JsTransport.init(poolSize = 1)
         for
-            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 150.millis)) { _ => () }.safe.get
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 150.millis)) {
+                _ => ()
+            }.safe.get
             port                    = listener.port
             (reaped, destroyClient) = stalledRawClient(port)
             wasReaped <- reaped.get
@@ -461,12 +463,13 @@ class JsTransportTlsTest extends Test:
             JsTransport.init(poolSize = 1)
         val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
         for
-            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 30.seconds)) { serverConn =>
-                discard(Sync.Unsafe.evalOrThrow {
-                    Fiber.initUnscoped {
-                        Abort.run[Closed](serverConn.inbound.safe.take.map(chunk => serverConn.outbound.safe.put(chunk))).unit
-                    }
-                })
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 30.seconds)) {
+                serverConn =>
+                    discard(Sync.Unsafe.evalOrThrow {
+                        Fiber.initUnscoped {
+                            Abort.run[Closed](serverConn.inbound.safe.take.map(chunk => serverConn.outbound.safe.put(chunk))).unit
+                        }
+                    })
             }.safe.get
             port = listener.port
             client <- transport.connectTls("127.0.0.1", port, clientTls).safe.get
@@ -496,13 +499,19 @@ class JsTransportTlsTest extends Test:
         val transport =
             JsTransport.init(poolSize = 1)
         for
-            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)) { _ =>
+            listener <- transport.listenTls(
+                "127.0.0.1",
+                0,
+                128,
+                serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)
+            ) { _ =>
                 ()
             }.safe.get
             (subjectClosed, destroySubject) = stalledRawClient(listener.port)
-            pacerListener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = pacerDeadline)) { _ =>
-                ()
-            }.safe.get
+            pacerListener <-
+                transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = pacerDeadline)) { _ =>
+                    ()
+                }.safe.get
             (pacerClosed, destroyPacer) = stalledRawClient(pacerListener.port)
             pacer <- Abort.run[Timeout](Async.timeout(10.seconds)(pacerClosed.get))
         yield

@@ -311,6 +311,13 @@ object SqliteWasmFacade:
                 n
             end if
 
+        /** `sqlite3_db_filename`, `""` in place of the null an in-memory database or an unattached schema answers. */
+        private val dbFilename: js.Function2[Int, String, String] = (db, schema) =>
+            withCString(schema) { pSchema =>
+                val name = call("sqlite3_db_filename", db, pSchema).asInstanceOf[Int]
+                if name == 0 then "" else cstrToJs(name)
+            }
+
         // --- Plain passthroughs, and the two pointer-returning reads ---
 
         private def int1(name: String): js.Function1[Int, Int]         = a => call(name, a).asInstanceOf[Int]
@@ -330,6 +337,10 @@ object SqliteWasmFacade:
             "kyo_sqlite3_column_text_bytes"     -> columnTextBytes,
             "kyo_sqlite3_column_blob_bytes"     -> columnBlobBytes,
             "kyo_sqlite3_column_decltype_bytes" -> columnDecltypeBytes,
+            "kyo_sqlite3_db_filename"           -> dbFilename,
+            "kyo_sqlite3_txn_state"             -> ((db: Int) => call("sqlite3_txn_state", db, 0).asInstanceOf[Int]),
+            "sqlite3_stmt_readonly"             -> int1("sqlite3_stmt_readonly"),
+            "sqlite3_get_autocommit"            -> int1("sqlite3_get_autocommit"),
             "sqlite3_close_v2"                  -> int1("sqlite3_close_v2"),
             "sqlite3_step"                      -> int1("sqlite3_step"),
             "sqlite3_finalize"                  -> int1("sqlite3_finalize"),

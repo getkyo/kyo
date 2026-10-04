@@ -112,16 +112,14 @@ The goal is always improvement. Making things compile and pass is not the goal: 
 Building automatically formats the code: no need to run formatting separately. Re-read any files you've edited after building, since formatting may have changed them.
 
 ```sh
-# Set JVM options (required for stable builds)
-export JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8"
-export JVM_OPTS="$JAVA_OPTS"
-
-# Test a specific module (JVM)
-sbt 'kyo-coreJVM/test'
+# Test a specific module (JVM), with the heap CI gives a JVM test driver
+scripts/sbt.sh test-jvm 'kyo-coreJVM/test'
 
 # Test a specific test class
-sbt 'kyo-coreJVM/testOnly kyo.ChannelTest'
+scripts/sbt.sh test-jvm 'kyo-coreJVM/testOnly kyo.ChannelTest'
 ```
+
+`.jvmopts` carries every JVM flag but the heap. The heap comes from the role passed to `scripts/sbt.sh` (`scripts/sbt-heap-lib.sh` holds the table); a bare `sbt` gets the JVM's default of a quarter of physical memory. Never set a heap in `JAVA_OPTS`, `SBT_OPTS`, `.jvmopts` or a workflow: `scripts/sbt-heap-check.sh` fails CI on one. See [CONTRIBUTING.md](CONTRIBUTING.md#the-sbt-heap).
 
 ### Containerized and CI-faithful runs: scripts/build.sh
 

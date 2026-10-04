@@ -165,7 +165,7 @@ object TodoApp extends CommandsEntryPoint:
             for
                 todos   <- store.get
                 visible <- Sync.defer(if options.all then todos else todos.filter(t => t.status ne TodoStatus.Completed))
-                _ <- if visible.isEmpty then Console.printLine("no todos")
+                _       <- if visible.isEmpty then Console.printLine("no todos")
                 else Async.foreachDiscard(visible)(t => Console.printLine(render(t)))
             yield ()
         }
@@ -192,7 +192,7 @@ object TodoApp extends CommandsEntryPoint:
             for
                 todos <- store.get
                 todo  <- todos.find(_.id == id).map(Sync.defer(_)).getOrElse(Abort.fail(new NoSuchElementException(s"no todo #$id")))
-                _ <-
+                _     <-
                     if todo.status eq TodoStatus.Active then
                         Console.printLine(s"todo #$id already active")
                     else if todo.status eq TodoStatus.Completed then

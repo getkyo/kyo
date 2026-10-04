@@ -40,7 +40,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
         "virtualized /proc/stat cpu total sums every present column and system includes irq plus softirq" in {
             val (baselineBytes, baselineLen) = span("cpu 0 0 0 0 0 0 0 0\n")
             val (tickBytes, tickLen)         = span("cpu 100 20 30 40 50 6 7 80\n")
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 LinuxDecoders.cpu(baselineBytes, baselineLen, 1L, handles) // baseline tick: no observation yet
                 val systemSumBefore = histogramSummary("machine", "cpu", "system.rate").sum
@@ -58,7 +58,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
         "short /proc/stat cpu line degrades to the present columns without throwing" in {
             val (baselineBytes, baselineLen) = span("cpu 0 0 0 0\n")
             val (tickBytes, tickLen)         = span("cpu 100 20 30 40\n")
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 LinuxDecoders.cpu(baselineBytes, baselineLen, 1L, handles)
                 val totalSumBefore    = histogramSummary("machine", "cpu", "total.rate").sum
@@ -74,7 +74,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
         "cpu.steal and cpu.iowait are written and their series registered on Linux" in {
             val (baselineBytes, baselineLen) = span("cpu 0 0 0 0 0 0 0 0\n")
             val (tickBytes, tickLen)         = span("cpu 10 10 10 10 55 1 1 66\n")
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 LinuxDecoders.cpu(baselineBytes, baselineLen, 1L, handles)
                 val iowaitSumBefore = histogramSummary("machine", "cpu", "iowait.rate").sum
@@ -90,7 +90,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
         "a non-numeric MIDDLE cpu column routes only that mode to Absent while the other modes stay present and no exception is thrown" in {
             val (baselineBytes, baselineLen) = span("cpu 0 0 0 0\n")
             val (tickBytes, tickLen)         = span("cpu 100 0 x 800\n") // system (index 2) is non-numeric
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 LinuxDecoders.cpu(baselineBytes, baselineLen, 1L, handles)
                 val userSumBefore     = histogramSummary("machine", "cpu", "user.rate").sum
@@ -119,7 +119,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             Scope.run(Path.run {
                 for
                     dir <- Path.tempDir("kyo-stats-machine-linux-cpumax")
-                    handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-cpumax-decode"), 8L)
+                    handles = MachineHandlesOwners.initForTest(Stat.initScope("mlinuxtest-cpumax-decode"), 8L)
                     file    = dir / "cpu.max"
                     _ <- file.write("50000 100000\n")
                     sampler = new MachineSampler(handles)
@@ -165,7 +165,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             Scope.run(Path.run {
                 for
                     dir <- Path.tempDir("kyo-stats-machine-linux-meminfo")
-                    handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-meminfo-decode"), 8L)
+                    handles = MachineHandlesOwners.initForTest(Stat.initScope("mlinuxtest-meminfo-decode"), 8L)
                     file    = dir / "meminfo"
                     _ <- file.write(fixture)
                     sampler           = new MachineSampler(handles)
@@ -200,7 +200,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             Scope.run(Path.run {
                 for
                     dir <- Path.tempDir("kyo-stats-machine-linux-meminfo-missing")
-                    handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-meminfo-missing"), 8L)
+                    handles = MachineHandlesOwners.initForTest(Stat.initScope("mlinuxtest-meminfo-missing"), 8L)
                     file    = dir / "meminfo"
                     _ <- file.write(fixture)
                     sampler                   = new MachineSampler(handles)
@@ -250,7 +250,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             // decoupled from the shared gauge; the generic "a NaN observation registers nothing, a real
             // value persists" cell behavior is already covered in isolation by MachineHandlesTest's
             // DoubleGaugeCell leaf.
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 LinuxDecoders.load(fullBytes, fullLen, handles)   // exercised for the no-exception wiring path
                 LinuxDecoders.load(truncBytes, truncLen, handles) // a truncated line must not throw either

@@ -269,10 +269,13 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(sp == 1, s"spurious=$sp")
     }
 
-    "waiter-list reversal does not cause N-th waiter to wake before 1st under FIFO contract".notJs in {
+    // A transaction blocked in `retryIf` is not queued anywhere: it reruns when its own retry-schedule timer fires, so waiters released by
+    // one commit complete in timer order, not arrival order. What holds is that none completes while its condition is false, so publishing
+    // one value at a time and waiting for the waiter it releases fixes the completion order.
+    "a retrying waiter completes only once the value it waits for is committed".notJs in {
         for
             ref       <- TRef.init(0)
-            wakeOrder <- AtomicRef.init(Chunk.empty[Int])
+            completed <- AtomicRef.init(Chunk.empty[Int])
             attempts  <- AtomicInt.init(0)
             gates     <- Kyo.fill(10)(Latch.init(1))
             waiters   <- Kyo.foreach(0 until 10) { i =>
@@ -286,18 +289,22 @@ class STMStressTest extends kyo.test.Test[Any]:
                                 _ <- STM.retryIf(v < i + 1)
                             yield ()
                         }
-                        _ <- wakeOrder.updateAndGet(_ :+ i)
+                        _ <- completed.updateAndGet(_ :+ i)
                     yield ()
                 }
             }
             _ <- Kyo.foreachDiscard(0 until 10)(i => gates(i).await)
             // All 10 waiters re-run their schedules against ref == 0; wait until they have collectively attempted
-            // before publishing, so the wake path is exercised, not a first-attempt read of the final value.
+            // before publishing, so the retry path is exercised, not a first-attempt read of the final value.
             _     <- assertEventually(attempts.get.map(_ >= 10))
-            _     <- Kyo.foreachDiscard(1 to 10)(i => STM.run(ref.set(i)))
-            _     <- Kyo.foreachDiscard(waiters)(_.get)
-            order <- wakeOrder.get
-        yield assert(!order.sameElements(9 to 0 by -1), s"order=$order")
+            steps <- Kyo.foreach(1 to 10) { i =>
+                // ref == i releases waiter i - 1 and no later one.
+                STM.run(ref.set(i)).andThen(waiters(i - 1).get).andThen(completed.get)
+            }
+        yield assert(
+            steps == Chunk.from((1 to 10).map(i => Chunk.from(0 until i))),
+            s"completed after each commit: $steps"
+        )
     }
 
     "signalling waiters does not hold per-ref lock".notJs in {

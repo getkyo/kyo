@@ -3875,7 +3875,7 @@ object Browser:
       * ```
       */
     def dataUrl(html: String): String =
-        s"data:text/html;charset=utf-8,${PercentEncode(html)}"
+        s"data:text/html;charset=utf-8,${PercentEncoding.encode(html, PercentEncoding.Mode.Component)}"
 
     // --- Nested types ---
 

@@ -93,17 +93,25 @@ import scala.concurrent.ExecutionContext
   * @see
   *   Concurrency for concurrency regulation details
   */
-final class Scheduler(
-    workerExecutor: Executor = Scheduler.defaultWorkerExecutor,
-    clockExecutor: Executor = Scheduler.defaultClockExecutor,
-    timerExecutor: ScheduledExecutorService = Scheduler.defaultTimerExecutor,
-    config: Config = Config.default
+final class Scheduler private[scheduler] (
+    workerExecutor: Executor,
+    clockExecutor: Executor,
+    timerExecutor: ScheduledExecutorService,
+    config: Config,
+    clockSource: () => Long
 ) {
+
+    def this(
+        workerExecutor: Executor = Scheduler.defaultWorkerExecutor,
+        clockExecutor: Executor = Scheduler.defaultClockExecutor,
+        timerExecutor: ScheduledExecutorService = Scheduler.defaultTimerExecutor,
+        config: Config = Config.default
+    ) = this(workerExecutor, clockExecutor, timerExecutor, config, () => InternalClock.monotonicMillis())
 
     import config.*
 
     private val pool    = LoomSupport.tryVirtualize(virtualizeWorkers, workerExecutor)
-    private val clock   = new InternalClock(clockExecutor)
+    private val clock   = new InternalClock(clockExecutor, clockSource)
     private val workers = new Array[Worker](maxWorkers)
     private val flushes = new LongAdder
     // Declared before cycleTask, which starts the loop that writes them: an initializer that ran after the loop started would
@@ -127,10 +135,10 @@ final class Scheduler(
     private val timer = InternalTimer(timerExecutor)
 
     private val admissionRegulator =
-        new Admission(() => loadAvg(), schedule, () => InternalClock.monotonicMillis(), timer)
+        new Admission(() => loadAvg(), schedule, () => InternalClock.monotonicMillis(), timer).start()
 
     private val concurrencyRegulator =
-        new Concurrency(() => loadAvg(), updateWorkers, Sleep(_), () => System.nanoTime, timer)
+        new Concurrency(() => loadAvg(), updateWorkers, Sleep(_), () => System.nanoTime, timer).start()
 
     private val top = new Reporter(status, enableTopJMX, enableTopConsoleMs, topStatusFile, topStatusFileMs)
 

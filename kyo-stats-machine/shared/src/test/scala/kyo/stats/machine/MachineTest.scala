@@ -125,7 +125,7 @@ class MachineTest extends kyo.test.Test[Any]:
         def observationsOf(readings: Chunk[MachineRegistrySnapshot.Reading], path: String): Long =
             readings.find(_.path == path).map(_.observations).getOrElse(0L)
         for
-            handles <- MachineHandles.init
+            handles <- MachineHandlesOwners.init
             sampler = new MachineSampler(handles)
             machine = Machine.forOs(hostOs, handles, sampler)
             // Baseline tick: a RateCell's first-ever observe call only establishes its prior value, with
@@ -165,7 +165,7 @@ class MachineTest extends kyo.test.Test[Any]:
         // scope, so the absolute memory.total value read back is this reader's own and cannot be poisoned by a
         // sibling suite writing the same first-registered process-global cell.
         val scope   = "mtest-hostmem-floor"
-        val handles = MachineHandles.initForTest(Stat.initScope(scope), System.live.unsafe.availableProcessors().toLong)
+        val handles = MachineHandlesOwners.initForTest(Stat.initScope(scope), System.live.unsafe.availableProcessors().toLong)
         val sampler = new MachineSampler(handles)
         val machine = Machine.forOs(hostOs, handles, sampler)
         machine.read()

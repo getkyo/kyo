@@ -9,7 +9,8 @@ import kyo.Span
 // so this file compiles only while the representation-capability hooks remain overridable by
 // external codecs. If canWriteTopLevelNonObject or codecName were narrowed to private[kyo], the
 // overrides below would not compile, and this test would fail at build time.
-final class ExternalWriter extends Writer:
+final class ExternalWriter()(using site: kyo.Frame) extends Writer:
+    override def frame: kyo.Frame                   = site
     override def canWriteTopLevelNonObject: Boolean = true
     override def codecName: String                  = "custom-codec"
 

@@ -109,9 +109,6 @@ Scratch and reproduction files must be folded into the matching `*Test.scala` by
 ## Building and testing
 
 ```sh
-export JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8"
-export JVM_OPTS="$JAVA_OPTS"
-
 # All tests on JVM
 sbt 'kyo-test-propJVM/test'
 

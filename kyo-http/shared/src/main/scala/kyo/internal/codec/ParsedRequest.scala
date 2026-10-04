@@ -11,8 +11,8 @@ import scala.annotation.tailrec
   * caller explicitly requests a String value.
   *
   * Binary layout (all offsets relative to raw bytes section start):
-  *   - [0..1] flags: 2 bytes — high byte = method ordinal, low byte = bit flags: bit0=chunked, bit1=keepAlive, bit2=hasQuery,
-  *     bit3=expectContinue, bit4=hasHost, bit5=multipleHost, bit6=emptyHost, bit7=upgrade
+  *   - [0..1] flags: 2 bytes: bit 15 = HTTP/1.0, bits 8 to 14 = method ordinal, bits 0 to 7 = bit0=chunked, bit1=keepAlive,
+  *     bit2=hasQuery, bit3=expectContinue, bit4=hasHost, bit5=multipleHost, bit6=emptyHost, bit7=upgrade
   *   - [2..5] contentLength: 4 bytes big-endian (-1 if absent)
   *   - [6..9] pathOff:2 + pathLen:2
   *   - [10..13] queryOff:2 + queryLen:2 (0/0 if no query)
@@ -22,8 +22,7 @@ import scala.annotation.tailrec
   *   - [+2..+headerCount*8-1] per-header (nameOff:2 + nameLen:2 + valOff:2 + valLen:2)
   *   - [rest] raw bytes — path, query, segment text, header names and values
   *
-  * Constructed by ParsedRequestBuilder.build(). Consumed by Http1Parser callbacks and UnsafeServerDispatch. headersAsPacked extracts the
-  * header section as a standalone array compatible with HttpHeaders.fromPacked.
+  * Constructed by ParsedRequestBuilder.build(). Consumed by Http1Parser callbacks and UnsafeServerDispatch.
   */
 private[kyo] opaque type ParsedRequest = Span[Byte]
 
@@ -31,47 +30,6 @@ private[kyo] object ParsedRequest:
 
     /** Empty sentinel used as initial value before a request is parsed. */
     val empty: ParsedRequest = Span.empty[Byte]
-
-    /** Decodes percent-escapes in a path segment, total and never throwing.
-      *
-      * Path rules, not query rules: '+' is an ordinary character here (RFC 3986 section 3.3), and a malformed escape is passed through
-      * literally rather than raised, since this sits on a dispatch path with no exception handler. Decoding is byte-wise and the result is
-      * read back as UTF-8, so a multi-byte character split across several escapes reassembles correctly.
-      */
-    private[codec] def decodePathEscapes(raw: String): String =
-        val src                                = raw.getBytes(StandardCharsets.UTF_8)
-        val out                                = new Array[Byte](src.length)
-        @tailrec def loop(i: Int, j: Int): Int =
-            if i >= src.length then j
-            else
-                val b = src(i) & 0xff
-                if b == '%' && i + 2 < src.length then
-                    val hi = hexDigit(src(i + 1))
-                    val lo = hexDigit(src(i + 2))
-                    if hi >= 0 && lo >= 0 then
-                        out(j) = ((hi << 4) | lo).toByte
-                        loop(i + 3, j + 1)
-                    else
-                        out(j) = b.toByte
-                        loop(i + 1, j + 1)
-                    end if
-                else
-                    out(j) = b.toByte
-                    loop(i + 1, j + 1)
-                end if
-        val len = loop(0, 0)
-        new String(out, 0, len, StandardCharsets.UTF_8)
-    end decodePathEscapes
-
-    /** Numeric value of a hex digit byte, or -1 when it is not one. */
-    private def hexDigit(b: Byte): Int =
-        val c = b & 0xff
-        if c >= '0' && c <= '9' then c - '0'
-        else if c >= 'a' && c <= 'f' then c - 'a' + 10
-        else if c >= 'A' && c <= 'F' then c - 'A' + 10
-        else -1
-        end if
-    end hexDigit
 
     /** Pre-encoded route segment for zero-alloc matching. */
     opaque type Segment = Array[Byte]
@@ -134,10 +92,15 @@ private[kyo] object ParsedRequest:
 
     extension (self: ParsedRequest)
 
-        /** HTTP method from the high byte of flags. */
+        /** HTTP method from bits 8 to 14 of flags. */
         def method: HttpMethod =
             val flags = readShort(self, 0)
-            methodFromOrdinal((flags >> 8) & 0xff)
+            methodFromOrdinal((flags >> 8) & 0x7f)
+
+        /** Whether the request line named HTTP/1.0. Bit 15 of flags. A response to it carries no `Transfer-Encoding` (RFC 9112 section
+          * 6.1) and no interim response (RFC 9110 section 10.1.1).
+          */
+        def isHttp10: Boolean = (readShort(self, 0) & 0x8000) != 0
 
         /** Whether Transfer-Encoding: chunked was detected. Bit 0 of flags. */
         def isChunked: Boolean = (readShort(self, 0) & 1) != 0
@@ -166,6 +129,11 @@ private[kyo] object ParsedRequest:
         /** Pre-parsed Content-Length (-1 if absent). */
         def contentLength: Int =
             readInt(self, 2)
+
+        /** Whether body bytes remain on the wire after the `inHand` bytes the parser took with the head (RFC 9112 section 6.3): a chunked
+          * body, which only its decoder can end, or a Content-Length longer than what is in hand.
+          */
+        def bodyBeyond(inHand: Int): Boolean = isChunked || contentLength > inHand
 
         /** Number of path segments. */
         def pathSegmentCount: Int =
@@ -221,20 +189,13 @@ private[kyo] object ParsedRequest:
 
         /** Returns path segment `i` with its percent-escapes decoded.
           *
-          * Decoding is done here rather than by `java.net.URLDecoder` for three reasons, each of which has bitten this path: URLDecoder
-          * throws on a malformed escape, and this runs inside request dispatch where nothing catches it; it decodes '+' to a space, which is
-          * the query rule (RFC 3986 section 3.4) and not the path rule, where '+' is an ordinary character; and applying it only when a '%'
-          * is present, as this did, made even that inconsistent, so "a+b" and "a+b%20c" disagreed about what '+' meant.
-          *
-          * A malformed escape is emitted literally rather than raised. That is a fallback, not the contract: `Http1Parser` refuses such a
-          * request before routing, so a segment reaching this method has already been validated. It matters only for a segment built
-          * directly, where producing an odd string beats throwing from a total accessor.
+          * The decode is the RFC 3986 component one: a '+' in a path is an ordinary character, and reading it as a space is the form rule
+          * for queries alone. This runs inside request dispatch, where nothing catches a throw, so a malformed escape is emitted literally.
+          * That is a fallback, not the contract: `Http1Parser` refuses such a request before routing, so it matters only for a segment
+          * built directly.
           */
         def pathSegmentAsStringDecoded(i: Int): String =
-            val raw = pathSegmentAsString(i)
-            if raw.indexOf('%') < 0 then raw
-            else ParsedRequest.decodePathEscapes(raw)
-        end pathSegmentAsStringDecoded
+            kyo.internal.PercentEncoding.decode(pathSegmentAsString(i), kyo.internal.PercentEncoding.Mode.Component)
 
         /** Returns all remaining path segments from `fromSegment` onward, decoded and joined with '/'. Used for rest captures.
           *
@@ -439,45 +400,24 @@ private[kyo] object ParsedRequest:
             end if
         end headerValue
 
-        /** Extracts the header section of the packed array as a standalone packed array compatible with the HttpHeaders.fromPacked format.
-          *
-          * The header section in ParsedRequest starts at `headerCountOffset` and runs to the end. The offsets within this section reference
-          * raw bytes that are part of the same region, but they're relative to the full ParsedRequest's rawBytesOffset. We need to adjust
-          * the offsets to be relative to the new array's raw bytes section.
-          */
-        def headersAsPacked: Array[Byte] =
+        /** The request's headers, independent of this request's bytes. */
+        def headers: HttpHeaders =
             val segCount          = readShort(self, 14)
             val headerCountOffset = 16 + segCount * 4
             val hdrCount          = readShort(self, headerCountOffset)
-            if hdrCount == 0 then
-                // Return a minimal packed array: [count=0 (2 bytes)]
-                val result = new Array[Byte](2)
-                result(0) = 0
-                result(1) = 0
-                result
+            if hdrCount == 0 then HttpHeaders.empty
             else
-                val fullRawBytesOffset = headerCountOffset + 2 + hdrCount * 8
-                // The new packed array's raw bytes offset will be: 2 + hdrCount * 8
-                val newRawBytesOffset = 2 + hdrCount * 8
-                // We need to copy header index + raw bytes that headers reference
-                // First, find the extent of raw bytes referenced by headers
-                val headerSectionSize = self.size - headerCountOffset
-                val result            = new Array[Byte](headerSectionSize)
-                // Copy the whole header section (count + index + raw bytes)
-                @tailrec def copyBytes(j: Int): Unit =
-                    if j < headerSectionSize then
-                        result(j) = self(headerCountOffset + j)
-                        copyBytes(j + 1)
-                copyBytes(0)
-                // Now adjust offsets: each header has 4 shorts (nameOff, nameLen, valOff, valLen)
-                // nameOff and valOff are relative to fullRawBytesOffset in the original ParsedRequest.
-                // In the new array, raw bytes start at newRawBytesOffset, but the raw bytes
-                // in the new array start at the same relative position (fullRawBytesOffset - headerCountOffset)
-                // which equals newRawBytesOffset. So offsets don't need adjustment!
-                // This is because offsets are already relative to the raw bytes section start,
-                // and we copied the raw bytes section at the same relative position.
-                result
+                val indexOffset                       = headerCountOffset + 2
+                val rawStart                          = indexOffset + hdrCount * 8
+                val fields                            = new Array[Int](hdrCount * 4)
+                @tailrec def readFields(i: Int): Unit =
+                    if i < fields.length then
+                        fields(i) = readShort(self, indexOffset + i * 2)
+                        readFields(i + 1)
+                readFields(0)
+                // Unsafe: read-only view of this request's bytes; parsed copies the slice it keeps.
+                HttpHeaders.parsed(self.toArrayUnsafe, rawStart, self.size - rawStart, fields, hdrCount)
             end if
-        end headersAsPacked
+        end headers
     end extension
 end ParsedRequest
