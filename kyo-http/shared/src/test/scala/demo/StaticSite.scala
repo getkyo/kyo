@@ -137,7 +137,7 @@ object StaticSite extends KyoApp:
             (serve, head, list, upload) = handlers(store)
             health                      = HttpHandler.health()
             server <- HttpServer.init(
-                HttpServerConfig.default.port(port).maxContentLength(10 * 1024 * 1024)
+                HttpServerConfig.default.port(port).maxContentLength(10.mib)
                     .openApi("/openapi.json", "Static Site Server")
             )(serve, head, list, upload, health)
             _ <- Console.printLine(s"StaticSite running on http://localhost:${server.port}")

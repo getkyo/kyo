@@ -21,10 +21,10 @@ object CryptoTicker extends KyoApp:
 
     def fetchPrices: Seq[Tick] < (Async & Abort[HttpException]) =
         HttpClient.withConfig(
-            _.timeout(10.seconds)
-                .connectTimeout(5.seconds)
-                .retryOn(status => status.isServerError || status.code == 429)
+            _.retryOn(status => status.isServerError || status.code == 429)
                 .retry(Schedule.exponentialBackoff(500.millis, 2.0, 10.seconds).repeat(3))
+                .timeout(10.seconds)
+                .map(_.connectTimeout(5.seconds))
         ) {
             for
                 data <- HttpClient.getJson[PriceData](
@@ -92,8 +92,7 @@ object CryptoTickerClient extends KyoApp:
             // Consume NDJSON stream using client-side convenience method
             // Process first 9 ticks (3 rounds of 3 coins)
             _ <- HttpClient.withConfig(
-                _.timeout(120.seconds)
-                    .connectTimeout(5.seconds)
+                _.timeout(120.seconds).map(_.connectTimeout(5.seconds))
             ) {
                 HttpClient.getNdJson[Tick]("http://localhost:3013/stream").take(9).foreachChunk { chunk =>
                     Kyo.foreach(chunk.toSeq) { tick =>

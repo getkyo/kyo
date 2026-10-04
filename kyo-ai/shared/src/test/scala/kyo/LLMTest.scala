@@ -684,7 +684,7 @@ class LLMTest extends kyo.test.Test[Any]:
             val config      = serverConfig(server.baseUrl)
                 .timeout(callTimeout)
                 .retrySchedule(Schedule.exponentialBackoff(initial = callTimeout * 2, factor = 2, maxBackoff = 1.minute).take(10))
-            def throttle(remaining: Int): Unit < Async =
+            def throttle(remaining: Int): Unit < (Async & Abort[HttpInvalidStatusException]) =
                 if remaining == 0 then ()
                 else server.enqueueStatus(429, """{"error":{"message":"rate limited"}}""").andThen(throttle(remaining - 1))
             Clock.withTimeControl { control =>

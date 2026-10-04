@@ -4,9 +4,17 @@ import kyo.*
 
 /** Configuration for an [[kyo.HttpClient]], controlling timeouts, retries, redirects, client filters, and base URL resolution.
   *
-  * Applied via `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`. The function overload composes with the current config, nested
+  * Applied via `HttpClient.withConfig(_.followRedirects(false)) { ... }`. The function overload composes with the current config, nested
   * `withConfig` calls stack rather than replace each other, so each layer only overrides the fields it changes. To discard the current
   * config entirely, use `HttpClient.withConfig(newConfig) { ... }`.
+  *
+  * The limits are checked values, so neither the constructor nor `copy` can hold one the client would misbehave on: a
+  * [[HttpClientConfig.TimeLimit]] or [[HttpClientConfig.RedirectLimit]] is built only by its `init`. The setters taking a raw `Duration` or
+  * `Int` for them return a `Result` that fails with an [[kyo.HttpConfigException]] at the caller's `Frame`, and
+  * `HttpClient.withConfig(_.timeout(10.seconds)) { ... }` turns that into an `Abort` before the block runs. Chain further raw setters with
+  * `flatMap`: `_.timeout(10.seconds).flatMap(_.maxRedirects(3))`. The connect deadline is a plain `Duration`, as kyo-net takes it: zero
+  * fails the connect at once. `maxResponseLength` is a [[kyo.ByteSize]], narrowed where the client uses it (zero becomes one byte, a size
+  * beyond `Int.MaxValue` becomes `Int.MaxValue`), so no byte size is refused.
   *
   * The `baseUrl` field is resolved only for requests with path-only URLs (where `scheme` is absent). A request to `/users` with the
   * base `https://api.example.com/v1` resolves to `https://api.example.com/v1/users`: the base's path is a prefix. Requests with a
@@ -23,17 +31,17 @@ import kyo.*
   *   which refuses a URL without a scheme, or without a host or Unix socket, with an [[kyo.HttpUrlParseException]].
   * @param timeout
   *   Maximum duration for the entire request lifecycle including retries, until the callback of `sendWith` returns. Defaults to 5
-  *   seconds. Set to `Duration.Infinity` to disable. A streamed body consumed inside that callback is under it; the streams
+  *   seconds. `TimeLimit.unlimited` disables it. A streamed body consumed inside that callback is under it; the streams
   *   `getStreamBytes`, `getSseJson`, `getSseText` and `getNdJson` return are consumed after their request completed at the head, so the
   *   timeout bounds the head and not the body. Does not apply to WebSocket connections (they are long-lived by design).
   * @param connectTimeout
-  *   Maximum duration for the TCP connect (and TLS handshake if applicable). Defaults to 30 seconds. Set to `Duration.Infinity` to use the
-  *   OS TCP timeout instead. Applies to both HTTP and WebSocket connections.
+  *   Maximum duration for the TCP connect (and TLS handshake if applicable). Defaults to 30 seconds. `Duration.Infinity` leaves it to the
+  *   OS TCP timeout, and zero fails the connect at once. Applies to both HTTP and WebSocket connections.
   * @param followRedirects
   *   Whether to automatically follow 3xx redirects. Defaults to true. When enabled, the client follows up to `maxRedirects` hops, handling
   *   303 See Other by changing the method to GET per RFC 9110.
   * @param maxRedirects
-  *   Maximum number of redirect hops before failing with [[HttpRedirectLoopException]]. Defaults to 10. Must be non-negative.
+  *   Maximum number of redirect hops before failing with [[HttpRedirectLoopException]]. Defaults to 10.
   * @param retrySchedule
   *   Backoff schedule for retries. Absent by default (no retries). When set, the client retries requests that fail with network errors or
   *   where `retryOn(status)` returns true.
@@ -47,12 +55,12 @@ import kyo.*
   *   Transport-level tuning applied to connections this client opens: the per-connection buffer sizes, the parser's header cap, and the TLS
   *   handshake deadline. The TCP connect deadline is not there, it is this config's own `connectTimeout`. See [[HttpTransportConfig]].
   * @param maxResponseLength
-  *   Hard cap, in bytes, on a BUFFERED response body the client accumulates in memory. A server (malicious or buggy) that streams an
+  *   Hard cap on a BUFFERED response body the client accumulates in memory. A server (malicious or buggy) that streams an
   *   unbounded chunked or connection-close-framed body, or declares an enormous `Content-Length`, would otherwise grow the client's buffer
   *   without limit until the JVM runs out of memory (CWE-400). When a buffered response exceeds this, the request fails with
   *   [[HttpPayloadTooLargeException]] instead. Defaults to 100 MiB: a safety ceiling, not a functional limit, large enough for realistic
   *   buffered JSON/HTML/file responses. Responses larger than this should use the streaming API (`getStreamBytes`, `getSseJson`, etc.),
-  *   which is NOT subject to this cap (the caller controls consumption). Must be positive.
+  *   which is NOT subject to this cap (the caller controls consumption).
   * @param autoFilters
   *   Whether ServiceLoader-discovered client filters are applied. Defaults to true.
   * @param clientFilter
@@ -68,25 +76,18 @@ import kyo.*
   */
 case class HttpClientConfig(
     baseUrl: Maybe[HttpClientConfig.BaseUrl] = Absent,
-    timeout: Duration = 5.seconds,
-    connectTimeout: Duration = 30.seconds,
+    timeout: HttpClientConfig.TimeLimit = HttpClientConfig.TimeLimit.defaultTimeout,
+    connectTimeout: Duration = kyo.net.Transport.DefaultConnectTimeout,
     followRedirects: Boolean = true,
-    maxRedirects: Int = 10,
+    maxRedirects: HttpClientConfig.RedirectLimit = HttpClientConfig.RedirectLimit.default,
     retrySchedule: Maybe[Schedule] = Absent,
     retryOn: HttpStatus => Boolean = _.isServerError,
     transportConfig: HttpTransportConfig = HttpTransportConfig.default,
     tls: HttpTlsConfig = HttpTlsConfig.default,
-    maxResponseLength: Int = 100 * 1024 * 1024,
+    maxResponseLength: ByteSize = HttpClientConfig.DefaultMaxResponseLength,
     autoFilters: Boolean = true,
     clientFilter: HttpFilter.Passthrough[Nothing] = HttpFilter.noop
 ):
-    require(maxRedirects >= 0, s"maxRedirects must be non-negative: $maxRedirects")
-    require(maxResponseLength > 0, s"maxResponseLength must be positive: $maxResponseLength")
-    require(timeout > Duration.Zero || timeout == Duration.Infinity, s"timeout must be positive or Infinity: $timeout")
-    require(
-        connectTimeout > Duration.Zero || connectTimeout == Duration.Infinity,
-        s"connectTimeout must be positive or Infinity: $connectTimeout"
-    )
 
     def baseUrl(base: HttpClientConfig.BaseUrl): HttpClientConfig = copy(baseUrl = Present(base))
 
@@ -98,15 +99,27 @@ case class HttpClientConfig(
     def baseUrl(url: HttpUrl)(using Frame): Result[HttpUrlParseException, HttpClientConfig] =
         HttpClientConfig.BaseUrl.init(url).map(baseUrl)
 
-    def timeout(d: Duration): HttpClientConfig                       = copy(timeout = d)
-    def connectTimeout(d: Duration): HttpClientConfig                = copy(connectTimeout = d)
+    def timeout(limit: HttpClientConfig.TimeLimit): HttpClientConfig = copy(timeout = limit)
+
+    /** This config with `d` as its timeout, or the [[kyo.HttpConfigException]] refusing a zero duration. */
+    def timeout(d: Duration)(using Frame): Result[HttpConfigException, HttpClientConfig] =
+        HttpClientConfig.TimeLimit.check("timeout", d).map(timeout)
+
+    def connectTimeout(d: Duration): HttpClientConfig = copy(connectTimeout = d)
+
+    def maxRedirects(limit: HttpClientConfig.RedirectLimit): HttpClientConfig = copy(maxRedirects = limit)
+
+    /** This config following at most `n` redirects, or the [[kyo.HttpConfigException]] refusing a negative `n`. */
+    def maxRedirects(n: Int)(using Frame): Result[HttpConfigException, HttpClientConfig] =
+        HttpClientConfig.RedirectLimit.init(n).map(maxRedirects)
+
+    def maxResponseLength(limit: ByteSize): HttpClientConfig = copy(maxResponseLength = limit)
+
     def followRedirects(v: Boolean): HttpClientConfig                = copy(followRedirects = v)
-    def maxRedirects(v: Int): HttpClientConfig                       = copy(maxRedirects = v)
     def retry(schedule: Schedule): HttpClientConfig                  = copy(retrySchedule = Present(schedule))
     def retryOn(f: HttpStatus => Boolean): HttpClientConfig          = copy(retryOn = f)
     def transportConfig(v: HttpTransportConfig): HttpClientConfig    = copy(transportConfig = v)
     def tls(config: HttpTlsConfig): HttpClientConfig                 = copy(tls = config)
-    def maxResponseLength(v: Int): HttpClientConfig                  = copy(maxResponseLength = v)
     def autoFilters(v: Boolean): HttpClientConfig                    = copy(autoFilters = v)
     def withoutAutoFilters: HttpClientConfig                         = autoFilters(false)
     def filter(f: HttpFilter.Passthrough[Nothing]): HttpClientConfig =
@@ -137,5 +150,61 @@ object HttpClientConfig:
 
         extension (self: BaseUrl) def url: HttpUrl = self
     end BaseUrl
+
+    /** A duration a request may take: positive, or `Duration.Infinity` for no limit. Zero would fail every request before it starts, so it
+      * is refused rather than held.
+      */
+    opaque type TimeLimit = Duration
+
+    object TimeLimit:
+        val defaultTimeout: TimeLimit = 5.seconds
+
+        /** How long a pooled connection may sit idle before the client closes it: the idle timeout proxies and load balancers default to.
+          */
+        val defaultIdleConnectionTimeout: TimeLimit = 60.seconds
+        val unlimited: TimeLimit                    = Duration.Infinity
+
+        /** `d` as a time limit, or the [[kyo.HttpConfigException]] refusing a zero duration. */
+        def init(d: Duration)(using Frame): Result[HttpConfigException, TimeLimit] = check("timeLimit", d)
+
+        private[kyo] def check(setting: String, d: Duration)(using Frame): Result[HttpConfigException, TimeLimit] =
+            if d > Duration.Zero then Result.succeed(d)
+            else Result.fail(HttpConfigException(setting, d.show, "positive, or Duration.Infinity for no limit"))
+
+        given CanEqual[TimeLimit, TimeLimit] = CanEqual.derived
+
+        extension (self: TimeLimit)
+            def duration: Duration = self
+
+            /** The longer of this limit and `floor`. Total: the result is never shorter than this limit, so it is valid too. */
+            def max(floor: Duration): TimeLimit = if floor > self then floor else self
+        end extension
+    end TimeLimit
+
+    /** How many redirects a request follows before failing with [[kyo.HttpRedirectLoopException]]: zero or more. */
+    opaque type RedirectLimit = Int
+
+    object RedirectLimit:
+        val default: RedirectLimit = 10
+
+        /** The limit for a literal `n`, checked at compile time: a negative literal, or an argument that is not a constant, does not
+          * compile. A value known only at runtime goes through [[init]].
+          */
+        inline def apply(inline n: Int): RedirectLimit =
+            inline if n < 0 then compiletime.error("HttpClientConfig.RedirectLimit must be zero or more")
+            else n
+
+        /** `n` as a redirect limit, or the [[kyo.HttpConfigException]] refusing a negative `n`. */
+        def init(n: Int)(using Frame): Result[HttpConfigException, RedirectLimit] =
+            if n >= 0 then Result.succeed(n)
+            else Result.fail(HttpConfigException("maxRedirects", n.toString, "zero or more"))
+
+        given CanEqual[RedirectLimit, RedirectLimit] = CanEqual.derived
+
+        extension (self: RedirectLimit) def count: Int = self
+    end RedirectLimit
+
+    /** The most of a buffered response body a client holds before failing with [[kyo.HttpPayloadTooLargeException]]. */
+    val DefaultMaxResponseLength: ByteSize = 100.mib
 
 end HttpClientConfig

@@ -60,11 +60,11 @@ class HttpServerResilienceTest extends BaseHttpTest:
       */
     private def startServer(transport: Transport, handlers: HttpHandler[?, ?, ?]*)(using
         Frame
-    ): HttpServer < (Async & Abort[NetException]) =
+    ): HttpServer < (Async & Abort[NetException | HttpRouteException]) =
         Clock.use { clock =>
             Sync.Unsafe.defer {
                 val config = HttpServerConfig.default.port(0).host("localhost")
-                HttpServer.Unsafe.init(transport, config, handlers, clock).safe.get.map(_.safe)
+                Abort.get(HttpServer.Unsafe.init(transport, config, handlers, clock)).map(_.safe.get.map(_.safe))
             }
         }
 

@@ -495,7 +495,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
         //
         // Origin: the unconsumed-body-reinterpreted smuggling class on a rejected-by-size request (RFC 9112 section 9.3).
         "a 413-rejected request's unconsumed body is not parsed as the next request" in {
-            val cfg = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(10)
+            val cfg = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(10.bytes)
             HttpServer.init(cfg)(echoHandler, bodyHandler, markerHandler, streamHandler).map { server =>
                 val smuggled = "GET /marker HTTP/1.1\r\nHost: localhost\r\n\r\n"
                 // Content-Length is the smuggled request length, well over the 10-byte limit, so the POST is 413'd.

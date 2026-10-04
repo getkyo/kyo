@@ -109,23 +109,25 @@ private[kyo] object TypeSafeDecider extends Decider.Backend:
             Result.Failure(AICompletionTimeoutException(provider, timeout))
         ) {
             Abort.run[AIGenException] {
-                HttpClient.withConfig(_.timeout(timeout)) {
-                    Abort.run[Closed] {
-                        HttpClient.postTextResponse(url, body, headers, failOnError = false).map { response =>
-                            if response.status.isSuccess then (response.fields.body: String < (Sync & Abort[AIGenException]))
-                            else
-                                val requestId = response.headers.get(requestIdHeader).fold("")(id => s"[request id $id] ")
-                                Completion.statusFailure(provider, "POST", url, response, requestId).map(Abort.fail(_))
-                        }.handle(
-                            Abort.recover[HttpException](e => Abort.fail(Completion.classifyHttp(provider, e)))(_),
-                            meter.run,
-                            Completion.awaitRetryAfter(timeout)(_),
-                            Retry[AITransientException](retrySchedule)(_)
-                        )
-                    }.map {
-                        case Result.Success(r) => r
-                        case Result.Failure(_) => Abort.panic(AIMeterClosedException())
-                        case Result.Panic(ex)  => Abort.panic(ex)
+                Abort.recover[HttpConfigException](e => Abort.fail(Completion.classifyHttp(provider, e))) {
+                    HttpClient.withConfig(_.timeout(timeout)) {
+                        Abort.run[Closed] {
+                            HttpClient.postTextResponse(url, body, headers, failOnError = false).map { response =>
+                                if response.status.isSuccess then (response.fields.body: String < (Sync & Abort[AIGenException]))
+                                else
+                                    val requestId = response.headers.get(requestIdHeader).fold("")(id => s"[request id $id] ")
+                                    Completion.statusFailure(provider, "POST", url, response, requestId).map(Abort.fail(_))
+                            }.handle(
+                                Abort.recover[HttpException](e => Abort.fail(Completion.classifyHttp(provider, e)))(_),
+                                meter.run,
+                                Completion.awaitRetryAfter(timeout)(_),
+                                Retry[AITransientException](retrySchedule)(_)
+                            )
+                        }.map {
+                            case Result.Success(r) => r
+                            case Result.Failure(_) => Abort.panic(AIMeterClosedException())
+                            case Result.Panic(ex)  => Abort.panic(ex)
+                        }
                     }
                 }
             }

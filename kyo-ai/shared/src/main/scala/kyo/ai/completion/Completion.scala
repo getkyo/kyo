@@ -276,14 +276,14 @@ object Completion:
                 if rejected then AIToolCallRejectedException(provider, message)
                 else
                     detail.status_code match
-                        case Present(code) if HttpStatus.isValid(code) =>
-                            HttpStatus(code) match
-                                case HttpStatus.Unauthorized | HttpStatus.Forbidden => AIProviderAuthException(provider, message)
-                                case HttpStatus.TooManyRequests                     => AIRateLimitException(provider, message)
-                                case s if s.isServerError                           => AIProviderUnavailableException(provider, message)
-                                case s                                              => AIRequestRejectedException(provider, s.code, message)
-                        case Present(code) => AIRequestRejectedException(provider, code, message)
-                        case Absent        => AIRequestRejectedException(provider, 0, message)
+                        case Present(code) =>
+                            HttpStatus.init(code) match
+                                case Result.Success(HttpStatus.Unauthorized | HttpStatus.Forbidden) =>
+                                    AIProviderAuthException(provider, message)
+                                case Result.Success(HttpStatus.TooManyRequests) => AIRateLimitException(provider, message)
+                                case Result.Success(s) if s.isServerError       => AIProviderUnavailableException(provider, message)
+                                case _                                          => AIRequestRejectedException(provider, code, message)
+                        case Absent => AIRequestRejectedException(provider, 0, message)
             exc
         }
 

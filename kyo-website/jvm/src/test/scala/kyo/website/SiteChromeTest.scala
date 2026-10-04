@@ -28,7 +28,7 @@ abstract class SiteChromeTest extends WebsiteTest:
     /** Serves the site, opens `route` in a fresh Chrome once the page's network is idle, and runs `f` with the served site. */
     protected def inChrome[A](route: String)(f: ServedSite.Site => A < (Browser & Async & Abort[BrowserReadException]))(using
         Frame
-    ): A < (Async & Scope & Abort[WebsiteException | FileSystemException | HttpBindException | BrowserException]) =
+    ): A < (Async & Scope & Abort[WebsiteException | FileSystemException | HttpBindException | HttpRouteException | BrowserException]) =
         ServedSite.serve { site =>
             Abort.recover[BrowserSetupException] { (ex: BrowserSetupException) =>
                 val msg = ex.getMessage

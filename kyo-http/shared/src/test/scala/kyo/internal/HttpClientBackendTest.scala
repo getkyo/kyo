@@ -138,7 +138,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
 
             Scope.run {
                 withServer(redirect, seen) { url =>
-                    HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                    HttpClient.withConfig(HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)) {
                         HttpClient.init().map { httpClient =>
                             val request = HttpRequest
                                 .postRaw(HttpUrl(url.scheme, url.host, url.port, "/multipart-start", Absent))
@@ -420,7 +420,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         Scope.run {
             withServer(startEp, targetEp) { url =>
                 var called = false
-                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                HttpClient.withConfig(HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)) {
                     HttpClient.initUnscoped().map { hc =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/start", Absent))
                         hc.sendWith(startRoute, request) { resp =>
@@ -661,8 +661,8 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         Scope.run {
             withServer(ep) { url =>
                 var called = false
-                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
-                    HttpClient.initUnscoped(maxConnectionsPerHost = 2).map { hc =>
+                HttpClient.withConfig(HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)) {
+                    HttpClient.initUnscoped(maxConnectionsPerHost = HttpClient.PoolSize(2)).map { hc =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
                         // Make 5 sequential requests — pool should reuse connections
                         Kyo.foreach(1 to 5) { _ =>
@@ -709,7 +709,11 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val recording       = new RecordingConnection(clientConn)
         val transport       = new DeferredConnectTransport(recording)
         val backend         = HttpClientBackend.init(transport, 2, 60.seconds)
-        val connectFiber    = backend.connect(HttpUrl.parse("http://test.invalid/").getOrThrow, 60.seconds, HttpTlsConfig.default)
+        val connectFiber    = backend.connect(
+            HttpUrl.parse("http://test.invalid/").getOrThrow,
+            60.seconds,
+            HttpTlsConfig.default
+        )
         // Settle the caller before the connect can hand anything over: from here the handoff is guaranteed to fail.
         connectFiber.safe.interrupt.andThen {
             Sync.Unsafe.defer(transport.release()).andThen {
@@ -761,7 +765,11 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
 
         "a pooled request's fresh connection" in {
             val route = HttpRoute.getRaw("ping").response(_.bodyText)
-            leftOpen(_.sendWithConfig(route, HttpRequest.getRaw(url), HttpClientConfig(timeout = Duration.Infinity))(identity))
+            leftOpen(_.sendWithConfig(
+                route,
+                HttpRequest.getRaw(url),
+                HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)
+            )(identity))
         }
 
         "connectWith" in {
@@ -804,7 +812,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val response = "HTTP/1.1 302 Found\r\nLocation: http://münchen.de/\r\nContent-Length: 0\r\n\r\n"
         Scope.run {
             withRawPeer(response) { port =>
-                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                HttpClient.withConfig(HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)) {
                     HttpClient.use { hc =>
                         val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/start", Absent))
                         Abort.run[HttpException](hc.sendWith(nonAsciiRoute, request)(identity)).map {
@@ -826,7 +834,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val response = "HTTP/1.1 302 Found\r\nLocation: /café\r\nContent-Length: 0\r\n\r\n"
         Scope.run {
             withRawPeer(response) { port =>
-                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                HttpClient.withConfig(HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)) {
                     HttpClient.use { hc =>
                         val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/start", Absent))
                         Abort.run[HttpException](hc.sendWith(nonAsciiRoute, request)(identity)).map {
@@ -1003,7 +1011,13 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                         // Run connectRaw in a nested Scope so its finalizer fires before the peer observation.
                         Scope.run {
                             Abort.run[HttpException](
-                                client.connectRaw(url, HttpMethod.GET, Span.empty[Byte], HttpHeaders.empty, 30.seconds)
+                                client.connectRaw(
+                                    url,
+                                    HttpMethod.GET,
+                                    Span.empty[Byte],
+                                    HttpHeaders.empty,
+                                    kyo.net.Transport.DefaultConnectTimeout
+                                )
                             ).map {
                                 case Result.Failure(e: HttpStatusException) =>
                                     assert(e.status == HttpStatus.InternalServerError)

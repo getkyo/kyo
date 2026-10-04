@@ -189,7 +189,9 @@ class HttpClientBackendResponseFailureTest extends kyo.BaseHttpTest:
           */
         def twoOnOneClient(port: Int, requests: AtomicInt.Unsafe, accepts: AtomicInt.Unsafe)(
             send: Int => Result[HttpException, String] < Async
-        )(using Frame): (Result[HttpException, String], Result[HttpException, String], Int, Int) < (Async & Scope) =
+        )(using
+            Frame
+        ): (Result[HttpException, String], Result[HttpException, String], Int, Int) < (Async & Scope & Abort[HttpConfigException]) =
             HttpClient.init().map { client =>
                 HttpClient.let(client) {
                     send(port).map(first => send(port).map(second => (first, second, requests.get(), accepts.get())))
@@ -295,8 +297,9 @@ class HttpClientBackendResponseFailureTest extends kyo.BaseHttpTest:
             withPeer(conn =>
                 onRequest(conn)(discard(conn.outbound.offer(bytes(s"HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n$body"))))
             ) { port =>
-                HttpClient.init(transportConfig = HttpTransportConfig.default.readChunkSize(262144)).map { client =>
-                    HttpClient.let(client)(getText(port).map(_.map(_.length)))
+                HttpClient.init(transportConfig = HttpTransportConfig.default.readChunkSize(256.kib)).map {
+                    client =>
+                        HttpClient.let(client)(getText(port).map(_.map(_.length)))
                 }
             }.map(result => assertValue(result, Result.succeed(150000)))
         }
@@ -528,11 +531,11 @@ class HttpClientBackendResponseFailureTest extends kyo.BaseHttpTest:
         def inMemory(streaming: Boolean, reads: Seq[String], whileCheckedOut: String, whilePooled: String)(using
             Frame
         ): (String, String, Int) < (Async & Abort[Any] & Scope) =
-            val (client1, server1)                                           = TransportConnection.inMemoryPair()
-            val (client2, server2)                                           = TransportConnection.inMemoryPair()
-            val transport                                                    = new TestChannelTransport(Seq(client1, client2))
-            val backend                                                      = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                                                       = HttpClientConfig(timeout = Duration.Infinity)
+            val (client1, server1) = TransportConnection.inMemoryPair()
+            val (client2, server2) = TransportConnection.inMemoryPair()
+            val transport          = new TestChannelTransport(Seq(client1, client2))
+            val backend            = HttpClientBackend.init(transport, 2, 60.seconds)
+            val config             = HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)
             def offer(server: kyo.net.Connection, read: String): Unit < Sync =
                 Sync.Unsafe.defer(if read.nonEmpty then discard(server.outbound.offer(bytes(read))))
             def serve(server: kyo.net.Connection, reads: Seq[String]): Unit < (Async & Abort[Closed]) =

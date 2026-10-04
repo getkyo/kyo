@@ -519,13 +519,12 @@ final private[kyo] class HttpContainerBackend(
         // Force-remove on rootless podman frequently exceeds the default kyo-http timeout (5s).
         // Bump it for the force=true case to absorb the slower SIGKILL+cleanup path.
         val call =
-            withErrorMapping(ctxContainer(id)) {
-                HttpClient.deleteText(
-                    url(s"/containers/${id.value}", "force" -> force.toString, "v" -> removeVolumes.toString)
-                ).unit
-            }
-        val deleted = if force then HttpClient.withConfig(_.timeout(30.seconds))(call) else call
-        deleted.andThen(awaitRemoved(id))
+            HttpClient.deleteText(
+                url(s"/containers/${id.value}", "force" -> force.toString, "v" -> removeVolumes.toString)
+            ).unit
+        withErrorMapping(ctxContainer(id)) {
+            if force then HttpClient.withConfig(_.timeout(30.seconds))(call) else call
+        }.andThen(awaitRemoved(id))
     end remove
 
     /** DELETE acks while teardown is still in flight on rootless podman, so block on `/wait?condition=removed` until the container is gone
@@ -2897,7 +2896,7 @@ private[kyo] object HttpContainerBackend:
     val defaultDaemonTimeout: Duration = 30.seconds
 
     /** `current`, the caller's timeout, raised to at least `floor` plus `grace`. */
-    private[kyo] def daemonDeadline(floor: Duration, current: Duration, grace: Duration): Duration =
+    private[kyo] def daemonDeadline(floor: Duration, current: HttpClientConfig.TimeLimit, grace: Duration): HttpClientConfig.TimeLimit =
         current.max(floor + grace)
 
     /** Default Docker/Podman Engine API version targeted by the HTTP backend. Override via

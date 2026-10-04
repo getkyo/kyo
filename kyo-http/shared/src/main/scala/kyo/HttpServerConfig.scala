@@ -13,8 +13,8 @@ import kyo.*
   * @param host
   *   Network interface to bind on. Defaults to `127.0.0.1` (localhost only). Use `0.0.0.0` to listen on all interfaces.
   * @param maxContentLength
-  *   Maximum buffered request body size in bytes. Defaults to 65536 (64KB). Requests exceeding this limit receive a 413 response. Streaming
-  *   request bodies are not subject to this limit.
+  *   Maximum buffered request body size. Defaults to 64 KiB. Requests exceeding this limit receive a 413 response. Streaming request
+  *   bodies are not subject to this limit.
   * @param backlog
   *   TCP listen backlog — maximum number of pending connections queued by the OS before new connections are refused. Defaults to 128.
   * @param keepAlive
@@ -54,9 +54,12 @@ import kyo.*
   * @param autoFilters
   *   Whether ServiceLoader-discovered server filters are applied. Defaults to true.
   * @param maxMultipartPartSize
-  *   The largest part, headers and content together, a `bodyMultipartStream` route accepts, in bytes. A part is delivered whole, as one
-  *   span, so this bounds the memory one part holds; a larger part fails the stream with `HttpPayloadTooLargeException`. Defaults to
-  *   `Int.MaxValue`, the most one span can hold.
+  *   The largest part, headers and content together, a `bodyMultipartStream` route accepts. A part is delivered whole, as one span, so
+  *   this bounds the memory one part holds; a larger part fails the stream with `HttpPayloadTooLargeException`. Defaults to `Int.MaxValue`
+  *   bytes, the most one span can hold.
+  *
+  * `maxContentLength` and `maxMultipartPartSize` are each a [[kyo.ByteSize]], narrowed where the server uses them: zero becomes one byte and
+  * a size beyond `Int.MaxValue` becomes `Int.MaxValue`, the most one span can hold, so no byte size is refused.
   *
   * @see
   *   [[kyo.HttpServer.init]] Uses this config to bind a server
@@ -68,7 +71,7 @@ import kyo.*
 case class HttpServerConfig(
     port: Int,
     host: String,
-    maxContentLength: Int,
+    maxContentLength: ByteSize,
     backlog: Int,
     keepAlive: Boolean,
     tcpFastOpen: Boolean,
@@ -82,11 +85,11 @@ case class HttpServerConfig(
     idleTimeout: Duration = 60.seconds,
     autoFilters: Boolean = true,
     lingeringTimeout: Duration = 5.seconds,
-    maxMultipartPartSize: Int = Int.MaxValue
+    maxMultipartPartSize: ByteSize = HttpServerConfig.DefaultMaxMultipartPartSize
 ) derives CanEqual:
     def port(p: Int): HttpServerConfig                            = copy(port = p)
     def host(h: String): HttpServerConfig                         = copy(host = h)
-    def maxContentLength(v: Int): HttpServerConfig                = copy(maxContentLength = v)
+    def maxContentLength(v: ByteSize): HttpServerConfig           = copy(maxContentLength = v)
     def backlog(v: Int): HttpServerConfig                         = copy(backlog = v)
     def keepAlive(v: Boolean): HttpServerConfig                   = copy(keepAlive = v)
     def tcpFastOpen(v: Boolean): HttpServerConfig                 = copy(tcpFastOpen = v)
@@ -98,7 +101,7 @@ case class HttpServerConfig(
     def transportConfig(v: HttpTransportConfig): HttpServerConfig = copy(transportConfig = v)
     def idleTimeout(v: Duration): HttpServerConfig                = copy(idleTimeout = v)
     def lingeringTimeout(v: Duration): HttpServerConfig           = copy(lingeringTimeout = v)
-    def maxMultipartPartSize(v: Int): HttpServerConfig            = copy(maxMultipartPartSize = v)
+    def maxMultipartPartSize(v: ByteSize): HttpServerConfig       = copy(maxMultipartPartSize = v)
     def autoFilters(v: Boolean): HttpServerConfig                 = copy(autoFilters = v)
     def withoutAutoFilters: HttpServerConfig                      = autoFilters(false)
     def openApi(
@@ -112,11 +115,14 @@ end HttpServerConfig
 
 object HttpServerConfig:
 
+    /** The largest multipart part a server accepts by default: the most one span can hold. */
+    val DefaultMaxMultipartPartSize: ByteSize = ByteSize.fromBytes(Int.MaxValue.toLong)
+
     val default: HttpServerConfig =
         HttpServerConfig(
             port = 0,
             host = "127.0.0.1",
-            maxContentLength = 65536,
+            maxContentLength = 64.kib,
             backlog = 128,
             keepAlive = true,
             tcpFastOpen = true,
@@ -130,7 +136,7 @@ object HttpServerConfig:
             idleTimeout = 60.seconds,
             autoFilters = true,
             lingeringTimeout = 5.seconds,
-            maxMultipartPartSize = Int.MaxValue
+            maxMultipartPartSize = DefaultMaxMultipartPartSize
         )
 
     case class OpenApiEndpoint(

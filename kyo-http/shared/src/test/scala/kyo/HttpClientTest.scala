@@ -101,23 +101,28 @@ class HttpClientTest extends BaseHttpTest:
     ): A < (S & Async & Abort[HttpException] & Scope) =
         initTrustAllClient().map(f)
 
-    def withClient[A, S](maxConnectionsPerHost: Int)(f: HttpClient => A < (S & Async & Abort[HttpException]))(using
+    def withClient[A, S](maxConnectionsPerHost: HttpClient.PoolSize)(f: HttpClient => A < (S & Async & Abort[HttpException]))(using
         Frame,
         kyo.test.AssertScope
     ): A < (S & Async & Abort[HttpException] & Scope) =
         initTrustAllClient(maxConnectionsPerHost).map(f)
 
-    val noTimeout = HttpClientConfig(timeout = Duration.Infinity)
+    /** A trust-all client with a pool size chosen at runtime, such as one a `Choice` branch picks. */
+    def initTrustAllClientSized(maxConnectionsPerHost: Int)(using Frame): HttpClient < (Async & Scope & Abort[HttpConfigException]) =
+        Abort.get(HttpClient.PoolSize.init(maxConnectionsPerHost)).map(initTrustAllClient(_))
+
+    val noTimeout = HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)
 
     "config" - {
 
         "default values" in {
             val config = HttpClientConfig()
             assert(config.baseUrl == Absent)
-            assert(config.timeout == 5.seconds)
+            assert(config.timeout.duration == 5.seconds)
             assert(config.connectTimeout == 30.seconds)
             assert(config.followRedirects == true)
-            assert(config.maxRedirects == 10)
+            assert(config.maxRedirects.count == 10)
+            assert(config.maxResponseLength == 100.mib)
             assert(config.retrySchedule == Absent)
             assert(config.autoFilters == true)
             assert(config.clientFilter.eq(HttpFilter.noop))
@@ -161,7 +166,7 @@ class HttpClientTest extends BaseHttpTest:
         "current config and filter can be inspected" in {
             HttpClient.withConfig(noTimeout.filter(HttpFilter.client.addHeader("X-Test", "1"))) {
                 HttpClient.useConfig { config =>
-                    assert(config.timeout == Duration.Infinity)
+                    assert(config.timeout.duration == Duration.Infinity)
                     assert(!config.clientFilter.eq(HttpFilter.noop))
                 }.andThen {
                     HttpClient.useFilter { filter =>
@@ -177,16 +182,79 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "negative maxRedirects throws" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpClientConfig(maxRedirects = -1)
+        "an invalid limit is refused with HttpConfigException naming the setting" in {
+            val config = HttpClientConfig()
+            assert(Chunk(
+                config.timeout(Duration.Zero).failure.map(_.setting),
+                config.maxRedirects(-1).failure.map(_.setting)
+            ) == Chunk(Present("timeout"), Present("maxRedirects")))
+        }
+
+        "a valid limit is set" in {
+            val config = HttpClientConfig()
+            assert(config.timeout(10.seconds).map(_.timeout.duration) == Result.succeed(10.seconds))
+            assert(config.timeout(Duration.Infinity).map(_.timeout.duration) == Result.succeed(Duration.Infinity))
+            assert(config.maxRedirects(0).map(_.maxRedirects.count) == Result.succeed(0))
+            assert(config.maxResponseLength(1.kib).maxResponseLength == 1.kib)
+        }
+
+        "a connect deadline is a plain duration kyo-net takes as given, zero included" in {
+            val config = HttpClientConfig()
+            assert(config.connectTimeout == kyo.net.Transport.DefaultConnectTimeout)
+            assert(config.connectTimeout(1.second).connectTimeout == 1.second)
+            assert(config.connectTimeout(Duration.Zero).connectTimeout == Duration.Zero)
+        }
+
+        "the checked limits refuse what the setters refuse" in {
+            assert(HttpClientConfig.TimeLimit.init(Duration.Zero).isFailure)
+            assert(HttpClientConfig.RedirectLimit.init(-1).isFailure)
+        }
+
+        "a time limit raised to a floor keeps the longer of the two" in {
+            val limit = HttpClientConfig.TimeLimit.defaultTimeout
+            assert(limit.max(30.seconds).duration == 30.seconds)
+            assert(limit.max(1.second).duration == 5.seconds)
+            assert(limit.max(Duration.Zero).duration == 5.seconds)
+            assert(limit.max(Duration.Infinity) == HttpClientConfig.TimeLimit.unlimited)
+            assert(HttpClientConfig.TimeLimit.unlimited.max(30.seconds) == HttpClientConfig.TimeLimit.unlimited)
+        }
+
+        "the refusal is raised at the caller's frame" in {
+            val (refused, here) = (HttpClientConfig().timeout(Duration.Zero), summon[Frame])
+            val at              = refused.failure.map(e => (e.frame.position.fileName, e.frame.position.lineNumber))
+            assert(at == Present(("HttpClientTest.scala", here.position.lineNumber)))
+        }
+
+        "withConfig aborts with the refusal before the block runs" in {
+            AtomicBoolean.init(false).map { ran =>
+                Abort.run[HttpConfigException](HttpClient.withConfig(_.maxRedirects(-1))(ran.set(true))).map { result =>
+                    ran.get.map { blockRan =>
+                        assert(result.failure.map(_.setting) == Present("maxRedirects"))
+                        assert(!blockRan)
+                    }
+                }
             }
         }
 
-        "zero timeout throws" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpClientConfig(timeout = Duration.Zero)
+        "withConfig applies a checked setter's config to the block" in {
+            HttpClient.withConfig(_.followRedirects(false).maxRedirects(3)) {
+                HttpClient.useConfig { config =>
+                    assert(config.maxRedirects.count == 3)
+                    assert(!config.followRedirects)
+                }
             }
+        }
+
+        "the constructor and copy take checked limits, not raw values" in {
+            typeCheckFailure("HttpClientConfig(timeout = Duration.Zero)")
+            typeCheckFailure("HttpClientConfig().copy(maxRedirects = -1)")
+        }
+
+        "a literal redirect limit is checked at compile time" in {
+            val config = HttpClientConfig(maxRedirects = HttpClientConfig.RedirectLimit(0))
+            assert(config.maxRedirects.count == 0)
+            typeCheckFailure("HttpClientConfig.RedirectLimit(-1)")("must be zero or more")
+            typeCheckFailure("val n = 3; HttpClientConfig.RedirectLimit(n)")("Cannot reduce")
         }
 
         "a baseUrl without a scheme or a host fails with HttpUrlParseException naming why" in {
@@ -210,16 +278,23 @@ class HttpClientTest extends BaseHttpTest:
             )
         }
 
-        "zero connectTimeout throws" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpClientConfig(connectTimeout = Duration.Zero)
-            }
+        "a pool below two connections per host is refused at the caller's frame, since the pool holds two or more" in {
+            val (refused, here) = (HttpClient.PoolSize.init(1), summon[Frame])
+            assert(refused.failure.map(_.setting) == Present("maxConnectionsPerHost"))
+            assert(refused.failure.map(_.frame.position.lineNumber) == Present(here.position.lineNumber))
+            assert(HttpClient.PoolSize.init(2).map(_.value) == Result.succeed(2))
+            typeCheckFailure("HttpClient.PoolSize(1)")("must be two or more")
+            typeCheckFailure("HttpClient.init(maxConnectionsPerHost = 4)")("Found")
         }
 
-        "maxConnectionsPerHost must be positive" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpClient.initUnscoped(maxConnectionsPerHost = 0)
-            }
+        "an idle timeout of zero is refused before a client exists" in {
+            assert(HttpClientConfig.TimeLimit.init(Duration.Zero).failure.map(_.setting) == Present("timeLimit"))
+            typeCheckFailure("HttpClient.init(idleConnectionTimeout = Duration.Zero)")("Found")
+        }
+
+        "a client built from checked values declares no failure" in {
+            typeCheck("val _: HttpClient < (Async & Scope) = HttpClient.init(HttpClient.PoolSize(2))")
+            typeCheck("val _: HttpClient < Sync = HttpClient.initUnscoped()")
         }
     }
 
@@ -524,6 +599,21 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
+        "a request cookie the grammar refuses fails the send with HttpCookieException" - {
+            val route = HttpRoute.getRaw("dashboard")
+                .request(_.cookie[String]("session"))
+                .response(_.bodyText)
+            val ep = route.handler(_ => HttpResponse.ok("served"))
+            runServer(ep) { url =>
+                val request = HttpRequest.getRaw(HttpUrl.fromUri("/dashboard"))
+                    .addField("session", "abc; theme=evil")
+                Abort.run[HttpException](send(url, route, request)).map {
+                    case Result.Failure(e: HttpCookieException) => assert(e.part == "the value of cookie 'session'")
+                    case other                                  => fail(s"expected HttpCookieException, got $other")
+                }
+            }
+        }
+
         "response cookie" - {
             val route = HttpRoute.getRaw("login")
                 .response(_.cookie[String]("token").bodyText)
@@ -621,11 +711,24 @@ class HttpClientTest extends BaseHttpTest:
             val route     = HttpRoute.getRaw("big").response(_.bodyText)
             val ep        = route.handler(_ => HttpResponse.ok(largeBody))
             withServer(ep) { url =>
-                HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                HttpClient.withConfig(_.maxResponseLength(64.kib)) {
                     Abort.run[HttpException](HttpClient.getText(s"$url/big")).map {
-                        case Result.Failure(_: HttpPayloadTooLargeException) => succeed
+                        case Result.Failure(e: HttpPayloadTooLargeException) => assert((e.bodySize, e.maxSize) == (256.kib, 64.kib))
                         case other                                           =>
                             fail(s"expected HttpPayloadTooLargeException for a 256 KiB response under a 64 KiB cap, got $other")
+                    }
+                }
+            }
+        }
+
+        "a zero maxResponseLength is narrowed to one byte where the client buffers, not refused" in {
+            val route = HttpRoute.getRaw("two").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok("ab"))
+            withServer(ep) { url =>
+                HttpClient.withConfig(_.maxResponseLength(ByteSize.Zero)) {
+                    Abort.run[HttpException](HttpClient.getText(s"$url/two")).map {
+                        case Result.Failure(e: HttpPayloadTooLargeException) => assert((e.bodySize, e.maxSize) == (2.bytes, 1.bytes))
+                        case other                                           => fail(s"expected HttpPayloadTooLargeException, got $other")
                     }
                 }
             }
@@ -637,7 +740,7 @@ class HttpClientTest extends BaseHttpTest:
             val route = HttpRoute.getRaw("ok").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok(body))
             withServer(ep) { url =>
-                HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                HttpClient.withConfig(_.maxResponseLength(64.kib)) {
                     HttpClient.getText(s"$url/ok").map(b => assert(b.length == 32 * 1024))
                 }
             }
@@ -869,7 +972,7 @@ class HttpClientTest extends BaseHttpTest:
             runServer(ep) { url =>
                 var called = false
                 Abort.get(HttpClientConfig.BaseUrl.init(HttpUrl(url.scheme, url.host, url.port, "/", Absent))).map { base =>
-                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = Duration.Infinity)) {
+                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = HttpClientConfig.TimeLimit.unlimited)) {
                         withClient { client =>
                             client.sendWith(route, HttpRequest.getRaw(HttpUrl.fromUri("/api"))) { resp =>
                                 called = true
@@ -887,7 +990,7 @@ class HttpClientTest extends BaseHttpTest:
             val ep    = route.handler(_ => HttpResponse.ok("prefixed"))
             runServer(ep) { url =>
                 Abort.get(HttpClientConfig.BaseUrl.init(HttpUrl(url.scheme, url.host, url.port, "/v1/", Absent))).map { base =>
-                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = Duration.Infinity)) {
+                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = HttpClientConfig.TimeLimit.unlimited)) {
                         withClient(_.sendWith(route, HttpRequest.getRaw(HttpUrl.fromUri("/api")))(resp =>
                             assert(resp.fields.body == "prefixed")
                         ))
@@ -902,7 +1005,7 @@ class HttpClientTest extends BaseHttpTest:
             runServer(ep) { url =>
                 val request = HttpRequest.getRaw(HttpUrl(Absent, "", 80, "", Absent)).addField("name", "a b+c")
                 Abort.get(HttpClientConfig.BaseUrl.init(HttpUrl(url.scheme, url.host, url.port, "/v1", Absent))).map { base =>
-                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = Duration.Infinity)) {
+                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = HttpClientConfig.TimeLimit.unlimited)) {
                         withClient(_.sendWith(HttpRoute.getRaw("users" / Capture[String]("name")).response(_.bodyText), request)(resp =>
                             assert(resp.fields.body == "[a b+c]")
                         ))
@@ -917,7 +1020,7 @@ class HttpClientTest extends BaseHttpTest:
             runServer(ep) { url =>
                 var called = false
                 Abort.get(HttpClientConfig.BaseUrl.init("http://other-host:9999/")).map { base =>
-                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = Duration.Infinity)) {
+                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = HttpClientConfig.TimeLimit.unlimited)) {
                         withClient { client =>
                             val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/data", Absent))
                             client.sendWith(route, request) { resp =>
@@ -975,7 +1078,7 @@ class HttpClientTest extends BaseHttpTest:
             val ep    = route.handler(_ => HttpResponse.redirect("/loop").addField("body", "loop"))
             runServer(ep) { url =>
                 var called = false
-                HttpClient.withConfig(noTimeout.copy(maxRedirects = 3)) {
+                HttpClient.withConfig(_ => noTimeout.maxRedirects(3)) {
                     withClient { client =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/loop", Absent))
                         Abort.run[HttpException](
@@ -1568,7 +1671,7 @@ class HttpClientTest extends BaseHttpTest:
                 Latch.init(1).map(_.await).andThen(HttpResponse.ok("too late"))
             }
             runServer(ep) { url =>
-                HttpClient.withConfig(HttpClientConfig(timeout = 100.millis)) {
+                HttpClient.withConfig(_ => HttpClientConfig().timeout(100.millis)) {
                     withClient { client =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
                         Abort.run[HttpException](
@@ -1592,7 +1695,7 @@ class HttpClientTest extends BaseHttpTest:
             runServer(ep) { url =>
                 var called = false
                 HttpClient.withConfig(noTimeout) {
-                    initTrustAllClient(maxConnectionsPerHost = 2).map { c =>
+                    initTrustAllClient(maxConnectionsPerHost = HttpClient.PoolSize(2)).map { c =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
                         // Use both slots by nesting two sendWith calls, then try a third
                         c.sendWith(route, request) { _ =>
@@ -1623,7 +1726,7 @@ class HttpClientTest extends BaseHttpTest:
             withServer(ep) { url =>
                 var called = false
                 HttpClient.withConfig(noTimeout) {
-                    withClient(2) { c =>
+                    withClient(HttpClient.PoolSize(2)) { c =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/maybe", Absent))
                         Kyo.foreach(1 to 3) { _ =>
                             c.sendWith(route, request) { r =>
@@ -1663,7 +1766,7 @@ class HttpClientTest extends BaseHttpTest:
             val ep    = route.handler(_ => HttpResponse.ok("pong"))
             runServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
-                    withClient(3) { c =>
+                    withClient(HttpClient.PoolSize(3)) { c =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
                         Kyo.foreach(1 to 5) { _ =>
                             c.sendWith(route, request)(identity)
@@ -1691,7 +1794,7 @@ class HttpClientTest extends BaseHttpTest:
                     // `HttpClient.init`, whose release registers in the ENCLOSING scope; without this the 2 sizes x 10 repeats = 20 clients
                     // would all stay open until the leaf ends, and each owns its own transport (ioPoolSize drivers, one poller fd apiece).
                     _ <- Scope.run {
-                        initTrustAllClient(size).map { c =>
+                        initTrustAllClientSized(size).map { c =>
                             // Sequentially send 10 requests with different body data through a small pool
                             // Each reuses a connection, which tests the mutable var reset in the backend
                             Kyo.foreach(0 until 10) { i =>
@@ -1734,7 +1837,7 @@ class HttpClientTest extends BaseHttpTest:
                     // Scope.run per branch: same reason as "connection reuse with varying data" above. The client's release registers in
                     // the enclosing scope, so without this every iteration's client (and its transport) stays open until the leaf ends.
                     _ <- Scope.run {
-                        initTrustAllClient(size).map { c =>
+                        initTrustAllClientSized(size).map { c =>
                             val streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-reuse", Absent))
                             val textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text-reuse", Absent))
                             // Stream response, fully consume
@@ -1776,7 +1879,7 @@ class HttpClientTest extends BaseHttpTest:
             val ep    = route.handler(_ => HttpResponse.ok("pong"))
             runServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
-                    withClient(10) { c =>
+                    withClient(HttpClient.PoolSize(10)) { c =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
                         Async.fill(5, 5) {
                             c.sendWith(route, request)(identity)
@@ -1798,7 +1901,7 @@ class HttpClientTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
-                    withClient(10) { c =>
+                    withClient(HttpClient.PoolSize(10)) { c =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/count", Absent))
                         Async.fill(5, 5) {
                             c.sendWith(route, request)(identity)
@@ -1817,7 +1920,7 @@ class HttpClientTest extends BaseHttpTest:
             val ep    = route.handler(_ => HttpResponse.ok("data"))
             runServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
-                    withClient(10) { c =>
+                    withClient(HttpClient.PoolSize(10)) { c =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/data", Absent))
                         c.sendWith(route, request)(identity).map { r1 =>
                             assert(r1.status == HttpStatus.OK)
@@ -1843,7 +1946,7 @@ class HttpClientTest extends BaseHttpTest:
                     size <- sizes
                     _    <- Scope.run {
                         for
-                            c     <- initTrustAllClient(size)
+                            c     <- initTrustAllClientSized(size)
                             latch <- Latch.init(1)
                             request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
                             fibers <- Kyo.fill(size * 3)(Fiber.initUnscoped(
@@ -1878,7 +1981,7 @@ class HttpClientTest extends BaseHttpTest:
                     size <- sizes
                     _    <- Scope.run {
                         for
-                            c     <- initTrustAllClient(size)
+                            c     <- initTrustAllClientSized(size)
                             latch <- Latch.init(1)
                             request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/burst", Absent))
                             fibers <- Kyo.fill(size)(Fiber.initUnscoped(
@@ -1913,7 +2016,7 @@ class HttpClientTest extends BaseHttpTest:
                     // changing the test's stress shape (still fires `size` concurrent per batch).
                     _ <- Scope.run {
                         for
-                            c <- initTrustAllClient(size + 2)
+                            c <- initTrustAllClientSized(size + 2)
                             request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stress", Absent))
                             // Run 5 batches, each batch fires `size` concurrent requests with a latch
                             _ <- Kyo.foreach(1 to 5) { _ =>
@@ -1956,7 +2059,7 @@ class HttpClientTest extends BaseHttpTest:
                     size <- sizes
                     _    <- Scope.run {
                         for
-                            c     <- initTrustAllClient(size * 2)
+                            c     <- initTrustAllClientSized(size * 2)
                             latch <- Latch.init(1)
                             textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text", Absent))
                             streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-mix", Absent))
@@ -2012,7 +2115,7 @@ class HttpClientTest extends BaseHttpTest:
                     size <- sizes
                     _    <- Scope.run {
                         for
-                            c      <- initTrustAllClient(size)
+                            c      <- initTrustAllClientSized(size)
                             latch  <- Latch.init(1)
                             fibers <- Kyo.foreach(0 until size) { i =>
                                 Fiber.initUnscoped {
@@ -2058,7 +2161,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1024)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1.kib)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(512)(0.toByte) // 512 bytes, within 1024 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -2072,7 +2175,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64.bytes)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(128)(0.toByte) // 128 bytes, exceeds 64 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -2086,7 +2189,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100.bytes)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(100)(0.toByte) // exactly 100 bytes
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -2100,7 +2203,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100.bytes)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(101)(0.toByte) // 101 bytes, over 100 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -2112,7 +2215,7 @@ class HttpClientTest extends BaseHttpTest:
         "empty body always succeeds" in {
             val route  = HttpRoute.getRaw("data").response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1.bytes)
             withServerConfig(config)(ep) { url =>
                 send(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/data"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -2125,7 +2228,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyText)
                 .response(_.bodyText)
             val ep     = route.handler(req => HttpResponse.ok(req.fields.body))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64.bytes)
             withServerConfig(config)(ep) { url =>
                 // First request: too large, should get 413
                 val bigBody = "x" * 128
@@ -2150,7 +2253,7 @@ class HttpClientTest extends BaseHttpTest:
             val config = HttpServerConfig.default
             assert(config.port == 0)
             assert(config.host == "127.0.0.1")
-            assert(config.maxContentLength == 65536)
+            assert(config.maxContentLength == 64.kib)
             assert(config.backlog == 128)
             assert(config.keepAlive == true)
             assert(config.tcpFastOpen == true)
@@ -2160,13 +2263,13 @@ class HttpClientTest extends BaseHttpTest:
 
         "builder methods" in {
             val config = HttpServerConfig.default
-                .maxContentLength(1024)
+                .maxContentLength(1.kib)
                 .backlog(256)
                 .keepAlive(false)
                 .tcpFastOpen(false)
                 .flushConsolidationLimit(128)
                 .strictCookieParsing(true)
-            assert(config.maxContentLength == 1024)
+            assert(config.maxContentLength == 1.kib)
             assert(config.backlog == 256)
             assert(config.keepAlive == false)
             assert(config.tcpFastOpen == false)
@@ -2462,7 +2565,7 @@ class HttpClientTest extends BaseHttpTest:
                     size <- sizes
                     _    <- Scope.run {
                         for
-                            c     <- initTrustAllClient(size)
+                            c     <- initTrustAllClientSized(size)
                             latch <- Latch.init(1)
                             slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow-close", Absent))
                             fibers <- Kyo.fill(size)(Fiber.initUnscoped(
@@ -3286,17 +3389,14 @@ class HttpClientTest extends BaseHttpTest:
 
         "withConfig transform preserves untouched fields" in {
             Abort.get(HttpClientConfig.BaseUrl.init("http://localhost:1234/")).map { base =>
-                val config = noTimeout.copy(
-                    baseUrl = Present(base),
-                    maxRedirects = 3,
-                    followRedirects = false
-                )
-                HttpClient.withConfig(config) {
-                    HttpClient.withConfig(_.copy(maxRedirects = 20)) {
-                        HttpClient.use { _ =>
-                            // Can't directly read config from outside, but we can verify
-                            // the transform API compiles and works by checking behavior
-                            succeed("compile and runtime check: nested withConfig transforms compose without error")
+                val config = noTimeout.copy(baseUrl = Present(base), followRedirects = false)
+                HttpClient.withConfig(_ => config.maxRedirects(3)) {
+                    HttpClient.withConfig(_.maxRedirects(20)) {
+                        HttpClient.useConfig { current =>
+                            assert(current.maxRedirects.count == 20)
+                            assert(current.baseUrl == Present(base))
+                            assert(!current.followRedirects)
+                            assert(current.timeout == HttpClientConfig.TimeLimit.unlimited)
                         }
                     }
                 }
@@ -3383,7 +3483,7 @@ class HttpClientTest extends BaseHttpTest:
             withServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
                     // Pool size 2 (minimum), send sequential requests to verify reuse
-                    withClient(2) { c =>
+                    withClient(HttpClient.PoolSize(2)) { c =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/pump-reuse", Absent))
                         // Send 3 sequential requests through the pool
                         // All must succeed — connections are reused across requests
@@ -3443,7 +3543,7 @@ class HttpClientTest extends BaseHttpTest:
             val ep    = route.handler(_ => HttpResponse.ok("parallel-ok"))
             withServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
-                    withClient(10) { c =>
+                    withClient(HttpClient.PoolSize(10)) { c =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/pump-parallel", Absent))
                         Async.fill(10, 10) {
                             c.sendWith(route, request)(identity)

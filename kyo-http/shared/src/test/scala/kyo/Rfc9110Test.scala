@@ -40,7 +40,7 @@ class Rfc9110Test extends BaseHttpTest:
 
     // rawRoute: use to observe raw response status/headers without type-safe body decoding
     val rawRoute  = HttpRoute.getRaw("raw").response(_.bodyText)
-    val noTimeout = HttpClientConfig(timeout = Duration.Infinity)
+    val noTimeout = HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)
 
     // ==================== Section 9.3.2: HEAD ====================
 
@@ -515,7 +515,7 @@ class Rfc9110Test extends BaseHttpTest:
         val route = HttpRoute.postRaw("upload").request(_.bodyText).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok("ok"))
         // Use small maxContentLength
-        val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(10)
+        val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(10.bytes)
         Scope.run {
             HttpServer.init(config)(ep).map { server =>
                 val bigBody   = "x" * 100 // exceeds 10-byte limit
@@ -745,7 +745,7 @@ class Rfc9110Test extends BaseHttpTest:
         val ep1    = route1.handler(_ => HttpResponse.halt(HttpResponse.redirect("/dest")))
         val ep2    = route2.handler(_ => HttpResponse.ok("dest"))
         withServer(ep1, ep2) { port =>
-            HttpClient.withConfig(noTimeout.copy(maxRedirects = 0)) {
+            HttpClient.withConfig(_ => noTimeout.maxRedirects(0)) {
                 withClient { c =>
                     val req = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/r", Absent))
                     Abort.run(c.sendWith(rawRoute, req)(identity)).map { result =>

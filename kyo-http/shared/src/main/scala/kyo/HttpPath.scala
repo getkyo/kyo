@@ -11,8 +11,8 @@ import scala.language.implicitConversions
   * String literals implicitly convert to `Literal` segments. `Capture[A]("name")` parses the URL segment using an `HttpCodec[A]`.
   * `Capture.Rest("name")` captures the entire remaining path as a single `String`.
   *
-  * WARNING: `Rest` must be the last segment in a path. Placing it before other segments throws `IllegalArgumentException` at server
-  * startup.
+  * WARNING: `Rest` must be the last segment in a path. Placing it before other segments fails `HttpServer.init` with an
+  * [[kyo.HttpRouteException]].
   *
   * @tparam A
   *   the intersection of field types contributed by captures in this path

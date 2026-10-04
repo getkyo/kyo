@@ -434,7 +434,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 .request(_.bodyText)
                 .response(_.bodyText)
             val handler = route.handler(req => HttpResponse.ok(req.fields.body))
-            val config  = HttpServerConfig.default.maxContentLength(200000)
+            val config  = HttpServerConfig.default.maxContentLength(200000.bytes)
             tempSocketPath().map { sockPath =>
                 val fullConfig = config.unixSocket(sockPath)
                 Sync.ensure(Sync.defer(cleanupSocket(sockPath))) {
@@ -699,7 +699,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             val route   = HttpRoute.getRaw("pooled").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("pooled-ok"))
             withUnixServer(handler) { (server, sockPath) =>
-                HttpClient.init(maxConnectionsPerHost = 4).map { httpClient =>
+                HttpClient.init(maxConnectionsPerHost = HttpClient.PoolSize(4)).map { httpClient =>
                     HttpClient.let(httpClient) {
                         val url = mkUrl(sockPath, "/pooled")
                         Kyo.foreach(1 to 8) { _ =>
@@ -721,8 +721,8 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             val handler = route.handler(_ => HttpResponse.ok("shared-ok"))
             withUnixServer(handler) { (server, sockPath) =>
                 val backend = internal.HttpTestPlatformBackend.client
-                HttpClient.init(maxConnectionsPerHost = 2).map { client1 =>
-                    HttpClient.init(maxConnectionsPerHost = 2).map { client2 =>
+                HttpClient.init(maxConnectionsPerHost = HttpClient.PoolSize(2)).map { client1 =>
+                    HttpClient.init(maxConnectionsPerHost = HttpClient.PoolSize(2)).map { client2 =>
                         val url    = mkUrl(sockPath, "/shared")
                         val fiber1 = Fiber.initUnscoped(
                             HttpClient.let(client1) {

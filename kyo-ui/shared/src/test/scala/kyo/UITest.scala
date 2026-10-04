@@ -50,7 +50,7 @@ abstract class UITest extends kyo.test.Test[Any]:
 
     def withUI[A, S](ui: UI < Async)(f: A < (Browser & S))(using
         Frame
-    ): A < (Async & Scope & Abort[BrowserException] & Abort[HttpBindException] & S) =
+    ): A < (Async & Scope & Abort[BrowserException] & Abort[HttpServerException] & S) =
         // Shared Chrome AND shared server. Browser.runShared launches one Chrome process lazily and keeps it alive for
         // the run; each call attaches its own tab and tears it down via internal Scope.run. SharedUIServer likewise binds
         // ONE HttpServer for the run: this leaf's UI is stashed in the shared server's ref, then the shared Chrome
