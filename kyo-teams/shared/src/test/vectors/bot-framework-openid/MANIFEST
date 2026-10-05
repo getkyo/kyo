@@ -1,0 +1,18 @@
+# The Bot Framework's public OpenID metadata and three keys of the key set it names, as Microsoft served them on 2026-10-05 at 13:46
+# UTC. Captured once outside the tests with:
+#
+#   curl -sS -o openidconfiguration https://login.botframework.com/v1/.well-known/openidconfiguration
+#   curl -sS https://login.botframework.com/v1/.well-known/keys \
+#     | jq '{keys: [.keys[] | select(.kid == "UZ0aA372PPypysf9e4RqPZ0jFTI" or .kid == "bkXXVNMo4eEPK-4ikohtmzwQnkU" or .kid == "wK2X6vT6d4Yu1gUq1cHLPtArJlM")]}' > keys
+#
+# The metadata is byte for byte. The key set served 233 keys of one shape (RSA, sig, with x5c) differing only in their endorsements,
+# so three are kept, in the served order and value for value, with jq's formatting: a key endorsed for msteams, one endorsed only for
+# conversationconductorivr, and one endorsed for the public channels (webchat, slack, telegram, ...) but not msteams.
+#
+# A test serves them from a local peer, so verification runs against Microsoft's real documents without reaching the internet. To
+# refresh the snapshot, rerun both commands, choosing kids of the same three kinds if these are no longer served, and update the
+# digests below.
+source https://login.botframework.com/v1/.well-known/openidconfiguration and https://login.botframework.com/v1/.well-known/keys
+license public signing-key metadata Microsoft publishes for every Bot Framework client; no license stated
+file openidconfiguration aa3c3eee00f76f92dd68af98e49a16585ed2d0cf5815564335b54b1c40bbf520 openidconfiguration
+file keys b5ebc60ef2913cb90c80959f3dc9943c58d3437065b1c8be45f0ffa9dd598077 keys

@@ -132,25 +132,42 @@ class CompletionTest extends kyo.test.Test[Any]:
         assert(Completion.retryAfterOf(HttpHeaders.empty.add("retry-after", "-3"), now) == Absent)
     }
 
-    "awaitRetryAfter sleeps the asked wait, capped at the deadline, then re-raises; other failures pass through" in {
+    "retryWithin waits out a Retry-After that fits the deadline, surfaces one that does not at once, and retries nothing else early" in {
         Clock.withTimeControl { control =>
-            val throttled: Unit < (Async & Abort[AIGenException]) = Abort.fail(AIRateLimitException("p", "slow", Present(5.seconds)))
+            def throttled(attempts: AtomicInt, wait: Duration): Unit < (Sync & Abort[AIGenException]) =
+                attempts.incrementAndGet.andThen(Abort.fail(AIRateLimitException("p", "slow", Present(wait))))
             for
-                fiber   <- Fiber.init(Abort.run[AIGenException](Completion.awaitRetryAfter(60.seconds)(throttled)))
+                now     <- Clock.now
+                fitting <- AtomicInt.init
+                fiber   <- Fiber.init(Abort.run[AIGenException](Completion.retryWithin(
+                    now + 60.seconds,
+                    Schedule.never
+                )(throttled(fitting, 5.seconds))))
                 _       <- control.awaitPendingSleepers(1)
                 _       <- control.advance(4.seconds, 50.millis)
                 early   <- fiber.done
                 _       <- control.advance(2.seconds, 50.millis)
                 result  <- fiber.get
-                capped  <- Fiber.init(Abort.run[AIGenException](Completion.awaitRetryAfter(1.second)(throttled)))
-                _       <- control.awaitPendingSleepers(1)
-                _       <- control.advance(1.second, 50.millis)
-                cappedR <- capped.get
-                other <- Abort.run[AIGenException](Completion.awaitRetryAfter(60.seconds)(Abort.fail(AIProviderAuthException("p", "401"))))
+                beyond  <- AtomicInt.init
+                start   <- Clock.now
+                beyondR <-
+                    Abort.run[AIGenException](Completion.retryWithin(start + 2.minutes, Schedule.repeat(3))(throttled(beyond, 4.days)))
+                end     <- Clock.now
+                beyondN <- beyond.get
+                other   <- Abort.run[AIGenException](Completion.retryWithin(
+                    start + 60.seconds,
+                    Schedule.repeat(3)
+                )(Abort.fail(AIProviderAuthException("p", "401"))))
             yield
                 assert(!early, "the failure must not re-raise before the asked wait")
                 assert(result.failure.exists(_.isInstanceOf[AIRateLimitException]))
-                assert(cappedR.failure.exists(_.isInstanceOf[AIRateLimitException]), "a wait past the deadline is cut to it")
+                beyondR.failure match
+                    case Present(limit: AIRateLimitException) =>
+                        assert(limit.retryAfter == Present(4.days), s"the surfaced limit carries the asked wait: $limit")
+                    case _ => fail(s"a wait past the deadline surfaces as the rate limit: $beyondR")
+                end match
+                assert(beyondN == 1, s"a wait past the deadline is never retried, attempts: $beyondN")
+                assert(end == start, "a wait past the deadline is not slept")
                 assert(other.failure.exists(_.isInstanceOf[AIProviderAuthException]))
             end for
         }

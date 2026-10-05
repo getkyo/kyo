@@ -501,6 +501,23 @@ class ContainerItTest extends BasePodTest:
                 yield assert(s == Container.State.Stopped)
             }
         }
+
+        // The process exits 0 on SIGTERM, so exit code 0 proves the stop delivered SIGTERM; a stop that only got the container down by
+        // SIGKILL leaves 137.
+        "stops a paused container gracefully" - runBackends {
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
+                .autoRemove(false)
+            Container.init(config).map { c =>
+                for
+                    _    <- c.pause
+                    _    <- c.stop
+                    info <- c.inspect
+                yield
+                    assert(info.state == Container.State.Stopped)
+                    assert(info.exitCode == Present(ExitCode.Success), s"a paused container must stop by SIGTERM, got ${info.exitCode}")
+            }
+        }
     }
 
     "kill" - {
@@ -1516,11 +1533,13 @@ class ContainerItTest extends BasePodTest:
 
         "logsText returns raw string for backward compat" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo hello-from-container; sleep infinity & wait")
+                .command("sh", "-c", "echo hello-from-container")
+                .autoRemove(false)
             Container.init(config).map { c =>
-                c.logsText.map { text =>
-                    assert(text.contains("hello-from-container"))
-                }
+                for
+                    _    <- c.waitForExit
+                    text <- c.logsText
+                yield assert(text.contains("hello-from-container"))
             }
         }
     }
@@ -2964,18 +2983,13 @@ class ContainerItTest extends BasePodTest:
             Scope.run {
                 Container.initWith(
                     Container.Config("alpine")
-                        .command(Command("sh", "-c", "trap 'exit 0' TERM; echo $MY_VAR; sleep infinity & wait")
-                            .envAppend(Map("MY_VAR" -> "from-command-env")))
+                        .command(Command("sh", "-c", "echo $MY_VAR").envAppend(Map("MY_VAR" -> "from-command-env")))
+                        .autoRemove(false)
                 ) { c =>
-                    // Race: c.logsText on the http backend can return before the container's `echo`
-                    // has flushed. Poll until the echo line appears (or timeout via outer test budget).
-                    Retry[AssertionError](Schedule.fixed(50.millis).take(40)) {
-                        c.logsText.map { text =>
-                            if text.contains("from-command-env") then
-                                succeed("envAppend value reached the command environment and was echoed to the logs")
-                            else throw new AssertionError(s"logs not yet flushed: '$text'")
-                        }
-                    }
+                    for
+                        _    <- c.waitForExit
+                        text <- c.logsText
+                    yield assert(text.contains("from-command-env"), s"the envAppend value was not echoed to the logs: '$text'")
                 }
             }
         }
@@ -3111,13 +3125,17 @@ class ContainerItTest extends BasePodTest:
         }
 
         "TTY mode logs — no multiplexing, raw stream" - runBackends {
+            // The logs are read once the container has exited: a daemon has captured all of a container's output by the time its wait
+            // returns, while a log read against a running container returns only what has reached the log so far.
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo tty-output; sleep infinity & wait")
+                .command("sh", "-c", "echo tty-output")
                 .allocateTty(true)
+                .autoRemove(false)
             Container.init(config).map { c =>
-                c.logsText.map { text =>
-                    assert(text.contains("tty-output"))
-                }
+                for
+                    _    <- c.waitForExit
+                    text <- c.logsText
+                yield assert(text.contains("tty-output"))
             }
         }
 
