@@ -4131,8 +4131,82 @@ lazy val `kyo-website-bundle` =
             `js-settings`,
             scalaJSUseMainModuleInitializer := true,
             Compile / mainClass             := Some("kyo.website.WebsiteBundleMain"),
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+            // Any use of java.util.Locale links the whole locale database, and the full CLDR one that
+            // `js-settings` supplies is 25 MB of the 35 MB unminified bundle. The site renders English
+            // only, so it links the en_US database instead.
+            excludeDependencies += ExclusionRule("io.github.cquiroz", s"locales-full-currencies-db_sjs1_${scalaBinaryVersion.value}"),
+            libraryDependencies += "io.github.cquiroz" %%% "locales-minimal-en_us-db" % "1.5.4",
+            `website-bundle-minify`
         )
+
+// Scala.js' own `minify`, already on for fullLinkJS, only shortens property names and leaves the
+// whitespace and the long top-level names to a general-purpose minifier. So fullLinkJS links into a
+// staging directory and terser writes the served bundle into the `-opt` directory WebsiteMain and the
+// deploy read. terser and not esbuild: the bundle's top-level `this` makes esbuild wrap it as a
+// CommonJS module, while terser's --module mangles top-level names under the module semantics the
+// browser applies. js/minify/package-lock.json pins the npm tree.
+lazy val `website-bundle-minify` = Seq(
+    Compile / fullLinkJS / scalaJSLinkerOutputDirectory := crossTarget.value / "kyo-website-bundle-linked",
+    Compile / fullLinkJS                                := {
+        val linked      = (Compile / fullLinkJS).dependsOn(websiteBundleRelinkIfStaged).value
+        val log         = streams.value.log
+        val linkDir     = (Compile / fullLinkJS / scalaJSLinkerOutputDirectory).value
+        val outDir      = crossTarget.value / ((Compile / fullLinkJS / moduleName).value + "-opt")
+        val specDir     = baseDirectory.value / "minify"
+        val toolDir     = target.value / "minify"
+        val bundle      = Set("main.js", "main.js.map")
+        val linkedFiles = IO.listFiles(linkDir).map(_.getName).toSet
+        if (linkedFiles != bundle)
+            sys.error(s"[kyo-website-bundle] expected exactly ${bundle.mkString(", ")} in $linkDir, found ${linkedFiles.mkString(", ")}")
+        val lock = IO.read(specDir / "package-lock.json")
+        if (
+            !(toolDir / "node_modules" / ".package-lock.json").exists() || !(toolDir / "package-lock.json").exists() ||
+            IO.read(toolDir / "package-lock.json") != lock
+        ) {
+            IO.createDirectory(toolDir)
+            IO.copyFile(specDir / "package.json", toolDir / "package.json")
+            IO.copyFile(specDir / "package-lock.json", toolDir / "package-lock.json")
+            log.info(s"[kyo-website-bundle] installing terser into $toolDir ...")
+            val rc = scala.sys.process.Process(Seq(npmCommand, "ci", "--no-audit", "--no-fund", "--silent"), toolDir).!
+            if (rc != 0) sys.error(s"npm ci for the bundle minifier failed (exit $rc)")
+        }
+        val minify = FileFunction.cached(streams.value.cacheDirectory / "minify", FilesInfo.hash, FilesInfo.hash) { _ =>
+            IO.delete(outDir)
+            IO.createDirectory(outDir)
+            log.info(s"[kyo-website-bundle] minifying into $outDir")
+            // Run from the link directory so the source-map option carries no platform path.
+            val rc = scala.sys.process.Process(
+                Seq(
+                    "node",
+                    (toolDir / "node_modules" / "terser" / "bin" / "terser").getAbsolutePath,
+                    "main.js",
+                    "--module",
+                    "--compress",
+                    "--mangle",
+                    "--source-map",
+                    "content='main.js.map',url='main.js.map'",
+                    "--output",
+                    (outDir / "main.js").getAbsolutePath
+                ),
+                linkDir
+            ).!
+            if (rc != 0) sys.error(s"terser failed on $linkDir/main.js (exit $rc)")
+            bundle.map(outDir / _)
+        }
+        minify(bundle.map(linkDir / _) + (specDir / "package-lock.json"))
+        linked.put(scalaJSLinkerOutputDirectory.key, outDir)
+    }
+)
+
+// sbt-scalajs skips a link while the files it last wrote still exist, and its fingerprint leaves out the
+// output directory. A checkout that last linked straight into `-opt` would therefore never populate the
+// staging directory; deleting the linking report is the plugin's own trigger for a relink.
+lazy val websiteBundleRelinkIfStaged: Def.Initialize[Task[Unit]] = Def.task {
+    val linkDir = (Compile / fullLinkJS / scalaJSLinkerOutputDirectory).value
+    if (!(linkDir / "main.js").exists())
+        IO.delete((Compile / fullLinkJS / streams).value.cacheDirectory / "linking-report.bin")
+}
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)

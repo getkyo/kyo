@@ -31,6 +31,9 @@ node_modules
 # Vendored third-party test vectors (Wycheproof and others) are JSON checked in byte for byte; each set's MANIFEST pins them.
 !**/src/test/vectors/**/*.json
 
+# The npm manifest and lockfile that pin the website bundle's minifier.
+!kyo-website-bundle/js/minify/*.json
+
 # Local analysis notes, never committed
 analysis-*.md
 

@@ -2,6 +2,7 @@ package kyo.website
 
 import java.nio.file.Files
 import java.nio.file.Paths
+import kyo.*
 
 /** Structural assertions over the GitHub Pages deploy workflow and the legacy-site retirement.
   *
@@ -100,6 +101,24 @@ class DeployWorkflowTest extends WebsiteTest:
         assert(workflowText.contains("fullLinkJS"), "missing fullLinkJS")
         assert(workflowText.contains("kyo-website-bundleJS"), "missing kyo-website-bundleJS")
         assert(!workflowText.contains("fastLinkJS"), "fastLinkJS must not appear in the deploy workflow")
+    }
+
+    // ---- the deployed bundle is minified ----
+
+    // Resolved the way the deploy's render step resolves it (no --bundle-dir), from the fullLinkJS this suite depends on. The
+    // minified bundle measures 3.3 MB; the same code unminified is 9.6 MB, and the full locale database adds 25 MB more. The
+    // bound leaves 20% headroom for the site to grow.
+    "the bundle the deploy ships is minified and under 4 MB" in {
+        val maxBytes = 4_000_000L
+        WebsiteMain.parseBundleDir(Chunk.empty[String], repoRoot().toString).map { dir =>
+            Sync.defer {
+                val js    = Paths.get(dir, "main.js")
+                val bytes = Files.size(js)
+                val lines = scala.util.Using.resource(Files.lines(js))(_.count())
+                assert(lines <= 10, s"$js has $lines lines; a minified bundle has one or two")
+                assert(bytes <= maxBytes, s"$js is $bytes bytes, over the $maxBytes byte bound")
+            }
+        }
     }
 
     // ---- forward-only render from the current repo ----
