@@ -1,11 +1,7 @@
 package kyo.net.internal
 
-import java.net.InetSocketAddress
-import java.nio.ByteBuffer
-import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLEngine
 import kyo.*
 import kyo.net.Test
 
@@ -13,57 +9,38 @@ class NioHandleTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    /** Open a connected SocketChannel pair for testing. Returns (client, server). The caller is responsible for closing both. */
-    def openLoopbackPair(): (SocketChannel, SocketChannel) =
-        val serverSock = ServerSocketChannel.open()
-        serverSock.bind(new InetSocketAddress("127.0.0.1", 0))
-        val port   = serverSock.socket().getLocalPort
-        val client = SocketChannel.open()
-        client.configureBlocking(false)
-        client.connect(new InetSocketAddress("127.0.0.1", port))
-        // Accept blocks briefly for loopback
-        serverSock.configureBlocking(true)
-        val server = serverSock.accept()
-        client.finishConnect()
-        serverSock.close()
-        (client, server)
-    end openLoopbackPair
-
+    // A handle only holds its channel and closes it, so these leaves need no peer. A loopback connection here made them depend on the
+    // host's ephemeral ports: on Windows a connect whose 4-tuple matches one still in TIME_WAIT fails with WSAEADDRINUSE, and a setup
+    // waiting on accept never returns.
     "init creates plain TCP handle with Absent tls" in {
-        val (client, server) = openLoopbackPair()
+        val channel = SocketChannel.open()
         try
-            val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
-            assert(handle.channel eq client)
+            val handle = NioHandle.init(channel, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+            assert(handle.channel eq channel)
             assert(handle.tls == Absent)
             assert(handle.readBufferSize == 4096)
             succeed
-        finally
-            client.close()
-            server.close()
+        finally channel.close()
         end try
     }
 
     "readBuffer is a direct ByteBuffer" in {
-        val (client, server) = openLoopbackPair()
+        val channel = SocketChannel.open()
         try
-            val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+            val handle = NioHandle.init(channel, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             assert(handle.readBuffer.isDirect)
             succeed
-        finally
-            client.close()
-            server.close()
+        finally channel.close()
         end try
     }
 
     "readBuffer capacity matches bufferSize parameter" in {
-        val (client, server) = openLoopbackPair()
+        val channel = SocketChannel.open()
         try
-            val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+            val handle = NioHandle.init(channel, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             assert(handle.readBuffer.capacity() == 4096)
             succeed
-        finally
-            client.close()
-            server.close()
+        finally channel.close()
         end try
     }
 
@@ -73,30 +50,28 @@ class NioHandleTest extends Test:
     }
 
     "initTls creates handle with Present tls state" in {
-        val (client, server) = openLoopbackPair()
+        val channel = SocketChannel.open()
         try
             val ctx = SSLContext.getInstance("TLS")
             ctx.init(null, null, null)
             val engine = ctx.createSSLEngine()
-            val handle = NioHandle.initTls(client, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
+            val handle = NioHandle.initTls(channel, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
             handle.tls match
                 case Present(state) => assert(state.engine eq engine)
                 case Absent         => fail("expected Present tls state")
             succeed
-        finally
-            client.close()
-            server.close()
+        finally channel.close()
         end try
     }
 
     "TLS buffers sized from SSLEngine session packet/application sizes" in {
-        val (client, server) = openLoopbackPair()
+        val channel = SocketChannel.open()
         try
             val ctx = SSLContext.getInstance("TLS")
             ctx.init(null, null, null)
             val engine  = ctx.createSSLEngine()
             val session = engine.getSession
-            val handle  = NioHandle.initTls(client, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
+            val handle  = NioHandle.initTls(channel, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
             handle.tls match
                 case Present(state) =>
                     assert(state.netInBuf.capacity() == session.getPacketBufferSize)
@@ -106,52 +81,37 @@ class NioHandleTest extends Test:
                     fail("expected Present tls state")
             end match
             succeed
-        finally
-            client.close()
-            server.close()
+        finally channel.close()
         end try
     }
 
     "close plain TCP handle closes the channel" in {
-        val (client, server) = openLoopbackPair()
-        try
-            val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
-            NioHandle.close(handle)
-            assert(!client.isOpen)
-            succeed
-        finally
-            // client already closed by NioHandle.close; close server
-            server.close()
-        end try
+        val channel = SocketChannel.open()
+        val handle  = NioHandle.init(channel, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+        NioHandle.close(handle)
+        assert(!channel.isOpen)
+        succeed
     }
 
     "close TLS handle calls engine closeOutbound then closes channel" in {
-        val (client, server) = openLoopbackPair()
-        try
-            val ctx = SSLContext.getInstance("TLS")
-            ctx.init(null, null, null)
-            val engine = ctx.createSSLEngine()
-            val handle = NioHandle.initTls(client, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
-            NioHandle.close(handle)
-            // After close, engine status should reflect outbound close
-            assert(engine.isOutboundDone)
-            assert(!client.isOpen)
-            succeed
-        finally
-            server.close()
-        end try
+        val channel = SocketChannel.open()
+        val ctx     = SSLContext.getInstance("TLS")
+        ctx.init(null, null, null)
+        val engine = ctx.createSSLEngine()
+        val handle = NioHandle.initTls(channel, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
+        NioHandle.close(handle)
+        assert(engine.isOutboundDone)
+        assert(!channel.isOpen)
+        succeed
     }
 
     "close is idempotent: second close does not throw" in {
-        val (client, server) = openLoopbackPair()
-        try
-            val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
-            NioHandle.close(handle)
-            NioHandle.close(handle) // Must not throw
-            succeed
-        finally
-            server.close()
-        end try
+        val channel = SocketChannel.open()
+        val handle  = NioHandle.init(channel, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+        NioHandle.close(handle)
+        NioHandle.close(handle)
+        assert(!channel.isOpen)
+        succeed
     }
 
 end NioHandleTest
