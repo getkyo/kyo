@@ -38,12 +38,18 @@ set -uo pipefail
 # On stop it prints any kernel OOM verdict from dmesg (Linux), plus the disk attribution when a
 # threshold was crossed during the run. Disabled with CI_MON=0. Never disrupts or fails the run,
 # with one opt-in exception: when CI_MON_DISK_ABORT_MB is set and free disk drops below it, the
-# monitor prints the attribution and TERM-kills its process group (the whole ci-test.sh tree runs in
-# one group, so the build dies with the evidence in the log instead of the runner dying with none).
+# monitor prints the attribution and TERM-kills the build's process group (CI_MON_KILL_PGID when
+# set, else its own), so the build dies with the evidence in the log instead of the runner dying
+# with none.
+#
+# Process ids: on Linux one line at start carries the pid, process group and session of the monitor's
+# ancestry and of the runner's processes, which says whether a group-wide signal from the build
+# could have reached the runner of a job that was lost.
 #
 # Env: CI_MON (set 0 to disable), KYO_SCHED_FILE (scheduler snapshot path), CI_MON_INTERVAL (seconds,
 #      default 20), CI_MON_DISK_WARN_MB (default 8192), CI_MON_DISK_CRIT_MB (default 2048),
-#      CI_MON_DISK_ABORT_MB (default unset: never abort).
+#      CI_MON_DISK_ABORT_MB (default unset: never abort), CI_MON_KILL_PGID (the process group the
+#      abort signals; default unset: the monitor's own).
 
 [ "${CI_MON:-1}" != "0" ] || exit 0
 
@@ -91,11 +97,23 @@ report() {
 }
 trap 'report; exit 0' TERM INT
 
+# The process group the disk abort signals. ci-test.sh passes CI_MON_KILL_PGID when it has moved the
+# build into a session of its own, so the signal stays inside that session. Without it the target is
+# the monitor's own group, which outside Linux CI is the build's. Anything that is not a pid above 1
+# falls back to the own group: `kill -- -1` would signal every process the user owns, the runner
+# among them.
+abort_build() {
+    case "${CI_MON_KILL_PGID:-}" in
+        '' | *[!0-9]* | 0 | 1) kill -TERM 0 ;;
+        *) kill -TERM -- "-$CI_MON_KILL_PGID" ;;
+    esac
+}
+
 # Threshold ladder for one disk sample. WARN and CRIT entries each dump the attribution once;
 # below-crit samples are additionally marked on the periodic line by the caller. The abort rung is
-# opt-in (CI_MON_DISK_ABORT_MB): it prints the evidence and TERM-kills the process group, so the
-# whole ci-test.sh tree (sbt, clang, this monitor) dies with the log intact rather than the runner
-# dying with no log at all.
+# opt-in (CI_MON_DISK_ABORT_MB): it prints the evidence and TERM-kills the build's process group,
+# so the whole ci-test.sh tree (sbt, clang, this monitor) dies with the log intact rather than the
+# runner dying with no log at all.
 disk_check() {
     local free="$1"
     case "$free" in '' | *[!0-9]*) return 0 ;; esac
@@ -104,7 +122,7 @@ disk_check() {
         disk_attribution "$free"
         trap - TERM INT
         [ "$MON_SRC" = "proc" ] && report
-        kill -TERM 0
+        abort_build
         exit 1
     fi
     # Flags are set BEFORE the (slow) attribution dump: a TERM landing mid-dump still leaves the
@@ -324,6 +342,34 @@ runner_headline() {
     printf 'runner=[%s]' "${rows:-none}"
 }
 
+# One process as "comm:pid/pgid/sid ppid", from /proc. The comm is read from its own file because the one in stat is
+# parenthesised and may carry spaces and parentheses; everything after its closing ") " is space-separated.
+proc_ids() {
+    local stat comm
+    stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+    comm=$(cat "/proc/$1/comm" 2>/dev/null) || return 1
+    # shellcheck disable=SC2086
+    set -- "$1" ${stat##*) }
+    printf '%s:%s/%s/%s %s' "${comm// /_}" "$1" "$4" "$5" "$3"
+}
+
+# The monitor's ancestry up to init and the runner's own processes, each as comm:pid/pgid/sid. Linux only: it reads
+# /proc, which Git Bash on Windows emulates with ids of its own.
+process_ids() {
+    [ "$OS" = "Linux" ] || return 0
+    local pid=$$ hops=0 row chain="" runner=""
+    while [ "$hops" -lt 32 ] && row=$(proc_ids "$pid"); do
+        chain="${chain:+$chain }${row% *}"
+        pid=${row##* }
+        hops=$((hops + 1))
+        [ "$pid" -gt 0 ] 2>/dev/null || break
+    done
+    for pid in $(pgrep -x 'Runner\.(Worker|Listener)' 2>/dev/null); do
+        row=$(proc_ids "$pid") && runner="${runner:+$runner }${row% *}"
+    done
+    printf 'process ids (comm:pid/pgid/sid) ancestry=[%s] runner=[%s]' "$chain" "${runner:-none}"
+}
+
 # Kernel log filter: keeps the lines that explain a dying machine, plus the 40 lines after each, which carry its call trace, and
 # drops the rest (on a runner, mostly container network churn). Capped so a flood cannot bury the build output. `exec` makes the
 # awk itself the process the monitor kills on stop. The match is on a lowercased copy because mawk, Ubuntu's awk, has no
@@ -368,7 +414,9 @@ kern_follow() {
 }
 
 ncpu=$( (command -v nproc >/dev/null 2>&1 && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo '?')
-log "started interval=${INTERVAL}s src=$MON_SRC cores=$ncpu sched=${SCHED_FILE:-none} diskWarnMB=$DISK_WARN_MB diskCritMB=$DISK_CRIT_MB diskAbortMB=${DISK_ABORT_MB:-off}"
+log "started interval=${INTERVAL}s src=$MON_SRC cores=$ncpu sched=${SCHED_FILE:-none} diskWarnMB=$DISK_WARN_MB diskCritMB=$DISK_CRIT_MB diskAbortMB=${DISK_ABORT_MB:-off} killPgid=${CI_MON_KILL_PGID:-own}"
+ids="$(process_ids)"
+[ -n "$ids" ] && log "$ids"
 kern_follow
 while true; do
     os="$(os_headline)"
