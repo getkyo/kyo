@@ -100,24 +100,51 @@ private[kyo] trait ContainerRuntimeBase:
         )
     end hasDocker
 
-    lazy val available: Seq[String] =
+    /** The runtimes this process answers for, each with the reason it cannot run here, or `Absent` when it can.
+      *
+      * A runtime that cannot run is kept with its reason rather than dropped, so its leaves are registered cancelled. The build forks the
+      * container suites once per runtime, and a fork that registered nothing for its runtime runs 0 leaves under a filter that matches only
+      * container leaves, which the runner fails as a selection that ran nothing.
+      */
+    lazy val assigned: Seq[(String, Maybe[String])] =
         import AllowUnsafe.embrace.danger
-        // The windows-latest CI runner's Docker daemon runs in Windows-container mode and cannot pull or run Linux images,
-        // so `docker` reports available while every operation fails at `docker pull`. These are Linux-container tests; skip on Windows.
-        if kyo.internal.Platform.isWindows then Seq.empty
-        else
-            val all      = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }
-            val distinct = distinctDaemons(all)
-            getEnv("KYO_POD_RUNTIME") match
+        val reachable = Seq("podman" -> hasPodman, "docker" -> hasDocker)
+        assignment(
+            kyo.internal.Platform.isWindows,
+            reachable,
+            distinctDaemons(reachable.collect { case (name, true) => name }),
+            getEnv("KYO_POD_RUNTIME")
+        )
+    end assigned
+
+    /** [[assigned]] from its inputs: whether the host is Windows, each runtime's reachability, the reachable runtimes that are distinct
+      * daemons, and the runtime the build pinned this process to.
+      */
+    private[kyo] def assignment(
+        windows: Boolean,
+        reachable: Seq[(String, Boolean)],
+        distinct: Seq[String],
+        pin: Maybe[String]
+    ): Seq[(String, Maybe[String])] =
+        val responsible = pin match
+            case Present(rt) => Seq(rt)
+            case Absent      => reachable.map(_._1)
+        responsible.map { rt =>
+            val reason =
+                // The windows-latest CI runner's Docker daemon runs in Windows-container mode and cannot pull or run Linux images,
+                // so `docker` reports available while every operation fails at `docker pull`.
+                if windows then Present("the host is Windows and these are Linux-container tests")
+                else if !reachable.exists(_ == (rt, true)) then Present(s"$rt is not reachable on this host")
                 // The pin is filtered by the same rule, not exempt from it. The build forks these suites once per runtime with the name
-                // pinned here, so exempting the pin would leave both forks running against one daemon whenever the two names resolve to it,
-                // which is the whole thing distinctDaemons exists to stop. The fork for the name that loses registers no leaves, and the one
-                // that wins runs them once.
-                case Present(rt) => if distinct.contains(rt) then Seq(rt) else Seq.empty
-                case Absent      => distinct
-            end match
-        end if
-    end available
+                // pinned here, so exempting the pin would leave both forks running against one daemon whenever the two names resolve to
+                // it, which is the whole thing distinctDaemons exists to stop.
+                else if !distinct.contains(rt) then Present(s"$rt reaches the same daemon as another runtime here, which runs these leaves")
+                else Absent
+            rt -> reason
+        }
+    end assignment
+
+    lazy val available: Seq[String] = assigned.collect { case (rt, Absent) => rt }
 
     /** Drops a runtime whose socket is the same file as one already kept, keeping the first.
       *
@@ -151,11 +178,6 @@ private[kyo] trait ContainerRuntimeBase:
     private lazy val podmanMachineSockets: Seq[String] =
         if !cliExists("podman") then Seq.empty
         else queryPodmanMachineSockets
-
-    def isPodman: Boolean = available.headOption.contains("podman")
-    def isDocker: Boolean = available.headOption.contains("docker")
-
-    def isAvailable(rt: String): Boolean = available.contains(rt)
 
     /** Whether a path this process creates is the same path the daemon's containers see.
       *

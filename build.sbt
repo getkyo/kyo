@@ -514,6 +514,7 @@ lazy val kyoJVM: Project = project
         `kyo-browser`.jvm,
         `kyo-slack`.jvm,
         `kyo-telegram`.jvm,
+        `kyo-teams`.jvm,
         `kyo-ui`.jvm,
         `kyo-markdown`.jvm,
         `kyo-i18n`.jvm,
@@ -611,6 +612,7 @@ lazy val kyoJS = project
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-telegram`.js,
+        `kyo-teams`.js,
         `kyo-ui`.js,
         `kyo-markdown`.js,
         `kyo-i18n`.js,
@@ -697,6 +699,7 @@ lazy val kyoNative = project
         `kyo-browser`.native,
         `kyo-slack`.native,
         `kyo-telegram`.native,
+        `kyo-teams`.native,
         `kyo-ui`.native,
         `kyo-markdown`.native,
         `kyo-i18n`.native,
@@ -781,6 +784,7 @@ lazy val kyoWasm = project
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
         `kyo-telegram`.wasm,
+        `kyo-teams`.wasm,
         `kyo-ui`.wasm,
         `kyo-markdown`.wasm,
         `kyo-i18n`.wasm,
@@ -3736,8 +3740,9 @@ lazy val `kyo-pod` =
                 // leaf for it. One fork per daemon puts all those leaves in a single process, where BasePodTest's
                 // `globallySequential` orders them into one stream and no two ever overlap. The single-leg helpers
                 // (`runBackend`, `runBackendLong`) are matched too: they register no `[runtime]` marker, but they
-                // reach the daemon, which is what decides this. A fork pinned to a runtime that is a duplicate of
-                // another registers no leaves at all (see ContainerRuntimeBase.available), so it costs an idle JVM.
+                // reach the daemon, which is what decides this. A fork pinned to a runtime that cannot run here
+                // (absent, or a duplicate of another daemon) registers its container leaves cancelled with the
+                // reason (see ContainerRuntimeBase.assigned), so it costs a short JVM and never runs an empty selection.
                 val daemonGroups =
                     if (daemonTests.isEmpty) Seq.empty
                     else
@@ -3895,6 +3900,37 @@ lazy val `kyo-telegram` =
         .withKyoTest
         .settings(
             `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false)
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-teams` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-teams"))
+        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-crypto`, `kyo-charset`)
+        .dependsOn(`kyo-pod` % "test->compile")
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            Test / sourceGenerators += Def.task {
+                TestVectorsGen.generate(
+                    baseDirectory.value / ".." / "shared" / "src" / "test" / "vectors",
+                    (Test / sourceManaged).value,
+                    "kyo",
+                    "TeamsVectors"
+                )
+            }.taskValue
         )
         .jvmSettings(
             mimaCheck(false)
