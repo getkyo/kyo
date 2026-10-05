@@ -513,6 +513,7 @@ lazy val kyoJVM: Project = project
         `kyo-browser`.jvm,
         `kyo-slack`.jvm,
         `kyo-telegram`.jvm,
+        `kyo-discord`.jvm,
         `kyo-teams`.jvm,
         `kyo-ui`.jvm,
         `kyo-markdown`.jvm,
@@ -610,6 +611,7 @@ lazy val kyoJS = project
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-telegram`.js,
+        `kyo-discord`.js,
         `kyo-teams`.js,
         `kyo-ui`.js,
         `kyo-markdown`.js,
@@ -696,6 +698,7 @@ lazy val kyoNative = project
         `kyo-browser`.native,
         `kyo-slack`.native,
         `kyo-telegram`.native,
+        `kyo-discord`.native,
         `kyo-teams`.native,
         `kyo-ui`.native,
         `kyo-markdown`.native,
@@ -780,6 +783,7 @@ lazy val kyoWasm = project
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
         `kyo-telegram`.wasm,
+        `kyo-discord`.wasm,
         `kyo-teams`.wasm,
         `kyo-ui`.wasm,
         `kyo-markdown`.wasm,
@@ -3876,6 +3880,42 @@ lazy val `kyo-telegram` =
         .withKyoTest
         .settings(
             `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false)
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-discord` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-discord"))
+        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-crypto`, `kyo-mime`)
+        .dependsOn(`kyo-pod` % "test->compile")
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            // Discord requires the library's version in every request's User-Agent (`reference.mdx`, "User Agent").
+            Compile / sourceGenerators += Def.task {
+                val file = (Compile / sourceManaged).value / "kyo" / "internal" / "discord" / "DiscordVersion.scala"
+                IO.write(
+                    file,
+                    s"""package kyo.internal.discord
+                       |
+                       |private[kyo] object DiscordVersion:
+                       |    val value: String = "${version.value}"
+                       |""".stripMargin
+                )
+                Seq(file)
+            }.taskValue
         )
         .jvmSettings(
             mimaCheck(false)
