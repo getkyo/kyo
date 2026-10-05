@@ -11,7 +11,9 @@ import kyo.internal.charset.Utf8
   *     leaf's own, with the token [[TeamsLocal]] issues. It runs wherever a container runtime does, and is cancelled on Windows.
   *
   * A leaf whose behaviour the Playground does not reproduce asserts Teams', and is cancelled on the Playground naming the gap. The
-  * inbound verification against the Bot Framework's real OpenID metadata and key set needs no credentials, so it runs on every run.
+  * inbound verification against the Bot Framework's real OpenID metadata and key set needs no credential but reaches the internet, so
+  * it runs only when `TEAMS_APP_ID` is set; `KeyCacheTest` runs the same verification on every run against a vendored snapshot of those
+  * documents, served locally.
   */
 class TeamsLiveTest extends kyo.test.Test[Any]:
 
@@ -169,10 +171,14 @@ class TeamsLiveTest extends kyo.test.Test[Any]:
         }
     }
 
-    // The metadata and key set are public, and the app id only names the token's audience, so no credential is needed.
+    // The metadata and key set are public, and the app id only names the token's audience, so no credential is needed. Reading them
+    // reaches the internet, which tests run in regular CI must not, so the leaf runs only where the other Teams leaves do.
     "the Bot Framework's real metadata and key set are read, and a token no key signed fails at its signature" in {
         env("TEAMS_APP_ID").map { fromEnv =>
-            val appId  = fromEnv.fold(TeamsLocal.appId)(Teams.AppId.init(_).getOrThrow)
+            val appId =
+                fromEnv.fold(cancel("the Bot Framework's real metadata and key set are on the internet; set TEAMS_APP_ID to run it"))(
+                    Teams.AppId.init(_).getOrThrow
+                )
             val id     = appId.value
             val secret = TeamsConfig.Credential.Secret(Teams.ClientSecret.init("unused-by-verify").getOrThrow)
             val config = TeamsConfig.init(appId, secret).getOrThrow
