@@ -33,12 +33,17 @@ class TransportListenerTest extends Test:
             }
         }
 
+        // Each accepted connection's handler runs on its own fiber, so two connections pending in one accept batch can reach the handler in
+        // either order. The second connection is opened only once the first one's handler is running, so the throw is always the first's.
         "a handler that throws on one connection does not wedge the accept loop" in {
             val transport = NetPlatform.transport
             val firstSeen = new java.util.concurrent.atomic.AtomicBoolean(false)
+            val thrown    = Promise.Unsafe.init[Unit, Any]()
             for
                 listener <- transport.listen("127.0.0.1", 0, 16) { serverConn =>
-                    if firstSeen.compareAndSet(false, true) then throw new RuntimeException("handler boom on first connection")
+                    if firstSeen.compareAndSet(false, true) then
+                        thrown.completeDiscard(Result.succeed(()))
+                        throw new RuntimeException("handler boom on first connection")
                     else
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
@@ -57,6 +62,7 @@ class TransportListenerTest extends Test:
                 _ <- Scope.ensure(Sync.defer(listener.close()))
                 // First connection: triggers the throwing handler. Best-effort; it may be torn down.
                 first <- transport.connect("127.0.0.1", listener.port).safe.get
+                _     <- thrown.safe.get
                 _ = first.close()
                 // Second connection must still be accepted and echo, proving the accept loop survived the handler throw.
                 second <- transport.connect("127.0.0.1", listener.port).safe.get
