@@ -283,11 +283,15 @@ class HttpContainerBackendTest extends BasePodTest:
 
     "stat" - {
 
-        /** `stat` of container `c1` against a fake daemon on a unix socket that answers with `header` as the path stat. */
+        /** `stat` of container `c1` against a fake daemon on a unix socket that answers with `header` as the path stat. The backend only
+          * speaks `http+unix`, so a host that cannot bind a Unix socket cancels the leaf.
+          */
         def statWith(header: String)(using
             Frame
         ): Result[ContainerException, Container.FileStat] < (Async & Scope & Abort[FileSystemException | HttpBindException]) =
-            Path.run(Path.tempDir("kyo-pod-stat-").map { dir =>
+            Sync.defer {
+                if !TestUnixSockets.supported then throw kyo.test.TestCancelled("this host cannot bind a Unix socket for the fake daemon")
+            }.andThen(Path.run(Path.tempDir("kyo-pod-stat-").map { dir =>
                 val socket = (dir / "d.sock").toString
                 val route  = HttpRoute.headRaw("v1.43" / "containers" / "c1" / "archive")
                     .response(_.header[String]("X-Docker-Container-Path-Stat"))
@@ -295,7 +299,7 @@ class HttpContainerBackendTest extends BasePodTest:
                 HttpServer.init(HttpServerConfig.default.unixSocket(socket))(daemon).andThen {
                     Abort.run[ContainerException](new HttpContainerBackend(socket).stat(Container.Id("c1"), Path("/tmp/x")))
                 }
-            })
+            }))
 
         "a path-stat header that is not base64 fails as a decode error" in {
             statWith("not*base64").map {
