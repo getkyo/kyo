@@ -47,6 +47,28 @@ private[kyo] object CallEngine:
             }
         }
 
+    // A cancel waits on requestEnqueued so it is never written ahead of its own request, and requestEnqueued is completed by the
+    // call's body right after its put lands. A timeout interrupts that body, so a body interrupted between registering the call
+    // and that completion (its put still waiting for room, or landed with the continuation not yet run) would leave the timeout's
+    // cancel, and so the call, waiting forever. The body runs inside this, which completes requestEnqueued when it ends, however it
+    // ends: a request that reached the writer is ahead of the cancel, and one whose interrupted put was dropped is never sent.
+    // completeUnitDiscard is a no-op on a completed promise, and a call with no id or no registry entry never registered.
+    private def releasingCancelOnExit[Out](
+        idSignal: Promise.Unsafe[JsonRpcId, Any],
+        callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo]
+    )(body: Out < (Async & Abort[JsonRpcError | Closed]))(using Frame): Out < (Async & Abort[JsonRpcError | Closed]) =
+        Sync.ensure(
+            // Unsafe: poll idSignal and complete the registered call's requestEnqueued from the body's finalizer
+            Sync.Unsafe.defer {
+                idSignal.poll() match
+                    case Maybe.Present(Result.Success(id)) =>
+                        Maybe(callerRegistry.get(id)).foreach { info =>
+                            info.requestEnqueued.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
+                        }
+                    case _ => ()
+            }
+        )(body)
+
     // raceResult: race the abort signal against the exchange round-trip, decoding the result to Out.
     private def raceResult[Out: Schema](
         abortSignal: Fiber.Promise[JsonRpcError, Any],
@@ -97,7 +119,7 @@ private[kyo] object CallEngine:
                         refresh(prev, drainSignal).andThen {
                             Sync.ensure(callEffectInFlightCleanup(inFlight, drainSignal, idSignal, callerRegistry)) {
                                 val raced: Out < (Async & Abort[JsonRpcError | Closed]) =
-                                    raceResult[Out](abortSignal, req, exchange)
+                                    releasingCancelOnExit(idSignal, callerRegistry)(raceResult[Out](abortSignal, req, exchange))
                                 if config.requestTimeout == Duration.Infinity then
                                     // Wrap raceResult with Abort.run inside Sync.ensure so that Abort.fail from
                                     // raceResult is caught here (not by an outer Abort.run that would discard the
@@ -207,7 +229,7 @@ private[kyo] object CallEngine:
                         Sync.ensure(callEffectInFlightCleanup(inFlight, drainSignal, idSignal, callerRegistry)) {
                             val req = OutboundReq(method, encodedParams, idSignal, abortSignal, extras)
                             val raced: Out < (Async & Abort[JsonRpcError | Closed]) =
-                                raceResult[Out](abortSignal, req, exchange)
+                                releasingCancelOnExit(idSignal, callerRegistry)(raceResult[Out](abortSignal, req, exchange))
                             if config.requestTimeout == Duration.Infinity then
                                 // Wrap raceResult with Abort.run inside Sync.ensure so that Abort.fail from
                                 // raceResult is caught here (not by an outer Abort.run that would discard the
