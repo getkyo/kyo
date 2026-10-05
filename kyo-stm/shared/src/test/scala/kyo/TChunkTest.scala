@@ -149,7 +149,7 @@ class TChunkTest extends kyo.test.Test[Any]:
         "concurrent modifications" in {
             for
                 chunk  <- TChunk.init[Int]
-                _      <- Async.foreach(1 to 100, 100)(i => STM.run(chunk.append(i)))
+                _      <- Async.foreach(1 to 100, 100)(i => STM.run(STM.defaultRetrySchedule.forever)(chunk.append(i)))
                 result <- STM.run(chunk.snapshot)
             yield
                 assert(result.toSet == (1 to 100).toSet)
@@ -199,7 +199,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             (for
                 size     <- Choice.eval(1, 10, 100)
                 chunk    <- TChunk.init[Int]()
-                _        <- Async.foreach(1 to size, size)(i => STM.run(chunk.append(i)))
+                _        <- Async.foreach(1 to size, size)(i => STM.run(STM.defaultRetrySchedule.forever)(chunk.append(i)))
                 snapshot <- STM.run(chunk.snapshot)
             yield assert(
                 snapshot.length == size &&
@@ -1288,7 +1288,7 @@ class TChunkTest extends kyo.test.Test[Any]:
                 val n = 100
                 for
                     chunk <- TChunk.init[Int]
-                    _     <- Async.foreach(1 to n, n)(i => STM.run(chunk.append(i)))
+                    _     <- Async.foreach(1 to n, n)(i => STM.run(STM.defaultRetrySchedule.forever)(chunk.append(i)))
                     snap  <- STM.run(chunk.snapshot)
                 yield
                     val counts = snap.groupBy(identity).view.mapValues(_.length).toMap

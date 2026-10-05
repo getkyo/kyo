@@ -175,7 +175,7 @@ class CommitBufferTest extends kyo.test.Test[Any]:
                 refs <- Kyo.foreach(1 to 4)(_ => TRef.init(0))
                 // Background contention on the highest-id ref (post-sort, this is the last lock acquired).
                 lastRef = refs.maxBy(_.id)
-                _ <- Async.fill(50, 50)(STM.run(lastRef.update(_ + 1))).unit
+                _ <- Async.fill(50, 50)(STM.run(STM.defaultRetrySchedule.forever)(lastRef.update(_ + 1))).unit
                 r <- Abort.run(
                     Async.timeout(10.seconds) {
                         STM.run(STM.defaultRetrySchedule) {
