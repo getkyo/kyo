@@ -748,7 +748,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 63 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 65 ]
     exit $?
 fi
 
