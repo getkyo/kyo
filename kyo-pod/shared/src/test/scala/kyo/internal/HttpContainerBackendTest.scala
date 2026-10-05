@@ -281,6 +281,45 @@ class HttpContainerBackendTest extends BasePodTest:
         }
     }
 
+    "stat" - {
+
+        /** `stat` of container `c1` against a fake daemon on a unix socket that answers with `header` as the path stat. */
+        def statWith(header: String)(using
+            Frame
+        ): Result[ContainerException, Container.FileStat] < (Async & Scope & Abort[FileSystemException | HttpBindException]) =
+            Path.run(Path.tempDir("kyo-pod-stat-").map { dir =>
+                val socket = (dir / "d.sock").toString
+                val route  = HttpRoute.headRaw("v1.43" / "containers" / "c1" / "archive")
+                    .response(_.header[String]("X-Docker-Container-Path-Stat"))
+                val daemon = route.handler(_ => HttpResponse.ok.addField("X-Docker-Container-Path-Stat", header))
+                HttpServer.init(HttpServerConfig.default.unixSocket(socket))(daemon).andThen {
+                    Abort.run[ContainerException](new HttpContainerBackend(socket).stat(Container.Id("c1"), Path("/tmp/x")))
+                }
+            })
+
+        "a path-stat header that is not base64 fails as a decode error" in {
+            statWith("not*base64").map {
+                case Result.Failure(error: ContainerDecodeException) =>
+                    assert(error.getMessage.contains("c1"), s"expected the container id in: ${error.getMessage}")
+                case other =>
+                    fail(s"expected a ContainerDecodeException, got $other")
+            }
+        }
+
+        // Podman encodes the header with the URL-safe alphabet: the stat of `/tmp/~~~` carries `-` where the standard alphabet has `+`.
+        "a path-stat header in the URL-safe alphabet, as podman sends it, decodes" in {
+            val podmanHeader =
+                "eyJuYW1lIjoifn5-Iiwic2l6ZSI6MCwibW9kZSI6NDIwLCJtdGltZSI6IjIwMjYtMTAtMDNUMjI6NDg6NDAuMzM2ODQ4MDQyLTA3OjAwIiwiaXNEaXIiOmZhbHNlLCJsaW5rVGFyZ2V0IjoiL3RtcC9-fn4ifQ=="
+            statWith(podmanHeader).map {
+                case Result.Success(stat) =>
+                    assert(stat.name == "~~~")
+                    assert(stat.linkTarget == Present("/tmp/~~~"))
+                case other =>
+                    fail(s"expected the stat of /tmp/~~~, got $other")
+            }
+        }
+    }
+
     /** A failing registry must not be reported as a missing image.
       *
       * The pull path deliberately collapses every no-credentials failure into
@@ -408,6 +447,24 @@ class HttpContainerBackendTest extends BasePodTest:
             classify(500, """{"message":"unauthorized: authentication required"}""", Present(ContainerImage.RegistryAuth(Dict.empty))).map {
                 result =>
                     assert(result.failure.exists(_.isInstanceOf[ContainerAuthException]), s"expected an auth failure, got $result")
+            }
+        }
+
+        // Docker's classic image store keeps one copy per digest reference, so a platform's pull of an index already cached for
+        // another platform is refused mid-stream. Read as an unclassified failure, nothing tells the caller the store is the cause.
+        "a refused overwrite of another platform's copy is a platform conflict" in {
+            val digest  = "sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092"
+            val image   = ContainerImage(s"docker.io/library/busybox@$digest")
+            val arm64   = Container.Platform("linux", "arm64")
+            val line    = s"""{"errorDetail":{"message":"cannot overwrite digest $digest"},"error":"cannot overwrite digest $digest"}"""
+            val backend = new HttpContainerBackend("/unused.sock")
+            Abort.run[ContainerException](Emit.run(backend.processPullLine(line, image, Present(arm64)))).map { result =>
+                result.failure match
+                    case Present(e: ContainerImagePlatformConflictException) =>
+                        assert(e.image == image)
+                        assert(e.platform == Present(arm64))
+                        assert(e.detail.contains(digest))
+                    case other => fail(s"expected a platform conflict, got $result")
             }
         }
     }

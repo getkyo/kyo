@@ -61,6 +61,7 @@ final private[kyo] class ShellBackend(
             val args = Chunk("create") ++
                 // Config flags
                 config.name.map(n => Chunk("--name", n)).getOrElse(Chunk.empty) ++
+                config.platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
                 // Hostname
                 config.hostname.map(h => Chunk("--hostname", h)).getOrElse(Chunk.empty) ++
                 // User
@@ -1348,16 +1349,32 @@ final private[kyo] class ShellBackend(
     private def withRegistryAuth(image: ContainerImage, auth: Maybe[ContainerImage.RegistryAuth], ctx: ResourceContext)(
         run: Maybe[String] => Unit < (Async & Abort[ContainerException])
     )(using Frame): Unit < (Async & Abort[ContainerException]) =
-        val creds: Maybe[String] = auth.flatMap { a =>
+        val encodedCreds: Maybe[String] = auth.flatMap { a =>
             val key = image.registry.getOrElse(ContainerImage.Registry.DockerHub)
             a.auths.get(key).orElse {
                 if key == ContainerImage.Registry.DockerHub then
                     a.auths.get(ContainerImage.Registry("https://index.docker.io/v1/"))
                 else Absent
             }
-        }.map { encoded =>
-            new String(java.util.Base64.getDecoder.decode(encoded), java.nio.charset.StandardCharsets.UTF_8)
         }
+        val decodedCreds: Result[Base64.Failure, Maybe[String]] = encodedCreds match
+            case Absent           => Result.succeed(Absent)
+            case Present(encoded) =>
+                ContainerBackend.decodeBase64(encoded).map(bytes =>
+                    Present(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8))
+                )
+        decodedCreds match
+            case Result.Failure(failure) =>
+                val server = image.registry.map(_.value).getOrElse("docker.io")
+                Abort.fail(ContainerAuthException(server, s"the stored credential is not base64: ${failure.message}"))
+            case Result.Panic(ex)      => Abort.panic(ex)
+            case Result.Success(creds) => withDecodedCreds(creds, image, ctx)(run)
+        end match
+    end withRegistryAuth
+
+    private def withDecodedCreds(creds: Maybe[String], image: ContainerImage, ctx: ResourceContext)(
+        run: Maybe[String] => Unit < (Async & Abort[ContainerException])
+    )(using Frame): Unit < (Async & Abort[ContainerException]) =
         creds match
             case Absent                               => run(Absent)
             case Present(c) if cmd.endsWith("podman") =>
@@ -1399,7 +1416,7 @@ final private[kyo] class ShellBackend(
                         Abort.fail[ContainerException](ContainerBackendException(s"docker login panicked for $server", ex))
                 }
         end match
-    end withRegistryAuth
+    end withDecodedCreds
 
     def imagePullWithProgress(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
@@ -1525,6 +1542,19 @@ final private[kyo] class ShellBackend(
                 )
             }
         }
+
+    // A remote podman's `version` client side is the caller's machine, so podman is asked for the host its `info` reports. Docker's
+    // `info` names the architecture as uname does (`aarch64`), so docker is asked for its server's Go names through `version`.
+    def hostPlatform(using Frame): Container.Platform < (Async & Abort[ContainerException]) =
+        val args =
+            if cmd.endsWith("podman") then Chunk("info", "--format", "{{.Host.OS}}/{{.Host.Arch}}")
+            else Chunk("version", "--format", "{{.Server.Os}}/{{.Server.Arch}}")
+        run(ResourceContext.Op("version"), args.toSeq*).map { raw =>
+            Container.Platform.parse(raw.trim) match
+                case Result.Success(platform) => platform
+                case _                        => Abort.fail(ContainerBackendException(s"$cmd answered no platform", raw.trim))
+        }
+    end hostPlatform
 
     def imageRemove(image: ContainerImage, force: Boolean, noPrune: Boolean)(
         using Frame
@@ -2247,6 +2277,14 @@ final private[kyo] class ShellBackend(
                         (matchesAny(DaemonErrorPhrases.ServerError) || matchesAny(DaemonErrorPhrases.RegistryUnreachable))
                     then
                         ContainerRegistryUnavailableException(ctx.describe, output)
+                    else if matchesAny(DaemonErrorPhrases.PlatformCopyConflict) then
+                        val ref = ctx match
+                            case ResourceContext.Image(r) => r
+                            case other                    => other.describe
+                        val platform = args.sliding(2).collectFirst {
+                            case Seq("--platform", p) => Container.Platform.parse(p).toMaybe
+                        }.getOrElse(Absent)
+                        ContainerImagePlatformConflictException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)), platform, output)
                     // initializing source: multi-step string surgery to extract the image ref
                     else if lower.contains("initializing source") then
                         val dockerIdx = output.indexOf("docker://")
