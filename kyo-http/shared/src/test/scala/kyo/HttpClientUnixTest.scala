@@ -434,7 +434,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 .request(_.bodyText)
                 .response(_.bodyText)
             val handler = route.handler(req => HttpResponse.ok(req.fields.body))
-            val config  = HttpServerConfig.default.maxContentLength(200000)
+            val config  = HttpServerConfig.default.maxContentLength(200000.bytes)
             tempSocketPath().map { sockPath =>
                 val fullConfig = config.unixSocket(sockPath)
                 Sync.ensure(Sync.defer(cleanupSocket(sockPath))) {

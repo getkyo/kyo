@@ -93,9 +93,7 @@ final private[kyo] class KeyCache private (config: TeamsConfig, http: HttpClient
 
     private def keySet(url: HttpUrl)(using Frame): Ready < (Async & Abort[Failure]) =
         val httpConfig =
-            Connector.requestConfig(config, config.requestTimeout).copy(maxResponseLength =
-                StreamCoreExtensions.readBufferCapacity(config.keysMaxResponseLength)
-            )
+            Connector.requestConfig(config, config.requestTimeout).copy(maxResponseLength = config.keysMaxResponseLength)
         Connector.transportWith(httpConfig, http, KeysMethod, url)(HttpClient.getTextResponse(url, failOnError = false)).map { response =>
             if !response.status.isSuccess then Abort.fail(TeamsUnexpectedStatusException(KeysMethod, response.status))
             else

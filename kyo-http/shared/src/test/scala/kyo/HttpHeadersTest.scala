@@ -107,7 +107,7 @@ class HttpHeadersTest extends BaseHttpTest:
                     assert(h.cookie("t") == Present("y"))
                     assert(h.cookies == Seq("s" -> "x", "t" -> "y"))
                     assert(h.responseCookie("b") == Present("2"))
-                    assert(h.addCookie("sid", "v1").getAll("Set-Cookie").last == "sid=v1")
+                    assert(h.addCookie("sid", "v1").map(_.getAll("Set-Cookie").last) == Result.succeed("sid=v1"))
                 }
             }
         }
@@ -323,39 +323,39 @@ class HttpHeadersTest extends BaseHttpTest:
 
     "addCookie" - {
         "serializes simple cookie" in {
-            val h = HttpHeaders.empty.addCookie("session", HttpCookie("abc123"))
+            val h = HttpHeaders.empty.addCookie("session", HttpCookie("abc123")).getOrThrow
             assert(h.get("Set-Cookie") == Present("session=abc123"))
         }
 
         "serializes cookie with maxAge" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("val").maxAge(1.hours))
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("val").maxAge(1.hours)).getOrThrow
             val v = h.get("Set-Cookie")
             assert(v.exists(_.contains("id=val")))
             assert(v.exists(_.contains("Max-Age=3600")))
         }
 
         "serializes cookie with domain" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").domain("example.com"))
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").domain("example.com")).getOrThrow
             assert(h.get("Set-Cookie").exists(_.contains("Domain=example.com")))
         }
 
         "serializes cookie with path" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").path("/api"))
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").path("/api")).getOrThrow
             assert(h.get("Set-Cookie").exists(_.contains("Path=/api")))
         }
 
         "serializes secure flag" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").secure(true))
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").secure(true)).getOrThrow
             assert(h.get("Set-Cookie").exists(_.contains("Secure")))
         }
 
         "serializes httpOnly flag" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").httpOnly(true))
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").httpOnly(true)).getOrThrow
             assert(h.get("Set-Cookie").exists(_.contains("HttpOnly")))
         }
 
         "serializes sameSite" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").sameSite(HttpCookie.SameSite.Strict))
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").sameSite(HttpCookie.SameSite.Strict)).getOrThrow
             assert(h.get("Set-Cookie").exists(_.contains("SameSite=Strict")))
         }
 
@@ -367,7 +367,7 @@ class HttpHeadersTest extends BaseHttpTest:
                 .secure(true)
                 .httpOnly(true)
                 .sameSite(HttpCookie.SameSite.Lax)
-            val h = HttpHeaders.empty.addCookie("session", cookie)
+            val h = HttpHeaders.empty.addCookie("session", cookie).getOrThrow
             val v = h.get("Set-Cookie").get
             assert(v.contains("session=token"))
             assert(v.contains("Max-Age=86400"))
@@ -379,7 +379,7 @@ class HttpHeadersTest extends BaseHttpTest:
         }
 
         "omits unset attributes" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v"))
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v")).getOrThrow
             val v = h.get("Set-Cookie").get
             assert(v == "id=v")
             assert(!v.contains("Max-Age"))
@@ -391,14 +391,14 @@ class HttpHeadersTest extends BaseHttpTest:
         }
 
         "string value shorthand" in {
-            val h = HttpHeaders.empty.addCookie("name", "value")
+            val h = HttpHeaders.empty.addCookie("name", "value").getOrThrow
             assert(h.get("Set-Cookie") == Present("name=value"))
         }
 
         "multiple Set-Cookie headers" in {
             val h = HttpHeaders.empty
-                .addCookie("a", "1")
-                .addCookie("b", "2")
+                .addCookie("a", "1").getOrThrow
+                .addCookie("b", "2").getOrThrow
             val all = h.getAll("Set-Cookie")
             assert(all.length == 2)
             assert(all(0) == "a=1")
@@ -406,8 +406,20 @@ class HttpHeadersTest extends BaseHttpTest:
         }
 
         "serializes Int cookie value" in {
-            val h = HttpHeaders.empty.addCookie("count", HttpCookie(42))
+            val h = HttpHeaders.empty.addCookie("count", HttpCookie(42)).getOrThrow
             assert(h.get("Set-Cookie") == Present("count=42"))
+        }
+
+        "refuses a ';' in a value with HttpCookieException that does not carry the value" in {
+            // Built at runtime, so the source snippet a failure's message quotes cannot contain it either.
+            val token  = java.util.UUID.randomUUID().toString
+            val secret = s"$token; Domain=$token"
+            HttpHeaders.empty.addCookie("session", secret) match
+                case Result.Failure(e: HttpCookieException) =>
+                    assert(e.part == "the value of cookie 'session'")
+                    assert(!e.getMessage.contains(token))
+                case other => fail(s"expected HttpCookieException, got $other")
+            end match
         }
     }
 

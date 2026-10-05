@@ -302,7 +302,7 @@ class HttpContainerBackendTest extends BasePodTest:
             val backend = new HttpContainerBackend("/unused.sock")
             Abort.run[ContainerException](
                 backend.normalizePullError(
-                    HttpStatusException(HttpStatus(status), "POST", "http+unix://unused/images/create", body),
+                    HttpStatusException(HttpStatus.init(status).getOrThrow, "POST", "http+unix://unused/images/create", body),
                     pullImage,
                     auth
                 )

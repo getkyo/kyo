@@ -185,7 +185,7 @@ class TeamsLiveTest extends kyo.test.Test[Any]:
             // The kid of a key Microsoft publishes for Teams, read outside the module, so the module's own fetch is what is tested.
             HttpClient.getText(TeamsConfig.OpenIdMetadata).map { metadata =>
                 val jwks = Json.decode[TeamsLiveTest.Metadata](metadata).getOrThrow.jwks_uri
-                HttpClient.withConfig(_.maxResponseLength(4 * 1024 * 1024))(HttpClient.getText(jwks)).map { keys =>
+                HttpClient.withConfig(_.maxResponseLength(4.mib))(HttpClient.getText(jwks)).map { keys =>
                     val kid = Maybe.fromOption(Json.decode[TeamsLiveTest.KeySet](keys).getOrThrow.keys
                         .collectFirst { case key if key.endorsements.contains("msteams") => key.kid }).getOrElse("")
                     val claims =

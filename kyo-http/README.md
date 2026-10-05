@@ -268,6 +268,8 @@ end for
 
 `HttpClient.init` returns a scoped client that closes when the enclosing `Scope` ends. `HttpClient.initUnscoped` is also available for manual lifecycle management.
 
+No setting is refused; each value has a meaning. A `maxConnectionsPerHost` of zero or less opens no connection, so every request fails with `HttpPoolExhaustedException`. An `idleConnectionTimeout` of zero closes a connection as soon as it is released, so nothing is reused, and `Duration.Infinity` never closes one for idleness. On `HttpClientConfig`, a zero `timeout` fails the request at once with `HttpTimeoutException`, a zero `connectTimeout` fails every connect at once with `HttpConnectTimeoutException`, and `Duration.Infinity` arms no deadline; a negative `maxRedirects` means zero, which fails the first redirect with `HttpRedirectLoopException`. Byte limits are `ByteSize` values narrowed where they are used: zero becomes one byte, and a size beyond `Int.MaxValue` becomes `Int.MaxValue`.
+
 The default client is process-global and created lazily on first use (100 idle connections per host, 60s idle timeout). Calls that need an isolated pool must use `HttpClient.init`; there is no implicit per-service client.
 
 ## Serving Requests (the server)
@@ -327,7 +329,7 @@ val server2 = HttpServer.init(
 Additional config options include `backlog`, `tcpFastOpen`, `flushConsolidationLimit`, and `strictCookieParsing`.
 
 `init` returns an `HttpServer < (Async & Scope)`. The `Scope` effect means the server shuts down automatically when the enclosing scope closes.
-If the server cannot bind to the configured host and port, `HttpServer.init` and `HttpServer.initWith` abort with `HttpBindException`, usually because the address is unavailable or the port is already in use.
+If the server cannot bind to the configured host and port, `HttpServer.init` and `HttpServer.initWith` abort with `HttpBindException`, usually because the address is unavailable or the port is already in use. A route the server cannot serve, such as one whose `Capture.Rest` is not its last segment, aborts the same calls with `HttpRouteException` before anything is bound.
 
 ### Streaming
 
@@ -371,7 +373,7 @@ val server = HttpServer.init(
     HttpServerConfig.default
         .port(8080)
         .host("0.0.0.0")
-        .maxContentLength(1024 * 1024) // 1MB
+        .maxContentLength(1.mib)
         .keepAlive(true)
 )(handler)
 ```
@@ -409,7 +411,7 @@ Caution: `trustAll = true` disables all certificate verification and exposes the
 
 ### Transport Tuning
 
-For low-level tuning of the byte-transport pipeline, both configs accept an `HttpTransportConfig` via `.transportConfig(...)`. The defaults are production-ready; override only when profiling reveals a bottleneck. The knobs are `channelCapacity` (in-flight chunks buffered before backpressure), `readChunkSize` (per-connection read buffer in bytes, JVM and Native only: on JS and Wasm, Node sizes each read itself, at most 64 KiB), `maxHeaderSize` (the limit on a message head the parser enforces, request or status line through the empty line, with body bytes in the same read not counted on either side; the server answers a request over it with 431, or 414 for a request line alone over it, and `Connection: close`; the client fails a response over it with `HttpProtocolException`), and `handshakeTimeout` (the TLS handshake deadline, off by default):
+For low-level tuning of the byte-transport pipeline, both configs accept an `HttpTransportConfig` via `.transportConfig(...)`. The defaults are production-ready; override only when profiling reveals a bottleneck. The knobs are `channelCapacity` (in-flight chunks buffered before backpressure), `readChunkSize` (per-connection read buffer, a `ByteSize`, JVM and Native only: on JS and Wasm, Node sizes each read itself, at most 64 KiB), `maxHeaderSize` (the limit on a message head the parser enforces, request or status line through the empty line, with body bytes in the same read not counted on either side; the server answers a request over it with 431, or 414 for a request line alone over it, and `Connection: close`; the client fails a response over it with `HttpProtocolException`), and `handshakeTimeout` (the TLS handshake deadline, off by default; zero fails every handshake at once):
 
 ```scala
 val server = HttpServer.init(
@@ -418,7 +420,7 @@ val server = HttpServer.init(
         .transportConfig(
             HttpTransportConfig.default
                 .channelCapacity(8)
-                .readChunkSize(16384)
+                .readChunkSize(16.kib)
                 .handshakeTimeout(10.seconds)
         )
 )(handler1, handler2)
@@ -451,7 +453,7 @@ val p3 = "users" / Capture[Int]("userId") / "posts" / Capture[Int]("postId")
 
 String literals become fixed segments. `Capture[A]("name")` extracts a value from the URL and parses it into type `A` using an `HttpCodec[A]`. Built-in codecs exist for `Int`, `Long`, `String`, `Boolean`, `Double`, `Float`, and `UUID`.
 
-`Rest` captures the remaining path as a single string, useful for file-serving or catch-all routes. It must be the last segment in the path. Placing it elsewhere throws an `IllegalArgumentException` at server startup:
+`Rest` captures the remaining path as a single string, useful for file-serving or catch-all routes. It must be the last segment in the path. Placing it elsewhere fails `HttpServer.init` with an `HttpRouteException`:
 
 ```scala
 // Matches /files/any/remaining/segments
@@ -807,6 +809,9 @@ A handful of standalone public types model the building blocks of a request. The
 | `HttpQueryParams` | Ordered, multi-valued query parameters that allow duplicate keys. | `get`, `getAll`, `add`, `toSeq`, `toQueryString` |
 | `HttpUrl` | A parsed URL with structured access to its parts. Build with `HttpUrl.parse` (full URLs, fails on malformed input) or `HttpUrl.fromUri` (path-only request URIs, never fails). | `scheme`, `host`, `port`, `path`, `query`, `queryParams`, `baseUrl`, `ssl`, `address` |
 | `HttpAddress` | A connection target, either `Tcp(host, port)` or `Unix(path)`. Returned by `server.address`. | `Tcp`, `Unix` |
+| `HttpStatus` | A status code from 100 to 599. `HttpStatus(404)` takes a literal checked at compile time; a code known only at runtime goes through `HttpStatus.init`, which fails with `HttpInvalidStatusException` outside that range. | `code`, `name`, `isSuccess`, `isError`, `init`, `resolve` |
+
+`HttpHeaders.addCookie` returns a `Result`: a name, value, Domain or Path outside the RFC 6265 grammar fails with `HttpCookieException` instead of writing a header.
 
 `HttpUrl.baseUrl` strips the query string, so it is the safe form for logging since query parameters may carry tokens or API keys. Header name lookups are always case-insensitive while preserving the original case on the wire.
 
@@ -835,18 +840,18 @@ Client operations use `Abort[HttpException]`. The hierarchy has five families:
 | Group and family | Leaf exceptions | Use when |
 |------------------|-----------------|----------|
 | Retry or connectivity, `HttpConnectionException` | `HttpConnectException`, `HttpDnsResolutionException`, `HttpUnixConnectException`, `HttpConnectTimeoutException`, `HttpPoolExhaustedException`, `HttpConnectionClosedException` | Deciding whether a failed connection attempt can be retried, or whether DNS, Unix socket configuration, connect timeout, or pool sizing must be fixed. A connection closed before or during a response with bytes still owed is `HttpConnectionClosedException`; its `phase` says whether it closed before the head, during the body, or as a TLS close without `close_notify`. |
-| Request policy and outbound validation, `HttpRequestException` | `HttpTimeoutException`, `HttpRedirectLoopException`, `HttpNonAsciiException`, `HttpInvalidFieldException`, `HttpStatusException` | Handling request policy failures and outbound request validation. |
-| Server operation and handler mapping, `HttpServerException` | `HttpBindException`, `HttpHandlerException` | Handling server startup failures and route handler failures that were not mapped by the endpoint. |
-| Decode, content, and wire shape, `HttpDecodeException` | `HttpUrlParseException`, `HttpMalformedBodyException`, `HttpFieldDecodeException`, `HttpMissingFieldException`, `HttpJsonDecodeException`, `HttpFormDecodeException`, `HttpUnsupportedMediaTypeException`, `HttpStreamingDecodeException`, `HttpMissingBoundaryException`, `HttpProtocolException`, `HttpPayloadTooLargeException` | Separating route or body decode failures from HTTP wire, framing and size failures. |
+| Request policy and outbound validation, `HttpRequestException` | `HttpTimeoutException`, `HttpRedirectLoopException`, `HttpNonAsciiException`, `HttpInvalidFieldException`, `HttpCookieException`, `HttpStatusException` | Handling request policy failures and outbound request validation. |
+| Server operation and handler mapping, `HttpServerException` | `HttpBindException`, `HttpRouteException`, `HttpHandlerException` | Handling server startup failures and route handler failures that were not mapped by the endpoint. |
+| Decode, content, and wire shape, `HttpDecodeException` | `HttpUrlParseException`, `HttpInvalidStatusException`, `HttpMalformedBodyException`, `HttpFieldDecodeException`, `HttpMissingFieldException`, `HttpJsonDecodeException`, `HttpFormDecodeException`, `HttpUnsupportedMediaTypeException`, `HttpStreamingDecodeException`, `HttpMissingBoundaryException`, `HttpProtocolException`, `HttpPayloadTooLargeException` | Separating route or body decode failures from HTTP wire, framing and size failures. |
 | WebSocket upgrade, `HttpWebSocketException` | `HttpWebSocketHandshakeException` | Identifying the public exception leaf for WebSocket upgrade handshake failures. |
 
 Body-only convenience methods (`getText`, `getJson`, `getBinary`, etc.) automatically fail with `HttpStatusException` when the server returns a non-2xx status code. This represents outbound response validation failure: the response arrived, but the selected client method treats that status as an error. Use the `*Response` variants with `failOnError = false` to receive and inspect error responses.
 
-Some request failures happen before the request is sent. Non-ASCII request-line data fails with `HttpNonAsciiException`, invalid field names, field values, request paths, or WebSocket request values fail with `HttpInvalidFieldException`, and redirect chains that exceed the configured limit fail with `HttpRedirectLoopException`.
+Some request failures happen before the request is sent. Non-ASCII request-line data fails with `HttpNonAsciiException`, invalid field names, field values, request paths, or WebSocket request values fail with `HttpInvalidFieldException`, a cookie outside the RFC 6265 grammar fails with `HttpCookieException` (which names the cookie but never carries its value), and redirect chains that exceed the configured limit fail with `HttpRedirectLoopException`.
 
 Decode failures split into two practical groups. Route and content decoding covers URL parse errors, path/query/header/cookie field decoding, missing required fields, JSON or form body decoding, unsupported or absent `Content-Type`, streaming content decoded as a buffered body, and missing multipart boundaries. Wire and framing failures cover malformed chunked bodies, protocol parse errors and oversized payloads. A connection closed while bytes were still expected is the connectivity leaf `HttpConnectionClosedException`. A streamed response body cut short emits the bytes that arrived and then fails with that leaf, so a consumer under `Abort[HttpException]` never mistakes a truncated body for a complete one.
 
-On the server side, failed bind attempts abort with `HttpBindException`. If a handler throws or aborts with an unmapped error, kyo-http represents that failure as `HttpHandlerException`; declared endpoint failures that use `.error[E](status)` are serialized with the declared status.
+On the server side, failed bind attempts abort with `HttpBindException`, and a route the server cannot serve with `HttpRouteException`. A response cookie outside the RFC 6265 grammar is answered with a logged 500 rather than written. If a handler throws or aborts with an unmapped error, kyo-http represents that failure as `HttpHandlerException`; declared endpoint failures that use `.error[E](status)` are serialized with the declared status.
 
 ### Response Helpers
 

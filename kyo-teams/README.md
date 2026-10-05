@@ -88,7 +88,7 @@ The rest of this README uses a `config: TeamsConfig` built this way.
 `Teams.Webhook.handler` takes a `TeamsWebhookConfig`, which holds the path the route is mounted at, and your function. It returns an `HttpHandler` for kyo-http's `HttpServer`, and it requires `Env[Teams]`, so the bot is served inside `Teams.run`:
 
 ```scala
-val serving: Unit < (Async & Scope & Abort[HttpBindException]) =
+val serving: Unit < (Async & Scope & Abort[HttpBindException | HttpRouteException]) =
     Teams.run(config) {
         Teams.Webhook.handler(webhook) {
             [A] => (activity: Teams.Activity[A]) =>
@@ -620,7 +620,7 @@ The webhook's signing keys are refetched after `keysMaxAge` (24 hours). An inbou
 
 ### Limits and transport
 
-A slow network, a large roster, or a proxy between the bot and Microsoft may need bounds or a transport other than the defaults. `requestTimeout` and `connectTimeout` (10 seconds each) bound each request. `maxResponseLength` and `keysMaxResponseLength` (4 MiB each) bound the bodies the module reads; kyo-http's limit is an `Int`, so zero reads as 1 byte and a size past `Int.MaxValue` bytes as `Int.MaxValue`. `tls` and `transport` are the `HttpTlsConfig` and `HttpTransportConfig` of the module's own client.
+A slow network, a large roster, or a proxy between the bot and Microsoft may need bounds or a transport other than the defaults. `requestTimeout` and `connectTimeout` (10 seconds each) bound each request. `maxResponseLength` and `keysMaxResponseLength` (4 MiB each) bound the bodies the module reads; kyo-http narrows each where it reads a body, so zero reads as 1 byte and a size past `Int.MaxValue` bytes as `Int.MaxValue`. `tls` and `transport` are the `HttpTlsConfig` and `HttpTransportConfig` of the module's own client.
 
 ## Escape hatches
 
@@ -682,7 +682,7 @@ def open(message: Teams.Activity.Message, title: String): Unit < (Async & Abort[
     }
 end open
 
-val bot: Unit < (Async & Scope & Abort[HttpBindException]) =
+val bot: Unit < (Async & Scope & Abort[HttpBindException | HttpRouteException]) =
     Teams.run(config) {
         Teams.Webhook.handler(webhook) {
             [A] => (activity: Teams.Activity[A]) =>

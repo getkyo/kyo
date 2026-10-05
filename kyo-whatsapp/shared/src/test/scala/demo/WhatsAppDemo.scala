@@ -150,7 +150,7 @@ object WhatsAppWebhookDemo extends KyoApp:
 
     def serve(port: Int, config: WhatsAppConfig, webhook: WhatsAppWebhookConfig)(using
         Frame
-    ): Unit < (Async & Scope & Abort[HttpBindException]) =
+    ): Unit < (Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         WhatsApp.run(config)(WhatsApp.Webhook.handler(webhook) {
             case WhatsAppNotification.Message(_, _, message: WhatsAppInboundMessage.Common) =>
                 Console.printLine(s"  inbound: $message").andThen(WhatsApp.markRead(message.id))

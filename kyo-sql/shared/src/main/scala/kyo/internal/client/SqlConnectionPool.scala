@@ -360,8 +360,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 //
                 // This is the only bound on how many connections may be IN USE, and the idle ring bounds only how
                 // many may be KEPT. They are allowed to differ, and there are two independent reasons they do.
-                // `ConnectionPool.init` requires `maxConnectionsPerHost >= 2` (`ConnectionPool.scala:90`), which the
-                // Vyukov buffer needs, so a pool asked for 1 still gets a ring of 2. And the ring is keyed by
+                // The idle pool is built with `maxConnections.max(2)` (see `init`), so a pool asked for 1 may keep
+                // two idle connections. And the ring is keyed by
                 // `Endpoint`, which includes the transport security, so one address under several TLS configs owns
                 // several buckets. Both raise retention above `maxConnections` and neither raises concurrency,
                 // because every lease passes through this channel first.

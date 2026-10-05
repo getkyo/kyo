@@ -23,8 +23,7 @@ import scala.annotation.tailrec
 final private[kyo] class Http1Parser(
     inbound: Channel.Unsafe[Span[Byte]],
     builder: ParsedRequestBuilder,
-    // Configurable via HttpTransportConfig.maxHeaderSize.
-    maxHeaderSize: Int = 65536,
+    maxHeaderSize: Int = readBufferCapacity(HttpTransportConfig.default.maxHeaderSize),
     onRequestParsed: (ParsedRequest, Span[Byte]) => Unit = (_, _) => (),
     onClosed: () => Unit = () => (),
     // Distinct from onClosed: the peer is still there and is owed an answer before the connection goes. RFC 9112 section 6.3

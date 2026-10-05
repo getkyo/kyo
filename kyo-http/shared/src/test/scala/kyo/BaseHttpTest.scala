@@ -15,6 +15,13 @@ abstract class BaseHttpTest extends kyo.test.Test[Any]:
     )(using Frame): HttpClient < (Async & Scope) =
         HttpClient.init(maxConnectionsPerHost, idleConnectionTimeout, HttpTlsConfig(trustAll = true))
 
+    /** The router for routes the leaf knows to be servable; a refused route fails the leaf with its [[HttpRouteException]]. */
+    def routerOf(
+        handlers: Seq[HttpHandler[?, ?, ?]],
+        cors: Maybe[HttpServerConfig.Cors]
+    )(using Frame): kyo.internal.server.HttpRouter =
+        kyo.internal.server.HttpRouter.init(handlers, cors).getOrThrow
+
     /** Polls until `condition` holds, giving up after `maxPolls`, a bound that only exists so a broken subject fails instead of spinning
       * forever. Between checks it yields to the scheduler, by awaiting a fiber it starts, rather than sleeping: no poll reads a clock, so the
       * pass condition is the observed state alone, never elapsed time, and the poll works the same inside `Clock.withTimeControl`, where a

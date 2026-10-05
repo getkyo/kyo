@@ -38,7 +38,7 @@ class WhatsAppTest extends BaseWhatsAppTest:
 
     def withSendServer[A, S](responseBody: String, statusOk: Boolean = true)(
         test: (Int, Channel[Tuple3[String, String, String]]) => A < S
-    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         Channel.init[Tuple3[String, String, String]](1).map { captured =>
             val route = HttpRoute.postRaw("v25.0" / phoneId.value / "messages")
                 .request(_.bodyBinary)
@@ -58,7 +58,7 @@ class WhatsAppTest extends BaseWhatsAppTest:
     /** A Graph server answering every send with `sendOkBody`, and the number of sends it received. */
     def withCountingServer[A, S](test: (Int, AtomicInt) => A < S)(using
         Frame
-    ): A < (S & Async & Scope & Abort[HttpBindException]) =
+    ): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         AtomicInt.init(0).map { hits =>
             val route = HttpRoute.postRaw("v25.0" / phoneId.value / "messages").response(_.bodyText)
                 .handler(_ => hits.incrementAndGet.andThen(HttpResponse.ok(sendOkBody)))
@@ -533,7 +533,9 @@ class WhatsAppTest extends BaseWhatsAppTest:
     }
 
     "a response head larger than kyo-http's header limit is WhatsAppTransportException of kind Protocol" in {
-        sendAgainstClosingServer(s"HTTP/1.1 200 OK\r\nX-Pad: ${"a" * (HttpTransportConfig.default.maxHeaderSize + 1)}\r\n\r\n").map {
+        sendAgainstClosingServer(
+            s"HTTP/1.1 200 OK\r\nX-Pad: ${"a" * (HttpTransportConfig.default.maxHeaderSize.toBytes.toInt + 1)}\r\n\r\n"
+        ).map {
             (port, result) =>
                 assert(result == Result.fail(
                     WhatsAppTransportException("send", WhatsAppTransportException.Kind.Protocol, "localhost", port, Absent)()
