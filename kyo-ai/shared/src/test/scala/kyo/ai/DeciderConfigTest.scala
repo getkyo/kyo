@@ -46,6 +46,12 @@ class DeciderConfigTest extends kyo.test.Test[Any]:
         assert(base.apiKey.isEmpty && base.modelName == "jev-latest")
     }
 
+    "toString redacts the API key and keeps the other fields" in {
+        val text = DeciderConfig.TypeSafe.default.apiKey("ts-s3cr3t").toString
+        assert(!text.contains("s3cr3t"), text)
+        assert(text.contains("<redacted>") && text.contains("jev-latest"), text)
+    }
+
     "transport builders set the decider's own settings, absent by default" in {
         val schedule = Schedule.fixed(1.second).take(2)
         val changed  = DeciderConfig.TypeSafe.default.timeout(3.seconds).meter(Meter.Noop).retrySchedule(schedule)

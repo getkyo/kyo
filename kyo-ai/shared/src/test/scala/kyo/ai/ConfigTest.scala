@@ -583,4 +583,14 @@ class ConfigTest extends kyo.test.Test[Any]:
         succeed("every graded default is a member of its values")
     }
 
+    "toString redacts the API key, its decider's included, and keeps the other fields" in {
+        val config = Config.OpenAI.default.apiKey("sk-s3cr3t").apiOrg("my-org")
+            .decider(DeciderConfig.TypeSafe.default.apiKey("ts-k3y"))
+        val text = config.toString
+        assert(!text.contains("s3cr3t") && !text.contains("k3y"), text)
+        assert(text.split("<redacted>", -1).length == 3 && text.contains("my-org") && text.contains(config.modelName), text)
+        assert(!Config.OpenAI.default.toString.contains("<redacted>"))
+        assert(config.apiKey == Present("sk-s3cr3t"))
+    }
+
 end ConfigTest
