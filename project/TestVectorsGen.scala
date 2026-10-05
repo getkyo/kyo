@@ -14,9 +14,11 @@ import sbt.*
   * source-sha256 <sha-256 of what that url served, when it is a single archive or document>
   * license <terms the upstream publishes the files under>
   * file <name> <sha-256 of the file> <path inside the source>
+  * kept <name> <sha-256 of the file>
   * }}}
   *
-  * Only the `file` lines are read by the build; the others record provenance for a reviewer.
+  * Only the `file` and `kept` lines are read by the build; the others record provenance for a reviewer. A `kept` file is verified like
+  * a `file` but not embedded: it is an input the set was produced from, such as a test-only private key, which no compiled source holds.
   *
   * The generator fails the build when a file in the set is not listed, a listed file is missing, or a digest differs, so a checked-in file
   * cannot drift from what its manifest says was fetched. It emits one object whose `text(set, name)` returns a file's content and
@@ -49,27 +51,24 @@ object TestVectorsGen {
         val set      = dir.getName
         val manifest = dir / "MANIFEST"
         if (!manifest.exists) sys.error(s"test vectors: $dir has no MANIFEST")
-        val listed = IO
-            .readLines(manifest, StandardCharsets.UTF_8)
-            .map(_.trim)
-            .filter(line => line.startsWith("file "))
-            .map { line =>
+        val lines                                        = IO.readLines(manifest, StandardCharsets.UTF_8).map(_.trim)
+        def entries(kind: String): Seq[(String, String)] =
+            lines.filter(_.startsWith(kind + " ")).map { line =>
                 line.split("\\s+").toList match {
                     case _ :: name :: digest :: _ => name -> digest.toLowerCase
                     case _                        => sys.error(s"test vectors: malformed MANIFEST line in $set: $line")
                 }
             }
+        val listed   = entries("file")
+        val kept     = entries("kept")
         val present  = IO.listFiles(dir).filter(_.isFile).map(_.getName).filter(_ != "MANIFEST").toSet
-        val unlisted = present -- listed.map(_._1)
+        val unlisted = present -- listed.map(_._1) -- kept.map(_._1)
         if (unlisted.nonEmpty)
             sys.error(s"test vectors: $set has files its MANIFEST does not list: ${unlisted.toSeq.sorted.mkString(", ")}")
+        kept.foreach { case (name, expected) => digestOf(set, dir, name, expected) }
         listed.map { case (name, expected) =>
-            val file = dir / name
-            if (!file.exists) sys.error(s"test vectors: $set/$name is listed in MANIFEST but missing")
-            val bytes  = IO.readBytes(file)
-            val actual = MessageDigest.getInstance("SHA-256").digest(bytes).map(b => f"${b & 0xff}%02x").mkString
-            if (actual != expected) sys.error(s"test vectors: $set/$name has sha-256 $actual, MANIFEST says $expected")
-            val text =
+            val bytes = digestOf(set, dir, name, expected)
+            val text  =
                 try
                     StandardCharsets.UTF_8
                         .newDecoder()
@@ -80,6 +79,16 @@ object TestVectorsGen {
                 catch { case e: CharacterCodingException => sys.error(s"test vectors: $set/$name is not UTF-8: $e") }
             Entry(set, name, expected, text)
         }
+    }
+
+    /** The bytes of `set/name`, or a build failure when the file is missing or its SHA-256 is not `expected`. */
+    private def digestOf(set: String, dir: File, name: String, expected: String): Array[Byte] = {
+        val file = dir / name
+        if (!file.exists) sys.error(s"test vectors: $set/$name is listed in MANIFEST but missing")
+        val bytes  = IO.readBytes(file)
+        val actual = MessageDigest.getInstance("SHA-256").digest(bytes).map(b => f"${b & 0xff}%02x").mkString
+        if (actual != expected) sys.error(s"test vectors: $set/$name has sha-256 $actual, MANIFEST says $expected")
+        bytes
     }
 
     private def render(pkg: String, objectName: String, entries: Seq[Entry]): String = {

@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Browser.*
+import kyo.Length.*
 import kyo.UI.foreach
 
 class TableTest extends UITest:
@@ -189,6 +190,87 @@ class TableTest extends UITest:
                 _ <- Browser.assertText(Selector.css("#tb-table tbody td"), "B")
                 _ <- Browser.assertText(Selector.id("tb-cell"), "B")
             yield ()
+        }
+    }
+
+    "explicit thead renders as a real header row group" in {
+        withUI(UI.div(UI.table(UI.thead(UI.tr(UI.th("H").id("th-cell")))).id("th-table"))) {
+            for
+                _ <- Browser.assertText(Selector.css("#th-table thead th"), "H")
+                _ <- Browser.assertText(Selector.id("th-cell"), "H")
+            yield ()
+        }
+    }
+
+    "explicit tfoot renders as a real footer row group" in {
+        withUI(UI.div(UI.table(UI.tfoot(UI.tr(UI.td("F").id("tf-cell")))).id("tf-table"))) {
+            for
+                _ <- Browser.assertText(Selector.css("#tf-table tfoot td"), "F")
+                _ <- Browser.assertText(Selector.id("tf-cell"), "F")
+            yield ()
+        }
+    }
+
+    "a reactive header row group re-renders inside its table" in {
+        val app: UI < Async =
+            for label <- Signal.initRef("H1")
+            yield UI.div(
+                UI.table(
+                    label.map(l => UI.thead(UI.tr(UI.th(l)))),
+                    UI.tbody(UI.tr(UI.td("B")))
+                ).id("rt-table"),
+                UI.button("Next").id("next").onClick(label.set("H2"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.css("#rt-table thead th"), "H1")
+                _ <- Browser.click(Selector.id("next"))
+                _ <- Browser.assertText(Selector.css("#rt-table thead th"), "H2")
+                _ <- Browser.assertText(Selector.css("#rt-table tbody td"), "B")
+            yield ()
+        }
+    }
+
+    // The parser groups every direct <table> row child into ONE implied tbody, so the
+    // three groups only stay distinct (and stay in header/body/footer order) when they
+    // are written out.
+    "thead, tbody and tfoot stay distinct groups in one table" in {
+        withUI(UI.div(UI.table(
+            UI.thead(UI.tr(UI.th("H"))),
+            UI.tbody(UI.tr(UI.td("B"))),
+            UI.tfoot(UI.tr(UI.td("F")))
+        ).id("grp-table"))) {
+            for
+                _ <- Browser.assertText(Selector.css("#grp-table thead > tr > th"), "H")
+                _ <- Browser.assertText(Selector.css("#grp-table tbody > tr > td"), "B")
+                _ <- Browser.assertText(Selector.css("#grp-table tfoot > tr > td"), "F")
+            yield ()
+        }
+    }
+
+    "colgroup sizes a column the cells never mention" in {
+        withUI(UI.div(UI.table(
+            UI.colgroup(UI.col.style(Style.width(200.px)).id("c1"), UI.col.style(Style.width(100.px))),
+            UI.tbody(UI.tr(UI.td("A").id("cell-a"), UI.td("B")))
+        ).style(Style.width(300.px)).id("cg-table"))) {
+            for
+                _ <- Browser.assertExists(Selector.id("c1"))
+                w <- Browser.eval("String(document.getElementById('cell-a').offsetWidth)")
+            yield assert(w == "200")
+        }
+    }
+
+    "col is void: it takes no children and closes itself" in {
+        withUI(UI.div(UI.table(
+            UI.colgroup(UI.col.id("void-col")),
+            UI.tbody(UI.tr(UI.td("A")))
+        ).id("void-table"))) {
+            for
+                kids <- Browser.eval("String(document.getElementById('void-col').childNodes.length)")
+                tag  <- Browser.eval("document.getElementById('void-col').tagName")
+            yield
+                assert(kids == "0")
+                assert(tag == "COL")
         }
     }
 

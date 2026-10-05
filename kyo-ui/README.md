@@ -124,7 +124,7 @@ Finite value domains are typed the same way, each covered in its own section bel
 - Headings: `UI.h1`..`UI.h6`.
 - Containers: `UI.div`, `UI.p`, `UI.section`, `UI.main`, `UI.header`, `UI.footer`, `UI.nav`, `UI.pre`, `UI.code`, `UI.span`.
 - Lists: `UI.ul`, `UI.ol`, `UI.li`.
-- Tables: `UI.table`, `UI.tr`, `UI.td`, `UI.th`. `Td` and `Th` carry `.colspan(v)` and `.rowspan(v)` setters (each is clamped to `>= 1`).
+- Tables: `UI.table`, `UI.tr`, `UI.td`, `UI.th`, plus the row groups `UI.thead`, `UI.tbody`, `UI.tfoot` and the column list `UI.colgroup` / `UI.col`. `Td` and `Th` carry `.colspan(v)` and `.rowspan(v)` setters (each is clamped to `>= 1`). A `col` is the only place a per-column width goes: it sizes the whole column, where a width on a cell sizes the row that cell is in.
 - Voids: `UI.hr`, `UI.br`.
 - Links: `UI.a` with `.href(v: Href)`, `.href(v, target)`, `.target(v)`. See [Domain enums for attributes](#domain-enums-for-attributes).
 - Labels: `UI.label.forId(v)` (alias `.\`for\`(v)` for HTML symmetry).
