@@ -1940,6 +1940,34 @@ class STMTest extends kyo.test.Test[Any]:
             }
         }
 
+        "STM.run evaluates its retry schedule at the ambient Clock's time" in {
+            // The default schedule's jitter derives each delay from the instant it is evaluated at, so under a controlled clock frozen at
+            // the epoch the first retry must sleep exactly the delay the schedule gives at the epoch. A fired sleeper is done at once, and
+            // the next attempt counts itself before arming its own sleeper, so after each advance the pending-sleeper fence pins the
+            // attempt count without racing the retrying fiber.
+            val expected = STM.defaultRetrySchedule.next(Instant.Epoch).map(_._1).getOrElse(Duration.Zero)
+            Clock.withTimeControl { control =>
+                for
+                    attempts <- AtomicInt.init(0)
+                    fiber    <- Fiber.initUnscoped(Abort.run[FailedTransaction] {
+                        STM.run(attempts.incrementAndGet.andThen(STM.retry))
+                    })
+                    _         <- control.awaitPendingSleepers(1)
+                    _         <- control.advance(expected.minusOrZero(1.nanos), Duration.Zero)
+                    _         <- control.awaitPendingSleepers(1)
+                    justShort <- attempts.get
+                    _         <- control.advance(1.nanos, Duration.Zero)
+                    _         <- control.awaitPendingSleepers(1)
+                    atDelay   <- attempts.get
+                    _         <- fiber.interrupt
+                yield
+                    assert(expected > Duration.Zero)
+                    assert(justShort == 1, s"the first retry fired before the ${expected.show} the schedule gives at the controlled time")
+                    assert(atDelay == 2, s"the first retry did not fire at the ${expected.show} the schedule gives at the controlled time")
+                end for
+            }
+        }
+
         "STM.run body observes Present(tick) for currentTransaction from its first statement" in {
             STM.run {
                 for
