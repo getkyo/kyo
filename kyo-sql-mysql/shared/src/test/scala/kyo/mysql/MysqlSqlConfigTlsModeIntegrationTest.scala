@@ -57,7 +57,7 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // Uses a per-leaf MySQL container started with --skip-ssl --default-authentication-plugin=mysql_native_password
     // (no CLIENT_SSL capability). allow mode: try plaintext first → server accepts → stay plaintext. No reconnect.
 
-    "sslmode=allow connects plaintext when server permits plaintext".tagged("kyo.OwnContainer") in {
+    "sslmode=allow connects plaintext when server permits plaintext".tagged(OwnContainer.name) in {
         Scope.run {
             // --skip-ssl disables server-side TLS so the server does not advertise CLIENT_SSL.
             // --default-authentication-plugin=mysql_native_password is required alongside --skip-ssl so
@@ -92,7 +92,7 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // detects this via requiresSecureTransport and retries with TLS (connectWithMode → SqlConfig.TlsMode.Require).
     // The connection succeeds and is verified to be over TLS via SHOW SESSION STATUS LIKE 'Ssl_cipher'.
 
-    "sslmode=allow upgrades to TLS when server requires TLS".tagged("kyo.OwnContainer") in {
+    "sslmode=allow upgrades to TLS when server requires TLS".tagged(OwnContainer.name) in {
         Scope.run {
             // --require-secure-transport=ON: server rejects plaintext with error 3159
             //   (ER_SECURE_TRANSPORT_REQUIRED), triggering the requiresSecureTransport reconnect path.
@@ -151,7 +151,7 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // Uses the shared TLS container (mysql:8.0, CLIENT_SSL advertised).
     // prefer mode: HandshakeExchange sees CLIENT_SSL in server capabilities → upgrades to TLS.
 
-    "sslmode=prefer connects with TLS when server supports TLS".tagged("kyo.OwnContainer") in {
+    "sslmode=prefer connects with TLS when server supports TLS".tagged(OwnContainer.name) in {
         // The shared TLS container (mysql:8.0) auto-generates certs; CLIENT_SSL is advertised.
         // prefer mode with trustAll=true: upgrade to TLS when server supports it.
         withTlsContainer { ctx =>
@@ -188,7 +188,7 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // Uses a per-leaf MySQL container started with --skip-ssl --default-authentication-plugin=mysql_native_password
     // (no CLIENT_SSL capability). prefer mode: HandshakeExchange sees no CLIENT_SSL → preferFallback=true → plaintext fallback.
 
-    "sslmode=prefer falls back to plaintext when server refuses TLS".tagged("kyo.OwnContainer") in {
+    "sslmode=prefer falls back to plaintext when server refuses TLS".tagged(OwnContainer.name) in {
         Scope.run {
             // --skip-ssl disables server-side TLS so the server does not advertise CLIENT_SSL.
             // --default-authentication-plugin=mysql_native_password is required alongside --skip-ssl so
@@ -223,7 +223,7 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // MysqlConnection derives preferFallback from the mode, false for Require since only Prefer falls back, and
     // HandshakeExchange.run fails when the server does not advertise CLIENT_SSL.
 
-    "sslmode=require accepts any cert chain".tagged("kyo.OwnContainer") in {
+    "sslmode=require accepts any cert chain".tagged(OwnContainer.name) in {
         // Shared TLS container (mysql:8.0, CLIENT_SSL advertised, self-signed cert).
         // require: TLS mandatory; no CA validation; the auto-generated self-signed cert is accepted.
         withTlsContainer { ctx =>
@@ -266,7 +266,7 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // Hence the cert-container fixture, which generates a cert with `openssl req -new -x509`, bind-mounts it at
     // `/etc/mysql/ssl`, and starts mysqld with `--ssl-cert=... --ssl-key=... --ssl-ca=...`.
 
-    "sslmode=verify-ca rejects untrusted CA on MySQL".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-ca rejects untrusted CA on MySQL".tagged(OwnContainer.name) in {
         withCertContainer { ctx =>
             val url =
                 s"mysql://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=verify-ca&sslrootcert=${ctx.wrongCaCertPath}"
@@ -301,7 +301,7 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // Reached through the same cert-container fixture as leaf 6, which is what supplies a `CN=localhost`
     // certificate and a host-accessible CA PEM.
 
-    "sslmode=verify-full rejects hostname mismatch on MySQL".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-full rejects hostname mismatch on MySQL".tagged(OwnContainer.name) in {
         withCertContainer { ctx =>
             // Reach the SAME container by its IP literal while the certificate says CN=localhost, so the chain
             // is valid and only the hostname disagrees. That is what separates verify-full from verify-ca: the
@@ -330,7 +330,7 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // container by the name the certificate actually carries, with the CA that actually signed it, and then
     // OBSERVES the transport rather than inferring it from the query succeeding.
 
-    "sslmode=verify-full connects with the matching CA and hostname, over TLS".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-full connects with the matching CA and hostname, over TLS".tagged(OwnContainer.name) in {
         withCertContainer { ctx =>
             val url =
                 s"mysql://${ctx.user}:${ctx.password}@localhost:${ctx.port}/${ctx.db}?sslmode=verify-full&sslrootcert=${ctx.caCertPath}"

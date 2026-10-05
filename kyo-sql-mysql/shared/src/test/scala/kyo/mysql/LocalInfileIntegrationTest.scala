@@ -66,7 +66,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 1: 10 MB stream ──────────────────────────────────────────────────
 
-    "streams a 10 MB span into a target table".tagged("kyo.OwnContainer") in {
+    "streams a 10 MB span into a target table".tagged(OwnContainer.name) in {
         Scope.run {
             withMyClient { client =>
                 withLoadTable(client) { tbl =>
@@ -90,7 +90,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 2: empty stream ──────────────────────────────────────────────────
 
-    "streams an empty stream and reports 0 affected rows".tagged("kyo.OwnContainer") in {
+    "streams an empty stream and reports 0 affected rows".tagged(OwnContainer.name) in {
         Scope.run {
             withMyClient { client =>
                 withLoadTable(client) { tbl =>
@@ -106,7 +106,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 3: Path.readBytesStream ─────────────────────────────────────────
 
-    "streams from Path.readBytes".tagged("kyo.OwnContainer") in {
+    "streams from Path.readBytes".tagged(OwnContainer.name) in {
         Scope.run {
             withMyClient { client =>
                 withLoadTable(client) { tbl =>
@@ -139,7 +139,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 3b: the load runs on the transaction's connection ───────────────
 
-    "a load inside a rolled-back transaction leaves no rows".tagged("kyo.OwnContainer") in {
+    "a load inside a rolled-back transaction leaves no rows".tagged(OwnContainer.name) in {
         Scope.run {
             withMyClient { client =>
                 withLoadTable(client, "id INT, name VARCHAR(255)") { tbl =>
@@ -172,7 +172,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 4: stream failure mid-transfer ───────────────────────────────────
 
-    "stream failure mid-transfer aborts the load and surfaces the underlying error".tagged("kyo.OwnContainer") in {
+    "stream failure mid-transfer aborts the load and surfaces the underlying error".tagged(OwnContainer.name) in {
         Scope.run {
             withMyClient { client =>
                 withLoadTable(client) { tbl =>
@@ -216,7 +216,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 5: server-side rejection (bad column in column list) ───────────
 
-    "server-side rejection (bad column reference) surfaces SqlServerException".tagged("kyo.OwnContainer") in {
+    "server-side rejection (bad column reference) surfaces SqlServerException".tagged(OwnContainer.name) in {
         Scope.run {
             withMyClient { client =>
                 // Reference a non-existent column in the LOAD DATA column list.
@@ -258,7 +258,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 6: 50 MB multi-packet boundary ──────────────────────────────────
 
-    "50 MB stream splits into multiple LOCAL_INFILE_DATA packets and reports correct row count".tagged("kyo.OwnContainer") in {
+    "50 MB stream splits into multiple LOCAL_INFILE_DATA packets and reports correct row count".tagged(OwnContainer.name) in {
         Scope.run {
             withMyClient { client =>
                 withLoadTable(client) { tbl =>
@@ -283,7 +283,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 7: cancellation mid-transfer ────────────────────────────────────
 
-    "cancellation mid-transfer terminates load; connection is reusable for follow-up SELECT".tagged("kyo.OwnContainer") in {
+    "cancellation mid-transfer terminates load; connection is reusable for follow-up SELECT".tagged(OwnContainer.name) in {
         Scope.run {
             withMyClient { client =>
                 withLoadTable(client) { tbl =>
@@ -371,7 +371,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 8: server with local_infile=OFF ──────────────────────────────────
 
-    "server with local_infile=OFF rejects LOCAL INFILE with SqlServerException".tagged("kyo.OwnContainer") in {
+    "server with local_infile=OFF rejects LOCAL INFILE with SqlServerException".tagged(OwnContainer.name) in {
         Scope.run {
             withLocalInfileOff { ctx =>
                 MysqlClient.initWith(
@@ -411,7 +411,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 9: mid-stream failure leaves connection reusable ─────────────────
 
-    "mid-stream failure leaves the connection reusable".tagged("kyo.OwnContainer") in {
+    "mid-stream failure leaves the connection reusable".tagged(OwnContainer.name) in {
         Scope.run {
             withMyClient { client =>
                 withLoadTable(client) { tbl =>

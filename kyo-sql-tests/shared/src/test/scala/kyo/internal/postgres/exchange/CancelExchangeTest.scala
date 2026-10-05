@@ -48,7 +48,7 @@ class CancelExchangeTest extends SqlContainerTest:
                 Scope.ensure(Abort.run(conn.terminate).unit).andThen(f(conn))
             }
 
-    "cancel interrupts a slow query, pg_sleep(10) aborts with SQLSTATE 57014".tagged("kyo.OwnContainer") in {
+    "cancel interrupts a slow query, pg_sleep(10) aborts with SQLSTATE 57014".tagged(OwnContainer.name) in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { queryConn =>
@@ -91,7 +91,7 @@ class CancelExchangeTest extends SqlContainerTest:
         }
     }
 
-    "cancel after query completes is a no-op, no error from cancel itself".tagged("kyo.OwnContainer") in {
+    "cancel after query completes is a no-op, no error from cancel itself".tagged(OwnContainer.name) in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -113,7 +113,7 @@ class CancelExchangeTest extends SqlContainerTest:
         }
     }
 
-    "cancel with wrong secretKey is silently rejected, connection remains usable".tagged("kyo.OwnContainer") in {
+    "cancel with wrong secretKey is silently rejected, connection remains usable".tagged(OwnContainer.name) in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
