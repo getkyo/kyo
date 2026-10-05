@@ -21,7 +21,7 @@ check() {  # check <name> <actual> <expected>
 
 echo "Running sbt-heap-lib self-tests..."
 
-for role in compile docs test-jvm run link publish tool; do
+for role in compile docs classnames test-jvm run link publish tool; do
     want=$(sbt_heap_role_mb "$role")
     check "$role on a 32GB runner is its table value" "$(SBT_HEAP_MEMORY_MB=32768 sbt_heap "$role")" "-J-Xmx${want}M"
 done

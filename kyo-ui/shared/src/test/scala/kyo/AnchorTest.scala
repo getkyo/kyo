@@ -127,4 +127,30 @@ class AnchorTest extends UITest:
         }
     }
 
+    "a modified click on an anchor with onClick keeps the browser's default and still runs the handler" in {
+        // A window listener runs after the page's delegated listener, so it sees whether that one took the
+        // default; it then cancels the navigation itself so the test page stays put.
+        val app: UI < Async =
+            for clicks <- Signal.initRef(0)
+            yield UI.div(
+                UI.a.href(Href.Path("/elsewhere")).id("a").onClick(clicks.getAndUpdate(_ + 1).unit)("Link"),
+                clicks.map(n => UI.span(n.toString).id("n"))
+            )
+        def clickPrevented(ctrl: Boolean): String =
+            s"""(function(){var seen=null;function f(e){seen=e.defaultPrevented;e.preventDefault();}
+               |window.addEventListener('click',f);
+               |document.getElementById('a').dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,ctrlKey:$ctrl}));
+               |window.removeEventListener('click',f);return seen;})()""".stripMargin
+        withUI(app) {
+            for
+                plain    <- Browser.evalBoolean(clickPrevented(ctrl = false))
+                modified <- Browser.evalBoolean(clickPrevented(ctrl = true))
+                _        <- Browser.assertText(Selector.id("n"), "2")
+            yield
+                assert(plain)
+                assert(!modified)
+            end for
+        }
+    }
+
 end AnchorTest
