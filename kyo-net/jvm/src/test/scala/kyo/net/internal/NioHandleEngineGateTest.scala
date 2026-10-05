@@ -1,7 +1,5 @@
 package kyo.net.internal
 
-import java.net.InetSocketAddress
-import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import kyo.*
 import kyo.net.Connection
@@ -99,20 +97,6 @@ class NioHandleEngineGateTest extends Test:
             }
         }
     end driveConnection
-
-    private def openPair(): (SocketChannel, SocketChannel) =
-        val ss = ServerSocketChannel.open()
-        ss.bind(new InetSocketAddress("127.0.0.1", 0))
-        val port = ss.socket().getLocalPort
-        val c    = SocketChannel.open()
-        c.configureBlocking(false)
-        c.connect(new InetSocketAddress("127.0.0.1", port))
-        ss.configureBlocking(true)
-        val s = ss.accept()
-        c.finishConnect()
-        ss.close()
-        (c, s)
-    end openPair
 
     "NIO engine gate exclusion under concurrent read, write, and close" - {
 
@@ -226,8 +210,10 @@ class NioHandleEngineGateTest extends Test:
         // actually exercised (unlike a simulation). After close, the gate must be false (the finally
         // block released it). A missing or broken finally would leave the gate permanently true and
         // any subsequent acquisition attempt would spin forever.
+        // The handle is never read or written, so an unconnected channel serves; the close_notify write it attempts fails inside close,
+        // which is the throwing path the finally has to survive.
         "gate acquired and released by real NioHandle.close on TLS handle" in {
-            val (c, s) = openPair()
+            val c = SocketChannel.open()
             try
                 val engine = javax.net.ssl.SSLContext.getDefault.createSSLEngine()
                 engine.setUseClientMode(true)
@@ -239,10 +225,7 @@ class NioHandleEngineGateTest extends Test:
 
                 assert(!handle.engineGate.get(), "gate must be false after close (released by finally)")
                 assert(!handle.channel.isOpen, "channel must be closed after NioHandle.close")
-            finally
-                try c.close()
-                catch case _: Exception => ()
-                s.close()
+            finally c.close()
             end try
         }
     }

@@ -204,7 +204,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/close") { ws =>
                     ws.put(HttpWebSocket.Payload.Text("trigger")).andThen {
                         Abort.run[Closed](ws.take()).map(result =>
-                            discard(assert(result.isFailure || result.isPanic))
+                            discard(assert(result.isFailure, s"expected Closed, got $result"))
                         )
                     }
                 }
@@ -219,7 +219,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                     ws.put(HttpWebSocket.Payload.Text("trigger")).andThen {
                         Abort.run[Closed](ws.take()).andThen {
                             ws.closeReason.map(reason =>
-                                assert(reason == Present((4000, "app error")) || reason.isDefined, s"expected close code 4000, got $reason")
+                                assert(reason == Present((4000, "app error")), s"expected close code 4000, got $reason")
                             )
                         }
                     }
@@ -234,10 +234,79 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/close-fast") { ws =>
                     // take blocks until close arrives
                     Abort.run[Closed](ws.take()).map(r =>
-                        discard(assert(r.isFailure || r.isPanic))
+                        discard(assert(r.isFailure, s"expected Closed, got $r"))
                     )
                 }
             }.unit
+        }
+
+        // A handler that closes and returns at once ends its session while the close frame may still be queued for the writer. The
+        // peer must still receive the code: without it, a Discord client's 4900, sent before it resumes on a new connection, reaches
+        // the server as a bare end of stream, which ends the session instead of keeping it resumable. Repeated because the frame is
+        // lost only when the session's teardown overtakes the writer.
+        "a client that closes and returns at once still sends its close code" in {
+            AtomicRef.initWith(Chunk.empty[Maybe[(Int, String)]]) { seen =>
+                withWsServer(HttpHandler.webSocket("ws/record") { (_, ws) =>
+                    ws.stream.foreachChunk(_ => ()).andThen(ws.closeReason).map(r => seen.updateAndGet(_.append(r)).unit)
+                }) { url =>
+                    Kyo.foreachDiscard(1 to 50)(_ =>
+                        HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/record")(_.close(4900, "bye"))
+                    ).andThen(assertEventually(seen.get.map(_.size == 50)))
+                }.andThen(seen.get).map { reasons =>
+                    assert(reasons.count(_ != Present((4900, "bye"))) == 0, s"close reasons the server saw: $reasons")
+                }
+            }
+        }
+
+        "a server handler that closes and returns at once still sends its close code" in {
+            withWsServer(HttpHandler.webSocket("ws/close-return")((_, ws) => ws.close(4900, "bye"))) { url =>
+                Kyo.foreach(Chunk.range(0, 50))(_ =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/close-return") { ws =>
+                        ws.stream.foreachChunk(_ => ()).andThen(ws.closeReason)
+                    }
+                )
+            }.map { reasons =>
+                assert(reasons.count(_ != Present((4900, "bye"))) == 0, s"close reasons the client saw: $reasons")
+            }
+        }
+
+        // Frames put before a close are part of the session: the writer must send them ahead of the Close frame, and a receiver must
+        // still take every frame that arrived before the peer's Close. Repeated because a frame is lost only when the close lands while
+        // it is still queued, on either the sending or the receiving side.
+        "a server handler that puts frames and closes delivers every frame before its close code" in {
+            val sent = Chunk.range(0, 10).map(i => s"m$i")
+            withWsServer(HttpHandler.webSocket("ws/put-close") { (_, ws) =>
+                Kyo.foreachDiscard(sent)(m => ws.put(HttpWebSocket.Payload.Text(m))).andThen(ws.close(4900, "bye"))
+            }) { url =>
+                Kyo.foreach(Chunk.range(0, 50))(_ =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/put-close") { ws =>
+                        ws.stream.run.map(frames => ws.closeReason.map(reason => (frames, reason)))
+                    }
+                )
+            }.map { sessions =>
+                val expected = (sent.map(HttpWebSocket.Payload.Text(_)), Present((4900, "bye")))
+                val wrong    = sessions.filter(_ != expected)
+                assert(wrong.isEmpty, s"${wrong.size} of 50 sessions differ, first: ${wrong.headOption}")
+            }
+        }
+
+        "a client that puts frames and closes delivers every frame before its close code" in {
+            val sent = Chunk.range(0, 10).map(i => s"m$i")
+            AtomicRef.initWith(Chunk.empty[(Chunk[HttpWebSocket.Payload], Maybe[(Int, String)])]) { seen =>
+                withWsServer(HttpHandler.webSocket("ws/record-frames") { (_, ws) =>
+                    ws.stream.run.map(frames => ws.closeReason.map(reason => seen.updateAndGet(_.append((frames, reason))).unit))
+                }) { url =>
+                    Kyo.foreachDiscard(1 to 50)(_ =>
+                        HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/record-frames") { ws =>
+                            Kyo.foreachDiscard(sent)(m => ws.put(HttpWebSocket.Payload.Text(m))).andThen(ws.close(4900, "bye"))
+                        }
+                    ).andThen(assertEventually(seen.get.map(_.size == 50)))
+                }.andThen(seen.get).map { sessions =>
+                    val expected = (sent.map(HttpWebSocket.Payload.Text(_)), Present((4900, "bye")))
+                    val wrong    = sessions.filter(_ != expected)
+                    assert(wrong.isEmpty, s"${wrong.size} of 50 sessions differ, first: ${wrong.headOption}")
+                }
+            }
         }
 
         "close after exchange" in {
@@ -322,7 +391,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
             }) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/empty") { ws =>
                     Abort.run[Closed](ws.take()).map(r =>
-                        discard(assert(r.isFailure || r.isPanic))
+                        discard(assert(r.isFailure, s"expected Closed, got $r"))
                     )
                 }
             }.unit
@@ -334,7 +403,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
             }) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/abort") { ws =>
                     Abort.run[Closed](ws.take()).map(r =>
-                        discard(assert(r.isFailure || r.isPanic))
+                        discard(assert(r.isFailure, s"expected Closed, got $r"))
                     )
                 }
             }.unit
@@ -411,6 +480,38 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                     }
                 }
             }
+        }
+
+        // The peer drops TCP without a Close frame, so no close reason is ever recorded and the handler returns after its reader has
+        // already ended. The session must still end: once it does, its outbound channel is closed and an offer fails with `Closed`.
+        "a server session ends when its handler returns after the peer dropped the connection" in {
+            val upgrade =
+                "GET /ws/drop HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+            def readHead(conn: kyo.net.Connection, acc: String): String < (Async & Abort[Closed]) =
+                if acc.contains("\r\n\r\n") then acc
+                else conn.inbound.safe.take.map(d => readHead(conn, acc + new String(d.toArray, "ISO-8859-1")))
+            for
+                session  <- AtomicRef.init(Absent: Maybe[HttpWebSocket])
+                returned <- Latch.init(1)
+                _        <- withWsServer(HttpHandler.webSocket("ws/drop") { (_, ws) =>
+                    session.set(Present(ws)).andThen(ws.onPeerClose).andThen(returned.release)
+                }) { url =>
+                    Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(url.host, url.port).safe.get).map { conn =>
+                        for
+                            _    <- Abort.run[Closed](conn.outbound.safe.put(Span.fromUnsafe(upgrade.getBytes("ISO-8859-1"))))
+                            head <- Abort.run[Closed](readHead(conn, ""))
+                            _ = assert(head.exists(_.startsWith("HTTP/1.1 101")), s"upgrade response: $head")
+                            // Unsafe: dropping the raw socket is the peer behaviour under test.
+                            _  <- Sync.Unsafe.defer(conn.close())
+                            _  <- returned.await
+                            ws <- session.get.map(_.getOrElse(fail("the handler never ran")))
+                            _  <- assertEventually(Abort.run[Closed](ws.offer(HttpWebSocket.Payload.Text("late"))).map(_.isFailure))
+                        yield ()
+                    }
+                }
+            yield succeed
+            end for
         }
 
         "client closes before reading anything" in {
@@ -908,6 +1009,20 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
 
     "HttpWebSocket.connect" - {
 
+        "frames put before a close reach the other side" in {
+            val sent = Chunk.range(0, 10).map(i => HttpWebSocket.Payload.Text(s"m$i"))
+            for
+                read     <- Latch.init(1)
+                received <- AtomicRef.init(Chunk.empty[HttpWebSocket.Payload])
+                _        <- connectTest(
+                    ws => Kyo.foreachDiscard(sent)(ws.put).andThen(ws.close(4900, "bye")).andThen(read.await),
+                    ws => ws.stream.run.map(received.set).andThen(read.release)
+                )
+                frames <- received.get
+            yield assert(frames == sent, s"received $frames")
+            end for
+        }
+
         "text echo" in {
             connectTest(
                 echo,
@@ -1021,7 +1136,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
             connectTest(
                 ws =>
                     Abort.run[Closed](ws.take()).map(result =>
-                        discard(assert(result.isFailure || result.isPanic))
+                        discard(assert(result.isFailure, s"expected Closed, got $result"))
                     ),
                 ws => ws.close().map(_ => succeed("close propagates to peer"))
             ).unit
@@ -1086,7 +1201,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 ws =>
                     ws.close().andThen(
                         Abort.run[Closed](ws.put(HttpWebSocket.Payload.Text("fail"))).map(result =>
-                            assert(result.isFailure || result.isPanic, s"put after close should fail with Closed, got: $result")
+                            assert(result.isFailure, s"put after close should fail with Closed, got: $result")
                         )
                     )
             ).map(_ => succeed("connectTest completes after put-after-close interaction"))
@@ -1097,7 +1212,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 ws => ws.close().map(_ => succeed("close completes cleanly")),
                 ws =>
                     Abort.run[Closed](ws.take()).map(result =>
-                        discard(assert(result.isFailure || result.isPanic))
+                        discard(assert(result.isFailure, s"expected Closed, got $result"))
                     )
             ).unit
         }
@@ -1124,7 +1239,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 _ => throw new RuntimeException("boom"),
                 ws =>
                     Abort.run[Closed](ws.take()).map(result =>
-                        discard(assert(result.isFailure || result.isPanic))
+                        discard(assert(result.isFailure, s"expected Closed, got $result"))
                     )
             ).map(_ => succeed("one-party throw is handled: other party observes close or panic"))
         }
@@ -1141,7 +1256,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 _ => succeed("empty party: function returns without action"),
                 ws =>
                     Abort.run[Closed](ws.take()).map(result =>
-                        discard(assert(result.isFailure || result.isPanic))
+                        discard(assert(result.isFailure, s"expected Closed, got $result"))
                     )
             ).unit
         }
@@ -1314,7 +1429,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 HttpClient.webSocket(url) { ws =>
                     ws.put(HttpWebSocket.Payload.Text("trigger")).andThen {
                         Abort.run[Closed](ws.take()).map(result =>
-                            discard(assert(result.isFailure || result.isPanic))
+                            discard(assert(result.isFailure, s"expected Closed, got $result"))
                         )
                     }
                 }
@@ -1487,7 +1602,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 }.map { result =>
                     // webSocket must honor HttpClientConfig.connectTimeout — the call fails fast with an
                     // HttpException rather than hanging until the OS TCP timeout.
-                    discard(assert(result.isFailure || result.isPanic))
+                    discard(assert(result.isFailure, s"expected Closed, got $result"))
                 }
             }.unit
         }
