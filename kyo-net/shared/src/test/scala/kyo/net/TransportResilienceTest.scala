@@ -63,16 +63,30 @@ class TransportResilienceTest extends Test:
       * A closed connection's TIME_WAIT holds its 4-tuple, and Windows keeps it for 120s. A kyo-netJVM pass churns most of the 16384-port
       * ephemeral range, so back-to-back passes wrap it inside that window, and a new connect whose tuple matches one still waiting fails with
       * WSAEADDRINUSE. A distinct address per churn listener keeps its tuples apart from every other listener's, at any count. A host that
-      * answers only on 127.0.0.1 (macOS) refuses the bind, and the listener falls back to it.
+      * answers only on 127.0.0.1 (macOS) refuses the bind, and the listener falls back to it. Any other bind failure fails the leaf: on a host
+      * that answers on all of 127/8, a silent fallback would turn the spread into a no-op.
       */
     private def churnListen(transport: Transport, backlog: Int)(handler: Connection => Unit)(using
         Frame
     ): Listener < (Async & Abort[NetException]) =
         Random.nextInt(253).map { n =>
-            Abort.recover[NetException](_ => transport.listen("127.0.0.1", 0, backlog)(handler).safe.get)(
-                transport.listen(s"127.0.0.${n + 2}", 0, backlog)(handler).safe.get
-            )
+            Abort.run[NetException](transport.listen(s"127.0.0.${n + 2}", 0, backlog)(handler).safe.get).map {
+                case Result.Failure(e) if addressRefused(e) => transport.listen("127.0.0.1", 0, backlog)(handler).safe.get
+                case other                                  => Abort.get(other)
+            }
         }
+
+    /** Whether a bind failed because the host refuses the address itself (EADDRNOTAVAIL: 49 on macOS/BSD, 99 on Linux). Each backend reports
+      * it in its own shape: the errno (posix), the JDK's message (NIO), or Node's error code in the message (JS).
+      */
+    private def addressRefused(e: NetException): Boolean =
+        e match
+            case NetBindException(_, _, cause) =>
+                cause match
+                    case errno: NetErrno => errno.code == (if kyo.internal.Platform.isMacOrBsd then 49 else 99)
+                    case t: Throwable    => Maybe(t.getMessage).exists(_.contains("Can't assign requested address"))
+                    case msg: String     => msg.contains("EADDRNOTAVAIL")
+            case _ => false
 
     /** Runs `body` on an accepted connection in its own fiber and closes the connection however `body` ends. The fiber is unscoped, so it
       * outlives an interrupted leaf; it ends once its peer closes.
