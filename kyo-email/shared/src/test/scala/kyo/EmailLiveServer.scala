@@ -22,6 +22,10 @@ import kyo.net.TlsTestCertShared
   *
   * The server's certificate is kyo-net's localhost test certificate, issued to `127.0.0.1`, which is also the CA the clients trust and the
   * client certificate a strict server accepts.
+  *
+  * Nothing in it reaches the internet: a CI run that selects this module pulls the image at its pinned digest before the tests
+  * (`scripts/fixture-images.sh`), [[EmailLiveServer.init]] fails with the command that pulls it rather than pulling where it is missing, and every service of the image
+  * that would call out is off.
   */
 final case class EmailLiveServer(container: Container, ports: EmailLiveServer.Ports, certificate: Path, key: Path, password: String):
 
@@ -88,7 +92,11 @@ end EmailLiveServer
 
 object EmailLiveServer:
 
-    val Image: ContainerImage = ContainerImage("docker.io/mailserver/docker-mailserver:16.0.1")
+    /** docker-mailserver 16.0.1, pinned by the digest of its multi-arch index (linux/amd64 and linux/arm64), which
+      * `scripts/fixture-images.sh` pulls; the two change together.
+      */
+    val Image: ContainerImage =
+        ContainerImage("docker.io/mailserver/docker-mailserver@sha256:d0fe7668defe157aad57ea31b1707ad1e2fb57d7a91bdf17cbdf876549946c86")
 
     val Host: String = "127.0.0.1"
 
@@ -122,7 +130,7 @@ object EmailLiveServer:
     def init(kind: Kind = Kind.Standard)(using
         Frame
     ): EmailLiveServer < (Async & Scope & Abort[ContainerException | FileSystemException]) =
-        Random.nextStringAlphanumeric(24).map { password =>
+        pulled.andThen(Random.nextStringAlphanumeric(24)).map { password =>
             Path.run {
                 Path.tempDir("kyo-email-server").map { directory =>
                     Kyo.foreachDiscard(files(kind, password))((name, content) => (directory / name).write(content)).andThen(directory)
@@ -145,12 +153,23 @@ object EmailLiveServer:
             }
         }
 
+    // kyo-pod pulls a missing image on its own, which would reach the registry from inside the leaf.
+    private def pulled(using Frame): Unit < (Async & Abort[ContainerException]) =
+        Abort.run[ContainerException](ContainerImage.inspect(Image)).map {
+            case Result.Success(_)                                 => Kyo.unit
+            case Result.Failure(_: ContainerImageMissingException) =>
+                Abort.panic(new IllegalStateException(s"${Image.reference} is not pulled; run: podman pull ${Image.reference}"))
+            case Result.Failure(other) => Abort.fail(other)
+            case Result.Panic(e)       => Abort.panic(e)
+        }
+
     private def files(kind: Kind, password: String): Chunk[(String, String)] =
         val strict   = kind == Kind.Strict
         val accounts =
             User.values.map(user => s"${user.login}|{PLAIN}$password" + (if user.userdb.isEmpty then "" else s"|${user.userdb}"))
         val postfixMain =
-            Chunk("smtputf8_enable = yes", s"message_size_limit = ${SizeLimit.toBytes}") ++
+            // The reverse lookup of each client would send a DNS query out of the container.
+            Chunk("smtputf8_enable = yes", s"message_size_limit = ${SizeLimit.toBytes}", "smtpd_peername_lookup = no") ++
                 (if strict then
                      Chunk(
                          s"smtpd_tls_CAfile = $Staged/cert.pem",
@@ -242,7 +261,10 @@ object EmailLiveServer:
         Container.Config.default
             .copy(image = Image)
             .hostname("mail.example.com")
+            // Each service that would reach the internet is off. ENABLE_UPDATE_CHECK defaults to 1 on a release image and asks GitHub
+            // for the latest release at start; ClamAV's and SpamAssassin's cron updates are removed with their services.
             .envAll(Dict.from(Map(
+                "ENABLE_UPDATE_CHECK" -> "0",
                 "ENABLE_CLAMAV"       -> "0",
                 "ENABLE_SPAMASSASSIN" -> "0",
                 "ENABLE_RSPAMD"       -> "0",
