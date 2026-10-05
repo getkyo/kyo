@@ -97,6 +97,10 @@ final case class Config private (
     def decider(config: Maybe[DeciderConfig]): Config = copy(decider = config)
     def temperature(temperature: Double): Config      = copy(temperature = Present(temperature.max(0).min(2)))
 
+    // `ScalaRunTime._toString` formats the product field by field without calling this override, so the copy cannot recurse; the
+    // decider's key is redacted by its own `toString`.
+    override def toString: String = scala.runtime.ScalaRunTime._toString(copy(apiKey = apiKey.map(_ => "<redacted>")))
+
     /** The output-token ceiling this request asks for, clamped to the model's declared maximum.
       *
       * Reasoning tokens are output tokens, spent from this same allowance, so what the number means
