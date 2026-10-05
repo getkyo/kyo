@@ -146,7 +146,11 @@ Json.encode[Shape](Rectangle(3.0, 4.0))
 
 On decode, the key determines which subtype to construct. This format is self-describing and works without configuration.
 
-Sealed traits support six wire representations, selected by a builder on the schema. The default is wrapper-object; the rest are opt-in:
+A variant is written and read by its own schema. Its field annotations (`@rename`, `@alias`, `@transform`) apply inside the sum as they do on the case class alone, and a variant with a given `Schema` of its own (a builder-configured given, or a `derivedVia` smart constructor) is serialized by that given, so its smart constructor's rejection surfaces through the sum too, as a `ConstructorRejectedException` under every tagged representation. Under `.untagged` a rejection counts as no match: the next variant is tried, and when none decodes the error is `NoVariantMatchException`.
+
+A variant's schema, like a field's, is the given `Schema` visible where the enclosing schema is derived: for `derives Schema` that is the sum's companion and the variant's own, and a local given in the block around `Schema.derived[Sum]` or `Json.encode[Sum]` takes precedence there. Two givens for one variant at that site are a compile error, as they are for `Schema[Variant]` alone.
+
+Sealed traits support seven wire representations, selected by a builder on the schema. The default is wrapper-object; the rest are opt-in:
 
 | Representation | Builder | Wire shape for `Circle(10.0)` |
 |---|---|---|
@@ -154,10 +158,11 @@ Sealed traits support six wire representations, selected by a builder on the sch
 | Flat discriminator | `.discriminator("type")` | `{"type":"Circle","radius":10.0}` |
 | Adjacent | `.adjacent("type","content")` | `{"type":"Circle","content":{"radius":10.0}}` |
 | Tuple (tagged) | `.tupleTagged` | `["Circle",{"radius":10.0}]` |
-| Tuple (flat) | `.tupleFlat` | `["Circle",10.0]` |
+| Tuple (flat) | `.tupleFlat` | `["Circle",10.0]` (every field by position, an absent optional as `null`) |
 | Untagged | `.untagged` | `{"radius":10.0}` |
+| Tag only | `.tagOnly` | `"Circle"` (only for variants without fields) |
 
-**Fallback chains.** A single representation must be expressible by the active codec or encode fails (see the Protobuf constraint below). To let one schema serve both a self-describing codec and Protobuf, declare an ordered fallback chain with `representations`; encode picks the highest-priority entry the codec can express and decode tries the chain in declared order. `orElseRepresentation(fallback)` is the single-fallback shorthand. `External` is always expressible and acts as the implicit chain floor, so it need not be listed explicitly. A chain containing a duplicate entry raises `DuplicateRepresentationException` at the builder call, not at encode time.
+**Fallback chains.** A single representation must be expressible by the active codec or encode fails (see the Protobuf constraint below). To let one schema serve both a self-describing codec and Protobuf, declare an ordered fallback chain with `representations`; encode picks the highest-priority entry the codec can express and decode tries the chain in declared order. `orElseRepresentation(fallback)` is the single-fallback shorthand. `External` is always expressible and acts as the implicit chain floor, so it need not be listed explicitly. A chain containing a duplicate entry raises `DuplicateRepresentationException` at the first encode or decode through the schema, naming the builder call.
 
 ```scala
 sealed trait Shape
@@ -175,7 +180,7 @@ Protobuf.encode[Shape](Rectangle(3.0, 4.0))
 // Span[Byte] (External wrapper-object form)
 ```
 
-The tagged representations (`.discriminator`, `.adjacent`, `.tupleTagged`, `.tupleFlat`) route the tag through the variant-naming layer below, so `renameAllVariants`, `variantNames`, and `variantAlias` all apply to the emitted tag. `.untagged` carries no tag, so variant naming and aliases do not apply to it.
+The tagged representations (`.discriminator`, `.adjacent`, `.tupleTagged`, `.tupleFlat`, `.tagOnly`) route the tag through the variant-naming layer below, so `renameAllVariants`, `variantNames`, and `variantAlias` all apply to the emitted tag. `.untagged` carries no tag, so variant naming and aliases do not apply to it.
 
 For a flat encoding with a type discriminator field, use `schema.discriminator`:
 
@@ -193,17 +198,34 @@ Json.encode[Shape](Rectangle(3.0, 4.0))
 // {"type":"Rectangle","width":3.0,"height":4.0}
 ```
 
-To map the wire discriminator value to a custom name, chain `variantNames` (explicit pairs) or `renameAllVariants` (a case convention). To rename every field by convention, use `renameAllFields`. Decode-only aliases accept alternate wire names on decode:
+A sealed sub-trait that only groups cases in Scala adds its cases to the sum: each is a variant with its own name and fields, under every representation. A sub-trait with a given `Schema` of its own is one variant instead, written by that schema:
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+@discriminator("type")
+sealed trait Event
+sealed trait Pointer             extends Event
+case class Click(x: Int)         extends Pointer
+case class Scroll(dy: Int)       extends Pointer
+case class KeyPress(key: String) extends Event
+
+Json.encode[Event](Scroll(3))
+// {"type":"Scroll","dy":3}
+```
+
+To map the wire discriminator value to a custom name, chain `variantNames` (explicit pairs) or `renameAllVariants` (a case convention). Decode-only aliases accept alternate wire names on decode. A variant's fields follow the variant's own schema, so `renameAllFields` on the sum does not reach them: give the variant a configured given, or `@rename` its fields:
 
 ```scala
 sealed trait Node
 case class DList(headRef: String)  extends Node
 case class Paragraph(text: String) extends Node
 
+given Schema[DList] = Schema[DList].renameAllFields(Schema.NameCase.SnakeCase)
+
 given Schema[Node] =
     Schema[Node].discriminator("kind")
         .renameAllVariants(Schema.NameCase.SnakeCase)
-        .renameAllFields(Schema.NameCase.SnakeCase)
         .variantAlias("d_list", "dlist")
 
 Json.encode[Node](DList("h1"))
@@ -213,9 +235,29 @@ Json.decode[Node]("""{"kind":"dlist","head_ref":"h1"}""")
 // Result.Success(DList("h1"))
 ```
 
-The case engine is acronym-aware: an uppercase run is one word. `DList` tokenizes as `D` + `List`, giving `d_list` under `SnakeCase`. The `Paragraph` variant needs no explicit mapping; `renameAllVariants(SnakeCase)` gives `paragraph`. The `variantAlias` call registers `dlist` as a decode-only alias for the variant whose primary wire name is `d_list`. A typo'd Scala variant name passed to `variantNames` raises `UnknownVariantException` at config time.
+The case engine is acronym-aware: an uppercase run is one word. `DList` tokenizes as `D` + `List`, giving `d_list` under `SnakeCase`. The `Paragraph` variant needs no explicit mapping; `renameAllVariants(SnakeCase)` gives `paragraph`. The `variantAlias` call registers `dlist` as a decode-only alias for the variant whose primary wire name is `d_list`. A typo'd Scala variant name passed to `variantNames` raises `UnknownVariantException` at the first encode or decode, naming the call.
 
-Variant naming applies only under `.discriminator(...)`. Without a discriminator the configuration has no effect and the default wrapper-object format is used.
+Variant naming applies to every representation that writes a variant's name: `discriminator`, `adjacent`, `tupleTagged`, `tupleFlat` and `tagOnly`. The default wrapper-object format keeps the Scala variant names, a variant's `@rename` included, and `untagged` writes no name, so under those two the configuration has no effect.
+
+Some formats tag their variants with integers, such as `{"type":2,"label":"ok"}`. `@tagNumber(n)` on each variant, or `variantNumbers("Button" -> 2, ...)` on the schema, makes the tag that integer. A catch-all variant then takes the number in an `Int` or `Long` field:
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+@discriminator("type")
+sealed trait Component
+@tagNumber(2) case class Button(label: String)                  extends Component
+@tagNumber(3) case class Slider(max: Int)                       extends Component
+@catchAll() case class Other(`type`: Int, raw: Structure.Value) extends Component
+
+Json.encode[Component](Button("ok"))
+// {"type":2,"label":"ok"}
+
+Json.decode[Component]("""{"type":9,"style":1}""")
+// Result.Success(Other(9, <the whole object>))
+```
+
+The number replaces the name on every representation that writes a tag, and decode reads an integer there: a string tag fails with `TypeMismatchException` and an unlisted number with `UnknownVariantException`. Numbers and names exclude each other. On the annotations, a variant without a number (other than the catch-all), two variants with one number, a `@rename` or `@alias` beside the numbers, and a `String` catch-all tag field are compile errors. On the builders, combining `variantNumbers` with `variantNames`, `renameAllVariants` or `variantAlias` raises `TransformFailedException` at the later call, and a variant left without a number fails at the first encode or decode. The wrapper-object format keys by name, so numbers do not apply to it.
 
 **Adjacent** keeps the tag and payload in separate, named keys of one object. The payload is always an object, even for a single-field variant:
 
@@ -229,6 +271,8 @@ given Schema[Shape] = Schema[Shape].adjacent("type", "content")
 Json.encode[Shape](Circle(10.0))
 // {"type":"Circle","content":{"radius":10.0}}
 ```
+
+A payload that encodes to an empty object, such as a `case object Empty extends Shape`, is written as the tag alone (`{"type":"Empty"}`), and a missing or null content decodes as an empty payload.
 
 **Tuple (tagged)** encodes the sum as a two-element array: tag at index 0, payload object at index 1:
 
@@ -258,6 +302,8 @@ Json.encode[Shape](Rectangle(3.0, 4.0))
 
 A record-typed field nests as one element rather than being deep-flattened: a variant like `Group(bounds: Rectangle)` encodes as `["Group",{"width":3.0,"height":4.0}]`, keeping the inner record whole.
 
+Every field keeps its position, since decode reads the array by position: an absent optional field is written as `null` (`Note(text: Maybe[String], label: String)` with no text encodes as `["Note",null,"a"]`), and the variant's own omit policies do not apply to its payload. A record nested in the payload keeps its keys and its omissions.
+
 **Untagged** emits only the variant payload, with no tag or wrapper. On decode, each variant is attempted in declaration order and the first clean parse wins:
 
 ```scala
@@ -276,7 +322,59 @@ Json.decode[Shape]("""{"width":3.0,"height":4.0}""")
 
 Because there is no tag, variants whose fields overlap are resolved by declaration order: the first variant whose fields all match wins. When no variant matches, decode returns `Result.Failure(NoVariantMatchException(...))` listing the variants that were attempted.
 
-Scala 3 type unions derive directly: `Schema[A | B]` is untagged by default, so it encodes the bare member payload and decodes by trying each member in declaration order. A type union has no nominal variant names, so the tagged representations (`discriminator`, `adjacent`) do not apply to it; only the untagged shape is available. When more than one member decodes the same wire value (a JSON number is both an `Int` and a `Long`), the default `Strict` policy fails with `AmbiguousVariantMatchException` listing the matched members rather than picking arbitrarily. Choose `unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)` to resolve a known-ambiguous union by declaration order instead.
+**Tag only** writes a variant as its name alone, for a sum whose variants carry no data, such as an enum of plain values. `@tagOnly()` on the sealed trait or enum selects it at derivation. Every variant must be a case object, an enum value without parameters, or a case class without fields; a variant with fields is a compile error naming it:
+
+```scala
+enum Priority derives Schema:
+    case Low, High
+
+given Schema[Priority] = Schema[Priority].tagOnly
+
+Json.encode[Priority](Priority.High)
+// "High"
+
+Json.decode[Priority]("\"Urgent\"")
+// Result.Failure(UnknownVariantException(variantName = "Urgent", ...))
+```
+
+The name goes through the variant-naming layer, and aliases are accepted on decode. A value that is not a string fails with `TypeMismatchException`.
+
+**Catch-all variants.** A sum read from a source that adds variants over time, such as a webhook, can keep input it does not recognize instead of failing the whole decode. Mark one variant `@catchAll()`, or name it with `.catchAll("Variant")`. It has a `String` field for the tag and a field for the unmatched input, read through that field's own schema; `Structure.Value` holds any value:
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+@discriminator("type")
+sealed trait Event
+case class Click(x: Int)                                                   extends Event
+@catchAll() case class UnknownEvent(tag: String, payload: Structure.Value) extends Event
+
+Json.decode[Event]("""{"type":"scroll","dy":3}""")
+// Result.Success(UnknownEvent("scroll", <the whole object>))
+
+Json.encode[Event](UnknownEvent("scroll", Structure.Value.Record(Chunk("type" -> Structure.Value.Str("scroll")))))
+// {"type":"scroll"}
+```
+
+What the variant receives follows the representation: under a discriminator the tag and the whole object, adjacent the tag and the content, the wrapper object its key and value, untagged the whole value (a variant with one field), tag-only the unknown name (a variant with one `String` field, or `Int` or `Long` for numbered variants). Encode writes the value back in that shape. A representation the variant's shape does not fit, `tupleTagged` and `tupleFlat` included, fails at the first encode or decode, and decoding needs a self-describing codec.
+
+A known tag whose variant fails to decode still fails the whole decode, since the input claims a shape it does not have. A source that also changes the shape of variants it already sent can keep that input too: `@catchAll(onFailure = true)`, or `.catchAll("Variant", onFailure = true)`, gives the catch-all the tag and input of a known variant that fails, as it would for an unknown tag:
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+@discriminator("type")
+sealed trait Event
+case class Click(x: Int)                                                                   extends Event
+@catchAll(onFailure = true) case class UnknownEvent(tag: String, payload: Structure.Value) extends Event
+
+Json.decode[Event]("""{"type":"Click"}""")
+// Result.Success(UnknownEvent("Click", <the whole object>))
+```
+
+The variant's failure is not kept; decoding the held input as that variant reproduces it. Input the catch-all's own fields reject fails with the known variant's failure, and input with no tag, or a tag of the wrong kind, fails as before.
+
+Scala 3 type unions derive directly: `Schema[A | B]` is untagged by default, so it encodes the bare member payload and decodes by trying each member in declaration order. A union's members are its variants, named by their types, so the tagged representations apply as they do to a sealed trait: `summon[Schema[Photo | Video]].discriminator("type")` writes `{"type":"Photo","url":"a"}` and reads it back. When more than one member decodes the same wire value (a JSON number is both an `Int` and a `Long`), the default `Strict` policy fails with `AmbiguousVariantMatchException` listing the matched members rather than picking arbitrarily. Choose `unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)` to resolve a known-ambiguous union by declaration order instead.
 
 ```scala
 val s: Schema[Int | Long] = summon[Schema[Int | Long]].unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)
@@ -286,7 +384,7 @@ Json.decode[Int | Long]("42")
 // Result.Success(42)  (Int wins as first-declared)
 ```
 
-The array-shaped and bare representations (`.tupleTagged`, `.tupleFlat`, `.untagged`) require a self-describing codec. Encoding through Protobuf raises `RepresentationUnsupportedException` before any bytes are written. Wrapper-object, flat-discriminator, and adjacent all work on Protobuf.
+The array-shaped and bare representations (`.tupleTagged`, `.tupleFlat`, `.untagged`, `.tagOnly`) require a self-describing codec. Encoding through Protobuf raises `RepresentationUnsupportedException` before any bytes are written. Wrapper-object, flat-discriminator, and adjacent all work on Protobuf.
 
 **Field presence on the wire.** By default an absent optional encodes as a null-valued key and an empty collection as `[]` or `{}`. To drop a field from the wire, apply an omit policy. `omitNone` and `omitEmptyCollections` are schema-wide. Per field, `omit(_.field)` opens a policy you finish four ways: `.whenNone` (drop an absent optional), `.whenEmpty` (drop an empty collection or map), `.when(predicate)` (drop when a predicate over the field's encoded value returns true), and `.whenDefault` (drop when the value equals the field's compile-time default). A per-field policy shadows the schema-wide one for that field. Only optional and collection/map fields are affected by `whenNone`/`whenEmpty`; `when` and `whenDefault` apply to any field type. An empty product is never dropped. On decode, an omitted field defaults back to `None`, the typed-empty value, or its compile-time default, so the round-trip is preserved.
 
@@ -598,7 +696,7 @@ For YAML-specific tooling, `Yaml.Events` exposes parser and writer events withou
 Events can be collected, transformed, rendered, or produced from schema values. This example uppercases every scalar from a YAML parser stream and renders the transformed events back to YAML:
 
 ```scala
-val renderer = Yaml.Events.Renderer()
+val renderer  = Yaml.Events.Renderer()
 val uppercase =
     Yaml.Events.Processor.mapScalars[DecodeException] { (value, meta) =>
         Result.succeed((value.toUpperCase, meta))
@@ -724,14 +822,14 @@ val cfgSource =
       |""".stripMargin
 
 // Decode straight from a CST document
-val cfgDoc = Yaml.cst(cfgSource).getOrThrow
+val cfgDoc     = Yaml.cst(cfgSource).getOrThrow
 val cfgDecoded =
     Yaml.decode[Map[String, Map[String, Map[String, String]]]](cfgDoc)
 assert(cfgDecoded.isSuccess)
 
 // Edit via throughCst (comments preserved), then render the result
 val imageV2 = Yaml.Cst.from("app:v2").getOrThrow.root.get
-val bumped =
+val bumped  =
     Yaml.pipeline
         .throughCst(
             _.replace(
@@ -906,13 +1004,23 @@ Schemas are provided for all common types out of the box:
 | Scheduling | `kyo.Schedule` |
 | Tuples | `(A, B)`, `(A, B, C)`, `(A, B, C, D)`, `(A, B, C, D, E)` |
 
+On the text codecs an instant is RFC 3339 text: it is written in UTC (`2016-04-30T11:18:25.796Z`), and decode also reads a numeric offset (`2016-04-30T11:18:25.796+05:30`) and a fraction of up to 9 digits, the same on every platform. A duration is ISO 8601 text, such as `PT1.5S`. Text that is neither fails the decode with the field's path.
+
 Prefer `kyo.UUID` in new schemas. `Schema.uuidSchema` now names `Schema[kyo.UUID]`: it writes canonical lowercase UUID text through `UUID.show` and reads through `UUID.parse`. Explicit Java UUID schema references should use `Schema.javaUuidSchema`, while ordinary `summon[Schema[java.util.UUID]]` remains available. Both UUID types use a string wire representation, but their runtime schema tags remain type-specific.
 
 Any case class or sealed trait composed of these types derives a `Schema` automatically. Nested case classes work without additional setup.
 
 `OrderedDict[K, V]` serializes in the same shape as `Dict[K, V]` and additionally preserves insertion order across an encode/decode round-trip: encoding walks the map in insertion order, and decoding rebuilds it by inserting entries in wire order.
 
-`Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. `Map[K, V]` and `Dict[K, V]` with a non-string key type serialize as an array of two-field `{key, value}` records, which the Protobuf codec renders as a standard proto3 `MapEntry`. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
+`Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. So does a map whose key type's schema is a string on the wire, such as an opaque type over `String` or a `transformVia` of `Schema[String]`: each key is written through its schema, and a key the schema rejects fails the decode with that key in the path. Decode also accepts such a map in the array form below. `Map[K, V]` and `Dict[K, V]` with any other key type serialize as an array of two-field `{key, value}` records, which the Protobuf codec renders as a standard proto3 `MapEntry`. To write a string-keyed map as that array too, bind `Schema.mapAsPairs`, `Schema.dictAsPairs` or `Schema.orderedDictAsPairs`:
+
+```scala
+given Schema[Map[String, Int]] = Schema.mapAsPairs[String, Int]
+
+val pairs = Json.encode(Map("a" -> 1)) // [{"key":"a","value":1}]
+```
+
+The form a schema chose is `Structure.Type.Mapping.form`, `Object` or `Pairs`, and the JSON Schema and Ion Schema generators describe the map in that form. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
 
 > **Note:** a map entry whose value is an empty collection can decode incorrectly on the Protobuf codec. proto3 has no representation for an empty `repeated` field, so the entry is written without its value and the decode reads whatever follows in its place, which either fails or yields a wrong value. Entries whose values are non-empty are unaffected, and the other codecs are unaffected. This is a shared codec defect in the `mapSchema`, `dictSchema`, and `orderedDictSchema` givens alike, not a property of any one map type. It is tracked in [getkyo/kyo#1747](https://github.com/getkyo/kyo/issues/1747) and will be fixed in a follow-up.
 
@@ -921,36 +1029,47 @@ Any case class or sealed trait composed of these types derives a `Schema` automa
 For opaque types, assign the schema for the underlying type inside the companion object where the type boundary is transparent:
 
 ```scala
-opaque type Email = String
+object Emails:
+    opaque type Email = String
 
-object Email:
-    def apply(s: String): Email = s
-    given Schema[Email]         = Schema[String]
+    object Email:
+        def apply(s: String): Email = s
+        given Schema[Email]         = Schema[String]
+end Emails
+export Emails.Email
 ```
 
 Inside the companion, `Email` is `String` to the compiler, so `Schema[String]` satisfies `Schema[Email]` without any conversion. Outside the companion the types are distinct, so the given must live inside where the boundary is visible.
 
+Declare the opaque type in an object of its own, as `Emails` does, whenever types beside it derive schemas. In the template that declares `opaque type Email = String`, a `String` and an `Email` are the same type to the compiler, so deriving a schema there for any record with a `String` or `Email` field is a compile error naming that field.
+
 For types that need a non-trivial conversion, use `Schema[Underlying].transform[MyType](to)(from)`:
 
 ```scala
-opaque type Username = String
+object Usernames:
+    opaque type Username = String
 
-object Username:
-    def apply(s: String): Username = s.toLowerCase
-    given Schema[Username] =
-        Schema[String].transform[Username](Username(_))(identity)
-end Username
+    object Username:
+        def apply(s: String): Username = s.toLowerCase
+        given Schema[Username]         =
+            Schema[String].transform[Username](Username(_))(identity)
+    end Username
+end Usernames
+export Usernames.Username
 ```
 
 When the conversion can reject, use `transformVia` with a smart constructor. Its outcome may be the type itself or a `Result`, `Maybe`, `Option`, `Either` or `Try` of it, and a rejection is a `ConstructorRejectedException` naming the type, a decode failure like any other malformed input:
 
 ```scala
-opaque type Port = Int
+object Ports:
+    opaque type Port = Int
 
-object Port:
-    def parse(i: Int): Either[String, Port] = if i >= 0 && i <= 65535 then Right(i) else Left(s"port out of range: $i")
-    given Schema[Port]                      = summon[Schema[Int]].transformVia(parse)(identity)
-end Port
+    object Port:
+        def parse(i: Int): Either[String, Port] = if i >= 0 && i <= 65535 then Right(i) else Left(s"port out of range: $i")
+        given Schema[Port]                      = summon[Schema[Int]].transformVia(parse)(identity)
+    end Port
+end Ports
+export Ports.Port
 
 Json.decode[Port]("-1")
 // Result.Failure(ConstructorRejectedException(typeName = "Port", rejection = "port out of range: -1", ...))
@@ -1001,6 +1120,27 @@ Json.decode[Slug]("""{"value":"hello-world"}""")
 
 Json.decode[Slug]("""{"value":"hello world"}""")
 // Result.Failure(ConstructorRejectedException(Nil, "Slug", "the constructor returned None"))
+```
+
+The constructor passed to `derivedVia` or `transformVia` runs with the `Frame` of the decode call in scope. A constructor that takes one, as a Kyo `init` does to build its failure, then names the site that decoded the bad input, not the line that defined the given, and the given stays a plain `given Schema[A]`, built once:
+
+```scala
+final class EmptyCodeException(using val frame: Frame) extends Exception("a code is not empty")
+
+object Codes:
+    opaque type Code = String
+
+    object Code:
+        def init(text: String)(using Frame): Result[EmptyCodeException, Code] =
+            if text.isEmpty then Result.fail(EmptyCodeException()) else Result.succeed(text)
+
+        given Schema[Code] = Schema.stringSchema.transformVia(init(_))(identity)
+    end Code
+end Codes
+export Codes.Code
+
+Json.decode[Code]("\"\"")
+// Result.Failure(ConstructorRejectedException(Nil, "Code", EmptyCodeException)), the rejection's frame the decode call's
 ```
 
 ## Annotations
@@ -1085,7 +1225,7 @@ Json.encode(Reading(21))
 
 ### Sum representations
 
-For sealed traits, `@discriminator`, `@adjacent`, and `@untagged` select the wire encoding declaratively, matching the `.discriminator`, `.adjacent`, and `.untagged` builders. They are sealed-trait-only; placing one on a case class is a compile error. `@rename` and `@alias` on a variant set and extend its tag value.
+For sealed traits, `@discriminator`, `@adjacent`, and `@untagged` select the wire encoding declaratively, matching the `.discriminator`, `.adjacent`, and `.untagged` builders. They are sealed-trait-only; placing one on a case class is a compile error. `@rename` and `@alias` on a variant set and extend its tag value, and `@tagNumber(n)` makes its tag an integer.
 
 ```scala doctest:scope=nested
 import kyo.schema.*
@@ -1121,6 +1261,21 @@ Json.encode(Packet(255))
 
 Json.decode[Packet]("""{"code":"ff"}""")
 // Result.Success(Packet(255))
+```
+
+A field codec that can reject belongs in `Transformer.Of` over a `transformVia` schema, so the rejection is a decode failure naming the field rather than an exception thrown from `read`:
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+object DecimalText extends Transformer.Of[Int](
+        Schema[String].transformVia((s: String) => s.toIntOption.toRight(s"not a number: $s"))(_.toString)
+    )
+
+case class Row(@transform(DecimalText) n: Int) derives Schema
+
+Json.decode[Row]("""{"n":"x"}""")
+// Result.Failure(ConstructorRejectedException(path = List("n"), typeName = "Int", rejection = "not a number: x", ...))
 ```
 
 ### Protobuf field numbers
@@ -1414,9 +1569,8 @@ case class Config(host: String, port: Int, ssl: Boolean)
 val config = Config("localhost", 8080, false)
 
 val summary = Schema[Config].fold(config)(List.empty[String]) {
-    [N <: String, V] =>
-        (acc, field, value) =>
-            s"${field.name}=$value" :: acc
+    [N <: String, V] => (acc, field, value) =>
+        s"${field.name}=$value" :: acc
 }.reverse.mkString(", ")
 // "host=localhost, port=8080, ssl=false"
 ```
@@ -1460,30 +1614,36 @@ The password is absent from serialized output because it is absent from the stru
 
 ### drop / rename / add / select / flatten
 
+<!-- doctest:scope=env:person
+```scala
+case class Person(name: String, age: Int) derives Schema
+```
+-->
+
 **drop** removes a field:
 
-```scala
+```scala doctest:scope=env:person
 Schema[Person].drop(_.age)
 // Serialized: {"name":"Alice"}
 ```
 
 **rename** changes a field's name, preserving its type. The source is a lambda (so the existing field is refactor-safe) and the target is a string literal (because the new name doesn't exist yet to point a lambda at):
 
-```scala
+```scala doctest:scope=env:person
 Schema[Person].rename(_.name, "userName")
 // Serialized: {"userName":"Alice","age":30}
 ```
 
 **add** adds a computed field derived from the source value:
 
-```scala
+```scala doctest:scope=env:person
 Schema[Person].add("adult")(_.age >= 18)
 // Serialized: {"name":"Alice","age":30,"adult":true}
 ```
 
 **select** keeps only the named fields, dropping everything else:
 
-```scala
+```scala doctest:scope=env:person
 Schema[Person].select(_.name)
 // Serialized: {"name":"Alice"}
 ```
@@ -1498,7 +1658,11 @@ Schema[Person].flatten
 // Serialized: {"name":"Alice","city":"Portland","zip":"97201"}
 ```
 
-When the field name isn't known at compile time, `drop` and `rename` accept string-based overloads: `drop("field")`, `rename("from", "to")`, `select("f1", "f2")`. `flatten` takes no arguments. `add` always takes a string literal for the new field name (since the name doesn't exist yet to point a lambda at) plus a lambda that computes the value.
+Each flattened key is the nested type's own wire name, so a `@rename` or a renaming given on `Address` carries over. A `renameAllFields` on the flattened schema applies to the flattened keys too, except a key the nested type renamed or cased itself, which is kept as written. Input in the nested form (`{"name":"Alice","address":{...}}`) still decodes. Every key must stay unique in the flat record: two nested fields of one type, or a nested field named like a kept field, are a compile error, and a collision that only the wire names reveal raises `FieldNameCollisionException` at the first encode or decode. Configure a nested field on its own type's schema, not on the flattened one: a builder after `flatten` that names a nested field raises `TransformFailedException` at the first encode or decode. The flat form needs a self-describing codec to decode, so Protobuf refuses to encode a flattened schema with `TransformUnsupportedException`.
+
+`flatten(_.field)` flattens one nested field and keeps the others nested, which is how a record with two fields of one type flattens one of them: `Schema[Order].flatten(_.billing)` writes `{"id":1,"street":"a","city":"b","shipping":{"street":"c","city":"d"}}`.
+
+When the field name isn't known at compile time, `drop` and `rename` accept string-based overloads: `drop("field")`, `rename("from", "to")`, `select("f1", "f2")`. `flatten` takes no arguments, or a lambda naming the one field to flatten. `add` always takes a string literal for the new field name (since the name doesn't exist yet to point a lambda at) plus a lambda that computes the value.
 
 These transforms are `transparent inline` and declared to return `Any`; the compiler refines the real result to a re-typed `Schema[A]`, so navigation and conversion against the reshaped view stay fully typed.
 
@@ -1506,7 +1670,7 @@ These transforms are `transparent inline` and declared to return `Any`; the comp
 
 **Gotcha:** once you derive a new schema via `drop`/`rename`/`add`/`select`/`flatten`, `Json.encode(value)` still uses the *original* `Schema[User]` summoned from implicit scope, not your reshaped one. The transform lives on the schema *instance*; you have to call the serialization methods on that instance:
 
-```scala
+```scala doctest:scope=env:person
 val s = Schema[Person].rename(_.name, "userName")
 
 s.encodeString[Json](Person("Alice", 30))
@@ -1769,7 +1933,7 @@ The ordering always follows the case class field declaration order, regardless o
 
 Schemas carry documentation, examples, and deprecation markers. These flow into JSON Schema generation, making your API spec reflect the annotations you add in code:
 
-```scala
+```scala doctest:scope=env:person
 val schema =
     Schema[Person]
         .doc("A person in the system")
@@ -1786,7 +1950,7 @@ Field layout is also available at runtime for building dynamic UIs, generating d
 
 `Structure.of[A]` derives the type shape at compile time:
 
-```scala
+```scala doctest:scope=env:person
 val tpe: Structure.Type = Structure.of[Person]
 // Structure.Type.Product with fields "name" (Str) and "age" (Integer)
 ```
@@ -1833,11 +1997,11 @@ A format is implemented as a `Codec`, which is a factory for a matching `Writer`
 
 ```scala
 abstract class Codec:
-    def newWriter(): Codec.Writer
+    def newWriter()(using Frame): Codec.Writer
     def newReader(input: Span[Byte])(using Frame): Codec.Reader
 ```
 
-`Writer` receives a stream of structural events and accumulates bytes; `Reader` consumes bytes and answers the same events in reverse to reconstruct the value. Schemas never know which codec is in use. They traverse the value in declaration order and emit events; the codec decides how those events are laid out on the wire.
+`Writer` receives a stream of structural events and accumulates bytes; `Reader` consumes bytes and answers the same events in reverse to reconstruct the value. Each keeps the `Frame` of the encode or decode call it serves as its `frame`, so a failure raised while writing or reading names that call. Schemas never know which codec is in use. They traverse the value in declaration order and emit events; the codec decides how those events are laid out on the wire.
 
 ### The event model
 
@@ -1865,7 +2029,7 @@ A complete codec is three classes: a `Writer` that accumulates bytes from struct
 ```scala doctest:expect=skipped
 import java.nio.charset.StandardCharsets
 
-final class LinesWriter extends Codec.Writer:
+final class LinesWriter()(using val frame: Frame) extends Codec.Writer:
     private val sb                                 = StringBuilder()
     def objectStart(name: String, size: Int): Unit = ()
     def objectEnd(): Unit                          = ()
@@ -1882,7 +2046,7 @@ final class LinesReader(input: Span[Byte])(using val frame: Frame) extends Codec
 end LinesReader
 
 object Lines extends Codec:
-    def newWriter(): Codec.Writer                               = LinesWriter()
+    def newWriter()(using Frame): Codec.Writer                  = LinesWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader = LinesReader(input)
 ```
 
@@ -1918,7 +2082,7 @@ Errors raised by the schema core and schema codecs extend the sealed `SchemaExce
 | `ParseException` | raw input cannot be parsed by the codec |
 | `RepresentationUnsupportedException` | a `.tupleTagged`, `.tupleFlat`, or `.untagged` representation is encoded through a codec that cannot express it (Protobuf) |
 | `AmbiguousVariantMatchException` | an untagged or type-union decode under the default `Strict` policy matches more than one member (lists the matched members) |
-| `DuplicateRepresentationException` | a `representations(...)` or `orElseRepresentation(...)` chain contains the same representation twice (raised at the builder call, not at encode time) |
+| `DuplicateRepresentationException` | a `representations(...)` or `orElseRepresentation(...)` chain contains the same representation twice (raised at the first encode or decode, naming the builder call) |
 | `TruncatedInputException` | the input stream ends before decoding completes |
 | `TrailingInputException` | decode finishes one complete value but the input still contains extra content |
 | `LimitExceededException` | `maxDepth` or `maxCollectionSize` is exceeded |

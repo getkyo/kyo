@@ -9,7 +9,7 @@ class SchemaExceptionTest extends kyo.test.Test[Any]:
     // modules, and no Codec instance is otherwise built in this module's test scope. The tests
     // below never call newWriter/newReader, so both throw.
     object TestCodec extends Codec:
-        def newWriter(): Codec.Writer                               = throw NotImplementedError()
+        def newWriter()(using Frame): Codec.Writer                  = throw NotImplementedError()
         def newReader(input: Span[Byte])(using Frame): Codec.Reader = throw NotImplementedError()
 
     "RecordDecodeException carries position and renders it" in {

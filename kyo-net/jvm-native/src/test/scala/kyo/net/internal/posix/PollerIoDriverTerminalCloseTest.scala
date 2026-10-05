@@ -88,6 +88,30 @@ class PollerIoDriverTerminalCloseTest extends Test:
                 }
             }
         }
+
+        "a close obligation registered on a driver that never started is discharged by close" in {
+            PosixTestSockets.assumePoller()
+            TlsRealEngines.assumeBoringSslReady()
+            val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real     = PollerBackend.default()
+            val pollerFd = real.create()
+            val driver   = TestDrivers.forBackend(real, pollerFd, spy)
+            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val rawEngine = TlsRealEngines.singleEngine(isServer = true)
+                val engine    = new RecordingTlsEngine(rawEngine)
+                handle.tls = Present(engine)
+                // No poll loop ever drains the engine FIFO here, so the discharge op closeHandle queues only runs if close() drains it.
+                driver.closeHandle(handle)
+                driver.close()
+                discard(sock.close(client))
+                assert(
+                    spy.closeCounts.getOrDefault(accepted, 0) == 1,
+                    s"the close of a never-started driver must discharge the queued close exactly once, counts=${spy.closeCounts}"
+                )
+                assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, was ${engine.freeCount.get()}")
+            }
+        }
     }
 
 end PollerIoDriverTerminalCloseTest

@@ -118,6 +118,23 @@ kyo-net keeps several off-heap buffers alive across multiple operations to avoid
 - **Document the in-flight guard.** Reuse of a buffer across calls is only safe when at most one operation that touches that buffer is in flight for the owning handle or driver at a time. The in-flight guard (for example, the send single-in-flight guard that prevents a second outbound write until the first completes) is the mechanism that makes the reuse safe. Document the guard at the buffer declaration and at any call site that checks it.
 - **No reused state in shared singletons.** Per-driver mutable state (for example, a poll-timeout value computed per iteration) must live on the per-driver scratch structure, not in an `object` backend or any other shared singleton. A field in a shared singleton is raced across every driver or carrier that calls into that singleton concurrently. Per-handle mutable state lives on the handle, never on a shared driver field.
 
+### Closing a polled fd
+
+On `PollerIoDriver`, `close(2)` of a fd runs only after the poll carrier has applied that fd's closing deregister, and no registration for the handle reaches the kernel after that deregister. On macOS, a kqueue `EV_ADD` for a fd that runs on one thread while another thread is inside `close(2)` of the same fd can livelock the close in the kernel: the thread never returns and the process cannot exit until reboot. The poll carrier applies registrations in FIFO order, so waiting for the deregister's apply is what rules that overlap out.
+
+The mechanism:
+
+- `deregisterFds(handle, fdClosing = true)` begins the handle's `FdWithdrawal` before submitting the deregister. From then on `applyRegistration` skips the handle's registrations and fails their promises `Closed`.
+- The deregister's apply completes the withdrawal. The fd close waits on it through `runAfterFdWithdrawal`: `freeResources` routes the connection's `fdCloseSink` that way, and `releaseFd`, after taking the handle's fd-close claim, the `closeFd` of `closeListener` and of the transport's connect-phase close.
+- `KqueuePollerBackend` stages registrations into a changelist that the next poll submits, so a closing deregister flushes the staged changes first when one of them is for the fd.
+- The terminal teardown, and `close()` on a driver that never started, complete any withdrawal the loop will never apply.
+
+Rules that follow:
+
+- Never close a fd the poller may hold except through `fdCloseSink` or `releaseFd`. A raw `close(2)` is safe only before the fd's first registration.
+- `shutdown(SHUT_RDWR)` stays immediate: it wakes carriers mid-syscall and does not race a registration.
+- A test that observes the close must await it (`RecordingSocketBindings.closed(fd)`), since the close runs on the poll carrier after `closeHandle` returns.
+
 ### TLS parity across drivers
 
 The encrypt and decrypt steps for a TLS connection are shared across all I/O drivers through `TlsEngineIo`. Every driver, including io_uring, goes through the same engine calls in the same order as the poller driver; the wire bytes are therefore identical regardless of which driver is active. This parity is a correctness property, not a performance choice: a driver that encrypts or decrypts differently from the poller produces a broken TLS stream.
@@ -134,7 +151,7 @@ Hostname resolution blocks (`getaddrinfo` on Native via the `kyo_net_resolve` sh
 
 ### Connect deadline
 
-The transport arms its own connect deadline so a client connect to an unreachable peer fails with a typed timeout instead of hanging until the OS gives up. When the caller's `connectTimeout` is finite, `connect` schedules a `Clock.live.unsafe.sleep(timeout)` timer (a timer fiber on the clock executor, never a blocked carrier) and fails the connect promise with `NetConnectTimeoutException(host, port, timeout)` if the OS connect has not completed first. The deadline arm and the OS outcome race on the same promise through `completeDiscard` (at-most-once), so they are mutually exclusive: a deadline that fires after the connect already completed is a no-op, and a connect that completes after the deadline already failed the promise is a no-op, with the winner interrupting the loser's timer. `Duration.Infinity` arms no timer, leaving timeout composition to the caller via `Async.timeout`; the default is `30.seconds`, so the guard is armed unless a caller opts out. The deadline arm is the ONLY producer of the typed timeout leaf: this is the close-cause discrimination, so a deadline-fired close surfaces `NetConnectTimeoutException` while an OS-failure close (refused/unreachable/reset) surfaces the generic `NetConnectException`. The server side mirrors this for TLS with a per-connection handshake deadline that reaps a stalled handshake (a slowloris guard).
+The transport arms its own connect deadline so a client connect to an unreachable peer fails with a typed timeout instead of hanging until the OS gives up. When the caller's `connectTimeout` is finite, `connect` schedules a `Clock.live.unsafe.sleep(timeout)` timer (a timer fiber on the clock executor, never a blocked carrier) and fails the connect promise with `NetConnectTimeoutException(host, port, timeout)` if the OS connect has not completed first. The deadline arm and the OS outcome race on the same promise through `completeDiscard` (at-most-once), so they are mutually exclusive: a deadline that fires after the connect already completed is a no-op, and a connect that completes after the deadline already failed the promise is a no-op, with the winner interrupting the loser's timer. `Duration.Infinity` arms no timer, leaving timeout composition to the caller via `Async.timeout`; the default is `30.seconds`, so the guard is armed unless a caller opts out. A zero deadline goes through `DeadlineTimer.arm`, which hands back an already-completed timer, so the deadline wins before the OS outcome can: a live zero-length sleep would race the connect and fire only sometimes. The deadline arm is the ONLY producer of the typed timeout leaf: this is the close-cause discrimination, so a deadline-fired close surfaces `NetConnectTimeoutException` while an OS-failure close (refused/unreachable/reset) surfaces the generic `NetConnectException`. The server side mirrors this for TLS with a per-connection handshake deadline that reaps a stalled handshake (a slowloris guard).
 
 ## Cross-platform layout
 

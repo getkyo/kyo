@@ -658,6 +658,19 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a provider connection cut mid-stream fails the stream as a transport failure, not as a complete stream" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = serverConfig(server.baseUrl)
+            server.enqueueStreamCut(Chunk(argDelta("{\"resultValue\":\"hel"))).andThen {
+                Abort.run[AIException](LLM.run(config)(Scope.run(AI.stream[String].map(_.run)))).map {
+                    case Result.Failure(AITransportException(closed: HttpConnectionClosedException)) =>
+                        assert(closed.phase == HttpConnectionClosedException.Phase.BodyTruncated)
+                    case other => fail(s"a stream cut mid-body must fail as a transport failure naming the cut, got: $other")
+                }
+            }
+        }
+    }
+
     // --- element mode: delta granularity ---
 
     "stream[Answer] emits one element per delta when each delta closes an element" in {

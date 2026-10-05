@@ -42,6 +42,12 @@ class HarnessCompletionTest extends kyo.test.Test[Any]:
         )
     }
 
+    "commandFailure classifies a code outside 100 to 599 as AIRequestRejectedException, since it is no HTTP status" in {
+        assert(HarnessCompletion.commandFailure("p", Present(599), "d") == AIProviderUnavailableException("p", "d"))
+        assert(HarnessCompletion.commandFailure("p", Present(600), "d") == AIRequestRejectedException("p", 600, "d"))
+        assert(HarnessCompletion.commandFailure("p", Present(99), "d") == AIRequestRejectedException("p", 99, "d"))
+    }
+
     "commandFailure classifies Absent (no provider status) as AIHarnessException" in {
         val ex = HarnessCompletion.commandFailure("p", Absent, "spawn failed")
         assert(ex == AIHarnessException("p", "spawn failed"))

@@ -8,8 +8,6 @@ import kyo.internal.util.*
 
 class Http1ClientConnectionTest extends kyo.BaseHttpTest:
 
-    given CanEqual[Any, Any] = CanEqual.derived
-
     import AllowUnsafe.embrace.danger
 
     /** Helper: create a channel pair and client connection. */
@@ -203,17 +201,17 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
             assert(result.contentLength == 0)
         }
 
-        "channel closed triggers onClosed" in {
-            val channel      = Channel.Unsafe.init[Span[Byte]](16)
-            var closedCalled = false
-            val parser       = new Http1ResponseParser(
+        "channel closed fails with HttpConnectionClosedException" in {
+            val channel                                                             = Channel.Unsafe.init[Span[Byte]](16)
+            var failure: Maybe[Result.Error[Http1ClientConnection.ResponseFailure]] = Absent
+            val parser                                                              = new Http1ResponseParser(
                 channel,
-                onClosed = () => closedCalled = true
+                onFailure = f => failure = Present(f)
             )
             discard(channel.close())
             parser.start()
 
-            assert(closedCalled, "onClosed should have been called when channel is closed")
+            assertValue(failure, Present(Result.fail(HttpConnectionClosedException(HttpConnectionClosedException.Phase.BeforeHead))))
         }
 
         "header exceeds max size" in {
@@ -222,17 +220,17 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
             val longResponse = "HTTP/1.1 200 OK\r\nX-Big: " + "x" * 200 + "\r\n\r\n"
             discard(channel.offer(Span.fromUnsafe(longResponse.getBytes(StandardCharsets.US_ASCII))))
 
-            var closedCalled           = false
-            var parsed: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser                 = new Http1ResponseParser(
+            var failure: Maybe[Result.Error[Http1ClientConnection.ResponseFailure]] = Absent
+            var parsed: ParsedResponse                                              = null.asInstanceOf[ParsedResponse]
+            val parser                                                              = new Http1ResponseParser(
                 channel,
                 maxHeaderSize = smallMax,
                 onResponseParsed = (resp, _) => parsed = resp,
-                onClosed = () => closedCalled = true
+                onFailure = f => failure = Present(f)
             )
             parser.start()
 
-            assert(closedCalled, "Parser should have called onClosed for oversized headers")
+            assertValue(failure, Present(Result.fail(HttpProtocolException("the response head exceeds 64 bytes"))))
             assert(parsed == null, "Parser should not have produced a response for oversized headers")
         }
     }
@@ -454,6 +452,128 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
             assert(afterHeaders.isEmpty, s"Expected no body after headers, got: '$afterHeaders'")
             assert(resp.statusCode == 200)
         }
+    }
+
+    /** Sends a GET over a connection whose inbound channel already holds `reads`, one span per read, and returns how the response
+      * promise completed: the status code and the body bytes that shared the head's read, or the failure.
+      */
+    private def outcome(maxHeaderSize: Int, reads: String*): Maybe[Result[Any, (Int, String)]] =
+        val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+        val outbound = Channel.Unsafe.init[Span[Byte]](16)
+        val conn     = Http1ClientConnection.init(inbound, outbound, maxHeaderSize)
+        reads.foreach(r => discard(inbound.offer(Span.fromUnsafe(r.getBytes(StandardCharsets.US_ASCII)))))
+        conn.send(HttpMethod.GET, "/", HttpHeaders.empty, Span.empty[Byte]).poll().map(
+            _.map { r =>
+                // The fiber's value is the ParsedResponse itself, as in sendAndAwait above.
+                val resp = r.asInstanceOf[ParsedResponse]
+                (resp.statusCode, new String(conn.lastBodySpan.toArray, StandardCharsets.US_ASCII))
+            }
+        )
+    end outcome
+
+    /** Asserts whole-value equality and, on a mismatch, reports the observed value on one line. */
+    private def assertValue[A](actual: A, expected: A)(using CanEqual[A, A], Frame, kyo.test.AssertScope): Unit =
+        assert(actual == expected, s"observed: ${actual.toString.replaceAll("\\s+", " ").take(4000)}")
+
+    /** A response head of exactly `size` bytes, terminator included. */
+    private def headOf(size: Int, contentLength: Int): String =
+        val fixed = s"HTTP/1.1 200 OK\r\nContent-Length: $contentLength\r\nX-Pad: \r\n\r\n".length
+        s"HTTP/1.1 200 OK\r\nContent-Length: $contentLength\r\nX-Pad: ${"p" * (size - fixed)}\r\n\r\n"
+    end headOf
+
+    "the head limit" - {
+
+        "a head of exactly maxHeaderSize bytes in one read is accepted" in {
+            val head = headOf(64, 0)
+            assert(head.length == 64)
+            assertValue(outcome(64, head), Present(Result.succeed((200, ""))))
+        }
+
+        "a head one byte over maxHeaderSize in one read fails with HttpProtocolException" in {
+            val head = headOf(65, 0)
+            assert(head.length == 65)
+            assertValue(outcome(64, head), Present(Result.fail(HttpProtocolException("the response head exceeds 64 bytes"))))
+        }
+
+        "a head of exactly maxHeaderSize bytes whose terminator straddles two reads is accepted" in {
+            val head = headOf(64, 0)
+            assertValue(outcome(64, head.take(62), head.drop(62)), Present(Result.succeed((200, ""))))
+        }
+
+        "a head one byte over maxHeaderSize whose terminator straddles two reads fails with HttpProtocolException" in {
+            val head = headOf(65, 0)
+            assertValue(
+                outcome(64, head.take(63), head.drop(63)),
+                Present(Result.fail(HttpProtocolException("the response head exceeds 64 bytes")))
+            )
+        }
+
+        "a head of exactly maxHeaderSize bytes followed in the same read by a larger body is accepted with the body" in {
+            val body = "b" * 200
+            assertValue(outcome(64, headOf(64, 200) + body), Present(Result.succeed((200, body))))
+        }
+
+        "a head one byte over maxHeaderSize followed in the same read by a body fails with HttpProtocolException" in {
+            assertValue(
+                outcome(64, headOf(65, 200) + ("b" * 200)),
+                Present(Result.fail(HttpProtocolException("the response head exceeds 64 bytes")))
+            )
+        }
+    }
+
+    "close with a response outstanding completes the response with HttpConnectionClosedException" in {
+        val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+        val outbound = Channel.Unsafe.init[Span[Byte]](16)
+        val conn     = Http1ClientConnection.init(inbound, outbound)
+        val fiber    = conn.send(HttpMethod.GET, "/", HttpHeaders.empty, Span.empty[Byte])
+        // ParsedResponse has no CanEqual; reference equality is right for it, and no response is expected here.
+        given CanEqual[ParsedResponse < Any, ParsedResponse < Any] = CanEqual.derived
+        assertValue(fiber.poll(), Absent)
+        conn.close()
+        assertValue(fiber.poll(), Present(Result.fail(HttpConnectionClosedException(HttpConnectionClosedException.Phase.BeforeHead))))
+    }
+
+    "a response failure carries the frame of the request it answers, not of the request that opened the connection" in {
+        val inbound                                                                          = Channel.Unsafe.init[Span[Byte]](16)
+        val outbound                                                                         = Channel.Unsafe.init[Span[Byte]](16)
+        val conn                                                                             = Http1ClientConnection.init(inbound, outbound)
+        def sendFrom(response: String)(using frame: Frame): (Maybe[Result[Any, Any]], Frame) =
+            discard(inbound.offer(Span.fromUnsafe(response.getBytes(StandardCharsets.US_ASCII))))
+            (conn.send(HttpMethod.GET, "/", HttpHeaders.empty, Span.empty[Byte]).poll(), frame)
+        val (first, firstFrame)   = sendFrom("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        val (second, secondFrame) = sendFrom("garbage\r\n\r\n")
+        assert(first.exists(_.isSuccess), s"observed $first")
+        assert(firstFrame != secondFrame)
+        second match
+            case Present(Result.Failure(e: HttpProtocolException)) => assert(e.frame == secondFrame, s"observed ${e.frame}")
+            case other                                             => fail(s"expected a protocol failure, observed $other")
+        end match
+    }
+
+    "an interim response in its own read is skipped for the final response (RFC 9110 section 15.2)" in {
+        assertValue(
+            outcome(
+                65536,
+                "HTTP/1.1 103 Early Hints\r\nLink: </s.css>; rel=preload\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+            ),
+            Present(Result.succeed((200, "hello")))
+        )
+    }
+
+    "thousands of interim responses in one read are skipped for the final response" in {
+        val interim = "HTTP/1.1 103 Early Hints\r\n\r\n" * 10000
+        assertValue(
+            outcome(65536, interim + "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"),
+            Present(Result.succeed((200, "hello")))
+        )
+    }
+
+    "a 101 is the final response of an upgrade, not an interim one" in {
+        assertValue(
+            outcome(65536, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"),
+            Present(Result.succeed((101, "")))
+        )
     }
 
 end Http1ClientConnectionTest

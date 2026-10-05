@@ -1,16 +1,18 @@
 package kyo.internal
 
 import kyo.*
+import kyo.db.Backend
 import kyo.internal.sqlite.SqliteErrors
 
 /** The conformance answers shared by every engine this driver runs: SQLite and the forks that keep its SQL surface and its storage rules.
-  * A descriptor supplies its identity and backend, and overrides an answer only where the battery measured a difference.
+  * A descriptor supplies its label, its backend and the URL scheme that backend claims, and overrides an answer only where the battery
+  * measured a difference.
   *
   * The DDL names below are multi-word on purpose. A declared type's leading word carries the KIND the codec dispatches on, and a trailing
   * `TEXT` forces TEXT affinity so a value that looks numeric is not rewritten on the way in. Under the natural names a 20-digit decimal
   * becomes a double, a JSON document that is a bare number becomes an integer, and an all-digit date becomes an integer, each silently.
   */
-abstract class SqliteLineageConformanceBackend extends SqlConformanceBackend:
+abstract class SqliteLineageConformanceBackend(backend: Backend, urlScheme: String) extends SqlConformanceBackend(backend):
 
     def quoteIdent(name: String): String = "\"" + name.replace("\"", "\"\"") + "\""
 

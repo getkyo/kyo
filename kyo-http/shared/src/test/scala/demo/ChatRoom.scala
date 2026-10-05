@@ -98,7 +98,8 @@ object ChatRoomClient extends KyoApp:
             )(post, list, feed)
             _ <- Console.printLine(s"ChatRoomClient started server on http://localhost:${server.port}")
 
-            _ <- HttpClient.withConfig(_.baseUrl(s"http://localhost:${server.port}").timeout(5.seconds)) {
+            api <- Abort.get(HttpClientConfig.BaseUrl.init(s"http://localhost:${server.port}"))
+            _   <- HttpClient.withConfig(_.baseUrl(api).timeout(5.seconds)) {
                 for
                     _  <- Console.printLine("\n=== Posting messages ===")
                     r1 <- HttpClient.postText("/messages", "Alice: Hello everyone!")

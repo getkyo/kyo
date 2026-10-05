@@ -235,7 +235,8 @@ class PosixTransportUpgradeReleaseTest extends Test:
                             assert(plaintext.start(), "the plaintext connection must start")
                             awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
                                 assert(armed, "the pump's recv SQE never became kernel-owned (a hang, not the release hazard under test)")
-                                val upgrade = transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe
+                                val upgrade =
+                                    transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe
                                 awaitCondition(5.seconds)(engine.stepCount.get() >= 1).map { stepped =>
                                     assert(stepped, "the upgrade handshake never reached its first step")
                                     val reapLatch = recording.awaitReap()
@@ -343,7 +344,11 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     // in-flight SQEs for the handle. (A verifying no-SNI client is not a reliable buildEngine throw: the
                                     // BoringSSL and OpenSSL providers bind an unmatchable identity and reject at handshake instead.)
                                     val unavailableProvider = NetTlsConfig(tlsProvider = Present("nonexistent-tls-provider"))
-                                    Abort.run[NetException](transport.upgradeToTls(plaintext, unavailableProvider, 16).safe.get).map {
+                                    Abort.run[NetException](transport.upgradeToTls(
+                                        plaintext,
+                                        unavailableProvider,
+                                        16
+                                    ).safe.get).map {
                                         outcome =>
                                             // Defensive: the upgrade is expected to fail closed (unavailable provider); if a
                                             // regression ever let it succeed, close the unexpected upgraded connection rather than leak it.
@@ -410,7 +415,11 @@ class PosixTransportUpgradeReleaseTest extends Test:
                         // The post-detach body runs inside a completion callback, and completion callbacks are run under a catch-all that
                         // logs rather than propagates. An unhandled throw there settles nothing, so this get is what fails when the
                         // containment is missing: it parks forever on a promise no path can complete, and the leaf's own cap reports it.
-                        Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
+                        Abort.run[NetException](transport.upgradeToTls(
+                            plaintext,
+                            NetTlsConfig(trustAll = true),
+                            16
+                        ).safe.get).map {
                             outcome =>
                                 // Defensive, as in the leaves above: a regression that let this upgrade succeed must not leak its connection.
                                 outcome.foreach(_.close())
@@ -476,7 +485,11 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     staged,
                                     "the peer's bytes never reached the inbound channel, so nothing would be staged for the engine"
                                 )
-                                Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
+                                Abort.run[NetException](transport.upgradeToTls(
+                                    plaintext,
+                                    NetTlsConfig(trustAll = true),
+                                    16
+                                ).safe.get).map {
                                     outcome =>
                                         outcome.foreach(_.close())
                                         outcome match
@@ -536,7 +549,11 @@ class PosixTransportUpgradeReleaseTest extends Test:
                         // place left that can see the settled promise and close the orphan.
                         val engine = new FinishWithCertHookEngine(onCertSha = () => plaintext.close())
                         engineSlot.set(engine)
-                        Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
+                        Abort.run[NetException](transport.upgradeToTls(
+                            plaintext,
+                            NetTlsConfig(trustAll = true),
+                            16
+                        ).safe.get).map {
                             outcome =>
                                 // Defensive: the upgrade is expected to settle as NetConnectionClosedException; if a regression ever
                                 // let it succeed, close the unexpected orphaned connection rather than leak it.

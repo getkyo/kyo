@@ -220,6 +220,20 @@ class MediaTypeTest extends kyo.test.Test[Any]:
             assert(Json.decode[MediaType]("""{"mainType":"te xt","subType":"plain","parameters":[]}""").isFailure)
             assert(Json.decode[MediaType]("""{"mainType":"text","subType":"plain","parameters":[{"name":"a b","value":"1"}]}""").isFailure)
         }
+        "a rejected part names the decoding caller's Frame, for the type and for a parameter" in {
+            def rejectedAt(json: String): Maybe[(Frame, Frame)] =
+                Json.decode[MediaType](json) match
+                    case Result.Failure(e: ConstructorRejectedException) =>
+                        e.rejection match
+                            case leaf: MimeException => Present((leaf.frame, e.frame))
+                            case _                   => Absent
+                    case _ => Absent
+            val frames = Chunk(
+                rejectedAt("""{"mainType":"te xt","subType":"plain","parameters":[]}"""),
+                rejectedAt("""{"mainType":"text","subType":"plain","parameters":[{"name":"a b","value":"1"}]}""")
+            )
+            assert(frames.forall(_.exists((rejected, decoded) => rejected == decoded)), frames.toString)
+        }
     }
 
     "totality" - {

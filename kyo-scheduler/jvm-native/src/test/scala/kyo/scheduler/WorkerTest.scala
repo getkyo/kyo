@@ -636,35 +636,101 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         }
 
         "steal a task from another worker" in {
-            val cdl1  = new CountDownLatch(1)
-            val cdl2  = new CountDownLatch(1)
-            val task1 = TestTask(_run = () => {
+            val started1 = new CountDownLatch(1)
+            val started2 = new CountDownLatch(1)
+            val cdl1     = new CountDownLatch(1)
+            val cdl2     = new CountDownLatch(1)
+            val task1    = TestTask(_run = () => {
+                started1.countDown()
                 cdl1.await()
                 Done
             })
             val task2 = TestTask(_run = () => {
+                started2.countDown()
                 cdl2.await()
                 Done
             })
             val worker1 = createWorker(executor)
             val worker2 = createWorker(executor, stealTask = w => worker1.stealingBy(w))
 
+            // The thief tries once and goes idle when the victim holds its queue lock, so it is woken only once worker1 is parked
+            // inside task1 and can no longer be polling its queue.
             worker1.enqueue(task1)
+            started1.await()
             worker1.enqueue(task2)
-            eventually(assert(worker1.load() == 2))
+            assert(worker1.load() == 2)
             assert(worker2.load() == 0)
 
             worker2.wakeup()
-            eventually {
-                assert(worker1.load() == 1)
-                assert(worker2.load() == 1)
-            }
+            started2.await()
+            assert(worker1.load() == 1)
+            assert(worker2.load() == 1)
             cdl1.countDown()
             cdl2.countDown()
             eventually {
                 assert(task2.executions == 1)
                 assert(task1.executions == 1)
             }
+        }
+
+        "a thief that finds the victim's queue locked takes nothing, and steals on its next wakeup" in {
+            val started1 = new CountDownLatch(1)
+            val cdl1     = new CountDownLatch(1)
+            val task1    = TestTask(_run = () => {
+                started1.countDown()
+                cdl1.await()
+                Done
+            })
+            val task2       = TestTask()
+            val gateEntered = new CountDownLatch(1)
+            val gateRelease = new CountDownLatch(1)
+            val gateArmed   = new AtomicBoolean(true)
+            // WorkerQueue reads a task's runtime under the queue lock when it inserts it, so this task holds the lock of the
+            // queue it is being added to for as long as the test wants.
+            val gate = new Task {
+                def run(startMillis: Long, clock: InternalClock, deadline: Long) = Done
+                override private[scheduler] def runtime(): Int                   = {
+                    if (gateArmed.compareAndSet(true, false)) {
+                        gateEntered.countDown()
+                        gateRelease.await()
+                    }
+                    0
+                }
+            }
+            val thiefReturned = new java.util.concurrent.Semaphore(0)
+            val worker1       = createWorker(executor)
+            val worker2       = createWorker(
+                command =>
+                    executor.execute { () =>
+                        try command.run()
+                        finally thiefReturned.release()
+                    },
+                stealTask = w => worker1.stealingBy(w)
+            )
+
+            worker1.enqueue(task1)
+            started1.await()
+            worker1.enqueue(task2)
+            val adding = new CountDownLatch(1)
+            executor.execute { () =>
+                worker1.enqueue(gate)
+                adding.countDown()
+            }
+            gateEntered.await()
+
+            worker2.wakeup()
+            thiefReturned.acquire()
+            assert(worker2.load() == 0)
+            assert(task2.executions == 0)
+            assert(worker1.load() == 2)
+
+            gateRelease.countDown()
+            adding.await()
+            worker2.wakeup()
+            thiefReturned.acquire()
+            assert(task2.executions == 1)
+            assert(worker1.load() == 1)
+            cdl1.countDown()
         }
 
         "stop" in {

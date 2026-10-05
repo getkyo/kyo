@@ -507,7 +507,11 @@ private[kyo] object HtmlRenderer:
         case _: Ul             => "ul"
         case _: Ol             => "ol"
         case _: Table          => "table"
+        case _: Colgroup       => "colgroup"
+        case _: Col            => "col"
+        case _: Thead          => "thead"
         case _: Tbody          => "tbody"
+        case _: Tfoot          => "tfoot"
         case _: H1             => "h1"
         case _: H2             => "h2"
         case _: H3             => "h3"
@@ -524,6 +528,8 @@ private[kyo] object HtmlRenderer:
         case _: Th             => "th"
         case _: Label          => "label"
         case _: Form           => "form"
+        case _: Fieldset       => "fieldset"
+        case _: Legend         => "legend"
         case _: Textarea       => "textarea"
         case _: Select         => "select"
         case _: Opt            => "option"
@@ -658,6 +664,8 @@ private[kyo] object HtmlRenderer:
             case b: Button =>
                 w(sb, " type=\"submit\"")
                 boolAttr(sb, "disabled", b.disabled)
+            case fs: Fieldset =>
+                boolAttr(sb, "disabled", fs.disabled)
             case cb: Checkbox =>
                 w(sb, " type=\"checkbox\"")
                 boolAttr(sb, "disabled", cb.disabled)

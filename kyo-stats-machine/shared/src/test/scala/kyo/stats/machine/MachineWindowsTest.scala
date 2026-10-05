@@ -53,7 +53,7 @@ class MachineWindowsTest extends kyo.test.Test[Any]:
             stub.getSystemTimesFn = (idle, kernel, user) =>
                 idle.set(0, 1000000L); kernel.set(0, 3000000L); user.set(0, 2000000L); 1
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 machine = new MachineWindows(handles, sampler)
             yield
@@ -84,7 +84,7 @@ class MachineWindowsTest extends kyo.test.Test[Any]:
             // first-ever-registered cell for a path canonical for the process lifetime, so a poll against
             // the shared scope could read a value a different suite registered first. A uniquely-scoped
             // MachineHandles avoids the race entirely.
-            val handles            = MachineHandles.initForTest(Stat.initScope("mwintest-memory-swap-decode"), 8L)
+            val handles            = MachineHandlesOwners.initForTest(Stat.initScope("mwintest-memory-swap-decode"), 8L)
             val sampler            = new MachineSampler(handles)
             val machine            = new MachineWindows(handles, sampler)
             val memAvailSumBefore  = histogramSummary("mwintest-memory-swap-decode", "memory", "available").sum
@@ -110,7 +110,7 @@ class MachineWindowsTest extends kyo.test.Test[Any]:
             stub.globalMemoryStatusFn = out =>
                 out.set(1, 1L); out.set(2, 1L); out.set(3, 1L); out.set(4, 1L); 1
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 machine = new MachineWindows(handles, sampler)
             yield
@@ -133,7 +133,7 @@ class MachineWindowsTest extends kyo.test.Test[Any]:
             stub.globalMemoryStatusFn = out =>
                 out.set(1, 1L); out.set(2, 1L); out.set(3, 1L); out.set(4, 1L); 1
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 machine = new MachineWindows(handles, sampler)
             yield

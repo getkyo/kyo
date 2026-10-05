@@ -1,4 +1,3 @@
--Xmx12G
 -Xss10M
 -XX:+UseG1GC
 -XX:+UseCompactObjectHeaders

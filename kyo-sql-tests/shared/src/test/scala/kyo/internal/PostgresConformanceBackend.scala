@@ -1,7 +1,6 @@
 package kyo.internal
 
 import kyo.*
-import kyo.db.Backend
 import kyo.internal.postgres.PostgresBackendFactory
 import kyo.internal.postgres.PostgresConnection
 
@@ -10,19 +9,13 @@ import kyo.internal.postgres.PostgresConnection
   * [[withFreshSchema]] and the capability flags, so the coordinates a conformance body sees are engine-free.
   *
   * The container is shared, not per-test: [[provision]] memoizes one postgres container per process through
-  * [[TestContainers.getOrInit]] over the kyo-pod [[TestContainers.containers]] table, keyed by the descriptor id `"postgres"`, so a container
-  * inited here shares the single entry with any other caller for that id. Each leaf then provisions a fresh database inside that shared
+  * [[TestContainers.getOrInit]] over the kyo-pod [[TestContainers.containers]] table, keyed by `"postgres"`, so a container inited here
+  * shares the single entry with any other caller for that key. Each leaf then provisions a fresh database inside that shared
   * container and drops it on scope exit, so leaves never collide yet pay the container start once.
   */
-final class PostgresConformanceBackend extends ContainerConformanceBackend:
+final class PostgresConformanceBackend extends ContainerConformanceBackend(new PostgresBackendFactory()):
 
-    def id: String = "postgres"
-
-    def label: String = "postgres"
-
-    def urlScheme: String = "postgres"
-
-    def backend: Backend = new PostgresBackendFactory()
+    def label: SqlConformanceBackend.Label = SqlConformanceBackend.Label("postgres")
 
     def containerConfig: Container.Config =
         ContainerPredef.Postgres.buildContainerConfig(ContainerPredef.Postgres.Config.default)
