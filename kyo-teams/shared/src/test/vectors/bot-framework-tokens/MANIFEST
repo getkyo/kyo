@@ -1,0 +1,23 @@
+# Bot Framework style tokens signed once, offline, with a key generated for these tests; nothing outside them trusts it.
+# header-s1.json, header-k1.json and claims.json are written by hand (no trailing newline). The rest was produced in this
+# directory with OpenSSL 3, by exactly these commands:
+#
+#   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out signing-key.pem
+#   b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+#   openssl rsa -in signing-key.pem -noout -modulus | cut -d= -f2 | xxd -r -p | b64url > modulus
+#   sign() { input="$(b64url < "$1").$(b64url < claims.json)"; printf '%s.%s' "$input" "$(printf '%s' "$input" | openssl dgst -sha256 -sign signing-key.pem | b64url)"; }
+#   sign header-s1.json > token-s1
+#   sign header-k1.json > token-k1
+#
+# token-k1 is signed by the same key as token-s1 but names `k1`, a key it was not signed with.
+source generated locally by the commands above; no upstream
+license test data written for kyo-teams, under the repository's license
+file claims.json 8cd2779393c8e604348d2c6de197b5c3e7c08c39b4681ad8828840d3bd38b729 claims.json
+file header-k1.json f1312a01adf001891f6c5c93645299a01b0e8ce21db8cd4df3fa2b8b185c1447 header-k1.json
+file header-s1.json 96add31c40ea76c096e9a32ea27f29e90b89b4460ab4ea5f450459602803ab8f header-s1.json
+file modulus d05fbf0a1aeaa7e5d9ec85b5ce30d294c88a81029db65e15d2c6513106a1cf73 modulus
+# signing-key.pem is a test-only key, kept so the commands above can be rerun; it is `kept`, not `file`, so no compiled
+# source embeds it.
+kept signing-key.pem dcecb454ce9717a895d1d2404f63f7817c87248a30e3526d32f10640a03453ec
+file token-k1 33d726d900c5acd82696fe44fd028f1a3ddb9154ac52ec4a4a282e7588d62a92 token-k1
+file token-s1 0b756000e4d205e10be16fff7b05083119f67b09ef592d2544ea5a7521791243 token-s1

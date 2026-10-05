@@ -467,26 +467,13 @@ final private[net] class IoUringDriver private[posix] (
                 if closedFlag.get() then
                     unregister(key)
                     promise.completeDiscard(Result.fail(Closed(label, Frame.internal, "driver closed")))
-                else if handle.isClosing() then
-                    // The handle's close was REQUESTED, which happens strictly before any closer takes the fd claim below. Arming a connect
-                    // in that gap dials out on a descriptor already committed to being closed and recycled, which is the same hazard the
-                    // accept path rejects on for its listener. Checking only the claim leaves the gap open, because `isClosing` is set at
-                    // the request and `fdCloseClaimed` only at the CAS a closer wins later.
-                    unregister(key)
-                    promise.completeDiscard(Result.fail(Closed(handleLabel(handle), handle.createdAt, "handle closing")))
-                else if handle.fdCloseIsClaimed then
-                    // The fd close has already been claimed, so `close(fd)` has either run or is owed, and the number may already name a
-                    // different socket: prepping a connect here would dial out on somebody else's connection. Two paths reach this check
-                    // with the claim already taken. `awaitConnect` only enqueues this submit on the engine FIFO, so a connect-phase teardown
-                    // that closes the fd on the caller's carrier can land before the arm drains; and a full SQ parks the arm in
-                    // `stalledSubmits`, where `reArmStalledSubmits` re-enters this submit long after. Reject instead, and fail the promise
-                    // rather than merely skipping the submit, which would park the caller on a completion that can never arrive.
-                    //
-                    // This narrows the window rather than closing it. The claim is taken on the CALLER's carrier
-                    // (`PosixTransport.closeUnwiredHandle`'s connect-phase arm claims, shuts down and closes the raw fd directly; only
-                    // `driver.closeHandle` goes through the FIFO), while this read and the `kyo_uring_prep_connect` below run on the reap
-                    // carrier, so a claim landing between them still arms against a just-freed fd. Closing that would mean routing the
-                    // connect-phase claim through `submitEngineOp` so it serializes with this submit on the one carrier that owns the ring.
+                else if !handle.ownsFd() then
+                    // The close was requested or the fd close claimed, so the number may already name a different socket: prepping a connect
+                    // here would dial out on somebody else's connection. `awaitConnect` only enqueues this submit on the engine FIFO, so a
+                    // connect-phase teardown can land before the arm drains, and a full SQ parks the arm in `stalledSubmits`, where
+                    // `reArmStalledSubmits` re-enters this submit long after. The connect-phase close claims through [[releaseFd]], on this
+                    // carrier, so the check and the prep below cannot straddle it. Fail the promise rather than merely skipping the submit,
+                    // which would park the caller on a completion that can never arrive.
                     unregister(key)
                     promise.completeDiscard(Result.fail(Closed(handleLabel(handle), handle.createdAt, "handle closed")))
                 else
@@ -559,9 +546,9 @@ final private[net] class IoUringDriver private[posix] (
             noAddr.close()
             noLen.close()
             promise.completeDiscard(Result.fail(Closed(label, Frame.internal, "driver closed")))
-        else if handle.isClosing() then
-            // The listener was torn down (closeListener ran requestClose on this carrier before this arm drained): its fd is closed and the
-            // number may already name a different socket, so arming would accept on that socket and steal its connections. Reject instead.
+        else if !handle.ownsFd() then
+            // The listener was torn down (closeListener ran on this carrier before this arm drained): its fd is closed and the number may
+            // already name a different socket, so arming would accept on that socket and steal its connections. Reject instead.
             unregister(key)
             noAddr.close()
             noLen.close()
@@ -1030,10 +1017,16 @@ final private[net] class IoUringDriver private[posix] (
                 cancel(handle)
                 handle.requestClose()
                 flushSubmits()
-            finally closeFd()
+            finally if handle.claimFdClose() then closeFd()
             end try
         }
     end closeListener
+
+    /** Claims and closes on the reap carrier, the one that preps every SQE: an arm drained before this op preps against the still-open fd,
+      * and one drained after it reads the claim and rejects, so no SQE is prepped between the claim and `close(fd)`.
+      */
+    override def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        submitEngineOp(() => if handle.claimFdClose() then closeFd())
 
     /** True when a recv for `handle` is in flight: a recv SQE kernel-owned (registered in `pending`) OR a recv parked on a full submission queue
       * (held in `stalledSubmits`, re-armed next reap turn by `reArmStalledSubmits`). The STARTTLS upgrade read path consults this ON THE REAP CARRIER

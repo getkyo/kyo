@@ -40,7 +40,7 @@ final class TestChannelTransport(conns: Seq[Connection], tlsCloseReason: Boolean
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("connectUnix")
 
-    def stdio(channelCapacity: Int, readChunkSize: Int)(using
+    def stdio(channelCapacity: Int, readChunkSize: ByteSize)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("stdio")
@@ -119,9 +119,14 @@ end TlsCloseConnection
 /** Test transport whose `connect` parks until the test releases it, so a test can settle the caller's own promise FIRST and then let the
   * connect succeed. That ordering is what an interrupted caller produces in production, and it cannot be staged with a transport that
   * hands back an already-completed fiber.
+  *
+  * With `interruptible = false` the connect ignores the interrupt a leaving caller sends it, standing in for a real connect that completes
+  * in the same instant the interrupt arrives, which is the only way a connect still lands after its caller left.
   */
-final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extends Transport:
-    private val gate      = Promise.Unsafe.init[Connection, Abort[NetException]]()
+final class DeferredConnectTransport(conn: Connection, interruptible: Boolean = true)(using AllowUnsafe) extends Transport:
+    private val gate =
+        if interruptible then Promise.Unsafe.init[Connection, Abort[NetException]]()
+        else Promise.Unsafe.initUninterruptible[Connection, Abort[NetException]]()
     private val requested = new java.util.concurrent.atomic.AtomicBoolean(false)
 
     /** Whether a caller has asked for the connect. */
@@ -129,6 +134,12 @@ final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extend
 
     /** Let the pending connect succeed with the prepared connection. */
     def release()(using AllowUnsafe, Frame): Unit = discard(gate.complete(Result.succeed(conn)))
+
+    /** Whether the pending connect was interrupted, which is how a real transport learns to stop it and close its socket. */
+    def connectInterrupted(using AllowUnsafe): Boolean =
+        gate.poll() match
+            case Present(Result.Panic(_: Interrupted)) => true
+            case _                                     => false
 
     def connect(host: String, port: Int, connectTimeout: Duration, config: NetConfig)(using
         AllowUnsafe,
@@ -151,7 +162,7 @@ final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extend
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("connectUnix")
 
-    def stdio(channelCapacity: Int, readChunkSize: Int)(using
+    def stdio(channelCapacity: Int, readChunkSize: ByteSize)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("stdio")

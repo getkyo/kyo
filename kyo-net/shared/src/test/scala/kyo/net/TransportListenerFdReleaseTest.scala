@@ -19,19 +19,10 @@ class TransportListenerFdReleaseTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    /** Listens on a port below every platform's ephemeral range (Linux starts at 32768, macOS and Windows at 49152). A port from port 0 is
-      * ephemeral, so once its listener closes any outbound connect on the host can be handed it before the re-bind, which then fails with
-      * EADDRINUSE although this listener did release it. A taken port only retries the choice; the re-bind the leaves assert is not retried.
-      */
     private def listenOutsideEphemeralRange(transport: Transport)(using Frame): Listener < (Async & Abort[NetException]) =
-        Loop(0) { attempt =>
-            val port = 20000 + java.util.concurrent.ThreadLocalRandom.current().nextInt(12000)
-            Abort.run[NetException](transport.listen("127.0.0.1", port, 16)(_ => ()).safe.get).map {
-                case Result.Success(listener)                             => Loop.done(listener)
-                case Result.Failure(_: NetBindException) if attempt < 100 => Loop.continue(attempt + 1)
-                case other                                                => Abort.get(other).map(Loop.done)
-            }
-        }
+        NonEphemeralPort.bind[Listener, NetException, Any](_.isInstanceOf[NetBindException])(port =>
+            transport.listen("127.0.0.1", port, 16)(_ => ()).safe.get
+        )
 
     "closing an idle listener releases its listen fd so the port can be re-bound once released completes" - eachBackend { transport =>
         listenOutsideEphemeralRange(transport).map { listener =>

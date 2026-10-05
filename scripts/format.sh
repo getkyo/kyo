@@ -22,6 +22,8 @@ set -uo pipefail
 
 ALL_TASKS=(kyoJVM/scalafmtAll kyoJS/scalafmtAll kyoNative/scalafmtAll kyoWasm/scalafmtAll scalafmtSbt doctestFormat)
 
+. "$(cd "$(dirname "$0")" && pwd)/sbt-heap-lib.sh"
+
 usage() {
     echo "Usage: format.sh [--check] [--changed [<base>]]" >&2
     echo "       format.sh --self-test" >&2
@@ -109,7 +111,7 @@ run_format() {
 
     local before after
     [ "$check" = no ] || before=$(snapshot)
-    sbt "${tasks[@]}" || {
+    sbt "$(sbt_heap tool)" "${tasks[@]}" || {
         echo "format.sh: sbt failed" >&2
         return 2
     }
@@ -139,6 +141,7 @@ self_test() {
     mkdir -p "$dir/bin" "$dir/repo"
     cat > "$dir/bin/sbt" <<'STUB'
 #!/usr/bin/env bash
+case "$1" in -J-Xmx*) printf '%s\n' "$1" >> "$FAKE_SBT_CALLS.heap"; shift ;; esac
 printf '%s\n' "$*" >> "$FAKE_SBT_CALLS"
 if [ -n "${FAKE_SBT_REWRITES:-}" ]; then
     printf '%s\n' "${FAKE_SBT_CONTENT:-formatted}" > "$FAKE_SBT_REWRITES"
@@ -177,7 +180,7 @@ STUB
     }
     calls() { cat "$dir/calls" 2>/dev/null; }
     run() {
-        rm -f "$dir/calls" "$dir/out"
+        rm -f "$dir/calls" "$dir/calls.heap" "$dir/out"
         (cd "$repo" && PATH="$dir/bin:$PATH" FAKE_SBT_CALLS="$dir/calls" "$self" "$@" > "$dir/out" 2>&1)
     }
     reset_repo() {
@@ -196,6 +199,9 @@ STUB
     if [ $? -eq 0 ] && [ "$(calls)" = "${ALL_TASKS[*]}" ]; then
         record ok "the whole tree in one sbt session"
     else record no "the whole tree in one sbt session"; fi
+    if [ "$(cat "$dir/calls.heap" 2>/dev/null)" = "$(sbt_heap tool)" ]; then
+        record ok "the session runs with the tool role's heap"
+    else record no "the session runs with the tool role's heap: $(cat "$dir/calls.heap" 2>/dev/null)"; fi
 
     reset_repo
     (cd "$repo" && printf 'object A { val x = 1 }\n' > mod/src/A.scala && git commit -qam change)
