@@ -313,6 +313,30 @@ class QueueTest extends kyo.test.Test[Any]:
             assert(testUnsafe.poll().contains(Maybe(1)))
         }
 
+        def closedBy(result: Result[Closed, Any]): Closed =
+            result match
+                case Result.Failure(closed) => closed
+                case other                  => throw AssertionError(s"expected a Closed failure: $other")
+
+        "reads after close share one failure naming the closing call" in withQueue { testUnsafe =>
+            val closedAt = summon[Frame]
+            discard { given Frame = closedAt; testUnsafe.close() }
+            val first  = closedBy(testUnsafe.poll())
+            val second = closedBy(testUnsafe.offer(1))
+            assert(first eq second)
+            assert(first.frame eq closedAt)
+        }
+
+        "a close after closeAwaitEmpty names the close call" in withQueue { testUnsafe =>
+            assert(testUnsafe.offer(1).contains(true))
+            val awaitedAt = summon[Frame]
+            val closedAt  = summon[Frame]
+            discard { given Frame = awaitedAt; testUnsafe.closeAwaitEmpty() }
+            assert(closedBy(testUnsafe.offer(2)).frame eq awaitedAt)
+            discard { given Frame = closedAt; testUnsafe.close() }
+            assert(closedBy(testUnsafe.poll()).frame eq closedAt)
+        }
+
         "should peek correctly" in withQueue { testUnsafe =>
             testUnsafe.offer(2)
             assert(testUnsafe.peek().contains(Maybe(2)))
