@@ -73,6 +73,53 @@ class TagTest extends kyo.test.Test[Any]:
         }
     }
 
+    "subtype comparison cache" - {
+        import Tag.internal.ComparisonCache
+        import Tag.internal.Mode
+
+        // The cache keys on identity and hash alone, so distinct encodings stand in for tags. A cache of its own keeps the leaves
+        // independent of the per-thread caches every other leaf shares.
+        val target     = "*target".asInstanceOf[Tag[Any]]
+        val candidates = (0 until 64).map(i => s"*candidate$i".asInstanceOf[Tag[Any]])
+
+        def sharingASet(cache: ComparisonCache, n: Int)(using kyo.test.AssertScope): Seq[Tag[Any]] =
+            val found = candidates.groupBy(cache.set(_, target, Mode.Subtype)).values.find(_.size >= n)
+            assert(found.isDefined, s"no $n candidates share a set")
+            found.get.take(n)
+        end sharingASet
+
+        "two comparisons that share a set both stay cached" in {
+            val cache     = ComparisonCache(64)
+            val Seq(x, y) = sharingASet(cache, 2): @unchecked
+            val set       = cache.set(x, target, Mode.Subtype)
+            cache.put(set, x, target, Mode.Subtype, true)
+            cache.put(set, y, target, Mode.Subtype, false)
+            assert(cache.get(set, x, target, Mode.Subtype) == Present(true))
+            assert(cache.get(set, y, target, Mode.Subtype) == Present(false))
+        }
+
+        "a third comparison in a set evicts the least recently used one" in {
+            val cache        = ComparisonCache(64)
+            val Seq(x, y, z) = sharingASet(cache, 3): @unchecked
+            val set          = cache.set(x, target, Mode.Subtype)
+            cache.put(set, x, target, Mode.Subtype, true)
+            cache.put(set, y, target, Mode.Subtype, true)
+            assert(cache.get(set, x, target, Mode.Subtype) == Present(true))
+            cache.put(set, z, target, Mode.Subtype, true)
+            assert(cache.get(set, x, target, Mode.Subtype) == Present(true))
+            assert(cache.get(set, z, target, Mode.Subtype) == Present(true))
+            assert(cache.get(set, y, target, Mode.Subtype) == Absent)
+        }
+
+        "an entry answers only its own mode" in {
+            val cache = ComparisonCache(64)
+            val x     = candidates.head
+            val set   = cache.set(x, target, Mode.Subtype)
+            cache.put(set, x, target, Mode.Subtype, true)
+            assert(cache.get(set, x, target, Mode.Equality) == Absent)
+        }
+    }
+
     "dynamic captured lambda bodies" - {
         trait Higher[F[_]]
         def original[A: Tag]: Tag[Higher[[X] =>> Either[A, X]]] = Tag.dynamic[Higher[[X] =>> Either[A, X]]]
