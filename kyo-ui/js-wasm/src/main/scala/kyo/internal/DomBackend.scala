@@ -648,10 +648,13 @@ private[kyo] object DomBackend:
                         // is handled by UILocation's interceptor. Prevent-defaulting every anchor here
                         // would also kill those. A modified click (ctrl/cmd/shift/alt, or a non-primary button) asks
                         // the browser for a new tab or window, so its default stays too; the handler runs either way.
-                        // Same test as UILocation's anchor interceptor.
+                        // Same test as UILocation's anchor interceptor. A download anchor keeps its default as well.
                         val modifiedClick = me.ctrlKey || me.metaKey || me.shiftKey || me.altKey || me.button != 0
-                        if !modifiedClick && target.tagName.toLowerCase == "a" && evTypes.contains("click") then
+                        if !modifiedClick && target.tagName.toLowerCase == "a" && !target.hasAttribute("download") &&
+                            evTypes.contains("click")
+                        then
                             e.preventDefault()
+                        end if
                         clickSubmitGuard = true
                         discard(dom.window.setTimeout(() => clickSubmitGuard = false, 0))
                         Present(UIEvent.Click(path, mouse))

@@ -594,9 +594,9 @@ object Queue:
         // already refused in it, so the only party that may still touch the ring is the one that wins the single-shot CAS out of it.
         private enum State derives CanEqual:
             case Open
-            case HalfOpen(p: Promise.Unsafe[Boolean, Any], r: Result.Error[Closed])
-            case Draining(r: Result.Error[Closed])
-            case FullyClosed(r: Result.Error[Closed])
+            case HalfOpen(p: Promise.Unsafe[Boolean, Any], closeFrame: Frame)
+            case Draining(closeFrame: Frame)
+            case FullyClosed(closeFrame: Frame)
         end State
 
         sealed abstract private class Closeable[A](initFrame: Frame) extends Unsafe[A]:
@@ -610,9 +610,35 @@ object Queue:
             // before the move into Draining, so any thread that observes Draining also observes the promise.
             final private val backlog = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[Maybe[Seq[A]], Any]])
 
+            @volatile final private var failureCache: Result.Failure[Closed] = null
+
+            /** The failure an operation on this closed queue reports, built where it is first observed.
+              *
+              * The closed state carries the frame of the call that closed the queue rather than a ready-made exception, so closing
+              * allocates nothing, and a queue that is closed and never read again never builds one. The first read builds it and caches
+              * it, so repeated reads share one instance.
+              *
+              * The cache is keyed by the closing frame: `closeAwaitEmpty` followed by `close` moves the queue to a state with a new frame,
+              * and reads after that report the `close` call site.
+              *
+              * Deferring construction matters off the JVM: `Closed` is a `Throwable`, Scala.js compiles `java.lang.Throwable` to a subclass of the
+              * JavaScript `Error`, and constructing one captures a stack even under `NoStackTrace`.
+              *
+              * Two threads racing the first read may each build one. Both carry the same resource and frames, and `@volatile` publishes
+              * whichever lands last, which later reads then share.
+              */
+            private def closedFailure(closeFrame: Frame): Result.Error[Closed] =
+                val cached = failureCache
+                if (cached ne null) && (cached.failure.frame eq closeFrame) then cached
+                else
+                    val built = Result.Failure(Closed("Queue", initFrame)(using closeFrame))
+                    failureCache = built
+                    built
+                end if
+            end closedFailure
+
             final def close()(using frame: Frame, allow: AllowUnsafe): Fiber.Unsafe[Maybe[Seq[A]], Any] =
-                val fail = Result.Failure(Closed("Queue", initFrame))
-                val p    = Promise.Unsafe.init[Maybe[Seq[A]], Any]()
+                val p = Promise.Unsafe.init[Maybe[Seq[A]], Any]()
                 // Claiming the backlog slot elects the single close that owns the drain, and it happens before the move into Draining so
                 // that observing Draining implies observing the promise. A close that loses this claim closed nothing and answers Absent,
                 // which also covers a queue that reached FullyClosed on its own through a completed closeAwaitEmpty.
@@ -625,10 +651,10 @@ object Queue:
                     def escalate(): Boolean =
                         state.get() match
                             case State.Open =>
-                                if state.compareAndSet(State.Open, State.Draining(fail)) then true
+                                if state.compareAndSet(State.Open, State.Draining(frame)) then true
                                 else escalate()
                             case s @ State.HalfOpen(await, _) =>
-                                if state.compareAndSet(s, State.Draining(fail)) then
+                                if state.compareAndSet(s, State.Draining(frame)) then
                                     await.completeDiscard(Result.succeed(false))
                                     true
                                 else escalate()
@@ -650,9 +676,8 @@ object Queue:
             end close
 
             final def closeAwaitEmpty()(using frame: Frame, allow: AllowUnsafe): Fiber.Unsafe[Boolean, Any] =
-                val fail = Result.Failure(Closed("Queue", initFrame))
-                val p    = Promise.Unsafe.init[Boolean, Any]()
-                if state.compareAndSet(State.Open, State.HalfOpen(p, fail)) then
+                val p = Promise.Unsafe.init[Boolean, Any]()
+                if state.compareAndSet(State.Open, State.HalfOpen(p, frame)) then
                     handleHalfOpen()
                     p
                 else
@@ -719,9 +744,9 @@ object Queue:
             // handover CAS, and a user-side poll running alongside that drain would be a second consumer.
             private def opClosed: Maybe[Result.Error[Closed]] =
                 state.get() match
-                    case State.Draining(r)    => Present(r)
-                    case State.FullyClosed(r) => Present(r)
-                    case _                    => Absent
+                    case State.Draining(cf)    => Present(closedFailure(cf))
+                    case State.FullyClosed(cf) => Present(closedFailure(cf))
+                    case _                     => Absent
 
             protected inline def op[A](inline f: => A): Result[Closed, A] =
                 opClosed.getOrElse(Result(f))
@@ -735,10 +760,10 @@ object Queue:
 
             private def offerClosed: Maybe[Result.Error[Closed]] =
                 state.get() match
-                    case State.Open           => Absent
-                    case State.HalfOpen(_, r) => Present(r)
-                    case State.Draining(r)    => Present(r)
-                    case State.FullyClosed(r) => Present(r)
+                    case State.Open            => Absent
+                    case State.HalfOpen(_, cf) => Present(closedFailure(cf))
+                    case State.Draining(cf)    => Present(closedFailure(cf))
+                    case State.FullyClosed(cf) => Present(closedFailure(cf))
 
             protected inline def offerOp(inline f: => Boolean): Result[Closed, Boolean] =
                 // Increment BEFORE reading state, so a close that CASes after this point still sees this offer as in flight and leaves the
@@ -762,7 +787,7 @@ object Queue:
                 // so the awaiter cannot be left waiting on a queue that did empty.
                 state.get() match
                     case s: State.HalfOpen
-                        if activeOffers.get() == 0 && _isEmpty() && state.compareAndSet(s, State.FullyClosed(s.r)) =>
+                        if activeOffers.get() == 0 && _isEmpty() && state.compareAndSet(s, State.FullyClosed(s.closeFrame)) =>
                         s.p.completeDiscard(Result.succeed(true))
                     case _ =>
 

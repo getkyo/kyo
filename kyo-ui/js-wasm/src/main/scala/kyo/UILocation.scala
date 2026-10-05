@@ -53,13 +53,15 @@ object UILocation:
                     val sameOrigin = a.host == dom.window.location.host
                     val noModifier = !me.ctrlKey && !me.metaKey && !me.shiftKey && !me.altKey && me.button == 0
                     val notBlank   = a.target != "_blank"
+                    // A download anchor saves its target; routing it would navigate to the file instead.
+                    val notDownload = !a.hasAttribute("download")
                     // A same-document link (only the hash differs, e.g. a `#section` table-of-contents
                     // or scroll anchor) must keep the browser's native in-page scrolling: intercepting
                     // it would preventDefault the scroll and push a hash-less path, so the anchor would
                     // appear dead. Only same-origin cross-document navigations are routed client-side.
                     val sameDocument =
                         a.pathname == dom.window.location.pathname && a.search == dom.window.location.search
-                    if sameOrigin && noModifier && notBlank && !sameDocument then
+                    if sameOrigin && noModifier && notBlank && notDownload && !sameDocument then
                         me.preventDefault()
                         // Preserve the anchor's hash so a cross-document link that targets a heading
                         // (e.g. /docs/mod/#section from a search result) keeps the fragment in the URL.
