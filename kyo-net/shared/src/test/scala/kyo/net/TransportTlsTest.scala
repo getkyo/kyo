@@ -112,9 +112,11 @@ class TransportTlsTest extends Test:
         transport.listen("127.0.0.1", 0, 16)(conn => conn.close()).safe.get.map { listener =>
             val port = listener.port
             listener.close()
-            Abort.run[NetException | Closed | Timeout](
+            // NIO defers the descriptor's close to the selector's next pass, and until then the kernel still completes connects into the
+            // backlog and resets them at the close. `released` is the signal that the port refuses.
+            listener.released.safe.get.andThen(Abort.run[NetException | Closed | Timeout](
                 Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", port, clientTls).safe.get)
-            ).map { outcome =>
+            )).map { outcome =>
                 outcome.foreach(conn => conn.close())
                 outcome match
                     case Result.Failure(e: NetConnectException) => assert(e.port == port)
