@@ -58,11 +58,13 @@ final class Container private[kyo] (
     def start(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.start(id)
 
-    /** Send SIGTERM and wait 10 seconds for graceful shutdown — matches the Docker CLI default. */
+    /** Send SIGTERM and wait 10 seconds for graceful shutdown, the Docker CLI default. A paused container is unpaused first. */
     def stop(using Frame): Unit < (Async & Abort[ContainerException]) =
         stop(10.seconds)
 
-    /** Send SIGTERM and wait up to `timeout` for graceful shutdown, then SIGKILL. */
+    /** Send SIGTERM and wait up to `timeout` for graceful shutdown, then SIGKILL. A paused container is unpaused first, so it receives the
+      * SIGTERM instead of being killed at the end of the grace.
+      */
     def stop(timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
         ensurePendingExit.andThen(Container.stopWithFallback(backend, id, timeout))
 
@@ -502,10 +504,11 @@ object Container:
                             // not turn each scoped fixture into a permanent corpse.
                             val shutdown: Unit < (Async & Abort[Nothing]) = config.stopSignal match
                                 case Present(signal) =>
-                                    Abort.run[ContainerException](killWithFallback(b, cid, signal)).map(logFailure("kill")).andThen(
-                                        Abort.run[ContainerException](b.waitForExit(cid, config.stopTimeout))
-                                            .map(r => logFailure("waitForExit")(r.map(_ => ())))
-                                    )
+                                    Abort.run[ContainerException](unpauseIfPaused(b, cid).andThen(killWithFallback(b, cid, signal)))
+                                        .map(logFailure("kill")).andThen(
+                                            Abort.run[ContainerException](b.waitForExit(cid, config.stopTimeout))
+                                                .map(r => logFailure("waitForExit")(r.map(_ => ())))
+                                        )
                                 case Absent =>
                                     Abort.run[ContainerException](stopWithFallback(b, cid, config.stopTimeout)).map(logFailure("stop"))
 
@@ -2317,7 +2320,15 @@ object Container:
     private[kyo] def stopWithFallback(b: ContainerBackend, id: Id, timeout: Duration)(using
         Frame
     ): Unit < (Async & Abort[ContainerException]) =
-        withUnreapedProcessFallback(hostKillContainerProcess(b, id, "stop"))(b.stop(id, timeout))
+        unpauseIfPaused(b, id).andThen(withUnreapedProcessFallback(hostKillContainerProcess(b, id, "stop"))(b.stop(id, timeout)))
+
+    /** A paused container's processes are frozen, so a stop signal sent to them stays pending. Podman does not stop one at all: its CLI
+      * refuses ("is running or paused, refusing to clean up: container state improper", every time on podman 4.9.3) and its HTTP stop
+      * fails too, which sent teardown through the host-side SIGKILL and could leave the container unremovable. Unpausing first makes the
+      * stop deliver its signal with the grace it grants, on every runtime.
+      */
+    private[kyo] def unpauseIfPaused(b: ContainerBackend, id: Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        b.state(id).map(s => if s == State.Paused then b.unpause(id) else ())
 
     private[kyo] def killWithFallback(b: ContainerBackend, id: Id, signal: Signal)(using
         Frame

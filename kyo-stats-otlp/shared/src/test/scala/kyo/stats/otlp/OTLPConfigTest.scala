@@ -41,4 +41,29 @@ class OTLPConfigTest extends kyo.test.Test[Any]:
         }
     }
 
+    "toString names each header and redacts its value, keeping the other fields" in {
+        val config = OTLPConfig(
+            endpoint = "http://localhost:4318",
+            tracesEndpoint = "http://localhost:4318/v1/traces",
+            metricsEndpoint = "http://localhost:4318/v1/metrics",
+            headers = Map("Authorization" -> "Bearer s3cr3t", "x-api-key" -> "k3y"),
+            timeout = 10.seconds,
+            compression = "gzip",
+            serviceName = "my-service",
+            resourceAttributes = Map("env" -> "prod"),
+            bspScheduleDelay = 5.seconds,
+            bspMaxQueueSize = 2048,
+            bspMaxExportBatchSize = 512,
+            bspExportTimeout = 30.seconds,
+            metricExportInterval = 60.seconds,
+            metricExportTimeout = 30.seconds
+        )
+        val text = config.toString
+        assert(!text.contains("s3cr3t") && !text.contains("k3y"))
+        assert(text.contains("Map(Authorization -> <redacted>, x-api-key -> <redacted>)"))
+        assert(text.startsWith("OTLPConfig(http://localhost:4318,"))
+        assert(text.contains("Map(env -> prod)") && text.contains("my-service"))
+        assert(config.headers == Map("Authorization" -> "Bearer s3cr3t", "x-api-key" -> "k3y"))
+    }
+
 end OTLPConfigTest

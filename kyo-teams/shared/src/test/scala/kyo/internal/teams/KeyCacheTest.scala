@@ -41,6 +41,30 @@ class KeyCacheTest extends kyo.test.Test[Any]:
         }
     }
 
+    // The vendored snapshot is Microsoft's real metadata and three of its real keys, one per kind of endorsement it serves. Only its
+    // jwks_uri is pointed at the local peer, since the module follows any https key set URL and the real one would reach the internet. A
+    // token naming a key Microsoft publishes for Teams that no key signed fails at its signature, which it reaches only after the metadata
+    // was accepted and that key was kept and parsed.
+    "Microsoft's real metadata and keys verify a token up to its signature" in {
+        val metadata = TeamsVectors.text("bot-framework-openid", "openidconfiguration")
+        val keys     = TeamsVectors.text("bot-framework-openid", "keys")
+        val realKeys = "https://login.botframework.com/v1/.well-known/keys"
+        val forTeams = Json.decode[KeyCacheTest.KeySet](keys).getOrThrow.keys
+            .collectFirst { case key if key.endorsements.contains("msteams") => key.kid }.getOrElse(fail("the snapshot has no Teams key"))
+        withLocal { local =>
+            for
+                _      <- local.reply("metadata", json(metadata.replace(realKeys, local.keysUrl.full)))
+                _      <- local.reply("jwks", json(keys))
+                teams  <- Teams.init(local.config)
+                result <- verifyOn(local, teams, forTeams)
+                counts <- fetches(local)
+            yield
+                assert(metadata.contains(s""""jwks_uri": "$realKeys""""), "the snapshot names Microsoft's key set URL")
+                assert((result, counts) == (mismatch, (1, 1)), s"got: ${result.failure.map(fieldsOf)}, $counts")
+            end for
+        }
+    }
+
     "an unknown kid refetches the set once keysMinRefresh has passed since the last fetch, and not before" in {
         Clock.withTimeControl { control =>
             withLocal { local =>
@@ -260,4 +284,9 @@ class KeyCacheTest extends kyo.test.Test[Any]:
         }
     }
 
+end KeyCacheTest
+
+object KeyCacheTest:
+    final case class Key(kid: String, endorsements: Chunk[String] = Chunk.empty) derives Schema
+    final case class KeySet(keys: Chunk[Key]) derives Schema
 end KeyCacheTest

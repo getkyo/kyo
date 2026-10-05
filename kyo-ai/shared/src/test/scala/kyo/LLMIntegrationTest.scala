@@ -246,7 +246,8 @@ class LLMIntegrationTest extends BaseAITest:
         yield
             assert(
                 onResult.isSuccess && offResult.isSuccess,
-                s"both turns must complete on ${backend.label}: on=$onResult off=$offResult"
+                s"both turns must complete on ${backend.label}: on=${BaseAITest.reported(onResult.flatMap(identity))} " +
+                    s"off=${BaseAITest.reported(offResult.flatMap(identity))}"
             )
             (reasoningOf(onResult), reasoningOf(offResult)) match
                 case (Present(onTokens), Present(offTokens)) =>

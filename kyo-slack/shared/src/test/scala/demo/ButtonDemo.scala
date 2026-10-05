@@ -3,12 +3,12 @@ package demo
 import kyo.*
 import kyo.SlackBlock.dsl.*
 
-/** Block Kit buttons and the `response_url` update path.
+/** Block Kit buttons and a reply through the interaction's `response_url`.
   *
   * Send the message `menu` and the bot posts a message with a typed Block Kit button. Clicking
-  * it delivers a `block_actions` interaction carrying the originating channel; the handler
-  * returns `BlockActionsResponse`, which acks the socket bare and then updates the message out
-  * of band over the correlated `response_url`.
+  * it delivers a `block_actions` interaction carrying its `response_url`; the handler acks at once
+  * and, on a forked fiber, replaces the clicked message with who clicked it through
+  * `Slack.replaceOriginal`.
   *
   * Slack app setup: Socket Mode on; Interactivity on; bot scope `chat:write`; subscribe to
   * `message.channels`.
@@ -23,17 +23,39 @@ object ButtonDemo extends KyoApp:
 
     run {
         Demos.connect { config =>
-            Slack.run(config) {
-                case SlackEnvelope.EventsApi(_, SlackEvent.Message(channel, _, text, _, _)) if text.trim == "menu" =>
-                    Slack.chatPostMessage(SlackMessage(channel, "pick one:", blocks = menu))
-                        .andThen(SlackAck.Ack)
+            val loop = Slack.run(config)(Slack.receive([A] =>
+                (env: SlackEnvelope[A]) =>
+                    env match
+                        case e: SlackEnvelope.EventsApi =>
+                            e.payload.event match
+                                case SlackEvent.Message(channel, _, text, _, _) if text.trim == "menu" =>
+                                    Slack.send(SlackMessage(channel, "pick one:", blocks = menu))
+                                        .andThen(SlackAck.Ack)
+                                case _ => SlackAck.Ack
 
-                case SlackEnvelope.Interactive(_, SlackInteraction.BlockActions(user, _, Present(channel), _, actions)) =>
-                    val clicked = if actions.isEmpty then "?" else actions(0).actionId.value
-                    SlackAck.BlockActionsResponse(SlackMessage(channel, s"<@${user.value}> clicked `$clicked`"))
+                        case e: SlackEnvelope.Interactive =>
+                            e.payload match
+                                case click: SlackInteraction.BlockActions =>
+                                    val clicked = if click.actions.isEmpty then "?" else click.actions(0).actionId.value
+                                    click.responseUrl match
+                                        case Present(url) =>
+                                            Fiber.initUnscoped(
+                                                Abort.run[SlackReplaceOriginalFailure](
+                                                    Slack.replaceOriginal(url, SlackReply(s"<@${click.user.id.value}> clicked `$clicked`"))
+                                                ).map {
+                                                    case Result.Success(_) => Kyo.unit
+                                                    case Result.Failure(e) => Log.warn(s"replaceOriginal failed: ${e.getMessage}")
+                                                    case Result.Panic(t)   => Abort.panic(t)
+                                                }
+                                            ).andThen(SlackAck.Ack)
+                                        case Absent => SlackAck.Ack
+                                    end match
+                                case _ => SlackAck.Ack
 
-                case _ => SlackAck.Ack
-            }
+                        case _: SlackEnvelope.Acknowledged => SlackAck.Ack
+                        case _: SlackEnvelope.Plain        => Kyo.unit
+            ))
+            loop
         }
     }
 end ButtonDemo

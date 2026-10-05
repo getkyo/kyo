@@ -120,7 +120,7 @@ class LLMStreamIntegrationTest extends BaseAITest:
                 chunks.mkString.length > 400,
                 s"${backend.label} answered too briefly for this leaf to mean anything: ${chunks.mkString.length} chars"
             )
-            incremental = backend.provider.completion.streamsIncrementally
+            incremental = backend.entry.modelStreamsIncrementally
             _           = if incremental then
                 assert(
                     chunks.size > 1,

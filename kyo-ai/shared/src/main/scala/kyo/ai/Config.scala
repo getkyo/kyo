@@ -41,6 +41,10 @@ final case class Config private (
     // Whether this model reads image content parts. Declared, not assumed: a text-only endpoint refuses
     // the whole request rather than ignoring the image, naming a JSON variant, not the picture.
     modelAcceptsImages: Boolean,
+    // Whether `stream` on this model delivers its answer in pieces as the model writes, measured per entry: the same model on
+    // two endpoints can differ (one sends the whole result-tool argument in a single delta), so the wire alone cannot say.
+    // An entry that has not been measured declares false, since a false "no" withholds a guarantee and a false "yes" breaks one.
+    modelStreamsIncrementally: Boolean,
     // Which field the endpoint reads the ceiling from. Carried from the provider like apiUrl and
     // overridable with it: a config re-aimed at another endpoint must re-declare this, or it names one
     // endpoint's URL while speaking another's request shape.
@@ -92,6 +96,10 @@ final case class Config private (
     def decider(config: DeciderConfig): Config        = copy(decider = Present(config))
     def decider(config: Maybe[DeciderConfig]): Config = copy(decider = config)
     def temperature(temperature: Double): Config      = copy(temperature = Present(temperature.max(0).min(2)))
+
+    // `ScalaRunTime._toString` formats the product field by field without calling this override, so the copy cannot recurse; the
+    // decider's key is redacted by its own `toString`.
+    override def toString: String = scala.runtime.ScalaRunTime._toString(copy(apiKey = apiKey.map(_ => "<redacted>")))
 
     /** The output-token ceiling this request asks for, clamped to the model's declared maximum.
       *
@@ -307,7 +315,9 @@ final case class Config private (
         reasoningOff: Maybe[Config.ReasoningOff] = Absent,
         forcedToolChoice: Maybe[Config.ForcedToolChoice] = Absent,
         systemInstructions: Maybe[Config.SystemMessages] = Absent,
-        invalidToolCalls: Maybe[Config.InvalidToolCalls] = Absent
+        invalidToolCalls: Maybe[Config.InvalidToolCalls] = Absent,
+        // Declare true only after seeing this model's `stream` arrive in pieces; see `modelStreamsIncrementally`.
+        streamsIncrementally: Boolean = false
     ): Config =
         copy(
             provider = provider,
@@ -317,6 +327,7 @@ final case class Config private (
             modelReasoning = reasoning,
             modelAcceptsTemperature = acceptsTemperature,
             modelAcceptsImages = acceptsImages,
+            modelStreamsIncrementally = streamsIncrementally && provider.completion.streamsIncrementally,
             apiUrl = provider.baseUrl,
             outputTokensParam = provider.outputTokensParam,
             reasoningOff = reasoningOff.getOrElse(provider.reasoningOff),
@@ -399,7 +410,9 @@ object Config:
         acceptsTemperature: Boolean,
         acceptsImages: Boolean,
         reasoningOff: Maybe[ReasoningOff] = Absent,
-        forcedToolChoice: Maybe[ForcedToolChoice] = Absent
+        forcedToolChoice: Maybe[ForcedToolChoice] = Absent,
+        // Declare true only after seeing this model's `stream` arrive in pieces; see `modelStreamsIncrementally`.
+        streamsIncrementally: Boolean = false
     )(using Frame): Config < Sync =
         credentialed(catalog(
             provider,
@@ -410,7 +423,8 @@ object Config:
             acceptsTemperature,
             acceptsImages,
             reasoningOff,
-            forcedToolChoice
+            forcedToolChoice,
+            streamsIncrementally = streamsIncrementally
         ))
 
     /** Attaches the provider's credentials to an already-declared config, so a catalog entry's facts
@@ -449,7 +463,8 @@ object Config:
         reasoningOff: Maybe[ReasoningOff] = Absent,
         forcedToolChoice: Maybe[ForcedToolChoice] = Absent,
         systemInstructions: Maybe[SystemMessages] = Absent,
-        invalidToolCalls: Maybe[InvalidToolCalls] = Absent
+        invalidToolCalls: Maybe[InvalidToolCalls] = Absent,
+        streamsIncrementally: Boolean = false
     ): Config =
         Config(
             provider.baseUrl,
@@ -462,6 +477,8 @@ object Config:
             reasoning,
             acceptsTemperature,
             acceptsImages,
+            // The harness wires report a finished turn, so no entry on them streams whatever its declaration says.
+            streamsIncrementally && provider.completion.streamsIncrementally,
             provider.outputTokensParam,
             reasoningOff.getOrElse(provider.reasoningOff),
             forcedToolChoice.getOrElse(provider.forcedToolChoice),
@@ -823,7 +840,8 @@ object Config:
                 outputMaximum = OutputMaximum.Verified(128000),
                 ReasoningEncoding.Managed,
                 acceptsTemperature = false,
-                acceptsImages = true
+                acceptsImages = true,
+                streamsIncrementally = true
             )
         val gpt_5_4: Config =
             catalog(
@@ -833,7 +851,8 @@ object Config:
                 outputMaximum = OutputMaximum.Verified(128000),
                 ReasoningEncoding.Managed,
                 acceptsTemperature = true,
-                acceptsImages = true
+                acceptsImages = true,
+                streamsIncrementally = true
             )
         val gpt_5_4_mini: Config =
             catalog(
@@ -843,7 +862,8 @@ object Config:
                 outputMaximum = OutputMaximum.Verified(128000),
                 ReasoningEncoding.Managed,
                 acceptsTemperature = true,
-                acceptsImages = true
+                acceptsImages = true,
+                streamsIncrementally = true
             )
         def default: Config                     = gpt_5_4
         private[kyo] val entries: Chunk[Config] =
@@ -1055,7 +1075,8 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = false,
             // Measured against this endpoint: a request stating none cuts the reasoning body from 94 characters to 5; this endpoint counts no reasoning tokens for the model at all. An image part is refused outright.
-            reasoningOff = Present(ReasoningOff.Level("none"))
+            reasoningOff = Present(ReasoningOff.Level("none")),
+            streamsIncrementally = true
         )
         def default: Config                     = deepseek_v4_pro
         private[kyo] val entries: Chunk[Config] =
@@ -1119,7 +1140,8 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = true,
             // Measured against this endpoint: a request stating none takes reasoning from 43 tokens to zero.
-            reasoningOff = Present(ReasoningOff.Level("none"))
+            reasoningOff = Present(ReasoningOff.Level("none")),
+            streamsIncrementally = true
         )
         val qwen3_7_max: Config = catalog(
             this,
@@ -1130,7 +1152,8 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = false,
             // Measured against this endpoint: a request stating none takes reasoning from 162 tokens to zero.
-            reasoningOff = Present(ReasoningOff.Level("none"))
+            reasoningOff = Present(ReasoningOff.Level("none")),
+            streamsIncrementally = true
         )
         val gemini_3_5_flash: Config = catalog(
             this,
@@ -1150,7 +1173,8 @@ object Config:
             outputMaximum = OutputMaximum.Verified(16384),
             ReasoningEncoding.Unavailable,
             acceptsTemperature = true,
-            acceptsImages = true
+            acceptsImages = true,
+            streamsIncrementally = true
         )
         val gpt_oss_120b: Config = catalog(
             this,
@@ -1271,7 +1295,8 @@ object Config:
             acceptsImages = true,
             // The reference states this model always thinks and that reasoning cannot be disabled, so a
             // request for none gets its lowest declared level.
-            reasoningOff = Present(ReasoningOff.CannotDisable("low"))
+            reasoningOff = Present(ReasoningOff.CannotDisable("low")),
+            streamsIncrementally = true
         )
         val kimi_k2_6: Config = catalog(
             this,
@@ -1292,7 +1317,8 @@ object Config:
             // is incompatible with thinking enabled"); with it disabled the same request is honored. The
             // sibling model, which takes a level word instead, honors the pair, so this is declared per
             // entry rather than for the provider.
-            forcedToolChoice = Present(ForcedToolChoice.RefusedWhileReasoning)
+            forcedToolChoice = Present(ForcedToolChoice.RefusedWhileReasoning),
+            streamsIncrementally = true
         )
         def default: Config                     = kimi_k3
         private[kyo] val entries: Chunk[Config] =

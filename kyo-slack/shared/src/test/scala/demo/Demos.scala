@@ -23,8 +23,14 @@ object Demos:
         System.env[String]("SLACK_APP_TOKEN").map { app =>
             System.env[String]("SLACK_BOT_TOKEN").map { bot =>
                 (app, bot) match
-                    case (Present(a), Present(b)) => f(SlackConfig(SlackToken.AppLevel(a), SlackToken.Bot(b)))
-                    case _                        => Console.printLine("set SLACK_APP_TOKEN and SLACK_BOT_TOKEN")
+                    case (Present(a), Present(b)) =>
+                        for
+                            appLevel <- Abort.get(SlackToken.AppLevel.init(a))
+                            bot      <- Abort.get(SlackToken.Bot.init(b))
+                            config   <- Abort.get(SlackConfig.init(appLevel, bot))
+                            _        <- f(config)
+                        yield ()
+                    case _ => Console.printLine("set SLACK_APP_TOKEN and SLACK_BOT_TOKEN")
             }
         }
 end Demos

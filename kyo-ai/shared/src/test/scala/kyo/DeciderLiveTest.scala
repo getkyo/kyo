@@ -42,6 +42,9 @@ class DeciderLiveTest extends kyo.test.Test[Any]:
 
     /** Every public form, one-shot and instance, under the given config. */
     def surface(config: Config)(using Frame, kyo.test.AssertScope) =
+        Abort.recover[AIException](ex => fail(s"the decision failed: ${BaseAITest.reported(Result.fail(ex))}"))(liveSurface(config))
+
+    def liveSurface(config: Config)(using Frame, kyo.test.AssertScope) =
         LLM.run(config) {
             for
                 // Direct forms.

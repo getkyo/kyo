@@ -16,6 +16,7 @@ object SlackId:
     opaque type AppId      = String
     opaque type TriggerId  = String
     opaque type EnvelopeId = String
+    opaque type EventId    = String
     opaque type ViewId     = String
     opaque type BotId      = String
     opaque type ActionId   = String
@@ -62,6 +63,16 @@ object SlackId:
         given Schema[EnvelopeId]                     = Schema.stringSchema.transform[EnvelopeId](apply)(_.value)
         given CanEqual[EnvelopeId, EnvelopeId]       = CanEqual.derived
     end EnvelopeId
+
+    /** An Events API event's `event_id`: Slack's own id for the event, where an `EnvelopeId` is the
+      * id of one Socket Mode delivery.
+      */
+    object EventId:
+        def apply(s: String): EventId             = s
+        extension (id: EventId) def value: String = id
+        given Schema[EventId]                     = Schema.stringSchema.transform[EventId](apply)(_.value)
+        given CanEqual[EventId, EventId]          = CanEqual.derived
+    end EventId
 
     object ViewId:
         def apply(s: String): ViewId             = s
