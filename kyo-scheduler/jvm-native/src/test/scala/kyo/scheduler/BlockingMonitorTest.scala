@@ -100,7 +100,8 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions with Ev
             // Before the join: socket calls ignore Thread.interrupt, and closing the resource is what returns them.
             release()
             thread.join(5000)
-            assert(!thread.isAlive(), "the blocked thread did not return once released"): Unit
+            assert(!thread.isAlive(), "the blocked thread did not return once released")
+            ()
         } finally release()
     }
 
