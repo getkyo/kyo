@@ -591,9 +591,14 @@ message, a button press and a modal submission. It reads its environment variabl
 | `SLACK_INTERACTIVE` | set when a person is in the channel to act on the suite's instructions |
 
 With all three of the first set, it runs against that workspace. With none, it runs against a
-`SlackLiveServer`: a slack-simulator container through kyo-pod, one per leaf, built from the source
-pinned by commit and checksum on a base pinned by digest. That is how CI runs it, on every platform
-but Windows. With only some set, every leaf is cancelled naming the missing ones.
+`SlackLiveServer`: a slack-simulator container through kyo-pod, one per leaf, built from
+`shared/src/test/slack-simulator/Containerfile` out of the source pinned by commit and checksum on a
+base pinned by digest. That is how CI runs it, on every platform but Windows. A CI run whose test
+selection includes kyo-slack builds the image before the tests (`scripts/fixture-images.sh`) and a
+leaf never builds it: where it is missing, the leaf fails with the `podman build` command, so a
+change to the Containerfile increments the tag's revision in `SlackLiveServer.Image` and its entry
+in `scripts/fixture-images.sh` together. With only some set,
+every leaf is cancelled naming the missing ones.
 
 The workspace needs an app with Socket Mode enabled, Event Subscriptions enabled with the bot
 event `message.channels`, Interactivity enabled, the slash command `/kyo-live`, the two tokens
