@@ -333,4 +333,53 @@ kern_flood=$(for i in $(seq 1 600); do echo "x oom-kill $i"; done | kern_run)
 expect_eq "kernel cap" "$(printf '%s\n' "$kern_flood" | wc -l | tr -d ' ')" "501"
 expect_eq "kernel cap note" "$(printf '%s\n' "$kern_flood" | tail -1)" '[ci-mon-kern] 500-line cap reached, later kernel lines dropped'
 
+# Disk abort target: the build's group when ci-test.sh names one, the monitor's own otherwise. A value that is not a pid
+# above 1 must never become `kill -- -1`, which signals every process the user owns.
+abort_run() {
+    CI_MON_KILL_PGID="$1" "$bash_bin" -c "
+        kill() { printf 'kill %s' \"\$*\"; }
+        $(sed -n '/^abort_build()/,/^}/p' "$script_dir/ci-monitor.sh")
+        abort_build
+    " || fail "abort_build exited non-zero for [$1]"
+}
+
+expect_eq "abort named group" "$(abort_run 4242)" 'kill -TERM -- -4242'
+expect_eq "abort own group" "$(abort_run '')" 'kill -TERM 0'
+expect_eq "abort never all processes" "$(abort_run 1)" 'kill -TERM 0'
+expect_eq "abort non-numeric" "$(abort_run '-1')" 'kill -TERM 0'
+
+# Process ids: the monitor's own entry opens the ancestry and the self-test's shell appears further up, each with its
+# real process group and session. Off Linux the line is absent.
+ids_run() {
+    OS="$1" "$bash_bin" -c "
+        $(sed -n '/^proc_ids()/,/^}/p' "$script_dir/ci-monitor.sh")
+        $(sed -n '/^process_ids()/,/^}/p' "$script_dir/ci-monitor.sh")
+        printf '%s ' \"\$\$\"
+        process_ids
+    " || fail "process_ids exited non-zero"
+}
+
+expect_eq "process ids off Linux" "$(ids_run Darwin | cut -d' ' -f2-)" ""
+
+if [ -r /proc/self/stat ]; then
+    ids_out=$(ids_run Linux)
+    ids_pid=${ids_out%% *}
+    self_stat=$(cat "/proc/$$/stat")
+    # shellcheck disable=SC2086
+    set -- ${self_stat##*) }
+    self_entry="$(cat "/proc/$$/comm"):$$/$3/$4"
+    case "$ids_out" in
+        "$ids_pid process ids (comm:pid/pgid/sid) ancestry=[bash:$ids_pid/"*) ;;
+        *) fail "process ids: the monitor's own entry does not open the ancestry: [$ids_out]" ;;
+    esac
+    case "$ids_out" in
+        *" $self_entry "* | *" $self_entry]"*) ;;
+        *) fail "process ids: the ancestry lacks the self-test shell [$self_entry]: [$ids_out]" ;;
+    esac
+    case "$ids_out" in
+        *" runner=["*"]") ;;
+        *) fail "process ids: no runner field: [$ids_out]" ;;
+    esac
+fi
+
 printf 'ci-monitor-selftest: ok\n'
