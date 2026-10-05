@@ -1181,7 +1181,9 @@ object DiscordTest:
                         Scope.ensure(Sync.Unsafe.defer(listener.close())).andThen {
                             Fiber.initUnscoped(request(listener.port)).map { client =>
                                 accepted.take.map { conn =>
-                                    Abort.run[Closed](conn.inbound.safe.take)
+                                    // The whole request is read before the close: a close with request bytes still unread sends a
+                                    // reset rather than a FIN, and Windows discards whatever of the head the client has not read yet.
+                                    Abort.run[Closed](readRequest(conn))
                                         .andThen(Abort.run[Closed](conn.outbound.safe.put(Span.fromUnsafe(head.getBytes(UTF_8)))))
                                         .andThen(Sync.Unsafe.defer(conn.close()))
                                         .andThen(client.get)
@@ -1193,5 +1195,20 @@ object DiscordTest:
             }
         }
     end withClosingAfterHead
+
+    /** Reads `conn` until it holds a whole request: its head and the `Content-Length` bytes of body after it. */
+    def readRequest(conn: kyo.net.Connection)(using Frame): Unit < (Async & Abort[Closed]) =
+        Loop("") { received =>
+            val headEnd  = received.indexOf("\r\n\r\n")
+            val complete = headEnd >= 0 && {
+                val bodyLength = received.substring(0, headEnd).split("\r\n").collectFirst {
+                    case line if line.toLowerCase.startsWith("content-length:") => line.drop("content-length:".length).trim.toInt
+                }.getOrElse(0)
+                received.length >= headEnd + 4 + bodyLength
+            }
+            if complete then Loop.done(())
+            else conn.inbound.safe.take.map(chunk => Loop.continue(received + new String(chunk.toArray, "ISO-8859-1")))
+        }
+    end readRequest
 
 end DiscordTest
