@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.*
+import kyo.internal.websocket.WebSocketCodec
 
 /** A bidirectional WebSocket connection handle, usable from both the client and server side.
   *
@@ -137,8 +138,8 @@ object HttpWebSocket:
                                         .andThen(closeRef2.set(Present((code, reason))))
                                         .andThen(peerClosed1.completeUnit.unit)
                                         .andThen(peerClosed2.completeUnit.unit)
-                                        .andThen(ch1to2.closeDiscard)
-                                        .andThen(ch2to1.closeDiscard)
+                                        .andThen(WebSocketCodec.closeKeepingQueued(ch1to2))
+                                        .andThen(WebSocketCodec.closeKeepingQueued(ch2to1))
                                 val ws1 = new HttpWebSocket(ch2to1, ch1to2, closeRef1, peerClosed1, doClose)
                                 val ws2 = new HttpWebSocket(ch1to2, ch2to1, closeRef2, peerClosed2, doClose)
                                 Sync.ensure {

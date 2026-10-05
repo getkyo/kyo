@@ -9,7 +9,7 @@ import kyo.*
   * without a request, so a burst of forged tokens cannot make the client fetch. Concurrent lookups share one fetch, which runs on a
   * fiber of its own. A failed fetch leaves the previous set in place, aged as it was, and fails every lookup that waited on it.
   */
-final private[kyo] class KeyCache private (config: TeamsConfig, http: HttpClient, state: AtomicRef[KeyCache.State]):
+final private[kyo] class KeyCache private (config: TeamsConfig, http: HttpClient, state: AtomicRef[KeyCache.State], hooks: KeyCache.Hooks):
     import KeyCache.*
 
     /** The key `kid` names, fetching the set when the rules above say so. */
@@ -33,19 +33,29 @@ final private[kyo] class KeyCache private (config: TeamsConfig, http: HttpClient
 
     private def unknown(kid: String)(using Frame): TeamsUnknownKeyException = TeamsUnknownKeyException(TeamsException.bounded(kid, 128))
 
+    // The fetch starts only once this caller's `Fetching` is the state. Starting it before the claim lets every caller that read the same
+    // state send a request, and interrupting a loser's fetch does not unsend one already written. The claim and the start are one
+    // uninterruptible step: a caller interrupted between them would leave a claim no fetch completes, and every later lookup waiting on it.
     private def refresh(current: State)(using Frame): Ready < (Async & Abort[Failure]) =
-        Fiber.initUnscoped(fetch).map { fiber =>
-            val fetching = new Fetching(fiber, current)
-            state.compareAndSet(current, fetching).map { won =>
-                if won then fiber.getResult.map(settle(fetching, _))
+        claim.map { claim =>
+            val fetching = new Fetching(claim, current)
+            hooks.beforeClaim.andThen(Async.uninterruptible(state.compareAndSet(current, fetching).map { won =>
+                if won then hooks.fetchStarting.andThen(Fiber.initUnscoped(fetch)).map(claim.becomeDiscard).andThen(true) else false
+            })).map { won =>
+                if won then claim.getResult.map(settle(fetching, _))
                 else
-                    fiber.interrupt.andThen(state.get.map {
+                    state.get.map {
                         case other: Fetching => other.fiber.getResult.map(settle(other, _))
                         case other: Ready    => other
                         case other           => refresh(other)
-                    })
+                    }
             }
         }
+
+    // Uninterruptible, so a lookup interrupted while it waits on the fetch does not fail the others waiting on it.
+    private def claim(using Frame): Fiber.Promise[Ready, Abort[Failure]] < Sync =
+        // Unsafe: kyo offers an uninterruptible promise only in the unsafe tier; it is created here and used through `.safe`.
+        Sync.Unsafe.defer(Fiber.Promise.Unsafe.initUninterruptible[Ready, Abort[Failure]]().safe)
 
     private def settle(fetching: Fetching, result: Result[Failure, Ready])(using Frame): Ready < (Sync & Abort[Failure]) =
         result match
@@ -123,7 +133,20 @@ private[kyo] object KeyCache:
     inline val KeysMethod     = "GET jwks"
 
     def init(config: TeamsConfig, http: HttpClient)(using Frame): KeyCache < Sync =
-        AtomicRef.init[State](Empty).map(new KeyCache(config, http, _))
+        init(config, http, Hooks.none)
+
+    private[kyo] def init(config: TeamsConfig, http: HttpClient, hooks: Hooks)(using Frame): KeyCache < Sync =
+        AtomicRef.init[State](Empty).map(new KeyCache(config, http, _, hooks))
+
+    /** Points inside `refresh` that only a test fills in, because no input a test controls can hold a lookup between reading the state and
+      * claiming the fetch. `beforeClaim` runs after a lookup has read the state it replaces and before its claim; `fetchStarting` runs in
+      * the lookup just before it starts the fetch. Holding every lookup in `beforeClaim` and counting `fetchStarting` makes a fetch that
+      * starts before its claim deterministic to catch.
+      */
+    final private[kyo] case class Hooks(beforeClaim: Unit < Async, fetchStarting: Unit < Sync)
+
+    private[kyo] object Hooks:
+        val none: Hooks = Hooks(Kyo.unit, Kyo.unit)
 
     sealed private[teams] trait State
     private[teams] case object Empty extends State

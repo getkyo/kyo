@@ -95,6 +95,14 @@ private[kyo] object WebSocketCodec:
     def writeClose(dst: TransportStream, code: Int, reason: String, mask: Boolean)(using Frame): Unit < Async =
         writeRawFrame(dst, OpClose, encodeClosePayload(code, reason), mask)
 
+    /** Closes a session's frame channel without losing what is in it: puts are refused at once, and its taker still receives every frame
+      * already queued before a take fails with `Closed`. `closeDiscard` would drop frames put just before a close, which a peer sees as
+      * a Close frame overtaking data sent ahead of it.
+      */
+    def closeKeepingQueued(channel: Channel[HttpWebSocket.Payload])(using Frame): Unit < Sync =
+        // Unsafe: the drain is not awaited, because the closing side must not wait on a taker that may never take.
+        Sync.Unsafe.defer(discard(channel.unsafe.closeAwaitEmpty()))
+
     /** Server: validate upgrade headers, write 101 response. */
     def acceptUpgrade(dst: TransportStream, headers: HttpHeaders, config: HttpWebSocket.Config)(using
         Frame
