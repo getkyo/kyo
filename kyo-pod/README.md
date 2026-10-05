@@ -130,6 +130,7 @@ Lifecycle state transitions follow a predictable machine:
 | Running | Paused | `pause` |
 | Paused | Running | `unpause` |
 | Running | Stopped | `stop` / `kill` / container exits |
+| Paused | Stopped | `stop` (unpauses first, so the stop signal is delivered) |
 | Running | Restarting | `restart` (transient) |
 | any non-terminal | Removed | `remove` |
 

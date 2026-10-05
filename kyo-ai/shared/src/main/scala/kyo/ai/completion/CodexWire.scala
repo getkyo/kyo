@@ -70,8 +70,6 @@ private[completion] object CodexWire:
     case class TurnId(id: String) derives Schema
     case class TurnStartResponse(turn: TurnId) derives Schema
     case class TurnInterruptParams(threadId: String, turnId: String) derives Schema
-    case class ThreadStatus(`type`: String) derives Schema
-    case class ThreadStatusChangedNotification(threadId: String, status: ThreadStatus) derives Schema
     case class AgentMessageDeltaNotification(threadId: String, turnId: String, delta: String) derives Schema
     // The server->client execution request for a registered dynamic tool, and its response shape
     // (verified against the app-server: the response requires `contentItems` + `success`).
@@ -337,6 +335,54 @@ private[completion] object CodexWire:
             else params.take(500) + "..."
         s"${event.method}: $preview"
     end eventSummary
+
+    /** The message and Codex's own classification of a failed turn: an `error` notification carries them in its `error` record, a
+      * failed `turn/completed` in its turn's.
+      */
+    def turnError(event: RpcEvent): Maybe[(String, Maybe[String])] =
+        def fields(value: Structure.Value): Map[String, Structure.Value] =
+            value match
+                case Structure.Value.Record(entries) => entries.iterator.toMap
+                case _                               => Map.empty
+        def detail(value: Structure.Value): Maybe[(String, Maybe[String])] =
+            val error = fields(value)
+            Maybe.fromOption(error.get("message").collect { case Structure.Value.Str(message) => message }).map { message =>
+                (message, Maybe.fromOption(error.get("codexErrorInfo").collect { case Structure.Value.Str(info) => info }))
+            }
+        end detail
+        val params = fields(event.params)
+        event.method match
+            case "error" =>
+                Maybe.fromOption(params.get("error")).flatMap(detail)
+            case "turn/completed" =>
+                val turn = params.get("turn").map(fields).getOrElse(Map.empty)
+                if turn.get("status").contains(Structure.Value.Str("failed")) then Maybe.fromOption(turn.get("error")).flatMap(detail)
+                else Absent
+            case _ =>
+                Absent
+        end match
+    end turnError
+
+    private val retryAtPattern = """try again at ([A-Z][a-z]{2}) (\d{1,2})(?:st|nd|rd|th), (\d{4}) (\d{1,2}):(\d{2}) ([AP]M)""".r
+    private val months         = Chunk("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+    /** When a usage-limit message says to retry. Codex states it only in its prose, in the local time of the machine it runs on;
+      * the month is matched by hand because a locale-driven formatter reads English month names only where full locale data is
+      * linked.
+      */
+    def retryAt(message: String, zone: java.time.ZoneId): Maybe[Instant] =
+        Maybe.fromOption(retryAtPattern.findFirstMatchIn(message)).flatMap { m =>
+            val month = months.indexOf(m.group(1)) + 1
+            if month == 0 then Absent
+            else
+                val hour12 = m.group(4).toInt % 12
+                val hour   = if m.group(6) == "PM" then hour12 + 12 else hour12
+                Result.catching[java.time.DateTimeException](
+                    java.time.LocalDateTime.of(m.group(3).toInt, month, m.group(2).toInt, hour, m.group(5).toInt).atZone(zone).toInstant
+                ).toMaybe.map(Instant.fromJava)
+            end if
+        }
+    end retryAt
 
     def isRetryingError(params: Structure.Value): Boolean =
         params match

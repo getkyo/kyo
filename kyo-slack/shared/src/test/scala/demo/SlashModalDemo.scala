@@ -5,9 +5,9 @@ import kyo.SlackBlock.dsl.*
 
 /** Slash command to a modal, with a live update and a submission.
   *
-  * Running the slash command opens a modal (`viewsOpen`) built from typed blocks: a section, a
+  * Running the slash command opens a modal (`openView`) built from typed blocks: a section, a
   * text input, and a button, with a Submit. Clicking the in-modal button refreshes it in place
-  * (`viewsUpdate`, keyed off the `viewId` that block_actions now carries). Submitting it delivers
+  * (`updateView`, keyed off the `viewId` that block_actions now carries). Submitting it delivers
   * a `view_submission` whose `stateJson` holds the typed values; the handler closes the modal by
   * returning `ViewResponse(Clear)`. Cancelling delivers a `view_closed` (the modal sets `notifyOnClose`).
   *
@@ -37,19 +37,25 @@ object SlashModalDemo extends KyoApp:
 
     run {
         Demos.connect { config =>
-            Slack.run(config) {
-                case SlackEnvelope.SlashCommand(_, command) =>
-                    Slack.viewsOpen(command.triggerId, modal("Fill this in and submit."))
-                        .andThen(SlackAck.CommandResponse(SlackMessage(command.channel, "opened a modal")))
+            val loop = Slack.run(config)(Slack.receive([A] =>
+                (env: SlackEnvelope[A]) =>
+                    env match
+                        case e: SlackEnvelope.SlashCommand =>
+                            Slack.openView(e.payload.triggerId, modal("Fill this in and submit."))
+                                .andThen(SlackAck.CommandResponse(SlackAck.CommandResponse.Visibility.Ephemeral, "opened a modal"))
 
-                case SlackEnvelope.Interactive(_, SlackInteraction.BlockActions(_, _, _, Present(viewId), _)) =>
-                    Slack.viewsUpdate(viewId, modal("Refreshed in place :sparkles:")).andThen(SlackAck.Ack)
+                        case e: SlackEnvelope.Interactive =>
+                            e.payload match
+                                case SlackInteraction.BlockActions(_, _, _, Present(viewId), _, _, _) =>
+                                    Slack.updateView(viewId, modal("Refreshed in place :sparkles:")).andThen(SlackAck.Ack)
+                                case _: SlackInteraction.ViewSubmission =>
+                                    SlackAck.ViewResponse(SlackAck.ViewAction.Clear)
+                                case _ => SlackAck.Ack
 
-                case SlackEnvelope.Interactive(_, SlackInteraction.ViewSubmission(_, _, _)) =>
-                    SlackAck.ViewResponse(SlackAck.ViewAction.Clear)
-
-                case _ => SlackAck.Ack
-            }
+                        case _: SlackEnvelope.Acknowledged => SlackAck.Ack
+                        case _: SlackEnvelope.Plain        => Kyo.unit
+            ))
+            loop
         }
     }
 end SlashModalDemo

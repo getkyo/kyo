@@ -15,7 +15,8 @@ import kyo.*
   * @param tracesEndpoint
   *   Full URL for the traces export endpoint, defaults to `endpoint + "/v1/traces"`
   * @param headers
-  *   Additional HTTP headers sent with every export request (e.g. auth tokens)
+  *   Additional HTTP headers sent with every export request (e.g. auth tokens). `toString` names each header and renders its value as
+  *   `<redacted>`, so a logged config does not carry the credentials.
   * @param timeout
   *   HTTP request timeout for each export call
   * @param compression
@@ -52,7 +53,11 @@ case class OTLPConfig(
     bspExportTimeout: Duration,
     metricExportInterval: Duration,
     metricExportTimeout: Duration
-)
+):
+    // `ScalaRunTime._toString` formats the product field by field without calling this override, so the copy cannot recurse.
+    override def toString: String =
+        scala.runtime.ScalaRunTime._toString(copy(headers = headers.map((name, _) => name -> "<redacted>")))
+end OTLPConfig
 
 object OTLPConfig:
 

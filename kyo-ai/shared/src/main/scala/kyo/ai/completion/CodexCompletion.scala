@@ -429,7 +429,6 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             eventRoute(events, "rawResponseItem/completed"),
             eventRoute(events, "item/agentMessage/delta"),
             eventRoute(events, "turn/completed"),
-            eventRoute(events, "thread/status/changed"),
             eventRoute(events, "thread/tokenUsage/updated"),
             eventRoute(events, "error")
         )
@@ -497,9 +496,11 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                                     )
                                 )
                             else if isTurnCompleted(event, threadId, turnId) then
-                                bridge.executed.get.map(calls =>
-                                    Loop.done((finalText(completed, delta), turnStats(usage, requests, calls.size)))
-                                )
+                                if turnError(event).isDefined then failTurn(event, stderrTail)
+                                else
+                                    bridge.executed.get.map(calls =>
+                                        Loop.done((finalText(completed, delta), turnStats(usage, requests, calls.size)))
+                                    )
                             else if event.method == "thread/tokenUsage/updated" then
                                 // Keep the latest total: the ephemeral thread's aggregate IS this turn's
                                 // usage, already summed across the CLI turn's internal provider requests.
@@ -570,7 +571,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             handler.call[TurnInterruptParams, Structure.Value]("turn/interrupt", TurnInterruptParams(threadId, turnId))
         ).unit
 
-    private def eventText(
+    private[completion] def eventText(
         event: RpcEvent,
         threadId: String,
         turnId: String,
@@ -601,16 +602,26 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                 }
             case "error" =>
                 if isRetryingError(event.params) then Absent
-                else failWithStderr(Absent, Json.encode(event.params), stderrTail)
-            case "thread/status/changed" =>
-                decodeEvent[ThreadStatusChangedNotification](event).map { notification =>
-                    if notification.threadId == threadId && notification.status.`type` == "systemError" then
-                        failWithStderr(Absent, Json.encode(event.params), stderrTail)
-                    else Absent
-                }
+                else failTurn(event, stderrTail)
+            // A systemError status announces a failed turn before the notification that says why: failing on it reports a broken
+            // harness where the reason (a spent usage allowance, say) arrives one event later, in `error` and the failed turn/completed.
             case _ =>
                 Absent
     end eventText
+
+    /** A failed turn as the module's leaf: a spent usage allowance is a rate limit carrying when Codex says to retry, anything else
+      * the harness's own failure with the app-server's stderr tail.
+      */
+    private def failTurn(event: RpcEvent, stderrTail: AtomicRef[String])(using Frame): Nothing < (Sync & Abort[AIGenException]) =
+        turnError(event) match
+            case Present((message, Present("usageLimitExceeded"))) =>
+                Clock.now.map { now =>
+                    val retryAfter = retryAt(message, java.time.ZoneId.systemDefault()).map(_.minusOrZero(now))
+                    Abort.fail(AIRateLimitException("Codex", message, retryAfter))
+                }
+            case _ =>
+                failWithStderr(Absent, Json.encode(event.params), stderrTail)
+    end failTurn
 
     // Both statusless-close arms report through these, so the evidence path (read the live tail, format
     // it, raise the typed leaf) is one place a test can drive with a populated ref.

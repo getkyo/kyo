@@ -40,19 +40,15 @@ trait Completion:
         resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
     )(using Frame): Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException])
 
-    /** Whether this backend delivers a stream in pieces as the model produces it.
+    /** Whether this wire can deliver a stream in pieces at all.
       *
-      * `true` where the wire carries incremental deltas, which is every HTTP family (they stream over
-      * SSE). `false` where the backend can only hand back a finished result, which `LLM.stream` then
-      * emits in one go: the elements and their order are exactly the same, and nothing fails, but
-      * time-to-first-token equals time-to-last-token.
-      *
-      * That difference is invisible from the stream itself, and it is the number a chat UI lives on, so
-      * it is declared rather than discovered. Read it to decide whether to render progressively or show a
-      * pending state:
+      * `true` for the HTTP families, which stream over SSE; `false` for the command harnesses, which hand back a finished result that
+      * `LLM.stream` then emits in one go. A `true` here is necessary but not sufficient: whether a given model's endpoint actually sends
+      * its answer in pieces is measured per catalog entry, since two endpoints on the same wire differ. Read the entry's fact to decide
+      * between rendering progressively and showing a pending state:
       *
       * {{{
-      * val incremental = config.provider.completion.streamsIncrementally
+      * val incremental = config.modelStreamsIncrementally
       * }}}
       */
     def streamsIncrementally: Boolean
@@ -225,18 +221,32 @@ object Completion:
             .orElse(headers.get("retry-after").flatMap(v => seconds(v).orElse(httpDate(v).map(until))))
     end retryAfterOf
 
-    /** Waits out a rate limit's `Retry-After` before re-raising it, so the retry schedule's next attempt
-      * lands at or after the moment the server asked for. Bounded by the deadline the caller runs under:
-      * a wait longer than `timeout` is cut to it, and the deadline then decides. Sits between the
-      * classification and the retry clause in every HTTP wire's handler chain.
+    /** The retry stage of every completion's handler chain: retries transient failures on `schedule`, and
+      * waits out a rate limit's `Retry-After` first, so the next attempt lands at or after the moment the
+      * server asked for. A wait that cannot end before `deadline` surfaces the rate limit at once, carrying
+      * the wait: sleeping to the deadline would turn it into a timeout that no longer says when the provider
+      * answers again, and an earlier attempt is refused the same way.
       */
-    private[kyo] def awaitRetryAfter[A, S](timeout: Duration)(v: A < (S & Abort[AIGenException]))(using
+    private[kyo] def retryWithin[A, S](deadline: Instant, schedule: Schedule)(v: => A < (S & Abort[AIGenException]))(using
         Frame
     ): A < (S & Async & Abort[AIGenException]) =
-        Abort.recover[AIGenException] {
-            case e @ AIRateLimitException(_, _, Present(wait)) => Async.sleep(wait.min(timeout)).andThen(Abort.fail(e))
-            case e                                             => Abort.fail(e)
-        }(v)
+        Abort.recover[BeyondDeadline](beyond => Abort.fail(beyond.limit)) {
+            Retry[AITransientException](schedule) {
+                Abort.recover[AIGenException] {
+                    case e @ AIRateLimitException(_, _, Present(wait)) =>
+                        Clock.now.map { now =>
+                            if wait >= deadline.minusOrZero(now) then Abort.fail(BeyondDeadline(e))
+                            else Async.sleep(wait).andThen(Abort.fail(e))
+                        }
+                    case e => Abort.fail(e)
+                }(v)
+            }
+        }
+
+    /** A rate limit the retry clause must not see: carried past it on its own channel, since every
+      * AIRateLimitException is transient.
+      */
+    private case class BeyondDeadline(limit: AIRateLimitException)
 
     private case class ErrorDetail(
         code: Maybe[String] = Absent,
