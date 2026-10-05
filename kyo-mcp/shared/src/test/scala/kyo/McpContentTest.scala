@@ -16,6 +16,19 @@ class McpContentTest extends Test:
     private def encodedJson[A: Schema](value: A): String =
         Json.encode[A](value)
 
+    "every variant decodes straight from its JSON text" in {
+        val contents = Seq[McpContent](
+            McpContent.Text("hello"),
+            McpContent.Image("<b64>", McpMimeType("image/png")),
+            McpContent.Audio("<b64>", McpMimeType("audio/wav")),
+            McpContent.EmbeddedResource(McpHandler.ResourceContents.Text(McpResourceUri("file:///x"), Absent, "body"))
+        )
+        contents.foreach { content =>
+            val decoded = Json.decode[McpContent](encodedJson[McpContent](content))
+            assert(decoded == Result.succeed(content), s"decoded $decoded")
+        }
+    }
+
     "Text: wire JSON contains type:text" in {
         val content = McpContent.Text("hello")
         val json    = encodedJson[McpContent](content)

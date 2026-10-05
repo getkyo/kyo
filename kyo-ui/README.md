@@ -124,7 +124,7 @@ Finite value domains are typed the same way, each covered in its own section bel
 - Headings: `UI.h1`..`UI.h6`.
 - Containers: `UI.div`, `UI.p`, `UI.section`, `UI.main`, `UI.header`, `UI.footer`, `UI.nav`, `UI.pre`, `UI.code`, `UI.span`.
 - Lists: `UI.ul`, `UI.ol`, `UI.li`.
-- Tables: `UI.table`, `UI.tr`, `UI.td`, `UI.th`. `Td` and `Th` carry `.colspan(v)` and `.rowspan(v)` setters (each is clamped to `>= 1`).
+- Tables: `UI.table`, `UI.tr`, `UI.td`, `UI.th`, plus the row groups `UI.thead`, `UI.tbody`, `UI.tfoot` and the column list `UI.colgroup` / `UI.col`. `Td` and `Th` carry `.colspan(v)` and `.rowspan(v)` setters (each is clamped to `>= 1`). A `col` is the only place a per-column width goes: it sizes the whole column, where a width on a cell sizes the row that cell is in.
 - Voids: `UI.hr`, `UI.br`.
 - Links: `UI.a` with `.href(v: Href)`, `.href(v, target)`, `.target(v)`. See [Domain enums for attributes](#domain-enums-for-attributes).
 - Labels: `UI.label.forId(v)` (alias `.\`for\`(v)` for HTML symmetry).
@@ -1134,7 +1134,7 @@ A chart goes live by swapping its data source: pass a `Signal[Seq[A]]` instead o
 ```scala
 val livePage: UI < Async =
     for
-        data <- Signal.initRef(sales)
+        data      <- Signal.initRef(sales)
         liveChart <- Chart(data)(Chart.bar(x = _.month, y = _.revenue))
             .animate(_.ease(300.millis))
             .lower
@@ -1147,7 +1147,7 @@ The data source is not the only reactive surface, and none of these are chart-sp
 val liveThreshold: UI < Async =
     for
         target <- Signal.initRef(50000.0)
-        chart <- Chart(sales)(
+        chart  <- Chart(sales)(
             Chart.bar(x = _.month, y = _.revenue),
             Chart.rule(y = target)
         ).lower
@@ -1161,7 +1161,7 @@ A chart does not own interaction state. It writes the hovered or selected datum 
 ```scala
 val interactivePage: UI < Async =
     for
-        hovered <- Signal.initRef(Maybe.empty[Sale])
+        hovered    <- Signal.initRef(Maybe.empty[Sale])
         hoverChart <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
             .onHover(hovered)
             .tooltip(s => s"${s.month}: ${s.revenue}")
@@ -1178,7 +1178,7 @@ val interactivePage: UI < Async =
 val highlightPage: UI < Async =
     for
         selected <- Signal.initRef(Maybe.empty[Sale])
-        chart <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        chart    <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
             .onSelect(selected)
             .interaction(_.highlightSelect)
             .lower
@@ -1191,7 +1191,7 @@ An interactive legend follows the same model. `.legend(_.interactive(ref))` make
 val legendTogglePage: UI < Async =
     for
         hidden <- Signal.initRef(Set.empty[Int])
-        chart <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        chart  <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
             .legend(_.top.interactive(hidden))
             .lower
     yield UI.div(chart)
@@ -1343,7 +1343,7 @@ import kyo.*
 
 def app(request: Request): UI < Async =
     request.path match
-        case "/" => div(h1("Channels"), a.href(Href.Path("/app/channel?id=1"))("general"))
+        case "/"        => div(h1("Channels"), a.href(Href.Path("/app/channel?id=1"))("general"))
         case "/channel" =>
             div(h1(s"Channel ${request.query.getOrElse("id", "?")}"), a.href(Href.Path("/app"))("All channels"))
         case other => div(h1("Not found"), p(other))
@@ -1736,10 +1736,10 @@ import UI.*
 import kyo.*
 
 val board: UI =
-    val cell  = 16
-    val cells = 10
-    val snake = Chunk((4, 5), (3, 5), (2, 5)) // head-first cells
-    val food  = (7, 3)
+    val cell    = 16
+    val cells   = 10
+    val snake   = Chunk((4, 5), (3, 5), (2, 5)) // head-first cells
+    val food    = (7, 3)
     val backing = Svg.rect.x(0).y(0).width(cell * cells).height(cell * cells)
         .fill(Svg.Paint.Color(Style.Color.rgb(24, 28, 42)))
     val foodDot = Svg.circle

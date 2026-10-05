@@ -88,7 +88,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
     "ensure(version) resolves a cacheDir that embeds the requested version (no download required)" in {
         Scope.run {
             hostTempDir("kyo-cd-vover-").map { tmp =>
-                // Pre-create a fake executable for whichever platform this host is on so that `ensure` short-circuits
+                // Pre-create a marked install for whichever platform this host is on so that `ensure` short-circuits
                 // (no network access).
                 for
                     os       <- System.operatingSystem
@@ -99,6 +99,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
                     versionDir    = tmp / s"chrome-headless-shell-$customVersion-$platform"
                     exec          = ChromeDownloader.executablePath(versionDir, platform, build)
                     _ <- Path.run(exec.write("fake-exec")) // createFolders=true creates the full ancestor chain
+                    _ <- Path.run((versionDir / ChromeDownloader.installedMarker).write(""))
                     sys = systemWithCache(tmp)(os, arch)
                     resolved <- System.let(sys)(ChromeDownloader.ensure(
                         Present(customVersion),
@@ -128,6 +129,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
                     versionDir    = tmp / s"chrome-$customVersion-$platform"
                     exec          = ChromeDownloader.executablePath(versionDir, platform, build)
                     _ <- Path.run(exec.write("fake-full-chrome"))
+                    _ <- Path.run((versionDir / ChromeDownloader.installedMarker).write(""))
                     sys = systemWithCache(tmp)(os, arch)
                     resolved <- System.let(sys)(ChromeDownloader.ensure(
                         Present(customVersion),
@@ -336,9 +338,9 @@ class ChromeDownloaderTest extends BaseBrowserTest:
     // (no buffered cap) and sinks each chunk to disk, so the download succeeds and the full body lands on the file even
     // though it far exceeds the cap.
     "downloadZip streams a body larger than maxResponseLength to disk instead of rejecting it" in {
-        val bodySize                              = 256 * 1024
-        val body                                  = Span.fromUnsafe(new Array[Byte](bodySize))
-        val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+        val bodySize                                                     = 256 * 1024
+        val body                                                         = Span.fromUnsafe(new Array[Byte](bodySize))
+        val bodyStream: Stream[Span[Byte], Async & Abort[HttpException]] = Stream[Span[Byte], Async] {
             Emit.valueWith(Chunk(body))(())
         }
         val handler = HttpRoute.getRaw("/chrome.zip").response(_.bodyStream).handler { _ =>
@@ -424,6 +426,104 @@ class ChromeDownloaderTest extends BaseBrowserTest:
                     assert(second == first, s"second resolved '$second' != first '$first'")
                     assert(after1 == 1, s"counter after first ensure: $after1 (expected 1)")
                     assert(after2 == 1, s"counter after second ensure: $after2 (expected 1 - cache reuse violated)")
+                end for
+            }
+        }
+    }
+
+    // ---- concurrent first-time setups ----
+
+    /** Runs two `ensureWith` setups of one version into `cache` at once. Both downloads are held at a two-party barrier, so each has
+      * started before either finishes; a download records an overlap when another is writing into the same directory. Each download
+      * writes the executable and a `payload` file, standing in for the rest of the archive.
+      */
+    private def concurrentSetups(cache: Path, version: String)(using Frame) =
+        for
+            os       <- System.operatingSystem
+            arch     <- System.architecture
+            platform <- ChromeDownloader.resolvePlatform(os, arch)
+            build = Browser.ChromeForTestingBuild.HeadlessShell
+            sys   = systemWithCache(cache)(os, arch)
+            barrier  <- Latch.init(2)
+            writing  <- AtomicRef.init(Set.empty[String])
+            overlaps <- AtomicInt.init
+            download: ((Browser.ChromeForTestingBuild, String, String, Path) => Unit < (Async & Abort[BrowserSetupException])) =
+                (b, _, p, dir) =>
+                    val key = dir.unsafe.show
+                    for
+                        before <- writing.getAndUpdate(_ + key)
+                        _      <- if before.contains(key) then overlaps.incrementAndGet.unit else Kyo.unit
+                        _      <- barrier.release
+                        _      <- barrier.await
+                        _      <- Abort.run[FileSystemException](Path.run {
+                            ChromeDownloader.executablePath(dir, p, b).write("new-exec").andThen((dir / "payload").write("payload"))
+                        }).map(_.getOrThrow)
+                        _ <- writing.updateAndGet(_ - key)
+                    yield ()
+                    end for
+            setup = System.let(sys)(ChromeDownloader.ensureWith(
+                Present(version),
+                Browser.LaunchConfig.default.chromeDownloaderConfig,
+                build,
+                download
+            ))
+            first  <- Fiber.initUnscoped(Abort.run[BrowserSetupException](setup))
+            second <- Fiber.initUnscoped(Abort.run[BrowserSetupException](setup))
+            r1     <- first.get
+            r2     <- second.get
+            o      <- overlaps.get
+            versionDir = cache / s"chrome-headless-shell-$version-$platform"
+        yield (r1, r2, o, versionDir, ChromeDownloader.executablePath(versionDir, platform, build))
+
+    /** The cache root's entries other than lock sentinels, which an advisory lock may leave behind by design. */
+    private def cacheEntries(cache: Path)(using Frame): Chunk[String] < (Sync & Abort[FileSystemException]) =
+        Path.runReadOnly(cache.list).map(_.flatMap(_.name.toChunk).filterNot(_.endsWith(Path.defaultLockSuffix)).sorted)
+
+    "two concurrent first-time setups into one empty cache both succeed and leave one complete install" in {
+        Scope.run {
+            hostTempDir("kyo-cd-race-").map { cache =>
+                for
+                    (r1, r2, overlaps, versionDir, exec) <- concurrentSetups(cache, "5.6.7.8")
+                    execContent                          <- Path.runReadOnly(exec.read)
+                    payload                              <- Path.runReadOnly((versionDir / "payload").exists)
+                    entries                              <- cacheEntries(cache)
+                yield
+                    assert(overlaps == 0, s"$overlaps download(s) wrote into a directory another download was writing")
+                    assert(r1 == Result.Success(exec.unsafe.show), s"first setup: $r1")
+                    assert(r2 == Result.Success(exec.unsafe.show), s"second setup: $r2")
+                    assert(execContent == "new-exec" && payload, s"install incomplete: exec '$execContent', payload $payload")
+                    assert(entries == Chunk(versionDir.name.getOrElse("")), s"cache root holds $entries")
+                end for
+            }
+        }
+    }
+
+    "two concurrent setups over a partial install both succeed and replace it with a complete one" in {
+        // An extract that died midway leaves the version directory holding the executable and nothing else. It is not an
+        // install, and it must be replaced even when both setups find it at once.
+        Scope.run {
+            hostTempDir("kyo-cd-partial-").map { cache =>
+                for
+                    os       <- System.operatingSystem
+                    arch     <- System.architecture
+                    platform <- ChromeDownloader.resolvePlatform(os, arch)
+                    version     = "5.6.7.9"
+                    partialExec = ChromeDownloader.executablePath(
+                        cache / s"chrome-headless-shell-$version-$platform",
+                        platform,
+                        Browser.ChromeForTestingBuild.HeadlessShell
+                    )
+                    _                                    <- Path.run(partialExec.write("stale-exec"))
+                    (r1, r2, overlaps, versionDir, exec) <- concurrentSetups(cache, version)
+                    execContent                          <- Path.runReadOnly(exec.read)
+                    payload                              <- Path.runReadOnly((versionDir / "payload").exists)
+                    entries                              <- cacheEntries(cache)
+                yield
+                    assert(overlaps == 0, s"$overlaps download(s) wrote into a directory another download was writing")
+                    assert(r1 == Result.Success(exec.unsafe.show), s"first setup: $r1")
+                    assert(r2 == Result.Success(exec.unsafe.show), s"second setup: $r2")
+                    assert(execContent == "new-exec" && payload, s"partial install kept: exec '$execContent', payload $payload")
+                    assert(entries == Chunk(versionDir.name.getOrElse("")), s"cache root holds $entries")
                 end for
             }
         }

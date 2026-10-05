@@ -257,7 +257,7 @@ val onOpenLint =
     LspHandler.TextDocument.didOpen { params =>
         Lsp.documents.map(_.get(params.textDocument.uri)).map { maybeDoc =>
             val diags: Chunk[LspHandler.Diagnostic] = maybeDoc match
-                case Absent => Chunk.empty
+                case Absent       => Chunk.empty
                 case Present(doc) =>
                     Chunk.from(doc.text.linesIterator.zipWithIndex.flatMap { case (l, i) =>
                         val line = i + 1
@@ -434,9 +434,9 @@ val reindex =
         else
             for
                 supplied <- Lsp.workDoneToken
-                token <- supplied match
+                token    <- supplied match
                     case Present(t) => (t: LspHandler.ProgressToken < Async)
-                    case Absent =>
+                    case Absent     =>
                         val fresh = LspHandler.ProgressToken.StringToken(s"reindex-${java.util.UUID.randomUUID()}")
                         Lsp.server.map(_.createWorkDoneProgress(LspHandler.WorkDoneProgressCreateParams(fresh)))
                             .map(_ => fresh)

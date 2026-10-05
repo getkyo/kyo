@@ -9,6 +9,22 @@ case class ISTGpsFix(lat: Double, lon: Double) derives CanEqual, Schema
 case class ISTReading(sensorId: String, value: Double) derives CanEqual, Schema
 case class ISTNestedReport(name: String, location: Option[ISTGpsFix], readings: List[ISTReading]) derives CanEqual, Schema
 case class ISTIntKeyedMap(counts: Map[Int, Int]) derives CanEqual, Schema
+case class ISTCharKeyedMap(counts: Map[Char, Int]) derives CanEqual, Schema
+enum ISTSignal derives CanEqual, Schema:
+    case Go, Stop
+
+@kyo.schema.discriminator("type")
+sealed trait ISTComponent derives CanEqual, Schema
+@kyo.schema.tagNumber(2)
+case class ISTButton(label: String) extends ISTComponent derives CanEqual
+@kyo.schema.catchAll()
+case class ISTOtherComponent(`type`: Int, raw: Structure.Value) extends ISTComponent derives CanEqual
+
+@kyo.schema.discriminator("kind")
+sealed trait ISTEvent derives CanEqual, Schema
+case class ISTClick(x: Int) extends ISTEvent derives CanEqual
+@kyo.schema.catchAll()
+case class ISTUnknownEvent(kind: String, raw: Structure.Value) extends ISTEvent derives CanEqual
 
 /** Records the length of every `write` call it receives, so a test can assert on the chunk
   * boundaries a streaming writer produced instead of only on the final byte content.
@@ -85,6 +101,24 @@ class IonSchemaTest extends kyo.test.Test[Any]:
                   |""".stripMargin
 
             val runtimeSchema: Schema[ISTPerson] = summon[Schema[ISTPerson]]
+            assert(IonSchema.encode(IonSchema.fromSchema(runtimeSchema, IonSchema.Config.Default)) == expected)
+        }
+
+        "a rename chain names the field by its last name" in {
+            val expected =
+                """$ion_schema_2_0
+                  |
+                  |type::{
+                  |  name: ISTPerson,
+                  |  type: struct,
+                  |  fields: closed::{
+                  |    displayName: { type: string, occurs: required },
+                  |    age: { type: int, occurs: required },
+                  |  },
+                  |}
+                  |""".stripMargin
+
+            val runtimeSchema = Schema[ISTPerson].rename("name", "userName").rename("userName", "displayName")
             assert(IonSchema.encode(IonSchema.fromSchema(runtimeSchema, IonSchema.Config.Default)) == expected)
         }
 
@@ -209,6 +243,22 @@ class IonSchemaTest extends kyo.test.Test[Any]:
             assert(Ion.ionSchemaString[ISTIntKeyedMap]() == expected)
         }
 
+        "describes a Char-keyed map as the list of key and value structs it is written as" in {
+            val expected =
+                """$ion_schema_2_0
+                  |
+                  |type::{
+                  |  name: ISTCharKeyedMap,
+                  |  type: struct,
+                  |  fields: closed::{
+                  |    counts: { type: list, element: { type: struct, fields: closed::{ key: { type: string, occurs: required }, value: { type: int, occurs: required } } }, occurs: required },
+                  |  },
+                  |}
+                  |""".stripMargin
+
+            assert(Ion.ionSchemaString[ISTCharKeyedMap]() == expected)
+        }
+
         // IonSchema is not a Codec (no newWriter/newReader), so this asserts the Mapping
         // node's shape only; no value round-trip exists for OrderedDict to preserve order
         // through here.
@@ -228,6 +278,27 @@ class IonSchemaTest extends kyo.test.Test[Any]:
             assert(Ion.ionSchemaString[MTOrderedDictConfig]() == expected)
         }
 
+        "emits a tag-only sum as one_of string alternatives, one valid value each" in {
+            given Schema[ISTSignal] = Schema[ISTSignal].tagOnly
+
+            val encoded = Ion.ionSchemaString[ISTSignal]()
+
+            assert(encoded.contains("valid_values: [\"Go\"]"), encoded)
+            assert(encoded.contains("valid_values: [\"Stop\"]"), encoded)
+            assert(!encoded.contains("Go: {"), encoded)
+        }
+
+        "a representation ISL cannot describe fails with the describe call's Frame" in {
+            given Schema[MTShape] = Schema[MTShape].tupleTagged
+            val describeSite      = summon[Frame]
+            val ex                = intercept[SchemaNotSerializableException] {
+                given Frame = describeSite
+                Ion.ionSchemaString[MTShape]()
+            }
+            assert(ex.detail.contains("cannot describe union representation Tuple"), ex.detail)
+            assert(ex.frame == describeSite, s"raised at ${ex.frame}, described at $describeSite")
+        }
+
         "emits sealed traits as ISL one_of alternatives for discriminator wrappers" in {
             given Schema[MTShape] = Schema[MTShape].discriminator("type")
 
@@ -238,6 +309,36 @@ class IonSchemaTest extends kyo.test.Test[Any]:
             assert(encoded.contains("radius: { type: float, occurs: required }"))
             assert(encoded.contains("width: { type: float, occurs: required }"))
             assert(!encoded.contains("MTCircle: { type: struct"))
+        }
+
+        "emits a numbered variant's tag as an int valid value" in {
+            given Schema[MTShape] = Schema[MTShape].discriminator("type").variantNumbers("MTCircle" -> 1, "MTRectangle" -> 2)
+
+            val encoded = Ion.ionSchemaString[MTShape]()
+
+            assert(encoded.contains("type: { type: int, valid_values: [1], occurs: required }"), encoded)
+            assert(encoded.contains("type: { type: int, valid_values: [2], occurs: required }"), encoded)
+        }
+
+        "emits a numbered adjacent tag and a numbered tag-only sum as int valid values" in {
+            val adjacent = Ion.ionSchemaString[MTShape]()(using
+                Schema[MTShape].adjacent("t", "c").variantNumbers("MTCircle" -> 1, "MTRectangle" -> 2)
+            )
+            assert(adjacent.contains("t: { type: int, valid_values: [1], occurs: required }"), adjacent)
+            val tagOnly = Ion.ionSchemaString[ISTSignal]()(using Schema[ISTSignal].tagOnly.variantNumbers("Go" -> 0, "Stop" -> 1))
+            assert(tagOnly.contains("valid_values: [0]"), tagOnly)
+            assert(tagOnly.contains("valid_values: [1]"), tagOnly)
+            assert(!tagOnly.contains("\"Go\""), tagOnly)
+        }
+
+        "emits a catch-all as any tag of the sum's kind, not its Scala name" in {
+            val numbered = Ion.ionSchemaString[ISTComponent]()
+            assert(numbered.contains("type: { type: int, valid_values: [2], occurs: required }"), numbered)
+            assert(numbered.contains("type: { type: int, occurs: required }"), numbered)
+            assert(!numbered.contains("ISTOtherComponent"), numbered)
+            val named = Ion.ionSchemaString[ISTEvent]()
+            assert(named.contains("kind: { type: string, occurs: required }"), named)
+            assert(!named.contains("ISTUnknownEvent"), named)
         }
 
         "emits a syntactically valid inline struct for a nested product under Option and List" in {

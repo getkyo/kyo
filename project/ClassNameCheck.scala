@@ -11,7 +11,8 @@ import sbtcrossproject.CrossPlugin.autoImport.crossProjectPlatform
   * linker (`IRLoader`, "Remove duplicates. Just like the JVM") and the Scala Native linker (`ClassLoader.load`, `collectFirst`) all do.
   * A compile error follows only where code resolves the name and finds the wrong members, so the duplicate itself has to be what fails.
   *
-  * Usage: `checkClassNames JVM` (also JS, Native, Wasm), or `checkClassNames --self-test` for the fixtures.
+  * Usage: `checkClassNames JVM` (also JS, Native, Wasm), or `checkClassNames --self-test` for the fixtures. `--write-index <file>`
+  * records every producer's classes; `--modules a,b --index <file>` compiles only those projects and reads the rest from the index.
   */
 object ClassNameCheck {
 
@@ -35,9 +36,14 @@ object ClassNameCheck {
         checkClassNames / aggregate := false
     )
 
-    /** A (project, configuration) pair and the directory it writes its classes to. */
-    final case class Producer(project: String, config: String, namespace: String, group: Option[String], classes: File) {
+    /** A (project, configuration) pair and the class files it produces, relative to its output directory. */
+    final case class Producer(project: String, config: String, namespace: String, group: Option[String], classes: Seq[String]) {
         def name: String = project + " (" + (if (config == "compile") "main" else config) + ")"
+    }
+
+    object Producer {
+        def fromDirectory(project: String, config: String, namespace: String, group: Option[String], dir: File): Producer =
+            Producer(project, config, namespace, group, classFilesOf(dir))
     }
 
     /** One class file path produced by more than one (project, configuration) pair. */
@@ -64,7 +70,44 @@ object ClassNameCheck {
         }
     }
 
-    private def argParser: Parser[String] = (Space ~> token(StringBasic, "<platform>")).examples(platforms :+ selfTestArg: _*)
+    private def argParser: Parser[Seq[String]] =
+        spaceDelimited("<platform> [--modules a,b,...] [--index <file>] [--write-index <file>] | " + selfTestArg)
+
+    /** A parsed invocation. `modules` with `index` is the incremental run; `writeIndex` records a full run's producers. */
+    final private case class Request(platform: String, modules: Option[Set[String]], index: Option[File], writeIndex: Option[File])
+
+    private def parseRequest(args: Seq[String]): Request = {
+        def fail(msg: String): Nothing = sys.error("checkClassNames: " + msg)
+        val platform                   = args.headOption.flatMap(a => platforms.find(_.equalsIgnoreCase(a))).map(_.toLowerCase).getOrElse {
+            fail("expected a platform (" + platforms.mkString(", ") + ") or " + selfTestArg + ", got '" + args.mkString(" ") + "'")
+        }
+        def valueOf(flag: String): Option[String] = args.indexOf(flag) match {
+            case -1                       => None
+            case i if i + 1 < args.length => Some(args(i + 1))
+            case _                        => fail(flag + " requires a value")
+        }
+        val known = Set("--modules", "--index", "--write-index")
+        args.drop(1).grouped(2).map(_.head).find(a => !known.contains(a)).foreach(a => fail("unknown argument '" + a + "'"))
+        val modules = valueOf("--modules").map(_.split(",").map(_.trim).filter(_.nonEmpty).toSet)
+        val index   = valueOf("--index").map(new File(_))
+        if (modules.isDefined != index.isDefined) fail("--modules and --index go together: the index supplies every other project")
+        Request(platform, modules, index, valueOf("--write-index").map(new File(_)))
+    }
+
+    /** The index a full run writes and an incremental run reads: one line per class file, `namespace project config path`, tab
+      * separated. Main writes it on every commit, so a pull request reads the producers it did not change from the index of its base
+      * instead of compiling them, and the rule that two projects never ship one main class still sees every project.
+      */
+    private[this] def writeIndex(file: File, producers: Seq[Producer]): Unit =
+        IO.writeLines(
+            file,
+            producers.flatMap(p => p.classes.map(path => Seq(p.namespace, p.project, p.config, path).mkString("\t"))).sorted
+        )
+
+    private[this] def readIndex(file: File): Seq[(String, String, String, Seq[String])] =
+        IO.readLines(file).filter(_.nonEmpty).map(_.split("\t", 4)).collect { case Array(ns, project, config, path) =>
+            (ns, project, config, path)
+        }.groupBy(e => (e._1, e._2, e._3)).toSeq.map { case ((ns, project, config), entries) => (ns, project, config, entries.map(_._4)) }
 
     /** The namespaces a platform argument selects. The sbt plugins are JVM projects, and they share a classpath with each other inside a
       * user's build definition rather than with anything running on the JVM, so they are their own namespace.
@@ -95,15 +138,14 @@ object ClassNameCheck {
     }
 
     private def checkTask: Def.Initialize[InputTask[Unit]] = Def.inputTaskDyn {
-        val requested = argParser.parsed
+        val args      = argParser.parsed
         val extracted = Project.extract(state.value)
 
-        if (requested == selfTestArg) Def.task(selfTest(state.value.log))
+        if (args == Seq(selfTestArg)) Def.task(selfTest(state.value.log))
         else {
-            val platform = platforms.find(_.equalsIgnoreCase(requested)).map(_.toLowerCase).getOrElse {
-                sys.error("checkClassNames: unknown argument '" + requested + "', expected " + (platforms :+ selfTestArg).mkString(", "))
-            }
-            val namespaces = namespacesOf(platform)
+            val request    = parseRequest(args)
+            val requested  = platforms.find(_.equalsIgnoreCase(request.platform)).getOrElse(request.platform)
+            val namespaces = namespacesOf(request.platform)
 
             // A cross project carries its platform; a plain project is an sbt plugin or a JVM project.
             val classified = extracted.structure.allProjectRefs.map { ref =>
@@ -134,20 +176,47 @@ object ClassNameCheck {
                 reachableAll(ref.project).forall { case (project, _) => scalaOf.get(project).forall(_ == scalaOf(ref.project)) }
             }
 
-            val inProducers = ScopeFilter(inProjects(selected*), inConfigurations(Compile, Test))
+            // An incremental run compiles only the requested projects and reads every other producer from the index of the commit the
+            // change applies to. Without that index there is nothing to read them from, so the run compiles everything instead.
+            val incremental = request.modules.filter(_ => request.index.exists(_.isFile))
+            val compiled    = incremental.fold(selected)(modules => selected.filter(ref => modules.contains(ref.project)))
+            val selectedSet = selected.map(_.project).toSet
+
+            val inProducers = ScopeFilter(inProjects(compiled*), inConfigurations(Compile, Test))
             val reachable   = reachableOf(extracted, selected)
 
             Def.task {
                 val log = state.value.log
-                log.info("checkClassNames " + requested + ": " + selected.size + " projects")
+                if (request.modules.isDefined && incremental.isEmpty)
+                    log.warn("checkClassNames " + requested + ": no index at " + request.index.get + ", checking every project")
+                log.info(
+                    "checkClassNames " + requested + ": " + selected.size + " projects" +
+                        incremental.fold("")(_ => ", " + compiled.size + " compiled, the rest from " + request.index.get)
+                )
                 if (mixed.nonEmpty)
                     log.info(
                         "checkClassNames " + requested + ": skipping " + mixed.map(_.project).sorted.mkString(", ") +
                             ", pinned to a Scala version their dependencies are not built at"
                     )
 
-                val produced = producerInfo.all(inProducers).value.map { case (project, config, group, classes) =>
-                    Producer(project, config, namespaceOfProject(project), group, classes)
+                val fresh = producerInfo.all(inProducers).value.map { case (project, config, group, classes) =>
+                    Producer.fromDirectory(project, config, namespaceOfProject(project), group, classes)
+                }
+                val freshProjects = compiled.map(_.project).toSet
+                // A group comes from the build being checked: a change to one would be a build.sbt change, which selects the project.
+                val indexed = incremental.toSeq.flatMap { _ =>
+                    readIndex(request.index.get).collect {
+                        case (ns, project, config, classes)
+                            if namespaces.contains(ns) && selectedSet.contains(project) && !freshProjects.contains(project) =>
+                            val group = selected.find(_.project == project).flatMap(ref => extracted.getOpt(ref / classNameGroup).flatten)
+                            Producer(project, config, ns, group, classes)
+                    }
+                }
+                val produced = fresh ++ indexed
+
+                request.writeIndex.foreach { file =>
+                    writeIndex(file, produced)
+                    log.info("checkClassNames " + requested + ": index of " + produced.size + " producers written to " + file)
                 }
 
                 val lines = report(collisions(produced), reachable)
@@ -163,7 +232,7 @@ object ClassNameCheck {
     def collisions(producers: Seq[Producer]): Seq[Collision] = {
         val byPath = new scala.collection.mutable.HashMap[(String, String), List[Producer]]
         producers.foreach { producer =>
-            classFilesOf(producer.classes).foreach { path =>
+            producer.classes.foreach { path =>
                 val key = (producer.namespace, path)
                 byPath.update(key, producer :: byPath.getOrElse(key, Nil))
             }
@@ -241,7 +310,7 @@ object ClassNameCheck {
         def producer(project: String, config: String, namespace: String, group: Option[String], classes: String*): Producer = {
             val dir = base / project / config
             classes.foreach(path => IO.write(dir / path, ""))
-            Producer(project, config, namespace, group, dir)
+            Producer.fromDirectory(project, config, namespace, group, dir)
         }
 
         def check(name: String, holds: Boolean): Unit = {
@@ -338,6 +407,25 @@ object ClassNameCheck {
 
             val clean = producer("clean", "compile", "jvm", None, "p/Unique.class")
             check("a build with no duplicate reports nothing", reportOf(Seq(clean, groupA)).isEmpty)
+
+            val indexFile = base / "index.tsv"
+            writeIndex(indexFile, Seq(a, aTest, jsX))
+            val restored = readIndex(indexFile).map { case (ns, project, config, classes) => Producer(project, config, ns, None, classes) }
+            check(
+                "the index restores every producer's classes",
+                restored.map(p => (p.namespace, p.project, p.config, p.classes.sorted)).toSet ==
+                    Seq(a, aTest, jsX).map(p => (p.namespace, p.project, p.config, p.classes.sorted)).toSet
+            )
+            check(
+                "a fresh producer colliding with an indexed one is reported",
+                reportOf(restored.filter(_.project == "a") :+ b).contains("p.X")
+            )
+            check("parsing rejects --modules without --index", scala.util.Try(parseRequest(Seq("JVM", "--modules", "a"))).isFailure)
+            check(
+                "parsing reads every flag",
+                parseRequest(Seq("JVM", "--modules", "a,b", "--index", "i", "--write-index", "w")) ==
+                    Request("jvm", Some(Set("a", "b")), Some(new File("i")), Some(new File("w")))
+            )
 
             val failures = results.count(_.startsWith("NO "))
             results.foreach(line => log.info("  " + line))

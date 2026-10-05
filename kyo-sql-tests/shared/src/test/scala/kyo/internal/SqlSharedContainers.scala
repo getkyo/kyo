@@ -7,7 +7,7 @@ import kyo.internal.postgres.PostgresConnection
 /** The postgres/mysql `withFreshSchema` API for kyo-sql tests: it hands the caller a freshly-created database/schema scoped to the test's
   * lifetime, provisioned against the shared container fixture.
   *
-  * The singleton container is memoized by descriptor id through [[TestContainers.getOrInit]] over the shared
+  * The singleton container is memoized by engine key through [[TestContainers.getOrInit]] over the shared
   * [[TestContainers.containers]] table, which lives in kyo-pod's test tree, reached through `kyo-pod % "test->test"`, so both
   * kyo-sql-tests and each backend module share one entry per id: the first call for an id lazily initializes its container via
   * [[TestContainers.initSingleton]], concurrent callers await the same [[kyo.Promise]] rather than starting a duplicate, and a failed

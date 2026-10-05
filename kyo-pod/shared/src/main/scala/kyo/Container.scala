@@ -477,7 +477,7 @@ object Container:
                 // `docker run` it does not auto-pull). Retry re-ensures (re-pulling the vanished image) then
                 // re-creates; scoped to ImageMissing so create conflicts and other errors propagate at once.
                 Retry[ContainerImageMissingException](retrySchedule) {
-                    b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
+                    b.imageEnsure(config.image, Absent, Absent).andThen(stamped(config).map(b.create))
                 }
             }.map { cid =>
                 // Capture the HttpClient bound at registration: by finalizer time the fiber-local has unwound to the
@@ -594,7 +594,7 @@ object Container:
                         b.imageEnsure(config.image, Absent, Absent)
                     }.andThen {
                         Retry[ContainerImageMissingException](retrySchedule) {
-                            b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
+                            b.imageEnsure(config.image, Absent, Absent).andThen(stamped(config).map(b.create))
                         }
                     }.map { cid =>
                         val container = new Container(cid, config, b, healthRef, pendingRef)
@@ -2204,6 +2204,16 @@ object Container:
     val defaultLogTail: Int = 1000
 
     private val backendLocal: Local[Maybe[ContainerBackend]] = Local.init(Absent)
+
+    /** Labels added to every container kyo-pod creates while set. The test suite sets one per leaf, so a leak check on a daemon other
+      * processes share counts only the containers that leaf caused. A restored checkpoint keeps the labels of the container it was taken
+      * from, so the label follows every path kyo-pod creates by.
+      */
+    private[kyo] val ambientLabels: Local[Dict[String, String]] = Local.init(Dict.empty)
+
+    /** `config` with the ambient labels added; a label the config sets itself keeps its value. */
+    private def stamped(config: Config)(using Frame): Config < Sync =
+        ambientLabels.use(ambient => if ambient.isEmpty then config else config.copy(labels = ambient ++ config.labels))
 
     private[kyo] def currentBackend(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
         backendLocal.get.map {

@@ -144,7 +144,8 @@ object ImageProxyClient extends KyoApp:
             server <- HttpServer.init(HttpServerConfig.default.port(0))(upload, download, list, downloadLegacy)
             _      <- Console.printLine(s"ImageProxyClient started server on http://localhost:${server.port}")
 
-            _ <- HttpClient.withConfig(_.baseUrl(s"http://localhost:${server.port}").timeout(5.seconds)) {
+            api <- Abort.get(HttpClientConfig.BaseUrl.init(s"http://localhost:${server.port}"))
+            _   <- HttpClient.withConfig(_.baseUrl(api).timeout(5.seconds)) {
                 for
                     // Create some binary data
                     payload = Span.from("Hello, binary world!".getBytes("UTF-8"))

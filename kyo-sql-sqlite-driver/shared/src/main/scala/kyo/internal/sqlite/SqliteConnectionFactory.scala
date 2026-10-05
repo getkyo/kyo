@@ -24,29 +24,27 @@ final private[kyo] class SqliteConnectionFactory(bindings: SqliteBindings) exten
     private def openLocal(address: SqlConfig.Address.Local, config: SqlConfig)(using
         Frame
     ): SqliteConnection < (Async & Abort[SqlException]) =
-        Sync.defer {
-            given AllowUnsafe = AllowUnsafe.embrace.danger
-            val vfs           = config.extensionFor[SqliteVfs].fold(SqliteConnectionFactory.DefaultVfs)(_.name)
-            Sync.Unsafe.defer(
-                bindings.openV2(address.path, SqliteConnectionFactory.OpenFlags, vfs)
-            ).map(_.safe.get).flatMap {
-                case Absent =>
-                    // NULL comes back only when SQLite could not allocate the handle, which is not a database error
-                    // and leaves nothing to read an error off.
-                    Abort.fail(SqliteOpenFailedException(address.path, "SQLite could not allocate a connection handle"))
-                case Present(db) =>
+        val vfs = config.extensionFor[SqliteVfs].fold(SqliteConnectionFactory.DefaultVfs)(_.name)
+        Sync.Unsafe.defer(bindings.openV2(address.path, SqliteConnectionFactory.OpenFlags, vfs)).map(_.safe.get).flatMap {
+            case Absent =>
+                // NULL comes back only when SQLite could not allocate the handle, which is not a database error
+                // and leaves nothing to read an error off.
+                Abort.fail(SqliteOpenFailedException(address.path, "SQLite could not allocate a connection handle"))
+            case Present(db) =>
+                // The handle exists even on failure, which is where the error text lives, so it is read before
+                // being closed rather than discarded with it.
+                Sync.Unsafe.defer {
                     val code = bindings.extendedErrcode(db)
-                    if code != SqliteConnection.Ok then
-                        // The handle exists even on failure, which is where the error text lives, so it is read before
-                        // being closed rather than discarded with it.
-                        val message = bindings.errmsg(db).value
+                    if code == SqliteConnection.Ok then Maybe.empty[String] else Present(bindings.errmsg(db).value)
+                }.flatMap { failure =>
+                    failure.fold(configured(bindings, db, address, config)) { message =>
                         Sync.Unsafe.defer(bindings.closeV2(db)).map(_.safe.get).andThen {
                             Abort.fail(SqliteOpenFailedException(address.path, message))
                         }
-                    else configured(bindings, db, address, config)
-                    end if
-            }
+                    }
+                }
         }
+    end openLocal
 
     private def configured(
         bindings: SqliteBindings,
@@ -54,13 +52,15 @@ final private[kyo] class SqliteConnectionFactory(bindings: SqliteBindings) exten
         address: SqlConfig.Address.Local,
         config: SqlConfig
     )(using Frame): SqliteConnection < (Async & Abort[SqlException]) =
-        given AllowUnsafe = AllowUnsafe.embrace.danger
-        val busyMillis    = config.acquireTimeout.toMillis.toInt
+        // Saturated: `toInt` keeps the low 32 bits, so the 9,223,372,036,855 millis of an unbounded timeout would become 2,077,252,343,
+        // and some finite bounds past Int.MaxValue a negative number, which SQLite reads as no waiting at all.
+        val busyMillis = math.min(config.acquireTimeout.toMillis, Int.MaxValue.toLong).toInt
         Sync.Unsafe.defer(bindings.configureConnection(db, busyMillis)).map(_.safe.get).flatMap { rc =>
             if rc != SqliteConnection.Ok then
-                val message = bindings.errmsg(db).value
-                Sync.Unsafe.defer(bindings.closeV2(db)).map(_.safe.get).andThen {
-                    Abort.fail(SqliteOpenFailedException(address.path, s"configuring the connection failed: $message"))
+                Sync.Unsafe.defer(bindings.errmsg(db).value).map { message =>
+                    Sync.Unsafe.defer(bindings.closeV2(db)).map(_.safe.get).andThen {
+                        Abort.fail(SqliteOpenFailedException(address.path, s"configuring the connection failed: $message"))
+                    }
                 }
             else
                 journalMode(bindings, db, address).andThen {
@@ -73,8 +73,24 @@ final private[kyo] class SqliteConnectionFactory(bindings: SqliteBindings) exten
                         inFlight      <- AtomicBoolean.init(false)
                         inTransaction <- AtomicBoolean.init(false)
                         id            <- Sync.defer(SqliteConnectionFactory.nextId())
-                        conn = new SqliteConnection(id, bindings, db, meter, lifetime, openFlag, inFlight, inTransaction)
+                        writeGate     <- SqliteWriteGate.Hold.init
+                        conn = new SqliteConnection(
+                            id,
+                            bindings,
+                            db,
+                            meter,
+                            lifetime,
+                            openFlag,
+                            inFlight,
+                            inTransaction,
+                            writeGate,
+                            busyMillis.toLong.millis
+                        )
                         _ <- attachAll(conn, address, config)
+                        // After the attachments, whose files are only named by the engine once attached. BEGIN IMMEDIATE takes the
+                        // write lock of every one of them, so the gate covers them all.
+                        paths <- Sync.Unsafe.defer(("main" +: SqliteAttach.schemasFor(config)).map(bindings.dbFilename(db, _).value))
+                        _     <- writeGate.cover(paths)
                     yield conn
                 }
             end if
@@ -102,7 +118,7 @@ final private[kyo] class SqliteConnectionFactory(bindings: SqliteBindings) exten
             Scope.run {
                 Scope.ensure { error =>
                     // Unsafe: the handle is this open's own until it hands the connection back, and a finalizer cannot suspend.
-                    if error.isDefined then Sync.Unsafe.defer(conn.closeNow(using summon[Frame], AllowUnsafe.embrace.danger))
+                    if error.isDefined then Sync.Unsafe.defer(conn.closeNow)
                     else ()
                 }.andThen {
                     Abort.run[SqlException](Kyo.foreachDiscard(statements)(conn.simpleExecute(_).unit)).flatMap {

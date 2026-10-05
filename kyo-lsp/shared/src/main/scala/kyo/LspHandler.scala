@@ -206,21 +206,10 @@ object LspHandler:
 
     // MARK: -- Document types (LspDocument + Uri opaque + identifier records + TextDocumentContentChangeEvent + TextDocumentSyncKind)
 
-    /** A managed text document tracked by the document registry.
-      *
-      * Users receive instances through `Lsp.documents.get(uri)`. The `encoding` field is stamped
-      * by the engine at insert time and is not part of the public constructor surface.
-      */
-    final case class LspDocument(
-        uri: LspDocument.Uri,
-        languageId: String,
-        version: Int,
-        text: String,
-        private[kyo] encoding: PositionEncodingKind = PositionEncodingKind.UTF16
-    ) derives CanEqual
-
-    object LspDocument:
-
+    // In an object of its own: in the template declaring `opaque type Uri = String` a Tag for String is refused, which the
+    // schema derived beside it needs. Outside LspDocument's companion: nested there, scaladoc reading LspHandler's TASTy
+    // fails with a CyclicReference on the holder object, so `doc` and the publish of kyo-lsp fail.
+    object LspDocumentUris:
         /** Opaque URI for a text document. Use `parse` to construct; the engine uses `fromWire`.
           *
           * Validation: non-empty, not all-whitespace. Mirrors `McpResourceUri` shape.
@@ -240,6 +229,24 @@ object LspHandler:
             given Schema[Uri]        = Schema.stringSchema.transform[Uri](fromWire)(_.asString)
             given CanEqual[Uri, Uri] = CanEqual.derived
         end Uri
+    end LspDocumentUris
+
+    /** A managed text document tracked by the document registry.
+      *
+      * Users receive instances through `Lsp.documents.get(uri)`. The `encoding` field is stamped
+      * by the engine at insert time and is not part of the public constructor surface.
+      */
+    final case class LspDocument(
+        uri: LspDocument.Uri,
+        languageId: String,
+        version: Int,
+        text: String,
+        private[kyo] encoding: PositionEncodingKind = PositionEncodingKind.UTF16
+    ) derives CanEqual
+
+    object LspDocument:
+
+        export LspDocumentUris.Uri
 
         given Schema[LspDocument] = Schema.derived
 
@@ -317,22 +324,27 @@ object LspHandler:
     object TextDocumentSaveReason:
         given Schema[TextDocumentSaveReason] = internal.lsp.LspWireEnumSchemas.textDocumentSaveReasonSchema
 
-    /** The kind of position encoding. */
-    opaque type PositionEncodingKind = String
+    // In an object of its own: in the template declaring `opaque type PositionEncodingKind = String` a Tag for String is
+    // refused, which every schema derived in LspHandler needs.
+    object PositionEncodingKinds:
+        /** The kind of position encoding. */
+        opaque type PositionEncodingKind = String
 
-    object PositionEncodingKind:
-        val UTF8: PositionEncodingKind  = "utf-8"
-        val UTF16: PositionEncodingKind = "utf-16"
-        val UTF32: PositionEncodingKind = "utf-32"
+        object PositionEncodingKind:
+            val UTF8: PositionEncodingKind  = "utf-8"
+            val UTF16: PositionEncodingKind = "utf-16"
+            val UTF32: PositionEncodingKind = "utf-32"
 
-        def apply(s: String): PositionEncodingKind = s
+            def apply(s: String): PositionEncodingKind = s
 
-        extension (k: PositionEncodingKind)
-            def asString: String = k
+            extension (k: PositionEncodingKind)
+                def asString: String = k
 
-        given Schema[PositionEncodingKind]                         = Schema.stringSchema.transform[PositionEncodingKind](apply)(_.asString)
-        given CanEqual[PositionEncodingKind, PositionEncodingKind] = CanEqual.derived
-    end PositionEncodingKind
+            given Schema[PositionEncodingKind] = Schema.stringSchema.transform[PositionEncodingKind](apply)(_.asString)
+            given CanEqual[PositionEncodingKind, PositionEncodingKind] = CanEqual.derived
+        end PositionEncodingKind
+    end PositionEncodingKinds
+    export PositionEncodingKinds.PositionEncodingKind
 
     // MARK: -- Progress types (ProgressToken + WorkDoneProgressValue + WorkDoneProgress* records)
 
@@ -881,28 +893,32 @@ object LspHandler:
     /** A reference to a command. */
     final case class Command(title: String, command: String, arguments: Chunk[String] = Chunk.empty) derives Schema, CanEqual
 
-    /** An opaque string code action kind (extensible set). */
-    opaque type CodeActionKind = String
+    // In an object of its own, as PositionEncodingKinds is.
+    object CodeActionKinds:
+        /** An opaque string code action kind (extensible set). */
+        opaque type CodeActionKind = String
 
-    object CodeActionKind:
-        val Empty: CodeActionKind                 = ""
-        val QuickFix: CodeActionKind              = "quickfix"
-        val Refactor: CodeActionKind              = "refactor"
-        val RefactorExtract: CodeActionKind       = "refactor.extract"
-        val RefactorInline: CodeActionKind        = "refactor.inline"
-        val RefactorRewrite: CodeActionKind       = "refactor.rewrite"
-        val Source: CodeActionKind                = "source"
-        val SourceOrganizeImports: CodeActionKind = "source.organizeImports"
-        val SourceFixAll: CodeActionKind          = "source.fixAll"
+        object CodeActionKind:
+            val Empty: CodeActionKind                 = ""
+            val QuickFix: CodeActionKind              = "quickfix"
+            val Refactor: CodeActionKind              = "refactor"
+            val RefactorExtract: CodeActionKind       = "refactor.extract"
+            val RefactorInline: CodeActionKind        = "refactor.inline"
+            val RefactorRewrite: CodeActionKind       = "refactor.rewrite"
+            val Source: CodeActionKind                = "source"
+            val SourceOrganizeImports: CodeActionKind = "source.organizeImports"
+            val SourceFixAll: CodeActionKind          = "source.fixAll"
 
-        def apply(s: String): CodeActionKind = s
+            def apply(s: String): CodeActionKind = s
 
-        extension (k: CodeActionKind)
-            def asString: String = k
+            extension (k: CodeActionKind)
+                def asString: String = k
 
-        given Schema[CodeActionKind]                   = Schema.stringSchema.transform[CodeActionKind](apply)(_.asString)
-        given CanEqual[CodeActionKind, CodeActionKind] = CanEqual.derived
-    end CodeActionKind
+            given Schema[CodeActionKind]                   = Schema.stringSchema.transform[CodeActionKind](apply)(_.asString)
+            given CanEqual[CodeActionKind, CodeActionKind] = CanEqual.derived
+        end CodeActionKind
+    end CodeActionKinds
+    export CodeActionKinds.CodeActionKind
 
     /** The trigger kind for a code action request. */
     enum CodeActionTriggerKind derives CanEqual:
@@ -1402,22 +1418,26 @@ object LspHandler:
 
     // MARK: -- Folding and selection types
 
-    /** An opaque string folding range kind (extensible set). */
-    opaque type FoldingRangeKind = String
+    // In an object of its own, as PositionEncodingKinds is.
+    object FoldingRangeKinds:
+        /** An opaque string folding range kind (extensible set). */
+        opaque type FoldingRangeKind = String
 
-    object FoldingRangeKind:
-        val Comment: FoldingRangeKind = "comment"
-        val Imports: FoldingRangeKind = "imports"
-        val Region: FoldingRangeKind  = "region"
+        object FoldingRangeKind:
+            val Comment: FoldingRangeKind = "comment"
+            val Imports: FoldingRangeKind = "imports"
+            val Region: FoldingRangeKind  = "region"
 
-        def apply(s: String): FoldingRangeKind = s
+            def apply(s: String): FoldingRangeKind = s
 
-        extension (k: FoldingRangeKind)
-            def asString: String = k
+            extension (k: FoldingRangeKind)
+                def asString: String = k
 
-        given Schema[FoldingRangeKind]                     = Schema.stringSchema.transform[FoldingRangeKind](apply)(_.asString)
-        given CanEqual[FoldingRangeKind, FoldingRangeKind] = CanEqual.derived
-    end FoldingRangeKind
+            given Schema[FoldingRangeKind]                     = Schema.stringSchema.transform[FoldingRangeKind](apply)(_.asString)
+            given CanEqual[FoldingRangeKind, FoldingRangeKind] = CanEqual.derived
+        end FoldingRangeKind
+    end FoldingRangeKinds
+    export FoldingRangeKinds.FoldingRangeKind
 
     /** Represents a folding range inside a document. */
     final case class FoldingRange(
@@ -1448,66 +1468,74 @@ object LspHandler:
 
     // MARK: -- Semantic token types
 
-    /** An opaque string semantic token type (extensible set). */
-    opaque type SemanticTokenTypes = String
+    // In an object of its own, as PositionEncodingKinds is.
+    object SemanticTokenTypesHolder:
+        /** An opaque string semantic token type (extensible set). */
+        opaque type SemanticTokenTypes = String
 
-    object SemanticTokenTypes:
-        val Namespace: SemanticTokenTypes     = "namespace"
-        val Type: SemanticTokenTypes          = "type"
-        val Class: SemanticTokenTypes         = "class"
-        val Enum: SemanticTokenTypes          = "enum"
-        val Interface: SemanticTokenTypes     = "interface"
-        val Struct: SemanticTokenTypes        = "struct"
-        val TypeParameter: SemanticTokenTypes = "typeParameter"
-        val Parameter: SemanticTokenTypes     = "parameter"
-        val Variable: SemanticTokenTypes      = "variable"
-        val Property: SemanticTokenTypes      = "property"
-        val EnumMember: SemanticTokenTypes    = "enumMember"
-        val Event: SemanticTokenTypes         = "event"
-        val Function: SemanticTokenTypes      = "function"
-        val Method: SemanticTokenTypes        = "method"
-        val Macro: SemanticTokenTypes         = "macro"
-        val Keyword: SemanticTokenTypes       = "keyword"
-        val Modifier: SemanticTokenTypes      = "modifier"
-        val Comment: SemanticTokenTypes       = "comment"
-        val String: SemanticTokenTypes        = "string"
-        val Number: SemanticTokenTypes        = "number"
-        val Regexp: SemanticTokenTypes        = "regexp"
-        val Operator: SemanticTokenTypes      = "operator"
-        val Decorator: SemanticTokenTypes     = "decorator"
+        object SemanticTokenTypes:
+            val Namespace: SemanticTokenTypes     = "namespace"
+            val Type: SemanticTokenTypes          = "type"
+            val Class: SemanticTokenTypes         = "class"
+            val Enum: SemanticTokenTypes          = "enum"
+            val Interface: SemanticTokenTypes     = "interface"
+            val Struct: SemanticTokenTypes        = "struct"
+            val TypeParameter: SemanticTokenTypes = "typeParameter"
+            val Parameter: SemanticTokenTypes     = "parameter"
+            val Variable: SemanticTokenTypes      = "variable"
+            val Property: SemanticTokenTypes      = "property"
+            val EnumMember: SemanticTokenTypes    = "enumMember"
+            val Event: SemanticTokenTypes         = "event"
+            val Function: SemanticTokenTypes      = "function"
+            val Method: SemanticTokenTypes        = "method"
+            val Macro: SemanticTokenTypes         = "macro"
+            val Keyword: SemanticTokenTypes       = "keyword"
+            val Modifier: SemanticTokenTypes      = "modifier"
+            val Comment: SemanticTokenTypes       = "comment"
+            val String: SemanticTokenTypes        = "string"
+            val Number: SemanticTokenTypes        = "number"
+            val Regexp: SemanticTokenTypes        = "regexp"
+            val Operator: SemanticTokenTypes      = "operator"
+            val Decorator: SemanticTokenTypes     = "decorator"
 
-        def apply(s: String): SemanticTokenTypes = s
+            def apply(s: String): SemanticTokenTypes = s
 
-        extension (t: SemanticTokenTypes)
-            def asString: String = t
+            extension (t: SemanticTokenTypes)
+                def asString: String = t
 
-        given Schema[SemanticTokenTypes]                       = Schema.stringSchema.transform[SemanticTokenTypes](apply)(_.asString)
-        given CanEqual[SemanticTokenTypes, SemanticTokenTypes] = CanEqual.derived
-    end SemanticTokenTypes
+            given Schema[SemanticTokenTypes]                       = Schema.stringSchema.transform[SemanticTokenTypes](apply)(_.asString)
+            given CanEqual[SemanticTokenTypes, SemanticTokenTypes] = CanEqual.derived
+        end SemanticTokenTypes
+    end SemanticTokenTypesHolder
+    export SemanticTokenTypesHolder.SemanticTokenTypes
 
-    /** An opaque string semantic token modifier (extensible set). */
-    opaque type SemanticTokenModifiers = String
+    // In an object of its own, as PositionEncodingKinds is.
+    object SemanticTokenModifiersHolder:
+        /** An opaque string semantic token modifier (extensible set). */
+        opaque type SemanticTokenModifiers = String
 
-    object SemanticTokenModifiers:
-        val Declaration: SemanticTokenModifiers    = "declaration"
-        val Definition: SemanticTokenModifiers     = "definition"
-        val Readonly: SemanticTokenModifiers       = "readonly"
-        val Static: SemanticTokenModifiers         = "static"
-        val Deprecated: SemanticTokenModifiers     = "deprecated"
-        val Abstract: SemanticTokenModifiers       = "abstract"
-        val Async: SemanticTokenModifiers          = "async"
-        val Modification: SemanticTokenModifiers   = "modification"
-        val Documentation: SemanticTokenModifiers  = "documentation"
-        val DefaultLibrary: SemanticTokenModifiers = "defaultLibrary"
+        object SemanticTokenModifiers:
+            val Declaration: SemanticTokenModifiers    = "declaration"
+            val Definition: SemanticTokenModifiers     = "definition"
+            val Readonly: SemanticTokenModifiers       = "readonly"
+            val Static: SemanticTokenModifiers         = "static"
+            val Deprecated: SemanticTokenModifiers     = "deprecated"
+            val Abstract: SemanticTokenModifiers       = "abstract"
+            val Async: SemanticTokenModifiers          = "async"
+            val Modification: SemanticTokenModifiers   = "modification"
+            val Documentation: SemanticTokenModifiers  = "documentation"
+            val DefaultLibrary: SemanticTokenModifiers = "defaultLibrary"
 
-        def apply(s: String): SemanticTokenModifiers = s
+            def apply(s: String): SemanticTokenModifiers = s
 
-        extension (m: SemanticTokenModifiers)
-            def asString: String = m
+            extension (m: SemanticTokenModifiers)
+                def asString: String = m
 
-        given Schema[SemanticTokenModifiers] = Schema.stringSchema.transform[SemanticTokenModifiers](apply)(_.asString)
-        given CanEqual[SemanticTokenModifiers, SemanticTokenModifiers] = CanEqual.derived
-    end SemanticTokenModifiers
+            given Schema[SemanticTokenModifiers] = Schema.stringSchema.transform[SemanticTokenModifiers](apply)(_.asString)
+            given CanEqual[SemanticTokenModifiers, SemanticTokenModifiers] = CanEqual.derived
+        end SemanticTokenModifiers
+    end SemanticTokenModifiersHolder
+    export SemanticTokenModifiersHolder.SemanticTokenModifiers
 
     /** Describes the semantic tokens legend. */
     final case class SemanticTokensLegend(
@@ -1790,22 +1818,26 @@ object LspHandler:
     /** The result of a `window/showDocument` request. */
     final case class ShowDocumentResult(success: Boolean) derives Schema, CanEqual
 
-    /** The trace value setting. */
-    opaque type TraceValue = String
+    // In an object of its own, as PositionEncodingKinds is.
+    object TraceValues:
+        /** The trace value setting. */
+        opaque type TraceValue = String
 
-    object TraceValue:
-        val Off: TraceValue      = "off"
-        val Messages: TraceValue = "messages"
-        val Verbose: TraceValue  = "verbose"
+        object TraceValue:
+            val Off: TraceValue      = "off"
+            val Messages: TraceValue = "messages"
+            val Verbose: TraceValue  = "verbose"
 
-        def apply(s: String): TraceValue = s
+            def apply(s: String): TraceValue = s
 
-        extension (v: TraceValue)
-            def asString: String = v
+            extension (v: TraceValue)
+                def asString: String = v
 
-        given Schema[TraceValue]               = Schema.stringSchema.transform[TraceValue](apply)(_.asString)
-        given CanEqual[TraceValue, TraceValue] = CanEqual.derived
-    end TraceValue
+            given Schema[TraceValue]               = Schema.stringSchema.transform[TraceValue](apply)(_.asString)
+            given CanEqual[TraceValue, TraceValue] = CanEqual.derived
+        end TraceValue
+    end TraceValues
+    export TraceValues.TraceValue
 
     /** Parameters for the `$/cancelRequest` notification. The `id` field identifies the request to cancel. */
     final case class CancelParams(id: JsonRpcId) derives Schema, CanEqual

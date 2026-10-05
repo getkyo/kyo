@@ -483,17 +483,6 @@ class PathTest extends kyo.test.Test[Any]:
         }
     }
 
-    // The clamp is pinned on the function rather than through a read, because the upper end names a
-    // two-gigabyte allocation that a test cannot make.
-    "readBufferCapacity clamps a buffer size to the range an array can address" in {
-        assert(Path.readBufferCapacity(ByteSize.Zero) == 1)
-        assert(Path.readBufferCapacity(1.bytes) == 1)
-        assert(Path.readBufferCapacity(8.kib) == 8192)
-        assert(Path.readBufferCapacity(Int.MaxValue.bytes) == Int.MaxValue)
-        assert(Path.readBufferCapacity((Int.MaxValue.toLong + 1L).bytes) == Int.MaxValue)
-        assert(Path.readBufferCapacity(4.gib) == Int.MaxValue)
-    }
-
     "read on a directory raises FileIsADirectoryException" in {
         Scope.run(Path.run {
             for

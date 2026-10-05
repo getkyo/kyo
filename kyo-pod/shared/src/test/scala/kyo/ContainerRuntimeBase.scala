@@ -39,19 +39,27 @@ private[kyo] trait ContainerRuntimeBase:
     private[kyo] def getHome(using AllowUnsafe): String =
         kyo.System.live.unsafe.property("user.home").getOrElse("")
 
-    /** The daemon socket named by `CONTAINER_HOST`, classified to a runtime by its path.
+    /** The daemon socket the runtime's own variable names: `CONTAINER_HOST` for podman, `DOCKER_HOST` for docker.
       *
       * That variable is how a caller points kyo-pod at a daemon that sits at no standard path: a socket bind-mounted
       * into a container, or one reached across a machine boundary. `Container`'s own backend honours it, so a helper
       * that consults only the standard paths reports NO runtime available on a host where every operation in fact
       * works, and the suites that gate on availability then register no leaves while the run still reports success.
-      * The path decides which runtime it is, the same way `HttpContainerBackend` names its own.
       */
     private[kyo] def envSocket(rt: String)(using AllowUnsafe): Maybe[String] =
-        getEnv("CONTAINER_HOST")
-            .map(_.stripPrefix("unix://"))
-            .filter(_.nonEmpty)
-            .filter(path => if rt == "podman" then path.contains("podman") else !path.contains("podman"))
+        envSocketFrom(rt, getEnv("CONTAINER_HOST"), getEnv("DOCKER_HOST"))
+
+    /** Each runtime takes the variable its CLI reads, as given. The shell arm runs that CLI, so the HTTP arm reaching the same socket is
+      * what keeps one runtime's two arms on one daemon; inferring the runtime from how the path looks sends a socket to the wrong runtime
+      * silently.
+      */
+    private[kyo] def envSocketFrom(rt: String, containerHost: Maybe[String], dockerHost: Maybe[String]): Maybe[String] =
+        val named = rt match
+            case "podman" => containerHost
+            case "docker" => dockerHost
+            case _        => Absent
+        named.map(_.stripPrefix("unix://")).filter(_.nonEmpty)
+    end envSocketFrom
 
     // --- Memoized detection — lazy vals capture AllowUnsafe internally so they stay parameter-free ---
 
@@ -92,24 +100,51 @@ private[kyo] trait ContainerRuntimeBase:
         )
     end hasDocker
 
-    lazy val available: Seq[String] =
+    /** The runtimes this process answers for, each with the reason it cannot run here, or `Absent` when it can.
+      *
+      * A runtime that cannot run is kept with its reason rather than dropped, so its leaves are registered cancelled. The build forks the
+      * container suites once per runtime, and a fork that registered nothing for its runtime runs 0 leaves under a filter that matches only
+      * container leaves, which the runner fails as a selection that ran nothing.
+      */
+    lazy val assigned: Seq[(String, Maybe[String])] =
         import AllowUnsafe.embrace.danger
-        // The windows-latest CI runner's Docker daemon runs in Windows-container mode and cannot pull or run Linux images,
-        // so `docker` reports available while every operation fails at `docker pull`. These are Linux-container tests; skip on Windows.
-        if kyo.internal.Platform.isWindows then Seq.empty
-        else
-            val all      = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }
-            val distinct = distinctDaemons(all)
-            getEnv("KYO_POD_RUNTIME") match
+        val reachable = Seq("podman" -> hasPodman, "docker" -> hasDocker)
+        assignment(
+            kyo.internal.Platform.isWindows,
+            reachable,
+            distinctDaemons(reachable.collect { case (name, true) => name }),
+            getEnv("KYO_POD_RUNTIME")
+        )
+    end assigned
+
+    /** [[assigned]] from its inputs: whether the host is Windows, each runtime's reachability, the reachable runtimes that are distinct
+      * daemons, and the runtime the build pinned this process to.
+      */
+    private[kyo] def assignment(
+        windows: Boolean,
+        reachable: Seq[(String, Boolean)],
+        distinct: Seq[String],
+        pin: Maybe[String]
+    ): Seq[(String, Maybe[String])] =
+        val responsible = pin match
+            case Present(rt) => Seq(rt)
+            case Absent      => reachable.map(_._1)
+        responsible.map { rt =>
+            val reason =
+                // The windows-latest CI runner's Docker daemon runs in Windows-container mode and cannot pull or run Linux images,
+                // so `docker` reports available while every operation fails at `docker pull`.
+                if windows then Present("the host is Windows and these are Linux-container tests")
+                else if !reachable.exists(_ == (rt, true)) then Present(s"$rt is not reachable on this host")
                 // The pin is filtered by the same rule, not exempt from it. The build forks these suites once per runtime with the name
-                // pinned here, so exempting the pin would leave both forks running against one daemon whenever the two names resolve to it,
-                // which is the whole thing distinctDaemons exists to stop. The fork for the name that loses registers no leaves, and the one
-                // that wins runs them once.
-                case Present(rt) => if distinct.contains(rt) then Seq(rt) else Seq.empty
-                case Absent      => distinct
-            end match
-        end if
-    end available
+                // pinned here, so exempting the pin would leave both forks running against one daemon whenever the two names resolve to
+                // it, which is the whole thing distinctDaemons exists to stop.
+                else if !distinct.contains(rt) then Present(s"$rt reaches the same daemon as another runtime here, which runs these leaves")
+                else Absent
+            rt -> reason
+        }
+    end assignment
+
+    lazy val available: Seq[String] = assigned.collect { case (rt, Absent) => rt }
 
     /** Drops a runtime whose socket is the same file as one already kept, keeping the first.
       *
@@ -143,11 +178,6 @@ private[kyo] trait ContainerRuntimeBase:
     private lazy val podmanMachineSockets: Seq[String] =
         if !cliExists("podman") then Seq.empty
         else queryPodmanMachineSockets
-
-    def isPodman: Boolean = available.headOption.contains("podman")
-    def isDocker: Boolean = available.headOption.contains("docker")
-
-    def isAvailable(rt: String): Boolean = available.contains(rt)
 
     /** Whether a path this process creates is the same path the daemon's containers see.
       *

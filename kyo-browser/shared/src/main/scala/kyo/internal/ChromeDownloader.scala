@@ -48,7 +48,7 @@ private[kyo] object ChromeDownloader:
       * `version = Absent` resolves the latest known-good Stable version dynamically via [[latestVersion]] using the
       * supplied `cfg.metadataUrl`; `Present(v)` pins to a caller-supplied version. `build` selects which artifact
       * to download (`chrome-headless-shell` or full `chrome`); each `build` caches independently so the two can
-      * coexist. Safe to call repeatedly; the cached binary is reused once downloaded.
+      * coexist. Safe to call repeatedly and concurrently, across processes; the cached binary is reused once installed.
       */
     def ensure(
         version: Maybe[String],
@@ -76,14 +76,83 @@ private[kyo] object ChromeDownloader:
             v        <- resolveVersion
             root     <- cacheRoot
             versionDir = root / s"${artifactName(build)}-$v-$platform"
-            exec       = executablePath(versionDir, platform, build)
-            cached <- Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(exec.exists))
-            _      <-
-                if cached then Kyo.unit
-                else download(build, v, platform, versionDir)
-        yield exec.toString
+            installed <- isInstalled(versionDir)
+            _         <-
+                if installed then Kyo.unit
+                else Scope.run(install(root, versionDir, staging => download(build, v, platform, staging)))
+        yield executablePath(versionDir, platform, build).toString
         end for
     end ensureWith
+
+    /** Names the file whose presence inside a version directory makes it an install. An install only ever appears whole: it is
+      * assembled in a private staging directory, marked, and moved into place in one atomic step. A version directory without the
+      * marker is what an interrupted extract leaves behind, and its executable may exist while the rest of the archive does not.
+      */
+    private[kyo] val installedMarker = ".kyo-browser-installed"
+
+    private def isInstalled(versionDir: Path)(using Frame): Boolean < Sync =
+        Abort.recover[FileSystemException](_ => false)(Path.runReadOnly((versionDir / installedMarker).exists))
+
+    /** Downloads into a staging directory next to `versionDir`, so the final move stays on one volume and is atomic, then puts the
+      * marked result in place. Concurrent setups, in this process or another, each stage privately; the first move wins and the
+      * others discard their copy. The staging directory is removed when the scope closes unless it was moved into place.
+      */
+    private def install(root: Path, versionDir: Path, download: Path => Unit < (Async & Abort[BrowserSetupException]))(using
+        Frame
+    ): Unit < (Async & Scope & Abort[BrowserSetupException]) =
+        for
+            suffix <- Random.nextStringAlphanumeric(12)
+            staging = root / s".${versionDir.name.getOrElse("chrome")}.staging-$suffix"
+            _ <- Scope.ensure(Abort.run[FileSystemException](Path.run(staging.exists.map(e => if e then staging.removeAll else ()))).unit)
+            _ <- download(staging)
+            _ <- fileSystem(s"failed to mark $staging as installed")(Path.run((staging / installedMarker).write("")))
+            _ <- place(staging, versionDir)
+        yield ()
+
+    private val placeOptions = Path.MoveOptions(replace = Path.Replace.Never, atomicity = Path.Atomicity.Required)
+
+    /** Moves `staging` to `versionDir`. A move refused because `versionDir` exists means another setup won, or an interrupted extract
+      * left a partial directory there; only the partial is replaced.
+      */
+    private def place(staging: Path, versionDir: Path)(using Frame): Unit < (Async & Abort[BrowserSetupException]) =
+        Abort.run[FileSystemException](Path.run(staging.move(versionDir, placeOptions))).map {
+            case Result.Success(_) => ()
+            case Result.Failure(_) =>
+                isInstalled(versionDir).map(installed => if installed then () else replacePartial(staging, versionDir))
+            case Result.Panic(t) => Abort.panic(t)
+        }
+
+    /** Replaces a partial `versionDir` with `staging`. Setups that both find the partial serialize on an advisory lock on
+      * `versionDir`, held across processes; the holder re-checks for an install before removing anything, so a setup never removes
+      * an install. A setup that skipped the lock can only move in once the partial is gone, and the holder's final move then fails
+      * on an install, which counts as done.
+      */
+    private def replacePartial(staging: Path, versionDir: Path)(using Frame): Unit < (Async & Abort[BrowserSetupException]) =
+        Scope.run {
+            for
+                _         <- fileSystem(s"failed to lock $versionDir")(Path.run(versionDir.lock(Path.LockMode.Exclusive)))
+                installed <- isInstalled(versionDir)
+                _         <-
+                    if installed then Kyo.unit
+                    else
+                        Abort.run[FileSystemException](Path.run(versionDir.removeAll)).andThen {
+                            Abort.run[FileSystemException](Path.run(staging.move(versionDir, placeOptions))).map {
+                                case Result.Success(_)  => ()
+                                case Result.Failure(ex) =>
+                                    isInstalled(versionDir).map { installed =>
+                                        if installed then ()
+                                        else Abort.fail(BrowserSetupFailedException(s"failed to install $staging as $versionDir", ex))
+                                    }
+                                case Result.Panic(t) => Abort.panic(t)
+                            }
+                        }
+            yield ()
+        }
+
+    private def fileSystem[A, S](message: String)(v: A < (S & Abort[FileSystemException]))(using
+        Frame
+    ): A < (S & Abort[BrowserSetupException]) =
+        Abort.recover[FileSystemException]((ex: FileSystemException) => Abort.fail(BrowserSetupFailedException(message, ex)))(v)
 
     // --- Internal ---
 

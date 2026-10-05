@@ -48,6 +48,88 @@ class ContainerRuntimeBaseTest extends BasePodTest:
         }
     }
 
+    "envSocketFrom" - {
+
+        "podman takes CONTAINER_HOST as given, whatever its path looks like" in {
+            // A forwarded socket under a name that says nothing about its daemon: classifying by path sent the podman leaves to the
+            // default rootless socket while the docker leaves took this one, with no error anywhere.
+            assert(ContainerRuntime.envSocketFrom("podman", Present("unix:///tmp/kyo-pod-root.sock"), Absent) ==
+                Present("/tmp/kyo-pod-root.sock"))
+            assert(ContainerRuntime.envSocketFrom("docker", Present("unix:///tmp/kyo-pod-root.sock"), Absent) == Absent)
+        }
+
+        "docker takes DOCKER_HOST, the variable its CLI reads" in {
+            assert(ContainerRuntime.envSocketFrom("docker", Absent, Present("unix:///var/run/docker.sock")) ==
+                Present("/var/run/docker.sock"))
+            assert(ContainerRuntime.envSocketFrom("podman", Absent, Present("unix:///var/run/docker.sock")) == Absent)
+        }
+
+        "an empty socket path names nothing" in {
+            assert(ContainerRuntime.envSocketFrom("podman", Present("unix://"), Absent) == Absent)
+        }
+    }
+
+    "assignment" - {
+
+        def reasonFor(assigned: Seq[(String, Maybe[String])], rt: String): Maybe[String] =
+            Maybe.fromOption(assigned.collectFirst { case (`rt`, reason) => reason }).flatten
+
+        // The build forks these suites once per runtime. A fork that registers nothing for its runtime runs 0 leaves under a filter that
+        // matches only container leaves, and the runner fails the whole selection for it.
+        "a fork pinned to a runtime that is not reachable answers for it with the reason" in {
+            val assigned = ContainerRuntime.assignment(
+                windows = false,
+                reachable = Seq("podman" -> true, "docker" -> false),
+                distinct = Seq("podman"),
+                pin = Present("docker")
+            )
+            assert(assigned.map(_._1) == Seq("docker"))
+            assert(reasonFor(assigned, "docker") == Present("docker is not reachable on this host"))
+        }
+
+        "unpinned, every runtime is answered for, runnable or with its reason" in {
+            val assigned = ContainerRuntime.assignment(
+                windows = false,
+                reachable = Seq("podman" -> true, "docker" -> false),
+                distinct = Seq("podman"),
+                pin = Absent
+            )
+            assert(assigned == Seq("podman" -> Absent, "docker" -> Present("docker is not reachable on this host")))
+        }
+
+        "a runtime that reaches the daemon of one kept before it is answered for with that reason" in {
+            val assigned = ContainerRuntime.assignment(
+                windows = false,
+                reachable = Seq("podman" -> true, "docker" -> true),
+                distinct = Seq("podman"),
+                pin = Present("docker")
+            )
+            assert(reasonFor(assigned, "docker") ==
+                Present("docker reaches the same daemon as another runtime here, which runs these leaves"))
+        }
+
+        "on Windows every runtime is answered for with the reason" in {
+            val assigned = ContainerRuntime.assignment(
+                windows = true,
+                reachable = Seq("podman" -> true, "docker" -> true),
+                distinct = Seq("podman", "docker"),
+                pin = Absent
+            )
+            assert(assigned.map(_._1) == Seq("podman", "docker"))
+            assert(assigned.forall(_._2 == Present("the host is Windows and these are Linux-container tests")))
+        }
+
+        "a runnable pinned runtime is answered for alone" in {
+            val assigned = ContainerRuntime.assignment(
+                windows = false,
+                reachable = Seq("podman" -> true, "docker" -> true),
+                distinct = Seq("podman", "docker"),
+                pin = Present("podman")
+            )
+            assert(assigned == Seq("podman" -> Absent))
+        }
+    }
+
     "available" - {
 
         "never reports a runtime whose installed CLI cannot reach its daemon" in {

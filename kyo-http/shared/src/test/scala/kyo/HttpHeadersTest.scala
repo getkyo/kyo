@@ -4,6 +4,138 @@ import kyo.*
 
 class HttpHeadersTest extends BaseHttpTest:
 
+    private val fields: Chunk[(String, String)] = Chunk(
+        "Content-Type" -> "text/plain",
+        "Set-Cookie"   -> "a=1",
+        "set-cookie"   -> "b=2",
+        "Cookie"       -> "s=x; t=y",
+        "X-Trace"      -> "café"
+    )
+
+    /** Headers holding `pairs` the way a parser builds them. */
+    private def parsed(pairs: Chunk[(String, String)]): HttpHeaders =
+        val raw    = new java.io.ByteArrayOutputStream()
+        val offset = new Array[Int](pairs.size * 4)
+        pairs.zipWithIndex.foreach { case ((name, value), i) =>
+            val n = name.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val v = value.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            offset(i * 4) = raw.size()
+            offset(i * 4 + 1) = n.length
+            raw.write(n)
+            offset(i * 4 + 2) = raw.size()
+            offset(i * 4 + 3) = v.length
+            raw.write(v)
+        }
+        val bytes = raw.toByteArray
+        HttpHeaders.parsed(bytes, 0, bytes.length, offset, pairs.size)
+    end parsed
+
+    /** The same fields in every form an `HttpHeaders` can be handed in. */
+    private def forms(pairs: Chunk[(String, String)]): Chunk[(String, HttpHeaders)] = Chunk(
+        "a Seq of pairs"    -> Seq(pairs*),
+        "a List of pairs"   -> pairs.toList,
+        "a Vector of pairs" -> pairs.toVector,
+        "a Chunk of pairs"  -> pairs,
+        "built headers"     -> pairs.foldLeft(HttpHeaders.empty)((h, kv) => h.add(kv._1, kv._2)),
+        "parsed headers"    -> parsed(pairs)
+    )
+
+    private def content(h: HttpHeaders): Chunk[(String, String)] =
+        h.foldLeft(Chunk.empty[(String, String)])((acc, n, v) => acc.append((n, v)))
+
+    private def wire(h: HttpHeaders): String =
+        val buf = new kyo.net.internal.util.GrowableByteBuffer()
+        h.writeToBuffer(buf)
+        new String(buf.toByteArray, java.nio.charset.StandardCharsets.UTF_8)
+    end wire
+
+    "every form" - {
+        forms(fields).foreach { (form, h) =>
+            form - {
+                "size, isEmpty and nonEmpty" in {
+                    assert(h.size == 5)
+                    assert(!h.isEmpty)
+                    assert(h.nonEmpty)
+                }
+                "get is case-insensitive and answers the first match" in {
+                    assert(h.get("content-type") == Present("text/plain"))
+                    assert(h.get("SET-COOKIE") == Present("a=1"))
+                    assert(h.get("X-Trace") == Present("café"))
+                    assert(h.get("X-Missing") == Absent)
+                }
+                "getAll" in {
+                    assert(h.getAll("Set-Cookie") == Chunk("a=1", "b=2"))
+                    assert(h.getAll("X-Missing") == Chunk.empty)
+                }
+                "contains" in {
+                    assert(h.contains("cookie"))
+                    assert(!h.contains("X-Missing"))
+                }
+                "foreach and foldLeft visit every field in order" in {
+                    val seen = scala.collection.mutable.ArrayBuffer.empty[(String, String)]
+                    h.foreach((n, v) => seen += ((n, v)))
+                    assert(Chunk.from(seen) == fields)
+                    assert(content(h) == fields)
+                }
+                "add appends" in {
+                    assert(content(h.add("X-New", "v")) == fields.append("X-New" -> "v"))
+                    assert(h.add("Content-Length", 42).get("Content-Length") == Present("42"))
+                    assert(content(h) == fields)
+                }
+                "set replaces every field of that name" in {
+                    assert(content(h.set("set-cookie", "c=3")) ==
+                        Chunk("Content-Type" -> "text/plain", "Cookie" -> "s=x; t=y", "X-Trace" -> "café", "set-cookie" -> "c=3"))
+                }
+                "remove drops every field of that name" in {
+                    assert(content(h.remove("SET-COOKIE")) ==
+                        Chunk("Content-Type" -> "text/plain", "Cookie" -> "s=x; t=y", "X-Trace" -> "café"))
+                }
+                "concat with every other form" in {
+                    forms(Chunk("X-Other" -> "o")).foreach { (_, other) =>
+                        assert(content(h.concat(other)) == fields.append("X-Other" -> "o"))
+                        assert(content(other.concat(h)) == ("X-Other" -> "o") +: fields)
+                    }
+                }
+                "writeToBuffer writes each field as a header line" in {
+                    assert(wire(h) ==
+                        "Content-Type: text/plain\r\nSet-Cookie: a=1\r\nset-cookie: b=2\r\nCookie: s=x; t=y\r\nX-Trace: café\r\n")
+                }
+                "invalidField finds nothing to refuse" in {
+                    assert(h.invalidField == Absent)
+                }
+                "cookies" in {
+                    assert(h.cookie("t") == Present("y"))
+                    assert(h.cookies == Seq("s" -> "x", "t" -> "y"))
+                    assert(h.responseCookie("b") == Present("2"))
+                    assert(h.addCookie("sid", "v1").getAll("Set-Cookie").last == "sid=v1")
+                }
+            }
+        }
+    }
+
+    "every empty form holds no headers" in {
+        forms(Chunk.empty).foreach { (form, h) =>
+            assert(h.isEmpty, form)
+            assert(h.size == 0, form)
+            assert(h.get("Host") == Absent, form)
+            assert(content(h) == Chunk.empty, form)
+            assert(wire(h) == "", form)
+            assert(h.invalidField == Absent, form)
+        }
+        succeed
+    }
+
+    "pairs a writer must refuse are reported like built ones" - {
+        "a value carrying CRLF" in {
+            val h: HttpHeaders = List("X-Ok" -> "1", "X-Trace" -> "bar\r\nX-Admin: true")
+            assert(h.invalidField == Present("the value of header 'X-Trace'"))
+        }
+        "a name that is not a token, by its index" in {
+            val h: HttpHeaders = Vector("X-Ok" -> "1", "X Bad" -> "v")
+            assert(h.invalidField == Present("the name of the header at index 1"))
+        }
+    }
+
     "cookie" - {
         "parses single cookie" in {
             val h = HttpHeaders.empty.add("Cookie", "session=abc123")

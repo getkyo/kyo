@@ -283,6 +283,11 @@ final private[net] class PollerIoDriver private[posix] (
     // multiple carriers, no poll-fiber confinement needed (unlike activeFds/pendingReads/etc; this touches only handle-scoped state).
     private val pendingCloses = java.util.concurrent.ConcurrentHashMap.newKeySet[PosixHandle]()
 
+    // Handles whose fd withdrawal (PosixHandle.FdWithdrawal) has begun and whose closing deregister the poll carrier has not yet applied.
+    // Their close(fd) waits on that apply, so one stranded here is a leaked fd: the terminal teardown completes whatever the loop never
+    // reached, and deregisterFds completes its own once the teardown has finished (the put-then-recheck pairing pendingCloses uses).
+    private val pendingWithdrawals = java.util.concurrent.ConcurrentHashMap.newKeySet[PosixHandle]()
+
     // Missed-readiness tracker for the dropped-edge case under epoll EPOLLET register-once.
     //
     // When an EPOLLIN edge fires on an armed fd and dispatchRead finds no pending read (the consumer is in a backpressure pause, so
@@ -736,8 +741,10 @@ final private[net] class PollerIoDriver private[posix] (
     private def terminalTeardown()(using AllowUnsafe, Frame): Unit =
         terminal.set(true)
         drainFifos()
+        sweepPendingWithdrawals()
         sweepPendingCloses()
         teardownComplete.set(true)
+        sweepPendingWithdrawals()
         sweepPendingCloses()
         val reason = closeReason
         if reason != null && closeTeardownClaim.compareAndSet(false, true) then closeTeardown(reason)
@@ -1095,6 +1102,7 @@ final private[net] class PollerIoDriver private[posix] (
       * queued after it runs.
       */
     private def writeTls(handle: PosixHandle, data: Span[Byte], engine: TlsEngine)(using AllowUnsafe, Frame): WriteResult =
+        handle.queueWrite(data.size)
         submitEngineOp { () =>
             // A failed acquire means the handle was closed before this op got a turn (or this op was stranded and force-discharged by a
             // terminal sweep): silently skip the write rather than touching the (possibly freed) engine/buffers. The caller already saw
@@ -1104,10 +1112,12 @@ final private[net] class PollerIoDriver private[posix] (
                     // Encrypt the plaintext through the shared engine loop, appending each drained ciphertext chunk to the pending tail; then
                     // send as much of the tail as the socket accepts (the poller's inline-send flush). The engine loop is shared with the
                     // io_uring driver; the inline send + writability re-arm below are the poller's send mechanism.
-                    discard(encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)))
+                    try discard(encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)))
+                    finally handle.landQueuedWrite(data.size)
                     flushPending(handle)
                 finally discard(handle.endWrite())
                 end try
+            else handle.landQueuedWrite(data.size)
             end if
         }
         // The pump always sees Done; the actual send runs on the FIFO worker carrier after engine ops complete.
@@ -1269,12 +1279,18 @@ final private[net] class PollerIoDriver private[posix] (
         // deregister removal also tried to fail them (it does not), there would be no double-completion hazard.
         // Pair each OpDeregister with the handle on deregIntake so the apply can id-guard the removal. The offer precedes the submitChange
         // on this one carrier, so the poll carrier sees the handle by the time it observes the command (the changeQueue offer publishes it).
+        // A closing withdrawal begins before the submit, so every registration the poll carrier applies after the deregister sees it and
+        // is skipped (applyRegistration).
+        if fdClosing then
+            handle.beginFdWithdrawal()
+            discard(pendingWithdrawals.add(handle))
         deregIntake.offer(handle)
         submitChange(packCmd(OpDeregister, handle.readFd, fdClosing))
         if handle.writeFd != handle.readFd then
             deregIntake.offer(handle)
             submitChange(packCmd(OpDeregister, handle.writeFd, fdClosing))
         end if
+        if fdClosing && teardownComplete.get() then completeFdWithdrawal(handle)
         val closed = Closed(handleLabel(handle), handle.createdAt, "canceled")
         handle.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
         handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
@@ -1290,6 +1306,36 @@ final private[net] class PollerIoDriver private[posix] (
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         // Public IoDriver cancel: the fd is still open (live-fd withdrawal). EV_DELETE must execute on kqueue to prevent stale events.
         deregisterFds(handle, fdClosing = false)
+
+    /** Claims inline: a registration applies on the poll carrier, after this claim if it reads the claim at all, and every registration for a
+      * recycled number comes from its new owner and applies later on that carrier, overwriting any entry a racing dead arm left behind. The
+      * close itself then waits for the fd's closing withdrawal when one has begun, so no interest change for the fd reaches the kernel
+      * alongside close(2) (see [[PosixHandle.FdWithdrawal]]).
+      */
+    def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        if handle.claimFdClose() then handle.runAfterFdWithdrawal(closeFd)
+
+    /** The listen fd closes once the poll carrier has applied its closing deregister, and the close removes its kqueue/epoll interest.
+      * Withdrawing it as live instead would have the poll carrier issue an EV_DELETE for the same fd at any point relative to that close,
+      * and closing it before the apply would let a queued accept arm's EV_ADD run during the close (see [[PosixHandle.FdWithdrawal]]).
+      */
+    def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        try deregisterFds(handle, fdClosing = true)
+        finally releaseFd(handle, closeFd)
+
+    /** Release the close(fd) held for this handle's withdrawal. Called on the poll carrier once the handle's last closing deregister is
+      * applied, and by the teardown paths for a withdrawal the loop will never apply.
+      */
+    private def completeFdWithdrawal(handle: PosixHandle)(using AllowUnsafe): Unit =
+        discard(pendingWithdrawals.remove(handle))
+        handle.completeFdWithdrawal()
+
+    private def sweepPendingWithdrawals()(using AllowUnsafe): Unit =
+        val it = pendingWithdrawals.iterator()
+        while it.hasNext do
+            completeFdWithdrawal(it.next())
+        end while
+    end sweepPendingWithdrawals
 
     /** Claim this handle's fd close (the one-shot [[PosixHandle.claimFdClose]]) and, if won, shut it down immediately and install the deferred
       * real `close(fd)` as [[PosixHandle.fdCloseSink]] -- the shared claim-then-defer dance every abrupt (non-`close_notify`) close path on
@@ -1533,15 +1579,12 @@ final private[net] class PollerIoDriver private[posix] (
                 // gone, so nothing else can touch the poll-fiber-confined maps closeTeardown clears.
                 if teardownComplete.get() && closeTeardownClaim.compareAndSet(false, true) then closeTeardown(closed)
             else
-                // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch. Tear down directly.
-                closeTeardown(closed)
+                // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch, and this carrier runs the
+                // terminal exit itself. Its final drain and pending-close sweeps are what discharge work queued before this close: a TLS
+                // closeHandle's fd close and the writes ahead of it sit on the engine FIFO, and no other consumer will ever run them.
+                terminalTeardown()
                 backend.close(pollerFd)
                 freeScratch()
-                // Mark the teardown finished on this path too. No loop ever ran, so drainFifos will never run either, which is exactly
-                // what these flags are read to mean: submitEngineOp's recheck drains a late op here instead of leaving it queued for a
-                // consumer that does not exist, and closeHandle self-closes inline instead of deferring to that same absent consumer.
-                terminal.set(true)
-                teardownComplete.set(true)
             end if
         end if
     end close
@@ -2471,14 +2514,17 @@ final private[net] class PollerIoDriver private[posix] (
         Maybe(takeRegistration(fd, kind)) match
             case Present(reg) =>
                 val handle = reg.handle
-                if handle.isClosing() then
-                    // A closing handle must never (re-)claim its fd. The ReadPump always re-arms (ReadPump.requestNextRead), so a read re-arm can
-                    // race the connection close: by the time this registration applies on the poll carrier, the handle's fd may already be closed
-                    // and recycled into a NEW connection. Applying it would overwrite the new owner's activeFds/pendingReads entry and (epoll)
-                    // MOD-re-encode the kernel event under the dead handle's id, so the new connection's reads are evicted and never dispatch (a
-                    // strand). Skip the registration entirely: fail the dangling promise Closed so its consumer tears down instead of hanging, then
-                    // return IdNoCheck so the caller skips backend.registerRead and the missed-edge re-dispatch. This is the register-side dual of
-                    // dispatchRead's beginDispatch guard and the OpDeregister id-guard; a live handle still registers normally below.
+                if !handle.ownsFd() then
+                    // A handle that no longer owns its fd must never (re-)claim it. A read re-arm (ReadPump.requestNextRead always re-arms) or an
+                    // accept re-arm (the accept loop's isClosed check is not atomic with the close) can race the close: by the time this
+                    // registration applies on the poll carrier, the fd may already be closed and recycled into a NEW connection or listener.
+                    // Applying it would overwrite the new owner's activeFds/pending entry and (epoll) MOD-re-encode the kernel event under the
+                    // dead handle's id, so the new owner's events go to the dead handle; on kqueue its EV_ADD could also run during close(2) of
+                    // the fd, which XNU can livelock on. Skip the registration entirely: fail the dangling promise Closed so its consumer tears
+                    // down instead of hanging, then return IdNoCheck so the caller skips backend.registerRead and the missed-edge re-dispatch.
+                    // This is the register-side dual of dispatchRead's beginDispatch guard and the OpDeregister id-guard. Every later
+                    // registration for the number comes from its new owner and applies after this one on this carrier, so the check needs no
+                    // ordering beyond the claim or withdrawal landing before close(fd).
                     val res = kind match
                         case RegKind.Accept => s"listener ${handleLabel(handle)}"
                         case _              => s"connection ${handleLabel(handle)}"
@@ -2644,6 +2690,9 @@ final private[net] class PollerIoDriver private[posix] (
                             h.pendingAcceptPromise = Absent
                         end if
                     end if
+                    // Every registration of h queued before this command has now been applied, and every later one is skipped, so no EV_ADD
+                    // for the fd can overlap its close from here on. A split-fd handle submits its write fd's deregister last.
+                    if fdClosing && fd == h.writeFd then completeFdWithdrawal(h)
                 case Absent =>
                     // No paired handle (the offer-before-submit ordering prevents this in practice). Safe default: remove nothing rather than risk
                     // evicting a recycled fd's new owner.

@@ -1,6 +1,5 @@
-package kyo.mime
+package kyo
 
-import kyo.*
 import kyo.internal.mime.Grammar
 
 /** The failures of kyo-mime, all at the construction or the parsing of a value: a media type or a disposition whose text is not one, a
@@ -38,11 +37,11 @@ object MimeException:
 
 end MimeException
 
-/** A [[MediaType]] was parsed from text that is not one, or constructed from parts that are not. */
+/** A [[kyo.mime.MediaType]] was parsed from text that is not one, or constructed from parts that are not. */
 final case class MimeInvalidMediaTypeException(violation: MimeException.Violation)(using Frame)
     extends MimeException(s"invalid media type: ${violation.describe}")
 
-/** A [[Disposition]] was parsed from text that is not one, or constructed from parts that are not. */
+/** A [[kyo.mime.Disposition]] was parsed from text that is not one, or constructed from parts that are not. */
 final case class MimeInvalidDispositionException(violation: MimeException.Violation)(using Frame)
     extends MimeException(s"invalid disposition: ${violation.describe}")
 

@@ -99,7 +99,7 @@ class MacosBindingsTest extends kyo.test.Test[Any]:
                 "the statfs struct layout this binding reads is macOS-specific"
             )
             val bindings = Ffi.load[MacosBindings]
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 val rootCell     = handles.diskStore("mbtest-realhost-root")
                 val missingCell  = handles.diskStore("mbtest-realhost-missing")
@@ -122,7 +122,7 @@ class MacosBindingsTest extends kyo.test.Test[Any]:
             val stub = new StubBindings
             stub.vmStatisticsFn = _ => 1
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 machine = new MachineMacos(handles, sampler)
             yield
@@ -151,7 +151,7 @@ class MacosBindingsTest extends kyo.test.Test[Any]:
             buf.close()
             assert(snap.mounts == Chunk("/mbtest-alpha", "/mbtest-beta")) // devfs dropped
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 disk = new MacosDisk(handles)
             yield
                 disk.read(stub)
@@ -166,7 +166,7 @@ class MacosBindingsTest extends kyo.test.Test[Any]:
             val stub = new StubBindings
             stub.mountsFn = (_, _) => 0
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 disk = new MacosDisk(handles)
             yield
                 disk.read(stub) // count == 0: no throw, store set stays empty
@@ -189,7 +189,7 @@ class MacosBindingsTest extends kyo.test.Test[Any]:
             stub.statfsFn = (path, out) =>
                 statfsCallCount += 1; out.set(0, 700L); out.set(1, 300L); 0
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 disk = new MacosDisk(handles)
             yield
                 disk.read(stub)              // 1st read: derives one store

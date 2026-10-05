@@ -518,6 +518,15 @@ class IonTest extends kyo.test.Test[Any]:
             )
         }
 
+        "rejects non-finite Ion floats for an integral type, not as a fraction" in {
+            val failures = Chunk("nan", "+inf", "-inf").map { text =>
+                Ion.decode[Int](text) match
+                    case Result.Failure(e: TypeMismatchException) => (e.expected, e.actual)
+                    case other                                    => ("not a type mismatch", other.toString)
+            }
+            assert(failures == Chunk.fill(3)(("Int", "a non-finite number")), failures.toString)
+        }
+
         "rejects trailing content after the decoded root value" in {
             assertFailure(
                 Ion.decode[Int]("0 1"),
@@ -637,6 +646,165 @@ class IonTest extends kyo.test.Test[Any]:
             assert(decoded.byId.is(value.byId))
         }
 
+    }
+
+    private def wirePin[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        wireDecodes(value, wire, schema)
+        wireWrites(value, wire, schema)
+    end wirePin
+
+    private def wireDecodes[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(Ion.decode[A](wire) == Result.succeed(value))
+    end wireDecodes
+
+    private def wireWrites[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(Ion.encode(value) == wire)
+    end wireWrites
+
+    "wire pins" - {
+        "a record with a collection and a nested record" in {
+            wirePin(
+                WCValues.record,
+                "{name:\"Ann\",age:41,active:true,score:2.5e0,tags:[\"a\",\"b\"],inner:{x:3,label:\"in\"}}",
+                summon[Schema[WCRecord]]
+            )
+        }
+        "fields renamed and aliased by annotation: the renamed-last order decodes and declaration order is written" in {
+            wireDecodes(WCValues.renamed, "{homeCity:\"Lisbon\",user_name:\"ann\"}", summon[Schema[WCRenamed]])
+            wireWrites(WCValues.renamed, "{user_name:\"ann\",homeCity:\"Lisbon\"}", summon[Schema[WCRenamed]])
+        }
+        "fields under a naming convention, one renamed by annotation" in {
+            wirePin(WCValues.cased, "{first_name:\"Ann\",ID:9}", summon[Schema[WCCased]])
+        }
+        "a flattened record: the nested form decodes and the flat form is written" in {
+            wireDecodes(WCValues.person, "{name:\"Ann\",address:{street:\"Main St\",zipCode:\"97201\"}}", summon[Schema[WCPerson]])
+            wireWrites(WCValues.person, "{name:\"Ann\",street:\"Main St\",zipCode:\"97201\"}", summon[Schema[WCPerson]])
+        }
+        "a flattened record under a naming convention: the nested form decodes" in {
+            wireDecodes(
+                WCValues.personC,
+                "{full_name:\"Ann Lee\",home_address:{cityName:\"Portland\",ZIP:\"97201\"}}",
+                summon[Schema[WCPersonCased]]
+            )
+        }
+        "a variant under the wrapper form" in {
+            wirePin(WCValues.circle: WCShape, "{WCCircle:{radius:1.5e0}}", summon[Schema[WCShape]])
+        }
+        "a case-object variant under the wrapper form" in {
+            wirePin(WCValues.empty: WCShape, "{WCEmpty:{}}", summon[Schema[WCShape]])
+        }
+        "a variant under a discriminator" in {
+            wirePin(WCValues.circle: WCShape, "{type:\"WCCircle\",radius:1.5e0}", WCShapes.discriminated)
+        }
+        "a case-object variant under a discriminator" in {
+            wirePin(WCValues.empty: WCShape, "{type:\"WCEmpty\"}", WCShapes.discriminated)
+        }
+        "a variant under the adjacent form" in {
+            wirePin(WCValues.square: WCShape, "{t:\"WCSquare\",c:{side:4}}", WCShapes.adjacent)
+        }
+        "a variant under tupleTagged" in {
+            wirePin(WCValues.square: WCShape, "[\"WCSquare\",{side:4}]", WCShapes.tupleTagged)
+        }
+        "a variant under tupleFlat" in {
+            wirePin(WCValues.square: WCShape, "[\"WCSquare\",4]", WCShapes.tupleFlat)
+        }
+        "a variant under untagged" in {
+            wirePin(WCValues.square: WCShape, "{side:4}", WCShapes.untagged)
+        }
+        "a variant under a naming convention with an alias" in {
+            wirePin(WCValues.circle: WCShape, "{type:\"wc_circle\",radius:1.5e0}", WCShapes.snake)
+        }
+        "a renamed variant under an annotated discriminator" in {
+            wirePin(WCValues.opened: WCEvent, "{kind:\"opened\",id:1}", summon[Schema[WCEvent]])
+        }
+        "a variant under an annotated discriminator" in {
+            wirePin(WCValues.closed: WCEvent, "{kind:\"WCClosed\",id:2,reason:\"done\"}", summon[Schema[WCEvent]])
+        }
+        "a record of maps of every key kind: the pair form decodes and the object form is written" in {
+            wireDecodes(
+                WCValues.maps,
+                "{byName:{a:1,b:2},byInt:[{key:1,value:\"one\"},{key:2,value:\"two\"}],byLong:[{key:10,value:true}],byChar:[{key:\"x\",value:1}],byRecord:[{key:{x:1,label:\"k\"},value:5}],byId:[{key:\"id1\",value:7}]}",
+                summon[Schema[WCMaps]]
+            )
+            wireWrites(
+                WCValues.maps,
+                "{byName:{a:1,b:2},byInt:[{key:1,value:\"one\"},{key:2,value:\"two\"}],byLong:[{key:10,value:true}],byChar:[{key:\"x\",value:1}],byRecord:[{key:{x:1,label:\"k\"},value:5}],byId:{id1:7}}",
+                summon[Schema[WCMaps]]
+            )
+        }
+        "a map keyed by String" in {
+            wirePin(WCValues.mapByName, "{m:{a:1,b:2}}", summon[Schema[WCMapByName]])
+        }
+        "a map keyed by Int" in {
+            wirePin(WCValues.mapByInt, "{m:[{key:1,value:\"one\"},{key:2,value:\"two\"}]}", summon[Schema[WCMapByInt]])
+        }
+        "a map keyed by Long" in {
+            wirePin(WCValues.mapByLong, "{m:[{key:10,value:true}]}", summon[Schema[WCMapByLong]])
+        }
+        "a map keyed by Char" in {
+            wirePin(WCValues.mapByChar, "{m:[{key:\"x\",value:1}]}", summon[Schema[WCMapByChar]])
+        }
+        "a map keyed by a record" in {
+            wirePin(WCValues.mapByRecord, "{m:[{key:{x:1,label:\"k\"},value:5}]}", summon[Schema[WCMapByRecord]])
+        }
+        "a map keyed by a string-backed type: the pair form decodes and the object form is written" in {
+            wireDecodes(WCValues.mapById, "{m:[{key:\"id1\",value:7},{key:\"id2\",value:8}]}", summon[Schema[WCMapById]])
+            wireWrites(WCValues.mapById, "{m:{id1:7,id2:8}}", summon[Schema[WCMapById]])
+        }
+        "fields holding their defaults" in {
+            wirePin(WCValues.defaultsAll, "{name:\"d\",count:7,label:\"x\",size:3}", summon[Schema[WCDefaults]])
+        }
+        "fields overriding their defaults: the bytes written" in {
+            wireWrites(WCValues.defaultsSet, "{name:\"d\",count:1,label:\"y\",note:\"n\",size:null}", summon[Schema[WCDefaults]])
+        }
+        "present optional fields" in {
+            wirePin(WCValues.maybePresent, "{a:1,b:\"s\",c:{x:2,label:\"c\"},d:4}", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields" in {
+            wirePin(WCValues.maybeAbsent, "{}", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields under omitNone" in {
+            wirePin(WCValues.maybeAbsent, "{}", WCMaybes.omitNone)
+        }
+        "a numbered variant under a discriminator" in {
+            wirePin(WCNumA(5): WCNumbered, "{type:1,x:5}", summon[Schema[WCNumbered]])
+        }
+        "a second numbered variant under a discriminator" in {
+            wirePin(WCNumB("b"): WCNumbered, "{type:2,s:\"b\"}", summon[Schema[WCNumbered]])
+        }
+        "a numbered variant under the wrapper form, written by name" in {
+            wirePin(WCWrapA(3): WCNumberedWrapped, "{WCWrapA:{x:3}}", summon[Schema[WCNumberedWrapped]])
+        }
+        "a numbered case object under the wrapper form, written by name" in {
+            wirePin(WCWrapB: WCNumberedWrapped, "{WCWrapB:{}}", summon[Schema[WCNumberedWrapped]])
+        }
+        "a tagOnly variant" in {
+            wirePin(WCLow: WCLevel, "\"WCLow\"", summon[Schema[WCLevel]])
+        }
+        "a renamed tagOnly variant" in {
+            wirePin(WCHigh: WCLevel, "\"hi\"", summon[Schema[WCLevel]])
+        }
+        "a known variant beside a catch-all" in {
+            wirePin(WCKnown(1): WCOpen, "{type:\"WCKnown\",x:1}", summon[Schema[WCOpen]])
+        }
+    }
+
+    "an Absent field whose default is Present round-trips as Absent" in {
+        val decoded = Ion.decode[WCDefaults](Ion.encode(WCValues.defaultsSet))
+        assert(decoded == Result.succeed(WCValues.defaultsSet), s"decoded $decoded")
+    }
+
+    "a catch-all captures an integer as an Integer, as every other format does" in {
+        val decoded = Ion.decode[WCOpen]("{type:\"zzz\",y:1}")
+        assert(decoded == Result.succeed(WCValues.other), s"decoded $decoded")
+    }
+
+    "a Short out of range or with a fraction fails with one exception type, read directly or from a captured value" in {
+        val (direct, captured) = CodecTestSupport.shortNarrowing[Ion]
+        assert(direct == Chunk("RangeException", "TypeMismatchException"), direct.toString)
+        assert(captured == direct, s"direct: $direct, captured: $captured")
     }
 
 end IonTest

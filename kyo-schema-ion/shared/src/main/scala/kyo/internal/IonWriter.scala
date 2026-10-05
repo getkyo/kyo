@@ -3,12 +3,16 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.Chunk
 import kyo.Codec.Writer
+import kyo.Frame
 import kyo.Ion
 import kyo.Span
 
-final class IonWriter private (private val out: StringBuilder, private val config: Ion.Config) extends Writer:
+final class IonWriter private (private val out: StringBuilder, private val config: Ion.Config)(using site: Frame) extends Writer:
+
+    override def frame: Frame = site
 
     override def canWriteTopLevelNonObject: Boolean = true
+    override def isSelfDescribing: Boolean          = true
     override def canWriteAnnotations: Boolean       = config.annotationEmissionMode == Ion.AnnotationEmissionMode.Emit
     override def codecName: String                  = "Ion"
 
@@ -267,5 +271,5 @@ object IonWriter:
     private val ReservedSymbols: Set[String] =
         Set("null", "true", "false", "nan", "+inf", "-inf")
 
-    def apply(config: Ion.Config = Ion.Config.Default): IonWriter = new IonWriter(new StringBuilder(256), config)
+    def apply(config: Ion.Config = Ion.Config.Default)(using Frame): IonWriter = new IonWriter(new StringBuilder(256), config)
 end IonWriter
