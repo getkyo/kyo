@@ -8,7 +8,7 @@ package kyo
   * `view_submission`/`view_closed` payload, and `notifyOnClose` must be set for Slack to deliver
   * a `view_closed` event when the user dismisses the modal.
   */
-case class SlackView(
+final case class SlackView(
     `type`: SlackView.Type,
     blocks: Chunk[SlackBlock] = Chunk.empty,
     callbackId: Maybe[String] = Absent,
@@ -22,12 +22,11 @@ case class SlackView(
 object SlackView:
 
     /** The view surface kind. `Modal` and `Home` are the documented values;
-      * `Unknown(raw)` preserves any unmodeled value for forward-safety (the
-      * `DisconnectReason` hand-rolled-Schema precedent).
+      * `Unknown(raw)` preserves any unmodeled value for forward-safety.
       */
     enum Type derives CanEqual:
-        case Modal // wire "modal"
-        case Home  // wire "home"
+        case Modal
+        case Home
         case Unknown(raw: String)
     end Type
 

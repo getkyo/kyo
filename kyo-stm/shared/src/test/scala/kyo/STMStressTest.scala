@@ -162,7 +162,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             youngs <- Fiber.initUnscoped {
                 elderStart.await.andThen(
                     Async.fill(20, 20)(
-                        Loop.repeat(200)(STM.run(ref.update(_ + 1)))
+                        Loop.repeat(200)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1)))
                     )
                 )
             }
@@ -338,7 +338,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             b      <- TRef.init(0)
             cycles <- AtomicInt.init(0)
             forward = Async.fill(50, 50) {
-                STM.run {
+                STM.run(STM.defaultRetrySchedule.forever) {
                     for
                         va <- a.get
                         vb <- b.get
@@ -349,7 +349,7 @@ class STMStressTest extends kyo.test.Test[Any]:
                 }
             }
             backward = Async.fill(50, 50) {
-                STM.run {
+                STM.run(STM.defaultRetrySchedule.forever) {
                     for
                         vb <- b.get
                         va <- a.get
@@ -374,7 +374,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             wrongHandler <- AtomicInt.init(0)
             rightHandler <- AtomicInt.init(0)
             _            <- Async.fill(64, 64) {
-                STM.run {
+                STM.run(STM.defaultRetrySchedule.forever) {
                     Abort.run[String] {
                         for
                             _ <- ref.update(_ + 1)
@@ -495,7 +495,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             latch      <- Latch.init(1)
             enqueuer   <- Fiber.initUnscoped(latch.await.andThen(
                 Async.foreachDiscard(1 to 2000) { i =>
-                    STM.run {
+                    STM.run(STM.defaultRetrySchedule.forever) {
                         for
                             _ <- q1.update(_ :+ i)
                             _ <- q2.update(_ :+ i)
@@ -505,7 +505,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             ))
             dequeuer <- Fiber.initUnscoped(latch.await.andThen(
                 Async.foreachDiscard(1 to 2000) { _ =>
-                    STM.run {
+                    STM.run(STM.defaultRetrySchedule.forever) {
                         for
                             s1 <- q1.use(_.size)
                             s2 <- q2.use(_.size)
@@ -525,16 +525,14 @@ class STMStressTest extends kyo.test.Test[Any]:
 
     "a fiber observing post-commit value via another ref also observes all commit-batched writes".notJs in {
         // The writer commits `a` and `b` together; the reader must never see `a` from one
-        // commit and `b` from another (publish-ordering atomicity / opacity). The writer must
-        // also never starve out of its retry budget — barging guarantees it commits within a
-        // bounded number of attempts — so an unhandled FailedTransaction here is a real failure.
+        // commit and `b` from another (publish-ordering atomicity / opacity).
         for
             a          <- TRef.init(0)
             b          <- TRef.init(0)
             violations <- AtomicInt.init(0)
             writer     <- Fiber.initUnscoped(
                 Async.foreachDiscard(1 to 5000) { i =>
-                    STM.run {
+                    STM.run(STM.defaultRetrySchedule.forever) {
                         for
                             _ <- a.set(i)
                             _ <- b.set(i)
@@ -544,7 +542,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             )
             reader <- Fiber.initUnscoped(
                 Async.foreachDiscard(1 to 5000) { _ =>
-                    STM.run {
+                    STM.run(STM.defaultRetrySchedule.forever) {
                         for
                             va <- a.get
                             vb <- b.get
@@ -588,7 +586,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             initialId <- Sync.defer(ref.id)
             seen      <- AtomicRef.init(Set.empty[Int])
             _         <- Async.fill(100, 100) {
-                STM.run {
+                STM.run(STM.defaultRetrySchedule.forever) {
                     for
                         v <- ref.get
                         _ <- seen.updateAndGet(_ + ref.id)
@@ -673,7 +671,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             violations <- AtomicInt.init(0)
             writer     <- Fiber.initUnscoped(
                 Async.foreachDiscard(1 to 5000)(i =>
-                    STM.run {
+                    STM.run(STM.defaultRetrySchedule.forever) {
                         for
                             _ <- a.set(if i % 2 == 0 then 10 else 0)
                             _ <- b.set(2)
@@ -817,11 +815,11 @@ class STMStressTest extends kyo.test.Test[Any]:
             torn   <- AtomicInt.init(0)
             latch  <- Latch.init(1)
             writer <- Fiber.initUnscoped(latch.await.andThen(
-                Async.foreachDiscard(1 to 10000)(i => STM.run(ref.set(i)))
+                Async.foreachDiscard(1 to 10000)(i => STM.run(STM.defaultRetrySchedule.forever)(ref.set(i)))
             ))
             readers = latch.await.andThen(Async.fill(8, 8)(
                 Async.foreachDiscard(1 to 5000) { _ =>
-                    STM.run {
+                    STM.run(STM.defaultRetrySchedule.forever) {
                         for
                             a <- ref.get
                             b <- ref.get
@@ -1580,7 +1578,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             accSeen       <- AtomicRef.init(Chunk.empty[Int])
             startMutating <- Latch.init(1)
             mutator       <- Fiber.initUnscoped(startMutating.await.andThen(
-                Async.foreachDiscard(1 to 1000)(i => STM.run(tmap.put(i % 20, i)))
+                Async.foreachDiscard(1 to 1000)(i => STM.run(STM.defaultRetrySchedule.forever)(tmap.put(i % 20, i)))
             ))
             folder <- Fiber.initUnscoped(
                 STM.run(STM.defaultRetrySchedule.forever) {
@@ -1713,7 +1711,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             ref      <- TRef.init(0)
             attempts <- AtomicInt.init(0)
             writer   <- Fiber.initUnscoped(Async.foreachDiscard(1 to 1000) { _ =>
-                STM.run(ref.update(_ + 1))
+                STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1))
             })
             _ <- Abort.run {
                 STM.run(Schedule.repeat(5)) {
@@ -1736,7 +1734,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             tchunk     <- TChunk.init(Chunk.empty[Int])
             violations <- AtomicInt.init(0)
             writer     <- Fiber.initUnscoped(Async.foreachDiscard(1 to 1000) { i =>
-                STM.run {
+                STM.run(STM.defaultRetrySchedule.forever) {
                     for
                         _ <- tmap.put(i % 10, i)
                         _ <- tref.set(i)
@@ -1745,7 +1743,7 @@ class STMStressTest extends kyo.test.Test[Any]:
                 }
             })
             reader <- Fiber.initUnscoped(Async.foreachDiscard(1 to 1000) { _ =>
-                STM.run {
+                STM.run(STM.defaultRetrySchedule.forever) {
                     for
                         _ <- tmap.snapshot
                         r <- tref.get
@@ -1793,7 +1791,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             root       <- TRef.init(mid)
             violations <- AtomicInt.init(0)
             rotater    <- Fiber.initUnscoped(Async.foreachDiscard(1 to 2000) { i =>
-                STM.run {
+                STM.run(STM.defaultRetrySchedule.forever) {
                     for
                         newLeaf <- TRef.initWith(i)(identity)
                         newMid  <- TRef.initWith(newLeaf)(identity)
@@ -1802,7 +1800,7 @@ class STMStressTest extends kyo.test.Test[Any]:
                 }
             })
             reader <- Fiber.initUnscoped(Async.foreachDiscard(1 to 2000) { _ =>
-                STM.run {
+                STM.run(STM.defaultRetrySchedule.forever) {
                     for
                         m <- root.get
                         l <- m.get

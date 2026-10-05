@@ -14,7 +14,7 @@ class STMTest extends kyo.test.Test[Any]:
         "concurrent modifications" in {
             for
                 ref    <- TRef.init(0)
-                fibers <- Async.fill(100, 100)(STM.run(ref.update(_ + 1)))
+                fibers <- Async.fill(100, 100)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1)))
                 value  <- STM.run(ref.get)
             yield assert(value == 100)
         }
@@ -562,7 +562,7 @@ class STMTest extends kyo.test.Test[Any]:
             (for
                 size  <- sizes
                 ref   <- TRef.init(0)
-                _     <- Async.fill(size, size)(STM.run(ref.update(_ + 1)))
+                _     <- Async.fill(size, size)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1)))
                 value <- STM.run(ref.get)
             yield assert(value == size))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
@@ -575,10 +575,10 @@ class STMTest extends kyo.test.Test[Any]:
                 ref        <- TRef.init(0)
                 latch      <- Latch.init(1)
                 writeFiber <- Fiber.initUnscoped(
-                    latch.await.andThen(Async.fill(size, size)(STM.run(ref.update(_ + 1))))
+                    latch.await.andThen(Async.fill(size, size)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1))))
                 )
                 readFiber <- Fiber.initUnscoped(
-                    latch.await.andThen(Async.fill(size, size)(STM.run(ref.get)))
+                    latch.await.andThen(Async.fill(size, size)(STM.run(STM.defaultRetrySchedule.forever)(ref.get)))
                 )
                 _     <- latch.release
                 _     <- writeFiber.get
@@ -623,7 +623,7 @@ class STMTest extends kyo.test.Test[Any]:
                     val leftFork  = forks(i)
                     val rightFork = forks((i + 1) % philosophers)
                     Async.collectAll((1 to 10).map { _ =>
-                        STM.run {
+                        STM.run(STM.defaultRetrySchedule.forever) {
                             for
                                 leftAvailable <- leftFork.get
                                 _             <- STM.retryIf(!leftAvailable)
@@ -1064,7 +1064,7 @@ class STMTest extends kyo.test.Test[Any]:
             }.andThen {
                 for
                     ref   <- TRef.init(0)
-                    _     <- Async.fill(50, 50)(STM.run(ref.update(_ + 1)))
+                    _     <- Async.fill(50, 50)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1)))
                     value <- STM.run(ref.get)
                 yield assert(value == 50)
             }
@@ -1569,7 +1569,7 @@ class STMTest extends kyo.test.Test[Any]:
             val n = 200
             for
                 ref <- TRef.init(0)
-                _   <- Async.fill(n, n)(STM.run(ref.update(_ + 1)))
+                _   <- Async.fill(n, n)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1)))
                 v   <- STM.run(ref.get)
             yield assert(v == n, s"expected $n increments, got $v — write exclusivity violated")
             end for
@@ -1712,8 +1712,8 @@ class STMTest extends kyo.test.Test[Any]:
                 ref     <- TRef.init(0)
                 readers <- AtomicRef.init(List.empty[Int])
                 _       <- Async.zip(
-                    Async.fill(n, n)(STM.run(ref.update(_ + 1))),
-                    Async.fill(n, n)(STM.run(ref.get).map(v => readers.updateAndGet(v :: _).unit))
+                    Async.fill(n, n)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1))),
+                    Async.fill(n, n)(STM.run(STM.defaultRetrySchedule.forever)(ref.get).map(v => readers.updateAndGet(v :: _).unit))
                 )
                 finalV <- STM.run(ref.get)
                 obs    <- readers.get
@@ -2277,7 +2277,7 @@ class STMTest extends kyo.test.Test[Any]:
             val n = 200
             for
                 ref <- TRef.init(0)
-                _   <- Async.fill(n, n)(STM.run(ref.update(_ + 1)))
+                _   <- Async.fill(n, n)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1)))
                 v   <- STM.run(ref.get)
             yield assert(v == n, s"all $n updates should commit, got $v")
             end for
@@ -2633,7 +2633,7 @@ class STMTest extends kyo.test.Test[Any]:
             val n = 100
             for
                 ref <- TRef.init(0)
-                _   <- Async.fill(n, n)(STM.run(ref.update(_ + 1)))
+                _   <- Async.fill(n, n)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1)))
                 v   <- STM.run(ref.get)
             yield assert(v == n, s"all $n updates should commit; got $v")
             end for

@@ -308,4 +308,32 @@ class CodexWireTest extends kyo.test.Test[Any]:
         }
     }
 
+    "retryAt reads the retry time a usage-limit message states, in the machine's local zone" in {
+        val message =
+            "You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Oct 3rd, 2026 4:43 PM."
+        val zone = java.time.ZoneId.of("America/Sao_Paulo")
+        assert(CodexWire.retryAt(message, zone) == Present(Instant.fromJava(java.time.Instant.parse("2026-10-03T19:43:00Z"))))
+        assert(CodexWire.retryAt("try again at Jan 1st, 2027 12:05 AM", zone) ==
+            Present(Instant.fromJava(java.time.Instant.parse("2027-01-01T03:05:00Z"))))
+        assert(CodexWire.retryAt("You’ve hit your usage limit.", zone) == Absent, "a message naming no time carries none")
+        assert(CodexWire.retryAt("try again at Foo 3rd, 2026 4:43 PM", zone) == Absent, "an unknown month is not guessed")
+    }
+
+    "turnError reads the reason from an error notification and from a failed turn/completed, and nothing else" in {
+        def event(method: String, json: String) = CodexWire.RpcEvent(method, Json.decode[Structure.Value](json).getOrThrow)
+        val error                               =
+            event(
+                "error",
+                """{"error":{"message":"limit","codexErrorInfo":"usageLimitExceeded"},"willRetry":false,"threadId":"t","turnId":"u"}"""
+            )
+        val failed = event(
+            "turn/completed",
+            """{"threadId":"t","turn":{"id":"u","status":"failed","error":{"message":"limit","codexErrorInfo":"usageLimitExceeded"}}}"""
+        )
+        val completed = event("turn/completed", """{"threadId":"t","turn":{"id":"u","status":"completed","error":null}}""")
+        assert(CodexWire.turnError(error) == Present(("limit", Present("usageLimitExceeded"))))
+        assert(CodexWire.turnError(failed) == Present(("limit", Present("usageLimitExceeded"))))
+        assert(CodexWire.turnError(completed) == Absent)
+    }
+
 end CodexWireTest

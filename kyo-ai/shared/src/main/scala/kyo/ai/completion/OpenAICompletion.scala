@@ -372,8 +372,14 @@ private[completion] object OpenAICompletion extends Completion:
                 // Fitted before mapping, so the wire sees the shape its entry declares. On a single-system
                 // wire, later system messages arrive as user turns behind a prelude naming what they are;
                 // the prefix is this family's serialization idiom.
-                val convert  = (content: String) => UserMessage(s"${Completion.systemInstructionPrefix} $content", Absent)
-                val entries  = Completion.fitSystemMessages(config, ctx.messages, convert).map(toEntry).toList
+                val convert = (content: String) => UserMessage(s"${Completion.systemInstructionPrefix} $content", Absent)
+                // A reasoning-only reply records an assistant turn with no text and no calls. It states nothing,
+                // and Moonshot refuses the whole request that carries one (400, "must not be empty").
+                val spoken = Completion.fitSystemMessages(config, ctx.messages, convert).filter {
+                    case AssistantMessage(content, calls) => !content.isBlank || calls.nonEmpty
+                    case _                                => true
+                }
+                val entries  = spoken.map(toEntry).toList
                 val toolDefs =
                     if tools.isEmpty then Absent
                     else

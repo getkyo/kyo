@@ -58,6 +58,9 @@ final case class DeciderConfig private (
     // Config.credentialed; private so a catalog entry stays pure from the outside.
     private[kyo] def credentialed(key: Maybe[String]): DeciderConfig =
         if key.isDefined then copy(apiKey = key) else this
+
+    // `ScalaRunTime._toString` formats the product field by field without calling this override, so the copy cannot recurse.
+    override def toString: String = scala.runtime.ScalaRunTime._toString(copy(apiKey = apiKey.map(_ => "<redacted>")))
 end DeciderConfig
 
 object DeciderConfig:

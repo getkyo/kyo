@@ -13,37 +13,24 @@ class SlackViewTest extends kyo.test.Test[Any]:
             notifyOnClose = true,
             blocks = Chunk(SlackBlock.Input("Your name", SlackBlock.Element.TextInput(SlackId.ActionId("name"))))
         )
-        Slack.encodeView(view).map { vb =>
-            val json = Json.encode(vb)
-            assert(json.contains("\"modal\""), json)
-            assert(json.contains("\"callback_id\":\"cb1\""), json)
-            assert(json.contains("\"title\":{\"type\":\"plain_text\",\"text\":\"T\"}"), json)
-            assert(json.contains("\"submit\":{\"type\":\"plain_text\",\"text\":\"Go\"}"), json)
-            assert(json.contains("\"close\":{\"type\":\"plain_text\",\"text\":\"Cancel\"}"), json)
-            assert(json.contains("\"private_metadata\":\"meta-123\""), json)
-            assert(json.contains("\"notify_on_close\":true"), json)
-            assert(json.contains("\"type\":\"input\""), json)
-            assert(json.contains("\"type\":\"plain_text_input\""), json)
-        }
+        assert(
+            Json.encode(Slack.encodeView(view)) ==
+                """{"type":"modal","callback_id":"cb1","blocks":[{"type":"input","label":{"type":"plain_text","text":"Your name","emoji":true},"element":{"type":"plain_text_input","action_id":"name","multiline":false},"optional":false}],"title":{"type":"plain_text","text":"T"},"submit":{"type":"plain_text","text":"Go"},"close":{"type":"plain_text","text":"Cancel"},"private_metadata":"meta-123","notify_on_close":true}"""
+        )
     }
 
     "a home view omits title/submit/close AND notify_on_close (which views.publish rejects)" in {
-        Slack.encodeView(SlackView(SlackView.Type.Home, blocks = Chunk(SlackBlock.Header("Home")))).map { vb =>
-            val json = Json.encode(vb)
-            assert(json.contains("\"home\""), json)
-            assert(!json.contains("\"submit\""), s"submit should be omitted: $json")
-            assert(!json.contains("\"close\""), s"close should be omitted: $json")
-            // notify_on_close is a modal-only field; a home view (default notifyOnClose=false) must not carry it,
-            // or views.publish fails with invalid_arguments (the live-validation finding).
-            assert(!json.contains("notify_on_close"), s"notify_on_close must be omitted when false: $json")
-            assert(json.contains("\"type\":\"header\""), json)
-        }
+        // notify_on_close is a modal-only field; views.publish answers invalid_arguments when a home view carries it.
+        assert(
+            Json.encode(Slack.encodeView(SlackView(SlackView.Type.Home, blocks = Chunk(SlackBlock.Header("Home"))))) ==
+                """{"type":"home","blocks":[{"type":"header","text":{"type":"plain_text","text":"Home","emoji":true}}]}"""
+        )
     }
 
     "SlackView.Type maps the closed set to/from its wire string and preserves Unknown" in {
-        assert(Json.encode(SlackView.Type.Modal: SlackView.Type).contains("modal"))
-        assert(Json.encode(SlackView.Type.Home: SlackView.Type).contains("home"))
-        assert(Json.encode(SlackView.Type.Unknown("workflow_step"): SlackView.Type).contains("workflow_step"))
+        assert(Json.encode(SlackView.Type.Modal: SlackView.Type) == "\"modal\"")
+        assert(Json.encode(SlackView.Type.Home: SlackView.Type) == "\"home\"")
+        assert(Json.encode(SlackView.Type.Unknown("workflow_step"): SlackView.Type) == "\"workflow_step\"")
         assert(Json.decode[SlackView.Type]("\"home\"") == Result.Success(SlackView.Type.Home))
         assert(Json.decode[SlackView.Type]("\"modal\"") == Result.Success(SlackView.Type.Modal))
         assert(Json.decode[SlackView.Type]("\"new_kind\"") == Result.Success(SlackView.Type.Unknown("new_kind")))
