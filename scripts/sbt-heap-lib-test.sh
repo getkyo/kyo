@@ -27,7 +27,13 @@ for role in compile docs classnames test-jvm run link publish tool; do
 done
 
 check "a role above runner memory less the reserve is clamped to it" \
-    "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap_mb link)" "$((7168 - SBT_HEAP_RESERVE_MB))"
+    "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap_mb compile)" "$((7168 - SBT_HEAP_RESERVE_MB))"
+for role in compile docs test-jvm run link publish tool; do
+    check "$role on a 16GB runner is its table value" "$(SBT_HEAP_MEMORY_MB=16384 sbt_heap_mb "$role")" "$(sbt_heap_role_mb "$role")"
+done
+check "link on the 7GB macos-14 runner keeps the 5120MB measured there" "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap_mb link)" "5120"
+check "run on the 7GB macos-14 runner is 3072MB" "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap_mb run)" "3072"
+check "tool on the 7GB macos-14 runner is 3072MB" "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap_mb tool)" "3072"
 check "a role within runner memory less the reserve is not clamped" \
     "$(SBT_HEAP_MEMORY_MB=16384 sbt_heap_mb compile)" "$(sbt_heap_role_mb compile)"
 check "a runner smaller than the reserve still gets 1GB" "$(SBT_HEAP_MEMORY_MB=2048 sbt_heap_mb tool)" "1024"

@@ -68,26 +68,73 @@ class PosixStructsAbiTest extends Test:
 
     "manual struct stat reader matches C" - {
         // Direct guard for PosixStat.modeOffset across the OS/arch matrix. struct stat is NOT laid out uniformly across Linux arches
-        // (x86_64 puts st_mode at offset 24; aarch64/asm-generic at offset 16; macOS at offset 4). fstat a real regular file and assert the
-        // decoded mode masks to S_IFREG, which holds only when modeOffset matches the host's struct stat. A wrong offset lands on an adjacent
-        // field (st_uid / st_nlink) whose value does not mask to S_IFREG, which is exactly the aarch64 misclassification this guards against.
-        "PosixStat.stMode reads S_IFREG from a real fstat'd regular file (arch-aware st_mode offset)" in {
+        // (x86_64 puts st_mode at offset 24; aarch64/asm-generic at offset 16), nor across macOS arches (the unsuffixed fstat is the
+        // legacy 32-bit-inode entry point on x86_64, offset 8; arm64 has only the 64-bit-inode one, offset 4). fstat a real regular file with
+        // a pinned 0600 mode and assert all 16 decoded bits, S_IFREG | 0600. Masking to S_IFREG alone is not enough: a wrong offset on macOS
+        // x86_64 reads the low 16 bits of st_ino, which mask to S_IFREG for one inode in 16, so the check passed or failed by inode number.
+        "PosixStat.stMode reads S_IFREG | 0600 from a real fstat'd regular file (arch-aware st_mode offset)" in {
             if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
                 cancel("fstat round-trips through the POSIX SocketBindings, whose symbols are absent from the Windows CRT")
-            val sockets     = Ffi.load[SocketBindings]
-            val (tempFd, _) = PosixTestSockets.tempFileFd(Array.empty[Byte])
-            val stat        = Buffer.alloc[Byte](PosixConstants.statSize)
+            val sockets        = Ffi.load[SocketBindings]
+            val (tempFd, file) = PosixTestSockets.tempFileFd(Array.empty[Byte])
+            val stat           = Buffer.alloc[Byte](PosixConstants.statSize)
             try
-                assert(sockets.fstat(tempFd, stat).value >= 0, "fstat of the temp regular file failed")
-                val mode = PosixStat.stMode(stat)
                 assert(
-                    (mode & PosixConstants.S_IFMT) == PosixConstants.S_IFREG,
-                    s"st_mode 0x${mode.toHexString} did not mask to S_IFREG (0x${PosixConstants.S_IFREG.toHexString}); modeOffset=${PosixStat.modeOffset} is wrong for this arch"
+                    file.setReadable(false, false) && file.setWritable(false, false) && file.setExecutable(false, false) &&
+                        file.setReadable(true, true) && file.setWritable(true, true),
+                    "could not pin the temp file's mode to 0600"
+                )
+                assert(sockets.fstat(tempFd, stat).value >= 0, "fstat of the temp regular file failed")
+                val mode     = PosixStat.stMode(stat) & 0xffff
+                val expected = PosixConstants.S_IFREG | 0x180
+                assert(
+                    mode == expected,
+                    s"st_mode 0x${mode.toHexString} is not S_IFREG | 0600 (0x${expected.toHexString}); modeOffset=${PosixStat.modeOffset} is wrong for this arch"
                 )
             finally
                 stat.close()
                 PosixTestSockets.closeTempFd(tempFd)
             end try
+        }
+
+        // The fstat leaf above checks only the host's layout. Each layout here is the C struct's leading fields, little-endian, with
+        // st_mode = S_IFREG | 0644 and every neighbouring field set to a value that is not a valid mode, so an offset that lands on a
+        // neighbour reads something else. The macOS x86_64 layout is the one the binding gets from the unsuffixed `fstat` symbol: the
+        // SDK header maps C callers to `fstat$INODE64`, but a by-name lookup resolves the legacy 32-bit-inode entry point.
+        "PosixStat decodes st_mode from every supported struct stat layout" - {
+            val mode = PosixConstants.S_IFREG | 0x1a4
+
+            def decoded(fields: Seq[(Int, Int, Long)], isMac: Boolean, isMacOrBsd: Boolean, isX86_64: Boolean): Int =
+                val buf = Buffer.alloc[Byte](PosixConstants.statSize)
+                try
+                    for (offset, width, value) <- fields; i <- 0 until width do
+                        buf.set(offset + i, ((value >>> (8 * i)) & 0xff).toByte)
+                    PosixStat.stModeFor(buf, isMac, isMacOrBsd, isX86_64) & 0xffff
+                finally buf.close()
+                end try
+            end decoded
+
+            "macOS x86_64 (legacy 32-bit-inode): st_dev u32 @0, st_ino u32 @4, st_mode u16 @8, st_nlink u16 @10" in {
+                val fields = Seq((0, 4, 0x01000004L), (4, 4, 0x0012abcdL), (8, 2, mode.toLong), (10, 2, 1L))
+                val got    = decoded(fields, isMac = true, isMacOrBsd = true, isX86_64 = true)
+                assert(got == mode, s"read 0x${got.toHexString}, expected 0x${mode.toHexString}")
+            }
+
+            "macOS arm64 and BSD (64-bit-inode): st_dev u32 @0, st_mode u16 @4, st_nlink u16 @6, st_ino u64 @8" in {
+                val fields = Seq((0, 4, 0x01000004L), (4, 2, mode.toLong), (6, 2, 1L), (8, 8, 0x0012abcdL))
+                assert(decoded(fields, isMac = true, isMacOrBsd = true, isX86_64 = false) == mode)
+                assert(decoded(fields, isMac = false, isMacOrBsd = true, isX86_64 = false) == mode)
+            }
+
+            "Linux x86_64: st_dev u64 @0, st_ino u64 @8, st_nlink u64 @16, st_mode u32 @24" in {
+                val fields = Seq((0, 8, 0x803L), (8, 8, 0x0012abcdL), (16, 8, 1L), (24, 4, mode.toLong))
+                assert(decoded(fields, isMac = false, isMacOrBsd = false, isX86_64 = true) == mode)
+            }
+
+            "Linux aarch64 (asm-generic): st_dev u64 @0, st_ino u64 @8, st_mode u32 @16, st_nlink u32 @20" in {
+                val fields = Seq((0, 8, 0x803L), (8, 8, 0x0012abcdL), (16, 4, mode.toLong), (20, 4, 1L))
+                assert(decoded(fields, isMac = false, isMacOrBsd = false, isX86_64 = false) == mode)
+            }
         }
     }
 
