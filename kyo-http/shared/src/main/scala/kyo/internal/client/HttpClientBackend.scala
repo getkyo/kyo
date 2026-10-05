@@ -1059,7 +1059,7 @@ final private[kyo] class HttpClientBackend private (
                     Fiber.Promise.init[Unit, Any].map { peerClosedPromise =>
                         val closeFn: (Int, String) => Unit < Async = (code, reason) =>
                             closeReasonRef.set(Present((code, reason))).andThen {
-                                outbound.closeDiscard
+                                WebSocketCodec.closeKeepingQueued(outbound)
                             }
                         val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
 
@@ -1077,7 +1077,8 @@ final private[kyo] class HttpClientBackend private (
                             }
                         }.map { readFiber =>
                             Fiber.initUnscoped {
-                                // Signal peer close and close inbound (so consumers of ws.stream see natural termination).
+                                // Signal peer close and close inbound keeping the frames that arrived before it (so consumers of
+                                // ws.stream take every frame, then see natural termination).
                                 // Do NOT close outbound here; the write fiber owns outbound lifecycle (closes on its own exit
                                 // via user-initiated ws.close, write failure, or the outer Sync.ensure cleanup). Users that want
                                 // to react to peer close compose ws.onPeerClose into their sender/receiver race.
@@ -1086,7 +1087,7 @@ final private[kyo] class HttpClientBackend private (
                                         case Result.Failure(_) => Kyo.unit
                                         case Result.Panic(t)   => Log.warn("HttpWebSocket client reader panicked", t)
                                         case Result.Success(_) => Kyo.unit
-                                    log.andThen(inbound.closeDiscard).andThen(peerClosedPromise.completeUnit.unit)
+                                    log.andThen(WebSocketCodec.closeKeepingQueued(inbound)).andThen(peerClosedPromise.completeUnit.unit)
                                 }
                             }.map { monitorFiber =>
                                 Fiber.initUnscoped {
@@ -1119,7 +1120,25 @@ final private[kyo] class HttpClientBackend private (
                                             .andThen(inbound.closeDiscard)
                                             .andThen(outbound.closeDiscard)
                                     ) {
-                                        f(ws)
+                                        f(ws).map { result =>
+                                            // `ws.close` only hands the close to the write fiber, and the finalizer above interrupts that
+                                            // fiber, so a handler that closes and returns at once would end the session before its close
+                                            // frame is written. As the server dispatch does, a handler that returns without closing closes
+                                            // with 1000 (unless the peer already ended the stream), outbound is closed in every case so the
+                                            // writer exits, and the session waits for the writer to write the queued frames and the close
+                                            // frame, for at most the session's closeTimeout.
+                                            closeReasonRef.get.map {
+                                                case Absent =>
+                                                    readFiber.done.map { isDone =>
+                                                        if isDone then Kyo.unit
+                                                        else closeReasonRef.set(Present((1000, "")))
+                                                    }
+                                                case _ => Kyo.unit
+                                            }.andThen(WebSocketCodec.closeKeepingQueued(outbound))
+                                                .andThen(Abort.run[Timeout](
+                                                    Async.timeout(config.closeTimeout)(writeFiber.get)
+                                                ).unit).andThen(result)
+                                        }
                                     }
                                 }
                             }
