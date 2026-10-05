@@ -1,7 +1,5 @@
 package kyo.net.internal.transport
 
-import java.net.InetSocketAddress
-import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import kyo.*
 import kyo.net.Test
@@ -34,22 +32,8 @@ class NioHandleReadArmTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    // Open a connected SocketChannel pair for NioHandle construction. The channels are closed at the
-    // end of each test. The pair is needed because NioHandle wraps a SocketChannel; the channels are
-    // never read or written here.
-    private def openPair(): (SocketChannel, SocketChannel) =
-        val ss = ServerSocketChannel.open()
-        ss.bind(new InetSocketAddress("127.0.0.1", 0))
-        val port = ss.socket().getLocalPort
-        val c    = SocketChannel.open()
-        c.configureBlocking(false)
-        c.connect(new InetSocketAddress("127.0.0.1", port))
-        ss.configureBlocking(true)
-        val s = ss.accept()
-        c.finishConnect()
-        ss.close()
-        (c, s)
-    end openPair
+    // NioHandle wraps a SocketChannel, but these leaves never read or write it, so an unconnected channel serves: no listener, no
+    // connect, nothing that depends on the host's ephemeral ports.
 
     "read delivered exactly once per armed read" - {
 
@@ -64,7 +48,7 @@ class NioHandleReadArmTest extends Test:
         // value. Only one can atomically swap the cell to Absent; the other's CAS finds the cell already
         // changed and fails.
         "read-delivered-exactly-once-under-double-completion" in {
-            val (client, server) = openPair()
+            val client = SocketChannel.open()
             try
                 val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
 
@@ -109,9 +93,7 @@ class NioHandleReadArmTest extends Test:
                     s"promise must carry exactly the winner's outcome (PeerFin), got $outcome"
                 )
                 succeed
-            finally
-                client.close()
-                server.close()
+            finally client.close()
             end try
         }
 
@@ -180,7 +162,7 @@ class NioHandleReadArmTest extends Test:
             // completing the handshake's promise, because the stale dispatch holds the pump's old
             // ReadArmCell reference which no longer matches the current cell content.
             "the handshake cell wins the CAS and the stale pump cell loses" in {
-                val (client, server) = openPair()
+                val client = SocketChannel.open()
                 try
                     val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
 
@@ -240,9 +222,7 @@ class NioHandleReadArmTest extends Test:
                         s"pump promise must NOT be completed by the dispatch (stale CAS lost); got $pumpResult"
                     )
                     succeed
-                finally
-                    client.close()
-                    server.close()
+                finally client.close()
                 end try
             }
 
@@ -252,7 +232,7 @@ class NioHandleReadArmTest extends Test:
             // though both arms carry the same promise reference, because the two ReadArmCell wrapper
             // objects are distinct heap objects (new ReadArmCell(p) != new ReadArmCell(p) by reference).
             "stale-arm: same-promise-different-cell-object-cas-fails" in {
-                val (client, server) = openPair()
+                val client = SocketChannel.open()
                 try
                     val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
 
@@ -294,9 +274,7 @@ class NioHandleReadArmTest extends Test:
                     assert(liveWin, "live CAS must SUCCEED: it holds the current cell reference (arm2)")
                     assert(handle.readArm.get().isEmpty, "cell must be Absent after the live dispatch cleared it")
                     succeed
-                finally
-                    client.close()
-                    server.close()
+                finally client.close()
                 end try
             }
         }

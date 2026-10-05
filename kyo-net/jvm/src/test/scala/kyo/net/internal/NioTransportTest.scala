@@ -476,53 +476,54 @@ class NioTransportTest extends Test:
         if !udsSupported then cancel("Java NIO Unix domain sockets unsupported on this host (needs Java 16+ on a Unix-like OS)")
 
         mkTransport().map { transport =>
-            // A unique short path under /tmp, mirroring PosixTransportSurfaceTest: /tmp keeps it under the 108-byte sun_path
-            // limit, and nanoTime makes it fresh per run, so no stale-file cleanup is needed before binding.
-            val path    = s"/tmp/kyo-nio-uds-${java.lang.System.nanoTime()}.sock"
-            val payload = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
+            // A scoped temp dir exists on every host, where /tmp does not exist on Windows. The socket path must fit macOS's 104-byte sun_path,
+            // so the file name inside it stays short: the worst case is 87 bytes on macOS.
+            Scope.run(Path.run(Path.tempDir("kyo-nio-uds").map { dir =>
+                val path    = (dir / "s.sock").unsafe.show
+                val payload = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
 
-            // Read exactly `target` bytes from a connection's inbound channel, concatenated. UDS can in principle fragment, so this
-            // loops on safe.take (each take blocks the calling fiber until the next echoed frame arrives: no sleep, no poll).
-            def collect(conn: kyo.net.Connection, target: Int): Array[Byte] < (Async & Abort[Closed]) =
-                Loop(Array.emptyByteArray) { acc =>
-                    if acc.length >= target then Loop.done(acc)
-                    else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
-                }
+                // Read exactly `target` bytes from a connection's inbound channel, concatenated. UDS can in principle fragment, so this
+                // loops on safe.take (each take blocks the calling fiber until the next echoed frame arrives: no sleep, no poll).
+                def collect(conn: kyo.net.Connection, target: Int): Array[Byte] < (Async & Abort[Closed]) =
+                    Loop(Array.emptyByteArray) { acc =>
+                        if acc.length >= target then Loop.done(acc)
+                        else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
+                    }
 
-            AtomicRef.init[Maybe[kyo.net.Connection]](Absent).map { serverConnRef =>
-                // Echo handler: capture the accepted connection (for cleanup), then echo each inbound frame back on outbound.
-                // The loop runs in a spawned fiber (the handler returns Unit); the test gates on the echoed bytes arriving, not a delay.
-                val listenFiber = transport.listenUnix(path, 16) { serverConn =>
-                    serverConnRef.unsafe.set(Present(serverConn))
-                    discard(Sync.Unsafe.evalOrThrow {
-                        Fiber.initUnscoped {
-                            Abort.run[Closed] {
-                                Loop.foreach {
-                                    serverConn.inbound.safe.take.map { chunk =>
-                                        serverConn.outbound.safe.put(chunk).andThen(Loop.continue)
+                AtomicRef.init[Maybe[kyo.net.Connection]](Absent).map { serverConnRef =>
+                    // Echo handler: capture the accepted connection (for cleanup), then echo each inbound frame back on outbound.
+                    // The loop runs in a spawned fiber (the handler returns Unit); the test gates on the echoed bytes arriving, not a delay.
+                    val listenFiber = transport.listenUnix(path, 16) { serverConn =>
+                        serverConnRef.unsafe.set(Present(serverConn))
+                        discard(Sync.Unsafe.evalOrThrow {
+                            Fiber.initUnscoped {
+                                Abort.run[Closed] {
+                                    Loop.foreach {
+                                        serverConn.inbound.safe.take.map { chunk =>
+                                            serverConn.outbound.safe.put(chunk).andThen(Loop.continue)
+                                        }
                                     }
-                                }
-                            }.unit
-                        }
-                    })
-                }
-                listenFiber.safe.get.map { listener =>
-                    transport.connectUnix(path).safe.get.map { client =>
-                        // Write the known payload, then read it back: the take blocks head-of-line on this fiber until the echo arrives.
-                        client.outbound.safe.put(payload).andThen(collect(client, payload.size)).map { echoed =>
-                            try
-                                assert(echoed.sameElements(payload.toArray), s"UDS echo mismatch: got ${echoed.toList}")
-                                succeed
-                            finally
-                                client.close()
-                                serverConnRef.unsafe.get().foreach(_.close())
-                                listener.close()
-                                discard(new java.io.File(path).delete())
-                            end try
+                                }.unit
+                            }
+                        })
+                    }
+                    listenFiber.safe.get.map { listener =>
+                        transport.connectUnix(path).safe.get.map { client =>
+                            // Write the known payload, then read it back: the take blocks head-of-line on this fiber until the echo arrives.
+                            client.outbound.safe.put(payload).andThen(collect(client, payload.size)).map { echoed =>
+                                try
+                                    assert(echoed.sameElements(payload.toArray), s"UDS echo mismatch: got ${echoed.toList}")
+                                    succeed
+                                finally
+                                    client.close()
+                                    serverConnRef.unsafe.get().foreach(_.close())
+                                    listener.close()
+                                end try
+                            }
                         }
                     }
                 }
-            }
+            }))
         }
     }
 

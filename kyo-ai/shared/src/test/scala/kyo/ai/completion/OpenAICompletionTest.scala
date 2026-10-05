@@ -9,6 +9,8 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
 
     case class RequireAllProbe(answer: String, note: Maybe[String]) derives Schema
     case class UserToolInputProbe(q: String, hint: Maybe[String]) derives Schema
+    case class SentMessage(role: String, tool_calls: Maybe[List[Structure.Value]] = Absent) derives Schema
+    case class SentBody(messages: List[SentMessage]) derives Schema
 
     "the request leaves a user tool's optional field OUT of required (require-all is result-tool-only)" in {
         val userTool     = Tool.init[UserToolInputProbe]("lookup", "an optional-field tool")(_ => 1)
@@ -622,7 +624,8 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
             }
         }.map {
             case Result.Success(n) => assert(n == 42, s"expected 42, got $n")
-            case other             => fail(s"a temperature-set gen on a reasoning model must succeed with the parameter omitted: $other")
+            case other             =>
+                fail(s"a temperature-set gen on a reasoning model must succeed with the parameter omitted: ${BaseAITest.reported(other)}")
         }
     }
 
@@ -652,6 +655,42 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
                         assert(body.contains("\"strict\":false"), s"request should contain strict:false: $body")
                         assert(body.contains("\"parameters\""), s"request should contain parameters field: $body")
                         assert(body.contains("\"tool_call_id\""), s"request should contain tool_call_id for tool message: $body")
+                    }
+                }
+            }
+        }
+    }
+
+    "an assistant turn that said nothing never reaches the wire; one carrying calls with empty text still does" in {
+        // Moonshot answers an assistant message with empty content and no tool calls with 400 "the message at
+        // position 5 with role 'assistant' must not be empty". Such a turn is what a reasoning-only reply
+        // records, and every later request of the loop carries it.
+        TestCompletionServer.run { server =>
+            val config = keyedConfig(server.baseUrl)
+            val ctx    = Context.empty
+                .systemMessage("you are a test assistant")
+                .userMessage("hello")
+                .add(AssistantMessage(""))
+                .userMessage("again")
+                .assistantMessage("", Chunk(Call(CallId("call-1"), "my_tool", """{"x":1}""")))
+                .toolMessage(CallId("call-1"), "tool result")
+            val toolInfo = Tool.init[Int]("my_tool", "a test tool")(_ => 0).infos.head
+            server.enqueueBody(minimalOpenAIBody("done")).andThen {
+                LLM.run(config) {
+                    Abort.run[HttpException] {
+                        Abort.run[AIException] {
+                            OpenAICompletion(config, ctx, Chunk(toolInfo))
+                        }
+                    }
+                }.andThen {
+                    server.captured.map { caps =>
+                        assert(caps.size == 1, s"expected 1 captured request, got ${caps.size}")
+                        val sent = Json.decode[SentBody](caps.head.body).getOrThrow.messages
+                        assert(
+                            sent.map(_.role) == List("system", "user", "user", "assistant", "tool"),
+                            s"only the silent assistant turn is left out: $sent"
+                        )
+                        assert(sent(3).tool_calls.exists(_.size == 1), s"the calling turn keeps its call: ${sent(3)}")
                     }
                 }
             }

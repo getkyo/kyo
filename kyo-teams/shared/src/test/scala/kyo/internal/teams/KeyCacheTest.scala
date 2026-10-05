@@ -41,6 +41,30 @@ class KeyCacheTest extends kyo.test.Test[Any]:
         }
     }
 
+    // The vendored snapshot is Microsoft's real metadata and three of its real keys, one per kind of endorsement it serves. Only its
+    // jwks_uri is pointed at the local peer, since the module follows any https key set URL and the real one would reach the internet. A
+    // token naming a key Microsoft publishes for Teams that no key signed fails at its signature, which it reaches only after the metadata
+    // was accepted and that key was kept and parsed.
+    "Microsoft's real metadata and keys verify a token up to its signature" in {
+        val metadata = TeamsVectors.text("bot-framework-openid", "openidconfiguration")
+        val keys     = TeamsVectors.text("bot-framework-openid", "keys")
+        val realKeys = "https://login.botframework.com/v1/.well-known/keys"
+        val forTeams = Json.decode[KeyCacheTest.KeySet](keys).getOrThrow.keys
+            .collectFirst { case key if key.endorsements.contains("msteams") => key.kid }.getOrElse(fail("the snapshot has no Teams key"))
+        withLocal { local =>
+            for
+                _      <- local.reply("metadata", json(metadata.replace(realKeys, local.keysUrl.full)))
+                _      <- local.reply("jwks", json(keys))
+                teams  <- Teams.init(local.config)
+                result <- verifyOn(local, teams, forTeams)
+                counts <- fetches(local)
+            yield
+                assert(metadata.contains(s""""jwks_uri": "$realKeys""""), "the snapshot names Microsoft's key set URL")
+                assert((result, counts) == (mismatch, (1, 1)), s"got: ${result.failure.map(fieldsOf)}, $counts")
+            end for
+        }
+    }
+
     "an unknown kid refetches the set once keysMinRefresh has passed since the last fetch, and not before" in {
         Clock.withTimeControl { control =>
             withLocal { local =>
@@ -104,6 +128,58 @@ class KeyCacheTest extends kyo.test.Test[Any]:
                                     }
                                 }
                         }
+                }
+            }
+        }
+    }
+
+    // Every lookup is held after reading the empty cache and before claiming the fetch, the interleaving under which lookups that start
+    // their fetch before the claim each send a request. The fetches started while all are held must be none; the peer is then given every
+    // request those fetches sent before the lookups go on, so the count at the end does not depend on how fast an interrupt lands.
+    "lookups that read the empty cache together start one fetch" in {
+        withLocal { local =>
+            for
+                teams   <- Teams.init(local.config)
+                arrived <- Latch.init(5)
+                open    <- Latch.init(1)
+                started <- AtomicInt.init
+                keys    <- KeyCache.init(
+                    local.config,
+                    teams.http,
+                    KeyCache.Hooks(arrived.release.andThen(open.await), started.incrementAndGet.unit)
+                )
+                fibers  <- Kyo.foreach(Chunk.range(0, 5))(_ => Fiber.initUnscoped(Abort.run(keys.get("k1"))))
+                _       <- arrived.await
+                early   <- started.get
+                _       <- assertEventually(fetches(local).map(_._1 == early))
+                _       <- open.release
+                results <- Kyo.foreach(fibers)(_.get)
+                counts  <- fetches(local)
+            yield
+                assert(
+                    (early, counts) == (0, (1, 1)),
+                    s"fetches started before any lookup claimed one: $early, metadata and key set fetches: $counts"
+                )
+                assert(results.map(_.map(_.kid)) == Chunk.fill(5)(Result.succeed(Present("k1"))))
+            end for
+        }
+    }
+
+    "a lookup interrupted while the fetch is in flight leaves the fetch to the next lookup" in {
+        withLocal { local =>
+            local.reply("metadata").andThen {
+                Teams.init(local.config).map { teams =>
+                    for
+                        first  <- Fiber.initUnscoped(verifyOn(local, teams, "k1"))
+                        _      <- local.held.await
+                        _      <- first.interrupt
+                        second <- Fiber.initUnscoped(verifyOn(local, teams, "k1"))
+                        _      <- local.reply("metadata", local.metadata())
+                        _      <- local.release
+                        result <- second.get
+                        counts <- fetches(local)
+                    yield assert((result, counts) == (mismatch, (1, 1)), s"result: $result, counts: $counts")
+                    end for
                 }
             }
         }
@@ -208,4 +284,9 @@ class KeyCacheTest extends kyo.test.Test[Any]:
         }
     }
 
+end KeyCacheTest
+
+object KeyCacheTest:
+    final case class Key(kid: String, endorsements: Chunk[String] = Chunk.empty) derives Schema
+    final case class KeySet(keys: Chunk[Key]) derives Schema
 end KeyCacheTest

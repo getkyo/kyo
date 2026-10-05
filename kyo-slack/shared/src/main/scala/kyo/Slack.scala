@@ -1,235 +1,364 @@
 package kyo
 
-import kyo.internal.SlackRawJson
-import kyo.internal.SlackSocketEngine
-import kyo.internal.SlackTransport
-import kyo.internal.SlackWebApi
-import kyo.internal.SlackWire
+import kyo.internal.slack.Methods
+import kyo.internal.slack.Reconnect
+import kyo.internal.slack.SocketEngine
+import kyo.internal.slack.Transport
+import kyo.internal.slack.WebApi
 
-/** A live Socket Mode connection: open the socket with `Slack.run` (scope-managed)
-  * or `Slack.init` (manually-managed), then drive it with `receive` and tear it down
-  * with `close`. Opaque so a caller cannot fabricate one; the representation wraps the
-  * internal engine handle, which carries the live socket engine, the config, and the
-  * reconnect-controller slot `receive` populates and `close` reads.
+/** The client of a Slack app, the value every verb requires: `Env[Slack]` is on each verb's row, so a
+  * verb used outside a region that provides a client does not compile.
+  *
+  * Only the module builds one, from a [[kyo.SlackConfig]]: `Slack.run(config)(v)` runs `v` with a client it
+  * closes when `v` ends, and `Slack.init(config)` opens a Socket Mode connection the caller holds in a
+  * `Scope` and runs computations with through `Slack.run(client)(v)`. `Slack.receive(handler)` runs the
+  * receive loop on the client in the environment, so receiving in one call is
+  * `Slack.run(config)(Slack.receive(handler))`. A client holds the config, its own kyo-http `HttpClient`
+  * (never the caller's, so no caller filter, base url or relaxed TLS reaches a request that carries a
+  * token), and, when built by `init`, its Socket Mode connection.
+  *
+  * The verbs are functions on the companion. A client is never a receiver of calls: it carries nothing a
+  * caller reads, and it cannot be constructed outside the module.
+  *
+  * @see
+  *   [[kyo.SlackConfig]] the config
+  * @see
+  *   [[kyo.SlackEnvelope]] what arrives, indexed by the answer each envelope requires
+  * @see
+  *   [[kyo.SlackAck]] the answer to an acknowledgeable envelope
+  * @see
+  *   [[kyo.SlackException]] the failures
   */
-opaque type Slack = kyo.internal.SlackSocketHandle
+final class Slack private[kyo] (
+    private[kyo] val config: SlackConfig,
+    private[kyo] val http: HttpClient,
+    private[kyo] val transport: Transport,
+    // The controller, not an engine: its active ref follows every rotation, so each receive reads, and close closes, the
+    // connection current at that moment rather than the first one.
+    private[kyo] val connection: Maybe[Reconnect.Controller]
+)
 
-/** The public entry object for kyo-slack Socket Mode. Contains the bot identity
-  * model, the connection entry points, and the Web API methods that send messages
-  * and manage views from within a connected handler.
-  */
+/** The entry points and verbs of kyo-slack. */
 object Slack:
 
     /** The `auth.test` result: the bot's user/team ids, the bot id, and the
-      * workspace url.
+      * workspace url. It has no `Schema`: the module decodes Slack's answer through its own
+      * wire type, and the companion's given makes `summon[Schema[Identity]]` a compile error.
       */
-    case class Identity(
+    final case class Identity(
         userId: SlackId.UserId,
         teamId: SlackId.TeamId,
         botId: SlackId.BotId,
-        url: String
-    ) derives Schema, CanEqual
+        url: HttpUrl
+    ) derives CanEqual
 
-    /** Advanced manually-managed entry: open the socket and return a live `Slack` handle
-      * the caller drives with `receive` and tears down with `close`. The bot-token
-      * ambient is bound by `Slack.receive` around the loop body (where the handler runs),
-      * so the handler's Web API calls resolve the token on the init + receive path
-      * exactly as they do under the scoped `run`. The handle carries `config` (with
-      * `config.bot`) so `receive` can bind it.
+    object Identity:
+        inline given noSchema: Schema[Identity] = compiletime.error(
+            "Slack.Identity has no Schema: kyo-slack decodes Slack's frames itself; build outbound values with the module's own types"
+        )
+    end Identity
+
+    // --- Entry points ---
+
+    /** Runs `v` with a client built on `config`, and closes the client and any connection it opened when `v` ends. The
+      * client opens no Socket Mode connection up front, so building it cannot fail: the Web API and `response_url` verbs
+      * use it directly, and a `receive` inside `v` opens a connection for its own duration. Receiving in one call is
+      * `Slack.run(config)(Slack.receive(handler))`.
       */
-    def init(config: SlackConfig)(using Frame): Slack < (Async & Abort[SlackException]) =
-        openEngine(config).map { engine =>
-            kyo.internal.SlackSocketHandle.fromEngine(engine, config).map(fromHandle)
-        }
+    def run[A, S](config: SlackConfig)(v: A < (S & Env[Slack]))(using Frame): A < (S & Async) =
+        runOver(Transport.live(_, config))(config)(v)
 
-    /** Scope-managed Socket Mode connection: open the socket, run the receive loop
-      * under the reconnect policy, and tear everything down on scope exit. The
-      * handler returns one `SlackAck` per envelope and the framework emits exactly one
-      * wire ack from it (structural acking); a routine disconnect rotates transparently
-      * per `config.reconnect`; `link_disabled` ends with `SlackTerminalException`.
+    private[kyo] def runOver[A, S](transport: HttpClient => Transport)(config: SlackConfig)(v: A < (S & Env[Slack]))(using
+        Frame
+    ): A < (S & Async) =
+        Scope.run(Scope.acquireRelease(build(config, transport))(close).map(client => run(client)(v)))
+
+    /** Runs `v` with `client`, which stays the caller's to close. */
+    def run[A, S](client: Slack)(v: A < (S & Env[Slack]))(using Frame): A < S =
+        Env.run(client)(v)
+
+    /** A client on `config` with its Socket Mode connection open, closed when the enclosing `Scope` ends, so the
+      * socket, its background fibers and the client's `HttpClient` never outlive it. `run(client)` runs a computation
+      * with it; `receive` there runs the loop on the held connection.
+      */
+    def init(config: SlackConfig)(using Frame): Slack < (Async & Abort[SlackInitFailure] & Scope) =
+        Scope.acquireRelease(initUnscoped(config))(close)
+
+    /** A client on `config` with its Socket Mode connection open, which nothing closes but the caller's `close`: the
+      * form for a client whose lifetime no `Scope` describes. Prefer `init`.
+      */
+    def initUnscoped(config: SlackConfig)(using Frame): Slack < (Async & Abort[SlackInitFailure]) =
+        open(config, Transport.live(_, config))
+
+    private[kyo] def initUnscopedOver(transport: HttpClient => Transport)(config: SlackConfig)(using
+        Frame
+    ): Slack < (Async & Abort[SlackInitFailure]) =
+        open(config, transport)
+
+    /** Closes `client`: its connection (the one active now, after any rotation) and then its `HttpClient`, without
+      * waiting for requests in flight. For an `initUnscoped` client, or to close an `init` one before its scope ends.
+      * Idempotent and total.
+      */
+    def close(client: Slack)(using Frame): Unit < Async =
+        client.connection.fold(Kyo.unit)(_.closeActive).andThen(client.http.closeNow)
+
+    /** Runs the receive loop on the client in the environment until it ends: acks each envelope that takes an answer,
+      * exactly once, with the `SlackAck` the handler returns; rotates the connection on a routine disconnect per
+      * `config.reconnect`; ends on `link_disabled` with `SlackLinkDisabledException`, and cleanly on a routine disconnect
+      * under `Reconnect.Off`. On a client built by `init` it runs on the held connection, which stays the caller's to
+      * close; on one built by `run(config)` it opens a connection and closes it when the loop ends.
       *
-      * The bot-token ambient is bound around the loop body, so a
-      * `Slack.chatPostMessage`/etc. call from inside the handler resolves the token. The
-      * scope finalizer closes whatever engine is active at exit, including one a rotation
-      * swapped in, so no socket or background fiber leaks.
+      * The handler answers each envelope with what the envelope requires (see [[kyo.SlackEnvelope]]) and runs with the
+      * same client, so it calls the verbs directly. `E` is what it can fail with, inferred from it. A handler failure ends
+      * the loop with that failure and leaves its envelope unacknowledged. A handler panic is logged at error with the
+      * envelope's type and id and leaves the envelope unacknowledged, so Slack redelivers it, and the loop goes on. The
+      * handler is bounded by `config.ackDeadline`: past it the bare ack goes out and the handler is interrupted, so long
+      * work belongs on a fiber the handler forks.
       */
-    def run[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
-    )(config: SlackConfig)(
-        handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException])
-    )(using Frame): Unit < (S & Async & Abort[SlackException] & Scope) =
-        SlackWebApi.local.let(Present(config.bot)) {
-            Scope.acquireRelease(
-                kyo.internal.SlackReconnect.open(() => openEngine(config), config)
-            )(_.closeActive).map { controller =>
-                controller.start(handler)
+    // The handler's row has no open effect parameter. Kyo's `Abort` is contravariant, so with one the handler's failure fits
+    // either `E` or that parameter, and under an enclosing `Slack.run` inference picks the parameter: `E` becomes Nothing and
+    // the failure lands in effects the loop cannot isolate across the fibers that run the handler.
+    def receive[E](
+        handler: [A] => SlackEnvelope[A] => A < (Async & Abort[E] & Env[Slack])
+    )(using Frame): Unit < (Async & Abort[SlackReceiveFailure | E] & Env[Slack]) =
+        Env.get[Slack].map(client => loop(client, handler))
+
+    private def loop[E](
+        client: Slack,
+        handler: [A] => SlackEnvelope[A] => A < (Async & Abort[E] & Env[Slack])
+    )(using Frame): Unit < (Async & Abort[SlackException.Connect | SlackLinkDisabledException | E]) =
+        val answer = answering(client, handler)
+        val reopen = () => openEngine(client)
+        client.connection match
+            case Present(controller) => controller.start(answer)
+            case Absent              =>
+                Scope.run(Scope.acquireRelease(Reconnect.open(reopen, client.config))(_.closeActive).map(_.start(answer)))
+        end match
+    end loop
+
+    /** The handler as the engine calls it: one `SlackAck` per envelope, with the client provided. Matching each case
+      * fixes the answer's type. `Hello`, `Disconnect` and `UnknownFrame` carry no envelope id, so the engine never acks
+      * them and the bare ack returned for them is unused.
+      */
+    private def answering[E](
+        client: Slack,
+        handler: [A] => SlackEnvelope[A] => A < (Async & Abort[E] & Env[Slack])
+    )(using Frame): SlackEnvelope[?] => SlackAck < (Async & Abort[E]) =
+        env =>
+            run(client) {
+                env match
+                    case e: SlackEnvelope.EventsApi    => handler(e)
+                    case e: SlackEnvelope.Interactive  => handler(e)
+                    case e: SlackEnvelope.SlashCommand => handler(e)
+                    case e: SlackEnvelope.Unknown      => handler(e)
+                    case e: SlackEnvelope.Hello        => handler(e).andThen(SlackAck.Ack)
+                    case e: SlackEnvelope.Disconnect   => handler(e).andThen(SlackAck.Ack)
+                    case e: SlackEnvelope.UnknownFrame => handler(e).andThen(SlackAck.Ack)
             }
-        }
 
-    def authTest(using Frame): Slack.Identity < (Async & Abort[SlackException]) =
-        SlackWebApi.request[EmptyBody, AuthTestResp]("auth.test", EmptyBody()).map { r =>
-            Slack.Identity(
-                SlackId.UserId(r.user_id.getOrElse("")),
-                SlackId.TeamId(r.team_id.getOrElse("")),
-                SlackId.BotId(r.bot_id.getOrElse("")),
-                r.url.getOrElse("")
-            )
-        }
+    /** A client with no connection: its own `HttpClient` and the transport over it. */
+    private def build(config: SlackConfig, transport: HttpClient => Transport)(using Frame): Slack < Sync =
+        HttpClient.initUnscoped().map(http => new Slack(config, http, transport(http), Absent))
 
-    def chatPostMessage(message: SlackMessage)(using Frame): SlackTs < (Async & Abort[SlackException]) =
-        messageBlocks(message).map { blocks =>
-            SlackWebApi.request[PostMessageBody, TsResp](
-                "chat.postMessage",
-                PostMessageBody(message.channel, message.text, blocks, message.threadTs)
-            ).map(r => SlackTs(r.ts))
-        }
-
-    def chatPostEphemeral(message: SlackMessage, user: SlackId.UserId)(using Frame): SlackTs < (Async & Abort[SlackException]) =
-        messageBlocks(message).map { blocks =>
-            SlackWebApi.request[EphemeralBody, EphemeralResp](
-                "chat.postEphemeral",
-                EphemeralBody(message.channel, user, message.text, blocks, message.threadTs)
-            ).map(r => SlackTs(r.message_ts))
-        }
-
-    def chatUpdate(channel: SlackId.ChannelId, ts: SlackTs, message: SlackMessage)(using Frame): SlackTs < (Async & Abort[SlackException]) =
-        messageBlocks(message).map { blocks =>
-            SlackWebApi.request[UpdateBody, TsResp](
-                "chat.update",
-                UpdateBody(channel, ts, message.text, blocks)
-            ).map(r => SlackTs(r.ts))
-        }
-
-    def viewsOpen(triggerId: SlackId.TriggerId, view: SlackView)(using Frame): SlackId.ViewId < (Async & Abort[SlackException]) =
-        encodeView(view).map { v =>
-            SlackWebApi.request[ViewsOpenBody, ViewResp]("views.open", ViewsOpenBody(triggerId, v)).map(r => SlackId.ViewId(r.view.id))
-        }
-
-    def viewsUpdate(viewId: SlackId.ViewId, view: SlackView)(using Frame): SlackId.ViewId < (Async & Abort[SlackException]) =
-        encodeView(view).map { v =>
-            SlackWebApi.request[ViewsUpdateBody, ViewResp]("views.update", ViewsUpdateBody(viewId, v)).map(r => SlackId.ViewId(r.view.id))
-        }
-
-    def viewsPublish(user: SlackId.UserId, view: SlackView)(using Frame): SlackId.ViewId < (Async & Abort[SlackException]) =
-        encodeView(view).map { v =>
-            SlackWebApi.request[ViewsPublishBody, ViewResp]("views.publish", ViewsPublishBody(user, v)).map(r => SlackId.ViewId(r.view.id))
-        }
-
-    def custom[In: Schema, Out: Schema](method: String, body: In)(using Frame): Out < (Async & Abort[SlackException]) =
-        SlackWebApi.request[In, Out](method, body)
-
-    extension (self: Slack)
-        /** Run the receive loop on this manually-managed `Slack`: ack on handler return exactly
-          * once per envelope; a routine disconnect rotates transparently per the config's
-          * reconnect policy; ends on `link_disabled` with `SlackTerminalException`. The bot-token
-          * ambient is bound around the loop body, so a `Slack.chatPostMessage`/etc. call from
-          * inside the handler resolves the token on this manual path exactly as under the scoped
-          * `run`. The already-opened engine is the controller's first active engine (no duplicate
-          * open); the controller is recorded on the handle so `close` tears down the
-          * currently-active engine.
-          */
-        def receive[S](using
-            Isolate[S, Abort[SlackException] & Async, S]
-        )(
-            handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException])
-        )(using Frame): Unit < (S & Async & Abort[SlackException]) =
-            val h = self.handle
-            kyo.internal.SlackReconnect.controllerFrom(h.engine, () => openEngine(h.config), h.config).map { controller =>
-                h.controller.set(Present(controller)).andThen {
-                    SlackWebApi.local.let(Present(h.config.bot)) {
-                        controller.start(handler)
+    /** A client with its first connection open. A failed or interrupted open closes the `HttpClient`, since nothing
+      * else holds it yet.
+      */
+    private def open(config: SlackConfig, transport: HttpClient => Transport)(using
+        Frame
+    ): Slack < (Async & Abort[SlackException.Connect]) =
+        build(config, transport).map { bare =>
+            AtomicBoolean.init(false).map { built =>
+                Scope.run {
+                    Scope.ensure(built.get.map(done => if done then Kyo.unit else bare.http.closeNow)).andThen {
+                        openEngine(bare).map(engine => Reconnect.controllerFrom(engine, () => openEngine(bare), config)).map {
+                            controller => built.set(true).andThen(new Slack(config, bare.http, bare.transport, Present(controller)))
+                        }
                     }
                 }
             }
-        end receive
+        }
 
-        /** Observable teardown of socket and background fibers. Idempotent and total (never
-          * aborts), mirroring `HttpWebSocket.close`. Closes the currently-active engine (via the
-          * controller while `receive` is running, else the initial engine).
-          */
-        def close(using Frame): Unit < Async =
-            val h = self.handle
-            h.controller.use {
-                case Present(controller) => controller.closeActive
-                case Absent              => h.engine.closeNow
-            }
-        end close
-    end extension
+    private inline val ConnectionsOpen = "apps.connections.open"
 
-    private[kyo] def fromHandle(h: kyo.internal.SlackSocketHandle): Slack        = h
-    extension (c: Slack) private[kyo] def handle: kyo.internal.SlackSocketHandle = c
-
-    /** Open the wss url via apps.connections.open (app-level token) and initialize
-      * an engine over the configured transport. Shared by init and run.
+    /** Obtain a Socket Mode url with `apps.connections.open` (app-level token) and open an engine on it over the
+      * client's transport. Used for the first connection and for every rotation.
       */
-    private[kyo] def openEngine(config: SlackConfig)(using Frame): SlackSocketEngine < (Async & Abort[SlackException]) =
-        SlackWebApi.baseUrl.use { base =>
-            openEngine(config, base)
+    private[kyo] def openEngine(client: Slack)(using Frame): SocketEngine < (Async & Abort[SlackException.Connect]) =
+        WebApi.send[Methods.AppsConnectionsOpenAnswer, SlackException.Connect](
+            client,
+            ConnectionsOpen,
+            client.config.appLevel.value,
+            Json.encode(Methods.AppsConnectionsOpen())
+        ).map { resp =>
+            socketUrl(resp.url) match
+                case Present(target) => SocketEngine.initUnscoped(client.transport, target, client.config)
+                case Absent          => Abort.fail(SlackRefusedUrlException(Transport.SocketConnect))
         }
 
-    private def openEngine(config: SlackConfig, base: String)(using Frame): SlackSocketEngine < (Async & Abort[SlackException]) =
-        Abort.recover[HttpException] { (ex: HttpException) =>
-            Abort.fail(new SlackHandshakeException(s"apps.connections.open transport failure: ${ex.getMessage}", ex))
-        } {
-            // Read the FULL response body as text: kyo-http leaves `rawBody` Absent on a 2xx,
-            // and the connections.open success IS a 2xx carrying the wss url, so a JSON-typed
-            // response would drop the body. The text body is decoded by decodeConnectionsOpen.
-            HttpClient.postTextResponse(
-                s"$base/apps.connections.open",
-                SlackWire.encodeConnectionsOpenBody,
-                headers = Seq(
-                    "Authorization" -> s"Bearer ${config.appLevel.value}",
-                    "Content-Type"  -> "application/json"
-                ),
-                failOnError = false
-            ).map { response =>
-                SlackWire.decodeConnectionsOpen(response.fields.body) match
-                    case Result.Success(url) => SlackTransport.transport.use(t => SlackSocketEngine.initUnscoped(t, url, config))
-                    case Result.Failure(ex)  => Abort.fail(ex)
-                    case Result.Panic(ex)    => Abort.fail(new SlackHandshakeException(
-                            s"apps.connections.open decode panicked: ${ex.getMessage}",
-                            ex
+    /** The Socket Mode url when it is an absolute wss url on a host in printable ASCII. The url is the connection's ticket, so
+      * it goes nowhere else, and never over a plain `ws` connection, which would send it in clear; Slack answers `wss` only.
+      */
+    private def socketUrl(url: String)(using Frame): Maybe[HttpUrl] =
+        def asciiLower(s: String): String = s.map(c => if c >= 'A' && c <= 'Z' then (c + 32).toChar else c)
+        HttpUrl.parse(url) match
+            case Result.Success(target)
+                if target.scheme.map(asciiLower).contains("wss") &&
+                    target.host.nonEmpty && target.unixSocket.isEmpty && target.full.forall(c => c >= '!' && c <= '~') =>
+                Present(target)
+            case _ => Absent
+        end match
+    end socketUrl
+
+    // --- Web API ---
+
+    /** The bot's identity, which also checks that the bot token works. Slack's `auth.test`. */
+    def identity(using Frame): Identity < (Async & Abort[SlackIdentityFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            WebApi.request[Methods.AuthTest, Methods.AuthTestAnswer, SlackIdentityFailure](client, "auth.test", Methods.AuthTest()).map {
+                r =>
+                    def rejected(field: String) =
+                        Abort.fail(SlackDecodeException(
+                            "auth.test",
+                            SlackDecodeException.Part.Payload,
+                            SlackDecodeException.Failure.ConstructorRejected,
+                            Chunk(field),
+                            Absent
                         ))
+                    if r.user_id.value.isEmpty then rejected("user_id")
+                    else if r.team_id.value.isEmpty then rejected("team_id")
+                    else if r.bot_id.value.isEmpty then rejected("bot_id")
+                    else
+                        HttpUrl.parse(r.url) match
+                            case Result.Success(url) if SlackConfig.absoluteProblemOf(url).isEmpty =>
+                                Identity(r.user_id, r.team_id, r.bot_id, url)
+                            case _ => rejected("url")
+                    end if
             }
         }
 
-    // private[kyo] request/response body models (not part of the public API).
-    // These internal DTOs carry the Slack Web API wire keys (channel, text, blocks,
-    // thread_ts, trigger_id, view_id, user, view, ...) so the derived Schema encodes
-    // the request body exactly as the Slack API expects. The typed `SlackBlock` layout
-    // renders to a `SlackRawJson` (a native Structure.Value), so `blocks` splices as a
-    // real JSON array rather than a quoted string.
-    // TODO: `blocks` is carried as `SlackRawJson` rather than a typed `Chunk[SlackBlock]` field
-    // because kyo-schema's derived sum/enum encoding emits a tagged shape, not Slack's untagged
-    // Block Kit JSON (see SlackBlock). Replace with the typed field once kyo-schema supports
-    // untagged discriminated-union encoding.
+    /** Posts `message` and answers its timestamp. Slack's `chat.postMessage`. */
+    def send(message: SlackMessage)(using Frame): SlackTs < (Async & Abort[SlackSendFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            WebApi.request[PostMessageBody, Methods.ChatPostMessageAnswer, SlackSendFailure](
+                client,
+                "chat.postMessage",
+                PostMessageBody(message.channel, message.text, messageBlocks(message), message.threadTs)
+            ).map(_.ts)
+        }
 
-    final private[kyo] case class EmptyBody() derives Schema
+    /** Posts `message` so only `user` sees it, and answers its timestamp. Slack's `chat.postEphemeral`. */
+    def sendEphemeral(message: SlackMessage, user: SlackId.UserId)(using
+        Frame
+    ): SlackTs < (Async & Abort[SlackSendEphemeralFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            WebApi.request[EphemeralBody, Methods.ChatPostEphemeralAnswer, SlackSendEphemeralFailure](
+                client,
+                "chat.postEphemeral",
+                EphemeralBody(message.channel, user, message.text, messageBlocks(message), message.threadTs)
+            ).map(_.message_ts)
+        }
 
-    // auth.test response: the Slack API returns user_id/team_id/bot_id/url. Mapped to
-    // the camelCase public Slack.Identity inside authTest.
-    final private[kyo] case class AuthTestResp(
-        user_id: Maybe[String] = Absent,
-        team_id: Maybe[String] = Absent,
-        bot_id: Maybe[String] = Absent,
-        url: Maybe[String] = Absent
-    ) derives Schema
+    /** Replaces the text and blocks of the message at `ts` in `channel`. Slack's `chat.update`. */
+    def edit(channel: SlackId.ChannelId, ts: SlackTs, message: SlackMessage)(using
+        Frame
+    ): SlackTs < (Async & Abort[SlackEditFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            WebApi.request[UpdateBody, Methods.ChatUpdateAnswer, SlackEditFailure](
+                client,
+                "chat.update",
+                UpdateBody(channel, ts, message.text, messageBlocks(message))
+            ).map(_.ts)
+        }
 
-    final private[kyo] case class TsResp(ts: String) derives Schema
+    /** Opens `view` as a modal, keyed by the trigger of the interaction that asked for it. Slack's `views.open`. */
+    def openView(triggerId: SlackId.TriggerId, view: SlackView)(using
+        Frame
+    ): SlackId.ViewId < (Async & Abort[SlackOpenViewFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            WebApi.request[ViewsOpenBody, Methods.ViewsOpenAnswer, SlackOpenViewFailure](
+                client,
+                "views.open",
+                ViewsOpenBody(triggerId, encodeView(view))
+            ).map(_.view.id)
+        }
 
-    // chat.postEphemeral returns `message_ts` (not `ts`), so it has its own response type.
-    final private[kyo] case class EphemeralResp(message_ts: String) derives Schema
+    /** Replaces the content of the open view `viewId`. Slack's `views.update`. */
+    def updateView(viewId: SlackId.ViewId, view: SlackView)(using
+        Frame
+    ): SlackId.ViewId < (Async & Abort[SlackUpdateViewFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            WebApi.request[ViewsUpdateBody, Methods.ViewsUpdateAnswer, SlackUpdateViewFailure](
+                client,
+                "views.update",
+                ViewsUpdateBody(viewId, encodeView(view))
+            ).map(_.view.id)
+        }
 
-    final private[kyo] case class ViewIdInner(id: String) derives Schema
+    /** Publishes `view` as `user`'s App Home. Slack's `views.publish`. */
+    def publishView(user: SlackId.UserId, view: SlackView)(using
+        Frame
+    ): SlackId.ViewId < (Async & Abort[SlackPublishViewFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            WebApi.request[ViewsPublishBody, Methods.ViewsPublishAnswer, SlackPublishViewFailure](
+                client,
+                "views.publish",
+                ViewsPublishBody(user, encodeView(view))
+            ).map(_.view.id)
+        }
 
-    final private[kyo] case class ViewResp(view: ViewIdInner) derives Schema
+    /** Calls a Web API method by its Slack name, for one the module does not model: `payload` is encoded as the JSON
+      * request, and the answer decoded as `Out`.
+      */
+    def custom[In: Schema, Out: Schema](method: SlackMethod, payload: In)(using
+        Frame
+    ): Out < (Async & Abort[SlackCustomFailure] & Env[Slack]) =
+        Env.get[Slack].map(client => WebApi.request[In, Out, SlackCustomFailure](client, method.value, payload))
 
-    // chat.postMessage request body. `blocks` carries a parsed Block Kit AST that the
-    // SlackRawJson Schema emits as a native JSON array (not a quoted string).
+    // --- Answers through a response_url ---
+
+    /** Posts `reply` through `url`, visible only to the person who acted. */
+    def respondEphemeral(url: SlackResponseUrl, reply: SlackReply)(using
+        Frame
+    ): Unit < (Async & Abort[SlackRespondEphemeralFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            WebApi.respond[SlackRespondEphemeralFailure](
+                client,
+                url,
+                Json.encode(EphemeralReplyBody("ephemeral", false, reply.text, replyBlocks(reply)))
+            )
+        }
+
+    /** Posts `reply` through `url` for everyone in the conversation, in the thread `threadTs` when it is present. */
+    def respondInChannel(url: SlackResponseUrl, reply: SlackReply, threadTs: Maybe[SlackTs] = Absent)(using
+        Frame
+    ): Unit < (Async & Abort[SlackRespondInChannelFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            WebApi.respond[SlackRespondInChannelFailure](
+                client,
+                url,
+                Json.encode(InChannelReplyBody("in_channel", false, reply.text, replyBlocks(reply), threadTs))
+            )
+        }
+
+    /** Puts `reply` in place of the message the interaction behind `url` came from. */
+    def replaceOriginal(url: SlackResponseUrl, reply: SlackReply)(using
+        Frame
+    ): Unit < (Async & Abort[SlackReplaceOriginalFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            WebApi.respond[SlackReplaceOriginalFailure](client, url, Json.encode(ReplaceReplyBody(true, reply.text, replyBlocks(reply))))
+        }
+
+    /** Deletes the message the interaction behind `url` came from. */
+    def deleteOriginal(url: SlackResponseUrl)(using Frame): Unit < (Async & Abort[SlackDeleteOriginalFailure] & Env[Slack]) =
+        Env.get[Slack].map(client => WebApi.respond[SlackDeleteOriginalFailure](client, url, Json.encode(DeleteReplyBody(true))))
+
+    // Request bodies carry `blocks` as the rendered Block Kit value (`SlackBlock.encode`), not as
+    // `Chunk[SlackBlock]`: the public blocks are not Slack's wire shape, so the body holds their rendering.
+
     final private[kyo] case class PostMessageBody(
         channel: SlackId.ChannelId,
         text: String,
-        blocks: Maybe[SlackRawJson],
+        blocks: Maybe[Structure.Value],
         thread_ts: Maybe[SlackTs]
     ) derives Schema
 
@@ -238,7 +367,7 @@ object Slack:
         channel: SlackId.ChannelId,
         user: SlackId.UserId,
         text: String,
-        blocks: Maybe[SlackRawJson],
+        blocks: Maybe[Structure.Value],
         thread_ts: Maybe[SlackTs]
     ) derives Schema
 
@@ -247,7 +376,7 @@ object Slack:
         channel: SlackId.ChannelId,
         ts: SlackTs,
         text: String,
-        blocks: Maybe[SlackRawJson]
+        blocks: Maybe[Structure.Value]
     ) derives Schema
 
     // The `view` object the views.* methods carry: the Slack API wire shape for a
@@ -255,10 +384,10 @@ object Slack:
     final private[kyo] case class ViewBody(
         `type`: SlackView.Type,
         callback_id: Maybe[String],
-        blocks: SlackRawJson,
-        title: Maybe[SlackRawJson],
-        submit: Maybe[SlackRawJson],
-        close: Maybe[SlackRawJson],
+        blocks: Structure.Value,
+        title: Maybe[Structure.Value],
+        submit: Maybe[Structure.Value],
+        close: Maybe[Structure.Value],
         private_metadata: Maybe[String],
         // Emitted only when true: `notify_on_close` is a modal-only field, and a `home` view
         // (or any view sent to views.publish) is rejected with invalid_arguments if it is present.
@@ -280,31 +409,53 @@ object Slack:
         view: ViewBody
     ) derives Schema
 
-    /** Render a message's typed `blocks` to the native JSON-array carrier, or `Absent` when the
-      * message carries no blocks. A malformed `SlackBlock.Raw` surfaces as a typed
-      * `SlackDecodeException` rather than an invalid body on the wire.
+    final private[kyo] case class EphemeralReplyBody(
+        response_type: String,
+        replace_original: Boolean,
+        text: String,
+        blocks: Maybe[Structure.Value]
+    ) derives Schema
+
+    final private[kyo] case class InChannelReplyBody(
+        response_type: String,
+        replace_original: Boolean,
+        text: String,
+        blocks: Maybe[Structure.Value],
+        thread_ts: Maybe[SlackTs]
+    ) derives Schema
+
+    final private[kyo] case class ReplaceReplyBody(replace_original: Boolean, text: String, blocks: Maybe[Structure.Value])
+        derives Schema
+
+    final private[kyo] case class DeleteReplyBody(delete_original: Boolean) derives Schema
+
+    /** Render a message's typed `blocks` to their Block Kit value, or `Absent` when the
+      * message carries no blocks.
       */
-    private[kyo] def messageBlocks(message: SlackMessage)(using Frame): Maybe[SlackRawJson] < Abort[SlackException] =
-        if message.blocks.isEmpty then Absent
-        else SlackBlock.encode(message.blocks).map(Present(_))
+    private[kyo] def messageBlocks(message: SlackMessage): Maybe[Structure.Value] =
+        blocksOf(message.blocks)
+
+    private[kyo] def replyBlocks(reply: SlackReply): Maybe[Structure.Value] =
+        blocksOf(reply.blocks)
+
+    private[kyo] def blocksOf(blocks: Chunk[SlackBlock]): Maybe[Structure.Value] =
+        if blocks.isEmpty then Absent
+        else Present(SlackBlock.encode(blocks))
 
     /** Map the public `SlackView` to the wire `ViewBody`: render the typed `blocks`, wrap the
       * `title`/`submit`/`close` labels as `plain_text` objects, and carry `private_metadata`
-      * and `notify_on_close`. A malformed `SlackBlock.Raw` surfaces as a typed
-      * `SlackDecodeException`.
+      * and `notify_on_close`.
       */
-    private[kyo] def encodeView(view: SlackView)(using Frame): ViewBody < Abort[SlackException] =
-        SlackBlock.encode(view.blocks).map { blocks =>
-            ViewBody(
-                view.`type`,
-                view.callbackId,
-                blocks,
-                view.title.map(SlackBlock.plainText),
-                view.submit.map(SlackBlock.plainText),
-                view.close.map(SlackBlock.plainText),
-                view.privateMetadata,
-                Maybe.when(view.notifyOnClose)(true)
-            )
-        }
+    private[kyo] def encodeView(view: SlackView): ViewBody =
+        ViewBody(
+            view.`type`,
+            view.callbackId,
+            SlackBlock.encode(view.blocks),
+            view.title.map(SlackBlock.plainText),
+            view.submit.map(SlackBlock.plainText),
+            view.close.map(SlackBlock.plainText),
+            view.privateMetadata,
+            Maybe.when(view.notifyOnClose)(true)
+        )
 
 end Slack
