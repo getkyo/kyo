@@ -1535,8 +1535,11 @@ class ResolverTest extends BaseCalibanTest:
             server      <- Resolvers.run(interpreter, Resolvers.Config.default, hooks)
             url = s"ws://localhost:${server.port}/api/graphql/ws"
             cr <- HttpClient.webSocket(url, config = wsSubprotocol("graphql-transport-ws")) { ws =>
+                // Reading only after the server's 4401 close has arrived is the order of a slow client: the ack
+                // reached the client ahead of the close, so it must still be there to take.
                 for
                     _ <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
+                    _ <- ws.onPeerClose
                     _ <- expectMessage(ws, _.contains("connection_ack"))
                     r <- awaitClose(ws)
                 yield r
@@ -2060,13 +2063,11 @@ class ResolverTest extends BaseCalibanTest:
             server      <- Resolvers.run(interpreter, Resolvers.Config.default, hooks)
             url = s"ws://localhost:${server.port}/api/graphql/ws"
             cr <- HttpClient.webSocket(url, config = wsSubprotocol("graphql-transport-ws")) { ws =>
+                // Reading only after the 4401 close has arrived is the order of a slow client: the ack arrived ahead of it.
                 for
-                    // No connection_ack wait: the afterInit panic closes the WS with 4401, and that close
-                    // races the ack frame. When the close wins (reliably on Windows), awaiting the ack aborts
-                    // with "ws closed before predicate matched". The 4401 close is the subject, so await it
-                    // directly via awaitClose (which polls closeReason and never consumes frames), matching the
-                    // "subscribe before connection_init returns 4401" test above.
                     _  <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
+                    _  <- ws.onPeerClose
+                    _  <- expectMessage(ws, _.contains("connection_ack"))
                     cr <- awaitClose(ws)
                 yield cr
             }
