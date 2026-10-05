@@ -153,4 +153,40 @@ class AnchorTest extends UITest:
         }
     }
 
+    "download names the file an anchor saves instead of navigating to" in {
+        withUI(UI.div(
+            UI.a.href(Href.External("data", "text/csv;charset=utf-8,a%2Cb")).download("rows.csv").id("dl")("Save"),
+            UI.a.href(Href.Path("/path")).id("plain")("Open")
+        )) {
+            for
+                _    <- Browser.assertAttribute(Selector.id("dl"), "download", "rows.csv")
+                name <- Browser.evalJson[String]("document.getElementById('dl').download")
+                bare <- Browser.evalJson[String]("document.getElementById('plain').download")
+            yield
+                assert(name == "rows.csv")
+                assert(bare.isEmpty)
+        }
+    }
+
+    "a download anchor with onClick keeps the browser's default and still runs the handler" in {
+        val app: UI < Async =
+            for clicks <- Signal.initRef(0)
+            yield UI.div(
+                UI.a.href(Href.External("data", "text/plain,x")).download("x.txt").id("a")
+                    .onClick(clicks.getAndUpdate(_ + 1).unit)("Save"),
+                clicks.map(n => UI.span(n.toString).id("n"))
+            )
+        val clickPrevented =
+            """(function(){var seen=null;function f(e){seen=e.defaultPrevented;e.preventDefault();}
+              |window.addEventListener('click',f);
+              |document.getElementById('a').dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+              |window.removeEventListener('click',f);return seen;})()""".stripMargin
+        withUI(app) {
+            for
+                prevented <- Browser.evalBoolean(clickPrevented)
+                _         <- Browser.assertText(Selector.id("n"), "1")
+            yield assert(!prevented)
+        }
+    }
+
 end AnchorTest

@@ -118,6 +118,7 @@ jobs:
         run: |
           scripts/ci-test.sh --self-test
           scripts/build-selftest.sh
+          scripts/ci-monitor-selftest.sh
 
       - name: Self-test the format script
         run: scripts/format.sh --self-test
