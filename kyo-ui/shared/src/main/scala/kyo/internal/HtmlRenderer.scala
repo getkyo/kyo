@@ -507,7 +507,11 @@ private[kyo] object HtmlRenderer:
         case _: Ul             => "ul"
         case _: Ol             => "ol"
         case _: Table          => "table"
+        case _: Colgroup       => "colgroup"
+        case _: Col            => "col"
+        case _: Thead          => "thead"
         case _: Tbody          => "tbody"
+        case _: Tfoot          => "tfoot"
         case _: H1             => "h1"
         case _: H2             => "h2"
         case _: H3             => "h3"
@@ -524,6 +528,8 @@ private[kyo] object HtmlRenderer:
         case _: Th             => "th"
         case _: Label          => "label"
         case _: Form           => "form"
+        case _: Fieldset       => "fieldset"
+        case _: Legend         => "legend"
         case _: Textarea       => "textarea"
         case _: Select         => "select"
         case _: Opt            => "option"
@@ -658,6 +664,8 @@ private[kyo] object HtmlRenderer:
             case b: Button =>
                 w(sb, " type=\"submit\"")
                 boolAttr(sb, "disabled", b.disabled)
+            case fs: Fieldset =>
+                boolAttr(sb, "disabled", fs.disabled)
             case cb: Checkbox =>
                 w(sb, " type=\"checkbox\"")
                 boolAttr(sb, "disabled", cb.disabled)
@@ -1518,7 +1526,9 @@ private[kyo] object HtmlRenderer:
            |      return;
            |    }
            |    // An anchor the UI handles stays on the page; one it does not handle is a link, and the browser follows it.
-           |    var mid=e.target&&e.target.id?e.target.id:null;if(el.tagName&&el.tagName.toLowerCase()==='a'&&he(el,"click"))e.preventDefault();post({Click:{path:p,mouse:mkMouse({ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey},mid)}});window._kyoClickSubmit=true;setTimeout(function(){window._kyoClickSubmit=false},0);
+           |    // A modified click asks the browser for a new tab or window, so its default stays; the handler runs either way.
+           |    var kmod=e.ctrlKey||e.metaKey||e.shiftKey||e.altKey||e.button!==0;
+           |    var mid=e.target&&e.target.id?e.target.id:null;if(!kmod&&el.tagName&&el.tagName.toLowerCase()==='a'&&he(el,"click"))e.preventDefault();post({Click:{path:p,mouse:mkMouse({ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey},mid)}});window._kyoClickSubmit=true;setTimeout(function(){window._kyoClickSubmit=false},0);
            |  }
            |  else if(t==="input"&&he(el,"input"))post({Input:{path:p,value:e.target.value}});
            |  else if(t==="change"&&he(el,"change")){

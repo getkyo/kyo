@@ -108,43 +108,52 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       * this method registers leaves only for the pinned runtime; combined with sequential leaves, ≤1 in-flight container op per daemon.
       */
     def runBackends(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
-            s"[$runtime]" - {
-                ContainerRuntime.findSocket(runtime).foreach { path =>
-                    "http" in {
-                        Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v))
-                    }
-                }
-
-                "shell" in {
-                    // The http arm above needs a socket to talk to; this one needs a CLI that reaches the
-                    // daemon. A runtime reached through a mounted socket with no CLI installed (a build
-                    // container, and any CI runner wired the same way) is genuinely available for HTTP and
-                    // cannot serve Shell at all. Cancelled rather than unregistered so the skip is visible in
-                    // the run's own totals instead of the leaf silently not existing.
-                    requireRuntimeCli(runtime)
-                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
-                }
-            }
-        }
+        registerBackends(
+            (_, path) => Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v)),
+            runtime => Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
+        )
 
     /** [[runBackends]] without the leak check around the body, for the leaves that test the leak check itself; the body gets the runtime
       * name. A leaf registered here cleans up after itself explicitly.
       */
     def runBackendsUnchecked(v: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
+        registerBackends(
+            (runtime, path) => Container.withBackendConfig(_.UnixSocket(Path(path)))(v(runtime)),
+            runtime => Container.withBackendConfig(_.Shell(runtime))(v(runtime))
+        )
+
+    /** The `[runtime] › http` and `[runtime] › shell` leaves of the [[runBackends]] family, for every runtime this process answers for.
+      *
+      * A runtime that cannot run here gets the same two leaves cancelled with its reason, so a filter that matches the real leaves where
+      * the runtime is present matches their cancelled twins where it is absent, and the per-runtime fork never runs an empty selection.
+      */
+    private def registerBackends(
+        http: (String, String) => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope),
+        shell: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope)
+    )(using Frame): Unit =
+        ContainerRuntime.assigned.foreach { (runtime, cannotRun) =>
             s"[$runtime]" - {
-                ContainerRuntime.findSocket(runtime).foreach { path =>
-                    "http" in {
-                        Container.withBackendConfig(_.UnixSocket(Path(path)))(v(runtime))
-                    }
-                }
-                "shell" in {
-                    requireRuntimeCli(runtime)
-                    Container.withBackendConfig(_.Shell(runtime))(v(runtime))
-                }
+                cannotRun match
+                    case Present(reason) =>
+                        "http" in cancel(reason)
+                        "shell" in cancel(reason)
+                    case Absent =>
+                        ContainerRuntime.findSocket(runtime).foreach { path =>
+                            "http" in http(runtime, path)
+                        }
+                        "shell" in {
+                            // The http arm above needs a socket to talk to; this one needs a CLI that reaches the
+                            // daemon. A runtime reached through a mounted socket with no CLI installed (a build
+                            // container, and any CI runner wired the same way) is genuinely available for HTTP and
+                            // cannot serve Shell at all. Cancelled rather than unregistered so the skip is visible in
+                            // the run's own totals instead of the leaf silently not existing.
+                            requireRuntimeCli(runtime)
+                            shell(runtime)
+                        }
+                end match
             }
         }
+    end registerBackends
 
     /** Like [[runBackends]] but raises the HTTP client's per-request timeout to 5 minutes for the http arm. Use for integration tests that
       * pull or build large images (e.g. mongo:7, mysql:8, postgres) where the default 5-second `HttpClientConfig` timeout is too short for
@@ -153,27 +162,13 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       * The shell arm is unaffected — it delegates to the container CLI which uses its own process timeout.
       */
     def runBackendsLong(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
-            s"[$runtime]" - {
-                ContainerRuntime.findSocket(runtime).foreach { path =>
-                    "http" in {
-                        Container.withBackendConfig(_.UnixSocket(Path(path))) {
-                            HttpClient.withConfig(_.timeout(5.minutes))(checkingContainerLeak(v))
-                        }
-                    }
-                }
-
-                "shell" in {
-                    // The http arm above needs a socket to talk to; this one needs a CLI that reaches the
-                    // daemon. A runtime reached through a mounted socket with no CLI installed (a build
-                    // container, and any CI runner wired the same way) is genuinely available for HTTP and
-                    // cannot serve Shell at all. Cancelled rather than unregistered so the skip is visible in
-                    // the run's own totals instead of the leaf silently not existing.
-                    requireRuntimeCli(runtime)
-                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
-                }
-            }
-        }
+        registerBackends(
+            (_, path) =>
+                Container.withBackendConfig(_.UnixSocket(Path(path))) {
+                    HttpClient.withConfig(_.timeout(5.minutes))(checkingContainerLeak(v))
+                },
+            runtime => Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
+        )
 
     /** Register one leaf test per available container runtime (docker, podman). The test body receives the runtime name as a parameter —
       * use this when the test logic needs to construct a backend config explicitly or branch on runtime identity. The body picks its own
@@ -182,9 +177,11 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       * Use as the body of `String -` in test declarations: {{{"auto-detect prefers HTTP" - runRuntimes { runtime => ... }}}}
       */
     def runRuntimes(f: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
+        ContainerRuntime.assigned.foreach { (runtime, cannotRun) =>
             s"[$runtime]" in {
-                f(runtime)
+                cannotRun match
+                    case Present(reason) => cancel(reason)
+                    case Absent          => f(runtime)
             }
         }
 
@@ -195,35 +192,31 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       * runtime) or [[runRuntimes]] (one leaf per runtime, body picks the backend).
       */
     def runBackend(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        val socket = Seq("podman", "docker")
-            .filter(ContainerRuntime.isAvailable)
-            .iterator
-            .flatMap(rt => ContainerRuntime.findSocket(rt).iterator)
-            .nextOption()
-        socket.foreach { path =>
-            "http" in {
-                Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v))
-            }
-        }
-    end runBackend
+        registerSingleLeg(path => Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v)))
 
     /** Like [[runBackend]] but raises the HTTP client's per-request timeout to 5 minutes. Use for single-leaf integration tests that pull
       * or build large images on a cold cache (e.g. predef DB tests).
       */
     def runBackendLong(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        val socket = Seq("podman", "docker")
-            .filter(ContainerRuntime.isAvailable)
-            .iterator
-            .flatMap(rt => ContainerRuntime.findSocket(rt).iterator)
-            .nextOption()
-        socket.foreach { path =>
-            "http" in {
-                Container.withBackendConfig(_.UnixSocket(Path(path))) {
-                    HttpClient.withConfig(_.timeout(5.minutes))(checkingContainerLeak(v))
-                }
+        registerSingleLeg { path =>
+            Container.withBackendConfig(_.UnixSocket(Path(path))) {
+                HttpClient.withConfig(_.timeout(5.minutes))(checkingContainerLeak(v))
             }
         }
-    end runBackendLong
+
+    /** The `http` leaf of [[runBackend]] over the first runnable runtime's socket, or that leaf cancelled with the reason when no runtime
+      * this process answers for has one, for the same reason [[registerBackends]] registers cancelled twins.
+      */
+    private def registerSingleLeg(http: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
+        ContainerRuntime.available.iterator.flatMap(rt => ContainerRuntime.findSocket(rt).iterator).nextOption() match
+            case Some(path) => "http" in http(path)
+            case None       =>
+                val reason =
+                    if ContainerRuntime.available.nonEmpty then "no runtime that can run here exposes a socket for the http backend"
+                    else ContainerRuntime.assigned.flatMap(_._2.toOption).mkString("; ")
+                "http" in cancel(reason)
+        end match
+    end registerSingleLeg
 
     /** Returns `config` with `autoRemove = false` so tests can inspect container state after stopping.
       *

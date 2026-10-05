@@ -90,7 +90,8 @@ class StartTlsInteropClientTest extends Test:
     end serve
 
     /** One s_server launch on `port`: waits for it to print ACCEPT or to exit. The bind failure is read from the output because OpenSSL 3
-      * exits with status 0 after `BIO_bind`.
+      * exits with status 0 after `BIO_bind`. It is matched on OpenSSL's own reason, "unable to bind socket", because the system error
+      * before it is platform text: "Address already in use" on Linux and macOS, "Unknown error" for WSAEADDRINUSE on Windows.
       */
     private def startOnce(certPath: String, keyPath: String, port: Int)(using Frame): Server < (Async & Abort[ServeFailure]) =
         val output = new ConcurrentLinkedQueue[String]()
@@ -141,7 +142,7 @@ class StartTlsInteropClientTest extends Test:
                 if ready.get() then Server(proc, port, output)
                 else
                     Sync.defer(proc.destroy()).andThen {
-                        if waited.isSuccess && text.contains("Address already in use") then
+                        if waited.isSuccess && text.contains("unable to bind socket") then
                             Abort.fail(ServeFailure.PortTaken(port, text))
                         else
                             val why = if waited.isSuccess then "exited before printing ACCEPT" else "did not print ACCEPT within 15s"
