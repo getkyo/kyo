@@ -560,12 +560,12 @@ private[kyo] object UnsafeServerDispatch:
             Channel.initUnscopedWith[HttpWebSocket.Payload](wsHandler.wsConfig.bufferSize) { outbound =>
                 AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeReasonRef =>
                     Fiber.Promise.init[Unit, Any].map { peerClosedPromise =>
-                        // closeFn routes ws.close through the outbound channel: set closeReasonRef + close outbound.
-                        // The write fiber drains remaining frames then emits the close frame inline (single writer to
-                        // conn), eliminating the put/close race that surfaced under caliban WS load on arm64 CI.
+                        // closeFn routes ws.close through the outbound channel: it sets closeReasonRef and closes outbound
+                        // keeping its queued frames, so the write fiber, the single writer to conn, writes every frame put
+                        // before the close and then the Close frame.
                         val closeFn: (Int, String) => Unit < Async = (code, reason) =>
                             closeReasonRef.set(Present((code, reason))).andThen {
-                                outbound.closeDiscard
+                                WebSocketCodec.closeKeepingQueued(outbound)
                             }
                         val ws      = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
                         val request = HttpRequest(HttpMethod.GET, url, headers, Record.empty)
@@ -584,16 +584,16 @@ private[kyo] object UnsafeServerDispatch:
                             }
                         }.map { readFiber =>
                             Fiber.initUnscoped {
-                                // Monitor: on read EOF (peer close), close inbound and complete peerClosedPromise so
-                                // ws.onPeerClose fires. Outbound is intentionally NOT closed here — applications that
-                                // want the sender fiber to exit promptly on peer close compose ws.onPeerClose into
-                                // their own race (see HttpWebSocket.onPeerClose docs).
+                                // Monitor: on read EOF (peer close), close inbound keeping the frames that arrived before
+                                // it, and complete peerClosedPromise so ws.onPeerClose fires. Outbound is intentionally NOT
+                                // closed here: applications that want the sender fiber to exit promptly on peer close
+                                // compose ws.onPeerClose into their own race (see HttpWebSocket.onPeerClose docs).
                                 readFiber.getResult.map { result =>
                                     val log = result match
                                         case Result.Failure(_) => Kyo.unit
                                         case Result.Panic(t)   => Log.warn("HttpWebSocket server reader panicked", t)
                                         case Result.Success(_) => Kyo.unit
-                                    log.andThen(inbound.closeDiscard).andThen(peerClosedPromise.completeUnit.unit)
+                                    log.andThen(WebSocketCodec.closeKeepingQueued(inbound)).andThen(peerClosedPromise.completeUnit.unit)
                                 }
                             }.map { monitorFiber =>
                                 Fiber.initUnscoped {
@@ -629,17 +629,22 @@ private[kyo] object UnsafeServerDispatch:
                                     ) {
                                         Abort.run[Any](wsHandler.wsHandler(request, ws)).map { _ =>
                                             // After handler returns: if no close reason was registered AND the reader
-                                            // hasn't already observed EOF, install a 1000 close reason and signal the
-                                            // write fiber by closing outbound. Then await writeFiber so the close frame
-                                            // hits the wire before the Sync.ensure finalizer interrupts the write fiber.
+                                            // hasn't already observed EOF, install a 1000 close reason. Then close outbound in
+                                            // every case, since the write fiber exits only once outbound is closed, and await it
+                                            // so the queued frames and any close frame hit the wire before the Sync.ensure
+                                            // finalizer interrupts it. The wait is bounded by closeTimeout, so a peer that stops
+                                            // reading cannot hold the session open.
                                             closeReasonRef.get.map {
                                                 case Absent =>
                                                     readFiber.done.map { isDone =>
                                                         if isDone then Kyo.unit
-                                                        else closeReasonRef.set(Present((1000, ""))).andThen(outbound.closeDiscard)
+                                                        else closeReasonRef.set(Present((1000, "")))
                                                     }
-                                                case _ => outbound.closeDiscard
-                                            }.andThen(writeFiber.get.unit)
+                                                case _ => Kyo.unit
+                                            }.andThen(WebSocketCodec.closeKeepingQueued(outbound))
+                                                .andThen(Abort.run[Timeout](
+                                                    Async.timeout(wsHandler.wsConfig.closeTimeout)(writeFiber.get)
+                                                ).unit)
                                         }
                                     }
                                 }

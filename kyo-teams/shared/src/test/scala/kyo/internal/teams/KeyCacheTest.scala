@@ -109,6 +109,58 @@ class KeyCacheTest extends kyo.test.Test[Any]:
         }
     }
 
+    // Every lookup is held after reading the empty cache and before claiming the fetch, the interleaving under which lookups that start
+    // their fetch before the claim each send a request. The fetches started while all are held must be none; the peer is then given every
+    // request those fetches sent before the lookups go on, so the count at the end does not depend on how fast an interrupt lands.
+    "lookups that read the empty cache together start one fetch" in {
+        withLocal { local =>
+            for
+                teams   <- Teams.init(local.config)
+                arrived <- Latch.init(5)
+                open    <- Latch.init(1)
+                started <- AtomicInt.init
+                keys    <- KeyCache.init(
+                    local.config,
+                    teams.http,
+                    KeyCache.Hooks(arrived.release.andThen(open.await), started.incrementAndGet.unit)
+                )
+                fibers  <- Kyo.foreach(Chunk.range(0, 5))(_ => Fiber.initUnscoped(Abort.run(keys.get("k1"))))
+                _       <- arrived.await
+                early   <- started.get
+                _       <- assertEventually(fetches(local).map(_._1 == early))
+                _       <- open.release
+                results <- Kyo.foreach(fibers)(_.get)
+                counts  <- fetches(local)
+            yield
+                assert(
+                    (early, counts) == (0, (1, 1)),
+                    s"fetches started before any lookup claimed one: $early, metadata and key set fetches: $counts"
+                )
+                assert(results.map(_.map(_.kid)) == Chunk.fill(5)(Result.succeed(Present("k1"))))
+            end for
+        }
+    }
+
+    "a lookup interrupted while the fetch is in flight leaves the fetch to the next lookup" in {
+        withLocal { local =>
+            local.reply("metadata").andThen {
+                Teams.init(local.config).map { teams =>
+                    for
+                        first  <- Fiber.initUnscoped(verifyOn(local, teams, "k1"))
+                        _      <- local.held.await
+                        _      <- first.interrupt
+                        second <- Fiber.initUnscoped(verifyOn(local, teams, "k1"))
+                        _      <- local.reply("metadata", local.metadata())
+                        _      <- local.release
+                        result <- second.get
+                        counts <- fetches(local)
+                    yield assert((result, counts) == (mismatch, (1, 1)), s"result: $result, counts: $counts")
+                    end for
+                }
+            }
+        }
+    }
+
     "keys the module cannot use are dropped: another kty, another use, no n or e, and a repeated kid keeps the first" in {
         withLocal { local =>
             val even = Base64.encodeUrl(Span.from(Array.tabulate[Byte](256)(i => if i == 0 then 0x80.toByte else 0)))

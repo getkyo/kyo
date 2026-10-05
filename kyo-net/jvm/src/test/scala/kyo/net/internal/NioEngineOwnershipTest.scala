@@ -1,7 +1,5 @@
 package kyo.net.internal
 
-import java.net.InetSocketAddress
-import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import kyo.*
 import kyo.net.Connection
@@ -96,20 +94,6 @@ class NioEngineOwnershipTest extends Test:
         }
     end driveConnection
 
-    private def openPair(): (SocketChannel, SocketChannel) =
-        val ss = ServerSocketChannel.open()
-        ss.bind(new InetSocketAddress("127.0.0.1", 0))
-        val port = ss.socket().getLocalPort
-        val c    = SocketChannel.open()
-        c.configureBlocking(false)
-        c.connect(new InetSocketAddress("127.0.0.1", port))
-        ss.configureBlocking(true)
-        val s = ss.accept()
-        c.finishConnect()
-        ss.close()
-        (c, s)
-    end openPair
-
     "NioHandle.engineGate" - {
 
         // After a TLS handshake completes, the gate must be released (false) so the first post-handshake
@@ -203,8 +187,10 @@ class NioEngineOwnershipTest extends Test:
         // Real NioHandle.close on a TLS handle must acquire and release the engine gate.
         // After close, the gate is false (released by the finally block in NioHandle.close).
         // This test exercises the real close path, not a manual gate simulation.
+        // The handle is never read or written, so an unconnected channel serves; the close_notify write it attempts fails inside close,
+        // which is the throwing path the finally has to survive.
         "NioHandle.close acquires and releases gate on TLS handle" in {
-            val (client, server) = openPair()
+            val client = SocketChannel.open()
             try
                 val engine = javax.net.ssl.SSLContext.getDefault.createSSLEngine()
                 engine.setUseClientMode(true)
@@ -214,10 +200,7 @@ class NioEngineOwnershipTest extends Test:
                 NioHandle.close(handle)
                 assert(!handle.engineGate.get(), "gate must be released after close (finally block ran)")
                 assert(!handle.channel.isOpen, "channel must be closed")
-            finally
-                try client.close()
-                catch case _: Exception => ()
-                server.close()
+            finally client.close()
             end try
         }
 

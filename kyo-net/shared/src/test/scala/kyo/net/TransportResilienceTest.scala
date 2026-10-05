@@ -42,11 +42,51 @@ class TransportResilienceTest extends Test:
             conn.inbound.safe.take.andThen(Loop.continue)
         }
 
-    /** Connects to `port`, runs `use` on the connection, and closes it however `use` ends, interruption included. */
+    /** Connects to `host:port`, runs `use` on the connection, and closes it however `use` ends, interruption included. */
+    private def withConnection[A](transport: Transport, host: String, port: Int)(
+        use: Connection => A < (Async & Abort[NetException | Closed])
+    )(using Frame): A < (Async & Abort[NetException | Closed]) =
+        transport.connect(host, port).safe.get.map(conn => Sync.ensure(Sync.defer(conn.close()))(use(conn)))
+
     private def withConnection[A](transport: Transport, port: Int)(use: Connection => A < (Async & Abort[NetException | Closed]))(using
         Frame
     ): A < (Async & Abort[NetException | Closed]) =
-        transport.connect("127.0.0.1", port).safe.get.map(conn => Sync.ensure(Sync.defer(conn.close()))(use(conn)))
+        withConnection(transport, "127.0.0.1", port)(use)
+
+    private def withConnection[A](transport: Transport, listener: Listener)(
+        use: Connection => A < (Async & Abort[NetException | Closed])
+    )(using Frame): A < (Async & Abort[NetException | Closed]) =
+        withConnection(transport, listener.host, listener.port)(use)
+
+    /** A listener for a leaf that churns thousands of connections, bound to a loopback address picked at random from 127.0.0.2 to 127.0.0.254.
+      *
+      * A closed connection's TIME_WAIT holds its 4-tuple, and Windows keeps it for 120s. A kyo-netJVM pass churns most of the 16384-port
+      * ephemeral range, so back-to-back passes wrap it inside that window, and a new connect whose tuple matches one still waiting fails with
+      * WSAEADDRINUSE. A distinct address per churn listener keeps its tuples apart from every other listener's, at any count. A host that
+      * answers only on 127.0.0.1 (macOS) refuses the bind, and the listener falls back to it. Any other bind failure fails the leaf: on a host
+      * that answers on all of 127/8, a silent fallback would turn the spread into a no-op.
+      */
+    private def churnListen(transport: Transport, backlog: Int)(handler: Connection => Unit)(using
+        Frame
+    ): Listener < (Async & Abort[NetException]) =
+        Random.nextInt(253).map { n =>
+            Abort.run[NetException](transport.listen(s"127.0.0.${n + 2}", 0, backlog)(handler).safe.get).map {
+                case Result.Failure(e) if addressRefused(e) => transport.listen("127.0.0.1", 0, backlog)(handler).safe.get
+                case other                                  => Abort.get(other)
+            }
+        }
+
+    /** Whether a bind failed because the host refuses the address itself (EADDRNOTAVAIL: 49 on macOS/BSD, 99 on Linux). Each backend reports
+      * it in its own shape: the errno (posix), the JDK's message (NIO), or Node's error code in the message (JS).
+      */
+    private def addressRefused(e: NetException): Boolean =
+        e match
+            case NetBindException(_, _, cause) =>
+                cause match
+                    case errno: NetErrno => errno.code == (if kyo.internal.Platform.isMacOrBsd then 49 else 99)
+                    case t: Throwable    => Maybe(t.getMessage).exists(_.contains("Can't assign requested address"))
+                    case msg: String     => msg.contains("EADDRNOTAVAIL")
+            case _ => false
 
     /** Runs `body` on an accepted connection in its own fiber and closes the connection however `body` ends. The fiber is unscoped, so it
       * outlives an interrupted leaf; it ends once its peer closes.
@@ -124,7 +164,7 @@ class TransportResilienceTest extends Test:
             for
                 cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
                 _             <- Scope.ensure(Sync.defer(cleanListener.close()))
-                churnListener <- transport.listen("127.0.0.1", 0, 256)(registeringEcho).safe.get
+                churnListener <- churnListen(transport, 256)(registeringEcho)
                 _             <- Scope.ensure(Sync.defer(churnListener.close()))
                 churn = Loop(0) { _ =>
                     if stop.get() then Loop.done(())
@@ -144,7 +184,7 @@ class TransportResilienceTest extends Test:
                         if i >= iters then Loop.done(())
                         else
                             Abort.run[NetException | Closed] {
-                                withConnection(transport, churnListener.port) { conn =>
+                                withConnection(transport, churnListener) { conn =>
                                     Loop(0) { j =>
                                         if j >= perConn then Loop.done(())
                                         else
@@ -195,11 +235,11 @@ class TransportResilienceTest extends Test:
         for
             cleanListener  <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
             _              <- Scope.ensure(Sync.defer(cleanListener.close()))
-            silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
+            silentListener <- churnListen(transport, 128)(drain)
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
             _              <- Async.foreach(0 until 300, 48) { _ =>
                 Abort.run[NetException | Closed] {
-                    withConnection(transport, silentListener.port) { conn =>
+                    withConnection(transport, silentListener) { conn =>
                         // Race a close against an armed read: start the read, close concurrently.
                         Async.zip(Abort.run(conn.inbound.safe.take).unit, Sync.defer(conn.close())).unit
                     }
@@ -221,11 +261,10 @@ class TransportResilienceTest extends Test:
             _             <- Loop(0) { round =>
                 if round >= 40 then Loop.done(())
                 else
-                    transport.listen("127.0.0.1", 0, 128)(echo).safe.get.map { churnListener =>
-                        val port     = churnListener.port
+                    churnListen(transport, 128)(echo).map { churnListener =>
                         val connects = Async.foreach(0 until 16, 16) { _ =>
                             Abort.run[NetException | Closed] {
-                                withConnection(transport, port) { conn =>
+                                withConnection(transport, churnListener) { conn =>
                                     conn.outbound.safe.put(Span.fromUnsafe("x".getBytes("UTF-8")))
                                 }
                             }.andThen(progress.tick)
@@ -256,11 +295,11 @@ class TransportResilienceTest extends Test:
             for
                 cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
                 _             <- Scope.ensure(Sync.defer(cleanListener.close()))
-                mixedListener <- transport.listen("127.0.0.1", 0, 128)(mixed).safe.get
+                mixedListener <- churnListen(transport, 128)(mixed)
                 _             <- Scope.ensure(Sync.defer(mixedListener.close()))
                 _             <- Async.foreach(0 until 200, 40) { _ =>
                     Abort.run[NetException | Closed] {
-                        withConnection(transport, mixedListener.port) { conn =>
+                        withConnection(transport, mixedListener) { conn =>
                             conn.outbound.safe.put(Span.fromUnsafe(msg))
                                 .andThen(Abort.run(conn.inbound.safe.take))
                                 .unit
@@ -282,11 +321,11 @@ class TransportResilienceTest extends Test:
         for
             cleanListener  <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
             _              <- Scope.ensure(Sync.defer(cleanListener.close()))
-            silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
+            silentListener <- churnListen(transport, 128)(drain)
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
             _              <- Async.foreach(0 until 300, 48) { _ =>
                 Abort.run[NetException | Closed] {
-                    withConnection(transport, silentListener.port) { conn =>
+                    withConnection(transport, silentListener) { conn =>
                         Fiber.initUnscoped(Abort.run[Closed](conn.inbound.safe.take).unit).map(_.interrupt.unit)
                     }
                 }.andThen(progress.tick)
@@ -306,11 +345,11 @@ class TransportResilienceTest extends Test:
             for
                 cleanListener  <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
                 _              <- Scope.ensure(Sync.defer(cleanListener.close()))
-                silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
+                silentListener <- churnListen(transport, 128)(drain)
                 _              <- Scope.ensure(Sync.defer(silentListener.close()))
                 _              <- Async.foreach(0 until 200, 40) { _ =>
                     Abort.run[NetException | Closed] {
-                        withConnection(transport, silentListener.port) { conn =>
+                        withConnection(transport, silentListener) { conn =>
                             Abort.run[Closed | Timeout](Async.timeout(20.millis)(conn.inbound.safe.take)).unit
                         }
                     }.andThen(progress.tick)
@@ -343,7 +382,7 @@ class TransportResilienceTest extends Test:
             for
                 cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
                 _             <- Scope.ensure(Sync.defer(cleanListener.close()))
-                churnListener <- transport.listen("127.0.0.1", 0, 256)(registeringDrain).safe.get
+                churnListener <- churnListen(transport, 256)(registeringDrain)
                 _             <- Scope.ensure(Sync.defer(churnListener.close()))
                 churn = Loop(0) { _ =>
                     if stop.get() then Loop.done(())
@@ -363,7 +402,7 @@ class TransportResilienceTest extends Test:
                         if i >= 120 then Loop.done(())
                         else
                             Abort.run[NetException | Closed] {
-                                withConnection(transport, churnListener.port) { conn =>
+                                withConnection(transport, churnListener) { conn =>
                                     // Arm a read the drain server never answers, bounded by a short timeout that fires
                                     // while it is still parked.
                                     Abort.run[Closed | Timeout](Async.timeout(8.millis)(conn.inbound.safe.take)).unit
