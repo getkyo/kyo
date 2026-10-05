@@ -501,6 +501,23 @@ class ContainerItTest extends BasePodTest:
                 yield assert(s == Container.State.Stopped)
             }
         }
+
+        // The process exits 0 on SIGTERM, so exit code 0 proves the stop delivered SIGTERM; a stop that only got the container down by
+        // SIGKILL leaves 137.
+        "stops a paused container gracefully" - runBackends {
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
+                .autoRemove(false)
+            Container.init(config).map { c =>
+                for
+                    _    <- c.pause
+                    _    <- c.stop
+                    info <- c.inspect
+                yield
+                    assert(info.state == Container.State.Stopped)
+                    assert(info.exitCode == Present(ExitCode.Success), s"a paused container must stop by SIGTERM, got ${info.exitCode}")
+            }
+        }
     }
 
     "kill" - {
