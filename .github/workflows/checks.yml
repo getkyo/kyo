@@ -231,7 +231,7 @@ jobs:
         run: |
           scripts/sbt.sh tool 'checkClassNames --self-test'
           if [ "${{ github.event_name }}" != pull_request ]; then
-            scripts/sbt.sh compile 'checkClassNames JVM --write-index target/classnames-index.tsv'
+            scripts/sbt.sh classnames 'checkClassNames JVM --write-index target/classnames-index.tsv'
             git rev-parse HEAD > target/classnames-index.sha
             exit 0
           fi
@@ -242,10 +242,10 @@ jobs:
               echo "No JVM project differs from $indexed; no class can have changed."
               exit 0
             fi
-            scripts/sbt.sh compile "checkClassNames JVM --modules $(paste -sd, target/classnames-plan) --index target/classnames-index.tsv"
+            scripts/sbt.sh classnames "checkClassNames JVM --modules $(paste -sd, target/classnames-plan) --index target/classnames-index.tsv"
           else
             echo "No usable class-name index; checking every project."
-            scripts/sbt.sh compile 'checkClassNames JVM'
+            scripts/sbt.sh classnames 'checkClassNames JVM'
           fi
 
       - name: Save class-name index
