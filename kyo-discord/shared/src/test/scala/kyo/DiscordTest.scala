@@ -1110,11 +1110,21 @@ object DiscordTest:
     /** A 200 whose chunked body's first size line is not hexadecimal. */
     val badChunked: String = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n{}\r\n0\r\n\r\n"
 
-    /** A port nothing listens on: a listener's, closed. */
+    /** A port nothing listens on: a listener's, closed and released.
+      *
+      * `close` hands the descriptor's release to the transport's event loop, so the port can still accept a connection after it returns. On
+      * Windows that connection was accepted and then reset, which the client rightly reports as `ConnectionClosed` rather than `Connect`.
+      * Waiting for `released` is what makes the port refuse.
+      */
     def closedPort(using Frame): Int < (Async & Abort[Any]) =
         Sync.Unsafe.defer(kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 1)(_ => ())).map { fiber =>
             // Unsafe: the listener is kyo-net's raw tier; it is closed at once, so only its port is kept.
-            fiber.safe.use(listener => Sync.Unsafe.defer(listener.close()).andThen(listener.port))
+            fiber.safe.use { listener =>
+                Sync.Unsafe.defer {
+                    listener.close()
+                    listener.released.safe
+                }.map(_.get).andThen(listener.port)
+            }
         }
 
     /** A peer that answers every connection with `response`, queued on accept, and counts the connections it accepted. The leaf
