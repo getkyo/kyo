@@ -9,13 +9,24 @@
 # Rules, over .github/, scripts/, .jvmopts and .sbtopts:
 #   heap-flag    no -Xmx, -Xms or -XX heap or RAM sizing flag outside sbt-heap-lib.sh
 #   bare-sbt     no workflow or action line starts sbt directly instead of scripts/sbt.sh
-#   script-sbt   a script that starts sbt sources sbt-heap-lib.sh or goes through scripts/sbt.sh
+#   script-sbt   a script that starts sbt, by name, through a variable holding it, or inside a wrapper
+#                function, sources sbt-heap-lib.sh or goes through scripts/sbt.sh
 # Forked JVMs configured in build.sbt (test forks, tool runners) are not drivers and are not checked.
 set -uo pipefail
 
 HEAP_FLAG='-Xm[sx][0-9]|-XX:(MaxHeapSize|InitialHeapSize|MaxRAM|MaxRAMPercentage|InitialRAMPercentage|MinRAMPercentage|MaxRAMFraction)='
-# sbt as the command word: at the start of the content or after a shell separator or keyword.
-SBT_START='(^|&&|\|\||[;|(]|\$\(|\bthen|\bdo|\bexec|\belse|\bsetsid|\bnohup|\btime)[[:space:]]*sbt([[:space:]]|$)'
+# Where a command word starts: the start of the content, or after a shell separator or keyword, past any
+# NAME=value environment prefixes. `{` opens a one-line function body, so a wrapper like `f() { sbt; }` counts.
+CMD_AT='(^|&&|\|\||[;|({]|\$\(|\bthen|\bdo|\bexec|\belse|\bsetsid|\bnohup|\btime)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+# sbt as the command word.
+SBT_START="${CMD_AT}sbt([[:space:]]|$)"
+# A variable that holds sbt: its name says so, whatever its case.
+SBT_VAR_NAME='[A-Za-z0-9_]*[Ss][Bb][Tt][A-Za-z0-9_]*'
+
+# The names a script assigns an sbt command to: `X=sbt`, `X=/path/to/sbt`, `X="${Y:-sbt}"`, `X=$(command -v sbt)`.
+sbt_assigned_vars() {
+    sed -nE 's/^[[:space:]]*((export|local|readonly|declare)[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=["'"'"']?(\$\{[A-Za-z_][A-Za-z0-9_]*:-)?(\$\((command -v|which)[[:space:]]+)?([^[:space:]"'"'"'}]*\/)?sbt(["'"'"'})[:space:]].*)?$/\3/p' "$1" | sort -u | paste -sd'|' -
+}
 
 check_tree() {
     local root="$1" found=0 f n line content
@@ -36,16 +47,20 @@ check_tree() {
         done < <(grep -nE -- '(^|[^[:alnum:]_./-])sbt([[:space:]]|$)' "$f")
     done < <(find "$root/.github" -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null)
 
+    local vars starts
     while IFS= read -r f; do
         case "$f" in */scripts/sbt.sh|*/scripts/sbt-heap-check.sh) continue ;; esac
-        grep -q 'sbt-heap-lib\.sh\|scripts/sbt\.sh\|/sbt\.sh"' "$f" && continue
+        # Exempt only on code: a comment that names the lib or scripts/sbt.sh exempts nothing.
+        grep -v '^[[:space:]]*#' "$f" | grep -q 'sbt-heap-lib\.sh\|scripts/sbt\.sh\|/sbt\.sh"' && continue
+        vars=$(sbt_assigned_vars "$f")
+        starts="$SBT_START|${CMD_AT}\"?\\\$\\{?(${SBT_VAR_NAME}${vars:+|$vars})\\}?\"?([[:space:]]|$)"
         while IFS=: read -r n line; do
             content=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*//')
             case "$content" in '#'*) continue ;; esac
-            if printf '%s' "$content" | grep -qE -- "$SBT_START"; then
+            if printf '%s' "$content" | grep -qE -- "$starts"; then
                 echo "script-sbt: ${f#$root/}:$n: $line"; found=1
             fi
-        done < <(grep -nE -- '(^|[^[:alnum:]_./-])sbt([[:space:]]|$)' "$f")
+        done < <(grep -nE -- '(^|[^[:alnum:]_./-])sbt([[:space:]]|$)|\$' "$f")
     done < <(find "$root/scripts" -type f -name '*.sh' 2>/dev/null)
 
     return "$found"
@@ -108,6 +123,38 @@ self_test() {
     reset
     printf '#!/bin/bash\n    setsid sbt "$@" &\n' > "$dir/scripts/d.sh"
     expect "a setsid-prefixed sbt counts as starting sbt" 1 "script-sbt: scripts/d.sh:2:"
+
+    reset
+    printf '#!/bin/bash\nSBT_CMD="${SBT_CMD:-sbt}"\nlog "CI=1 $SBT_CMD x"\n( cd r && CI=1 "$SBT_CMD" x ) | tee l\n' > "$dir/scripts/e.sh"
+    expect "sbt started through \"\$SBT_CMD\" behind an env prefix fails" 1 "script-sbt: scripts/e.sh:4:"
+
+    reset
+    printf '#!/bin/bash\nrunner=$(command -v sbt)\n"$runner" compile\n' > "$dir/scripts/f.sh"
+    expect "a variable assigned the sbt path is sbt, whatever its name" 1 "script-sbt: scripts/f.sh:3:"
+
+    reset
+    printf '#!/bin/bash\nrun_sbt() { sbt "$@"; }\nrun_sbt compile\n' > "$dir/scripts/g.sh"
+    expect "a one-line function wrapping sbt fails" 1 "script-sbt: scripts/g.sh:2:"
+
+    reset
+    printf '#!/bin/bash\nCI=1 sbt compile\n' > "$dir/scripts/h.sh"
+    expect "an env-prefixed bare sbt fails" 1 "script-sbt: scripts/h.sh:2:"
+
+    reset
+    printf '#!/bin/bash\n# heap: see sbt-heap-lib.sh\n"$SBT_CMD" x\n' > "$dir/scripts/i.sh"
+    expect "a lib named only in a comment exempts nothing" 1 "script-sbt: scripts/i.sh:3:"
+
+    reset
+    printf '#!/bin/bash\nSBT_CMD="${SBT_CMD:-sbt}"\n. "$ROOT/scripts/sbt-heap-lib.sh"\nHEAP=$(sbt_heap link) || exit 2\n( cd r && CI=1 "$SBT_CMD" "$HEAP" x )\n' > "$dir/scripts/j.sh"
+    expect "\"\$SBT_CMD\" in a script that sources the lib and uses sbt_heap passes" 0 ""
+
+    reset
+    printf '#!/bin/bash\nsource "$here/sbt-heap-lib.sh"\nrun_sbt() { sbt "$(sbt_heap tool)" "$@"; }\nrun_sbt x\n' > "$dir/scripts/k.sh"
+    expect "a wrapper function in a script that sources the lib passes" 0 ""
+
+    reset
+    printf '#!/bin/bash\nCMD=ls\n"$CMD" -l\ntool="$HOME/bin/sbtx"\n"$tool" y\n' > "$dir/scripts/l.sh"
+    expect "a variable holding something other than sbt passes" 0 ""
 
     echo "Results: $pass/$((pass+fail)) passed, $fail failed"
     [ "$fail" = 0 ]
