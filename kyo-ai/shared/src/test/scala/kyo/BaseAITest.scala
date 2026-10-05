@@ -189,8 +189,6 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
         end if
     end selectBackends
 
-    private[kyo] var anthropicPreflight: Maybe[Result[HttpException, Unit]] = Absent
-
     private[kyo] def providerMatches(name: String, backend: Backend): Boolean =
         val label = backend.label.toLowerCase
         name == label ||
@@ -225,10 +223,10 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
     )(using Frame): Unit =
         backends.filter(pred).foreach { backend =>
             s"[${backend.label}]" in {
-                for
-                    config <- requireBackend(backend)
-                    _      <- LLM.run(config)(v(backend))
-                yield ()
+                // Recovers typed failures only: a leaf's own cancel travels as a panic, and routing that through `unwrap` would fail it.
+                requireBackend(backend).map { config =>
+                    Abort.recover[AIException](ex => unwrap(backend, Result.fail(ex)))(LLM.run(config)(v(backend)))
+                }
             }
         }
     end runBackendsWhere
@@ -238,94 +236,22 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
     )(using Frame): Unit =
         backends.foreach { backend =>
             s"[${backend.label}]" in {
-                for
-                    config <- requireBackend(backend)
-                    _      <- v(backend, config)
-                yield ()
+                requireBackend(backend).map { config =>
+                    Abort.recover[AIException](ex => unwrap(backend, Result.fail(ex)))(v(backend, config))
+                }
             }
         }
     end runBackendConfigs
 
+    /** The backend's credentialed config, or a cancelled arm naming why the backend cannot run. */
     private[kyo] def requireBackend(backend: Backend)(using Frame, kyo.test.AssertScope): Config < Async =
-        for
-            config <- Config.credentialed(backend.entry)
-            _      <- backend.cli match
-                case Present(command) =>
-                    for
-                        available <- commandAvailable(command)
-                        _         <- Kyo.lift(assume(available, s"$command CLI is not available"))
-                        _         <-
-                            if command != "claude" then Kyo.unit
-                            else
-                                claudeAuthenticationAvailable.map(authenticated =>
-                                    assume(authenticated, "claude CLI is not authenticated")
-                                )
-                    yield ()
-                case Absent =>
-                    Kyo.lift(assume(config.apiKey.isDefined, s"${backend.provider.keyName} is not available")).andThen(
-                        apiBackendAvailable(backend, config)
-                    )
-        yield config
+        Config.credentialed(backend.entry).map { config =>
+            BaseAITest.unavailability(backend.provider, backend.cli, config).map {
+                case Present(reason) => cancel(s"${backend.label} is unavailable: $reason")
+                case Absent          => config
+            }
+        }
     end requireBackend
-
-    private[kyo] def apiBackendAvailable(backend: Backend, config: Config)(using Frame, kyo.test.AssertScope): Unit < Async =
-        if backend.provider.name != Config.Anthropic.name then Kyo.unit
-        else
-            config.apiKey match
-                case Absent =>
-                    Kyo.unit
-                case Present(key) =>
-                    anthropicPreflight match
-                        case Present(result) =>
-                            handleApiPreflight(backend, result)
-                        case Absent =>
-                            val headers = Seq(
-                                "content-type"      -> "application/json",
-                                "x-api-key"         -> key,
-                                "anthropic-version" -> "2023-06-01"
-                            )
-                            val body =
-                                Json.encode(Structure.Value.Record(Chunk(
-                                    "model"      -> Structure.Value.Str(config.modelName),
-                                    "max_tokens" -> Structure.Value.Integer(1),
-                                    "messages"   -> Structure.Value.Sequence(Chunk(Structure.Value.Record(Chunk(
-                                        "role"    -> Structure.Value.Str("user"),
-                                        "content" -> Structure.Value.Str("ping")
-                                    ))))
-                                )))
-                            Abort.run[HttpException] {
-                                // The ping gets a generous timeout: under account throttle pressure the
-                                // API slow-walks even a 1-token request past the 5-second client default,
-                                // and a slow-but-working provider should run the arms, not cancel them.
-                                HttpClient.withConfig(_.timeout(30.seconds)) {
-                                    HttpClient.postText(s"${config.apiUrl}/messages", body, headers).unit
-                                }
-                            }.map { result =>
-                                anthropicPreflight = Present(result)
-                                handleApiPreflight(backend, result)
-                            }
-            end match
-        end if
-    end apiBackendAvailable
-
-    private[kyo] def handleApiPreflight(backend: Backend, result: Result[HttpException, Unit])(using
-        Frame,
-        kyo.test.AssertScope
-    ): Unit =
-        result match
-            case Result.Success(_) =>
-                ()
-            // A timed-out availability ping is the provider being slow or throttled, the same
-            // unavailability class as a refused connection: cancel the arm, never fail it.
-            case Result.Failure(ex: HttpTimeoutException) =>
-                cancel(providerUnavailableMessage(backend, AITransportException(ex)))
-            case Result.Failure(ex) if unavailableCause(ex) =>
-                cancel(providerUnavailableMessage(backend, AITransportException(ex)))
-            case Result.Failure(ex) =>
-                fail(ex)
-            case Result.Panic(ex) =>
-                fail(ex)
-    end handleApiPreflight
 
     private[kyo] def unwrap[A](backend: Backend, result: Result[AIException, A])(using Frame, kyo.test.AssertScope): A < Sync =
         result match
@@ -333,41 +259,12 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
             case Result.Failure(ex) if providerUnavailable(ex) =>
                 Kyo.lift(cancel(providerUnavailableMessage(backend, ex)))
             case Result.Failure(ex) =>
-                Kyo.lift(fail(ex))
+                Kyo.lift(failArm(backend, ex))
             case Result.Panic(ex) if providerUnavailable(ex) =>
                 Kyo.lift(cancel(providerUnavailableMessage(backend, ex)))
             case Result.Panic(ex) =>
-                Kyo.lift(fail(ex))
+                Kyo.lift(failArm(backend, ex))
     end unwrap
-
-    private[kyo] def commandAvailable(command: String)(using Frame): Boolean < Async =
-        Abort.run[CommandException] {
-            Command(command, "--version").textWithExitCode
-        }.map {
-            case Result.Success((_, code)) => code.isSuccess
-            case _                         => false
-        }
-    end commandAvailable
-
-    private[kyo] def claudeAuthenticationAvailable(using Frame): Boolean < Async =
-        Abort.run[CommandException] {
-            Command("claude", "auth", "status").textWithExitCode
-        }.map {
-            case Result.Success((output, code)) => code.isSuccess && claudeAuthenticated(output)
-            case _                              => false
-        }
-    end claudeAuthenticationAvailable
-
-    private[kyo] def claudeAuthenticated(output: String): Boolean =
-        Json.decode[Structure.Value](output).toMaybe.exists {
-            case Structure.Value.Record(fields) =>
-                fields.exists {
-                    case ("loggedIn", Structure.Value.Bool(value)) => value
-                    case _                                         => false
-                }
-            case _ => false
-        }
-    end claudeAuthenticated
 
     private[kyo] def providerUnavailable(ex: Throwable): Boolean =
         val renderedUnavailable = unavailableText(ex.getMessage) || unavailableText(ex.toString)
@@ -411,46 +308,16 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
                 case other            => unavailableText(other.toString)
     end unavailableProduct
 
+    /** A cancel reason lands in CI logs, and a failure's detail carries the provider's response body, which can echo the key. So the
+      * reason names the failure's type, or the status and error codes of a raw refusal, never its text.
+      */
     private[kyo] def providerUnavailableMessage(backend: Backend, ex: Throwable): String =
-        unavailableDetail(ex).map(detail => s"${backend.label} provider is unavailable: $detail").getOrElse(
-            s"${backend.label} provider is unavailable"
-        )
-    end providerUnavailableMessage
+        s"${backend.label} provider is unavailable: ${BaseAITest.unavailableDetail(ex)}"
 
-    private[kyo] def unavailableDetail(ex: Throwable): Maybe[String] =
-        ex match
-            case provider: AIProviderUnavailableException =>
-                Present(provider.detail)
-            case rateLimit: AIRateLimitException =>
-                Present(rateLimit.detail)
-            case auth: AIProviderAuthException =>
-                Present(auth.detail)
-            case transport: AITransportException =>
-                unavailableDetail(transport.cause)
-            case status: HttpStatusException =>
-                status.body
-                    .flatMap(extractProviderErrorMessage)
-                    .orElse(Maybe(status.getMessage).filter(_.nonEmpty))
-            case _ =>
-                Maybe(ex.getMessage)
-                    .filter(message => message.nonEmpty && unavailableText(message))
-                    .orElse(Maybe(ex.getCause).flatMap(unavailableDetail))
-        end match
-    end unavailableDetail
-
-    private[kyo] def extractProviderErrorMessage(body: String): Maybe[String] =
-        Json.decode[Structure.Value](body).toMaybe.flatMap {
-            case Structure.Value.Record(fields) =>
-                Maybe.fromOption(fields.collectFirst {
-                    case ("error", Structure.Value.Record(errorFields)) =>
-                        Maybe.fromOption(errorFields.collectFirst { case ("message", Structure.Value.Str(message)) => message })
-                    case ("message", Structure.Value.Str(message)) =>
-                        Present(message)
-                }).flatten
-            case _ =>
-                Absent
-        }.orElse(Maybe.when(body.nonEmpty)(body))
-    end extractProviderErrorMessage
+    private def failArm(backend: Backend, ex: Throwable)(using Frame, kyo.test.AssertScope): Nothing =
+        BaseAITest.failureReport(ex) match
+            case Present(report) => fail(s"${backend.label} failed: $report")
+            case Absent          => fail(ex)
 
     private[kyo] def unavailableText(message: String): Boolean =
         if message == null then false
@@ -522,5 +389,183 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
             case Result.Panic(ex)      => Abort.panic(ex)
         }
     end agentAsk
+
+end BaseAITest
+
+object BaseAITest:
+
+    // Unsafe: the cache outlives every suite in the test JVM, so no suite's effect scope can allocate it.
+    private val probes: AtomicRef[Map[String, Maybe[String]]] =
+        AtomicRef.Unsafe.init(Map.empty[String, Maybe[String]])(using AllowUnsafe.embrace.danger).safe
+
+    /** Why a backend cannot run, or Absent when it can, probed once per test JVM and shared by every suite.
+      *
+      * A set key or an installed CLI says nothing about whether the credential works, and an arm run against a dead one fails on the
+      * provider's refusal rather than on anything under test. The probe exercises no kyo-ai code, so its failure cannot be a kyo-ai
+      * defect: every failure, a refusal, a timeout or a broken transport alike, cancels the arms with the reason.
+      */
+    private[kyo] def unavailability(provider: Config.Provider, cli: Maybe[String], config: Config)(using Frame): Maybe[String] < Async =
+        probes.get.map { cached =>
+            cached.get(provider.name) match
+                case Some(known) => known
+                case None        =>
+                    probe(cli, provider, config).map(found => probes.updateAndGet(_.updated(provider.name, found)).andThen(found))
+        }
+    end unavailability
+
+    private def probe(cli: Maybe[String], provider: Config.Provider, config: Config)(using Frame): Maybe[String] < Async =
+        cli match
+            case Present(command) => cliProbe(command)
+            case Absent           =>
+                config.apiKey match
+                    case Absent       => Present(s"${provider.keyName} is not set")
+                    case Present(key) => apiProbe(provider, config.apiUrl, key)
+    end probe
+
+    /** An authenticated read that spends no tokens: the model listing, or the key's own record on OpenRouter, whose listing is public.
+      *
+      * Providers refuse a bad key with 400, 401 or 403, so any answer outside 2xx is an unusable credential.
+      */
+    private[kyo] def apiProbe(provider: Config.Provider, apiUrl: String, key: String)(using Frame): Maybe[String] < Async =
+        val base    = apiUrl.stripSuffix("/")
+        val url     = if provider.name == Config.OpenRouter.name then s"$base/key" else s"$base/models"
+        val headers =
+            if provider.name == Config.Anthropic.name then Seq("x-api-key" -> key, "anthropic-version" -> "2023-06-01")
+            else Seq("Authorization"                                       -> s"Bearer $key")
+        Abort.run[HttpException] {
+            // Under throttle pressure a provider slow-walks even a listing past the 5-second client default, and a slow but
+            // working provider should run its arms.
+            HttpClient.withConfig(_.timeout(30.seconds))(HttpClient.getText(url, headers))
+        }.map {
+            case Result.Success(_)                           => Absent
+            case Result.Failure(status: HttpStatusException) =>
+                Present(s"GET $url answered ${statusDetail(status.status.code, status.body)}")
+            case Result.Failure(ex) => Present(s"GET $url failed: ${ex.getMessage}")
+            case Result.Panic(ex)   => Present(s"GET $url failed: $ex")
+        }
+    end apiProbe
+
+    private def cliProbe(command: String)(using Frame): Maybe[String] < Async =
+        succeeds(command, "--version").map {
+            case false => Present(s"the $command CLI is not installed")
+            case true  =>
+                command match
+                    case "claude" => claudeLoggedIn.map(loggedIn => Maybe.when(!loggedIn)("the claude CLI is not logged in"))
+                    case "codex"  => succeeds("codex", "login", "status").map(ok => Maybe.when(!ok)("the codex CLI is not logged in"))
+                    case _        => Absent
+        }
+    end cliProbe
+
+    private def succeeds(command: String*)(using Frame): Boolean < Async =
+        Abort.run[CommandException](Command(command*).textWithExitCode).map {
+            case Result.Success((_, code)) => code.isSuccess
+            case _                         => false
+        }
+    end succeeds
+
+    private def claudeLoggedIn(using Frame): Boolean < Async =
+        Abort.run[CommandException](Command("claude", "auth", "status").textWithExitCode).map {
+            case Result.Success((output, code)) => code.isSuccess && claudeAuthenticated(output)
+            case _                              => false
+        }
+    end claudeLoggedIn
+
+    private[kyo] def claudeAuthenticated(output: String): Boolean =
+        Json.decode[Structure.Value](output).toMaybe.exists {
+            case Structure.Value.Record(fields) =>
+                fields.exists {
+                    case ("loggedIn", Structure.Value.Bool(value)) => value
+                    case _                                         => false
+                }
+            case _ => false
+        }
+    end claudeAuthenticated
+
+    /** How a live leaf reports a failure that carries what a provider or harness answered: its type, the status, the error's codes and
+      * a stated retry wait, never the text, which can echo the key and would land in CI logs. Absent for any other failure, which
+      * reports as it is.
+      */
+    private[kyo] def failureReport(ex: Throwable): Maybe[String] =
+        ex match
+            case _: AIMissingApiKeyException     => Absent
+            case transport: AITransportException => Present(s"AITransportException ${unavailableDetail(transport)}")
+            case status: HttpStatusException     => Present(s"HttpStatusException ${unavailableDetail(status)}")
+            case answered: AIException           =>
+                // `detail`, not getMessage: the rendered message appends the frame after the body.
+                val detail = answered match
+                    case e: AIRateLimitException           => Present(e.detail)
+                    case e: AIProviderUnavailableException => Present(e.detail)
+                    case e: AIProviderAuthException        => Present(e.detail)
+                    case e: AIRequestRejectedException     => Present(e.detail)
+                    case e: AIToolCallRejectedException    => Present(e.detail)
+                    case e: AIHarnessException             => Present(e.detail)
+                    case _                                 => Absent
+                detail.map { text =>
+                    val status = statusInMessage(text).map(" " + _).getOrElse("")
+                    val wait   = answered match
+                        case AIRateLimitException(_, _, Present(retryAfter)) => s", retry after ${retryAfter.show}"
+                        case _                                               => ""
+                    s"${answered.getClass.getSimpleName}$status$wait"
+                }
+            case _ => Absent
+    end failureReport
+
+    /** A live leaf's outcome for a report, with any failure through [[failureReport]]. */
+    private[kyo] def reported(result: Result[Any, Any]): String =
+        def report(ex: Throwable): String = failureReport(ex).getOrElse(ex.toString)
+        result match
+            case Result.Success(_)             => "Success"
+            case Result.Failure(ex: Throwable) => report(ex)
+            case Result.Failure(other)         => other.toString
+            case Result.Panic(ex)              => report(ex)
+        end match
+    end reported
+
+    private[kyo] def unavailableDetail(ex: Throwable): String =
+        ex match
+            case transport: AITransportException => unavailableDetail(transport.cause)
+            case status: HttpStatusException     => statusDetail(status.status.code, status.body)
+            case other                           => other.getClass.getSimpleName
+    end unavailableDetail
+
+    /** The status, then the refusal's error type, code and status words. A body's free text can echo the key, and providers also put
+      * free text in fields meant for a code, so only a value made of letters and underscores alone is kept, a shape no provider key
+      * takes.
+      */
+    private[kyo] def statusDetail(code: Int, body: Maybe[String]): String =
+        val tokens = body.flatMap(leadingJson).map(errorCodes).getOrElse(Chunk.empty)
+        (Chunk(code.toString) ++ tokens.distinct).mkString(" ")
+    end statusDetail
+
+    /** The JSON value a text starts with. A rendered exception message continues after the body, so the shortest prefix ending in a
+      * closing bracket that decodes is the whole value: a shorter one is unbalanced.
+      */
+    private def leadingJson(text: String): Maybe[Structure.Value] =
+        val ends = text.indices.iterator.filter(i => text(i) == '}' || text(i) == ']')
+        Maybe.fromOption(ends.map(i => Json.decode[Structure.Value](text.take(i + 1)).toMaybe).collectFirst { case Present(v) => v })
+    end leadingJson
+
+    /** The status detail of a message rendered from an `HttpStatusException` ("... returned 429 (Too Many Requests). Body: ..."), the
+      * only form a classified failure keeps of the response.
+      */
+    private[kyo] def statusInMessage(message: String): Maybe[String] =
+        Maybe.fromOption(statusMessage.findFirstMatchIn(message)).map { found =>
+            statusDetail(found.group(1).toInt, Maybe(found.group(2)))
+        }
+
+    private val statusMessage = """returned (\d{3}) \([^)]*\)\.(?: Body: ([\s\S]*))?""".r
+
+    private def errorCodes(value: Structure.Value): Chunk[String] =
+        value match
+            case Structure.Value.Sequence(elements) => elements.headMaybe.map(errorCodes).getOrElse(Chunk.empty)
+            case Structure.Value.Record(fields)     =>
+                val error = fields.collectFirst { case ("error", Structure.Value.Record(inner)) => inner }.getOrElse(fields)
+                error.collect {
+                    case (("type" | "code" | "status"), Structure.Value.Str(word)) if errorCode.matches(word) => word
+                }
+            case _ => Chunk.empty
+    end errorCodes
+
+    private val errorCode = "[A-Za-z_]{1,64}".r
 
 end BaseAITest

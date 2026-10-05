@@ -102,8 +102,10 @@ case class AIProviderUnavailableException(provider: String, detail: String)(usin
   * (429). A recoverable throttle by nature (a rate-limit window resets, a quota refills), so it is
   * TRANSIENT: retrying with backoff is the correct response, and `LLM.gen` retries it on the configured
   * schedule. A bounded schedule still surfaces a genuinely-stuck account once its attempts are spent.
-  * `retryAfter` is the wait the response asked for (`Retry-After`), honored before the schedule's own
-  * backoff when present. Either operation makes the call, so it is in both failure sets.
+  * `retryAfter` is the wait the response asked for (`Retry-After`, or the retry time a command harness
+  * states), honored before the schedule's own backoff when present. A wait that cannot end before the
+  * call's deadline is not slept or retried: this failure surfaces at once, carrying it. Either operation
+  * makes the call, so it is in both failure sets.
   */
 case class AIRateLimitException(provider: String, detail: String, retryAfter: Maybe[Duration] = Absent)(using Frame)
     extends AIException(s"$provider rate limit or quota exceeded: $detail") with AITransientException

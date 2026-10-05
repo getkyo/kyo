@@ -457,10 +457,10 @@ class LLMTest extends kyo.test.Test[Any]:
     }
 
     "a 429 with Retry-After is waited out under the deadline before the retry, on the Anthropic and OpenAI wires" in {
-        // A Retry-After past the deadline: the wait is cut to the deadline, which then fires with the one
-        // request made (without the wait, the immediate schedule would have made a second request at
-        // once). Then a short Retry-After: the retry follows it and succeeds. Virtual time advances in
-        // steps until the fiber settles, so the outcome does not depend on when the sleeper registers.
+        // A Retry-After past the deadline: no wait can end inside it, so the rate limit surfaces at once,
+        // carrying when the server allows the next attempt, with the one request made. Then a short
+        // Retry-After: the retry follows it and succeeds. Virtual time advances in steps until the fiber
+        // settles, so the outcome does not depend on when the sleeper registers.
         def probe(config: Config, server: TestCompletionServer, okBody: String)(using Frame) =
             Clock.withTimeControl { control =>
                 for
@@ -478,7 +478,11 @@ class LLMTest extends kyo.test.Test[Any]:
                     shortResult <- short.get
                     bodies      <- server.captured
                 yield
-                    assert(longResult.failure.exists(_.isInstanceOf[AICompletionTimeoutException]), s"long: $longResult")
+                    longResult.failure match
+                        case Present(limit: AIRateLimitException) =>
+                            assert(limit.retryAfter == Present(60.seconds), s"the failure carries the server's Retry-After: $limit")
+                        case _ => fail(s"a Retry-After past the deadline surfaces as the rate limit, got: $longResult")
+                    end match
                     assert(afterLong.size == 1, "a Retry-After past the deadline makes no second request")
                     assert(shortResult == Result.succeed("ok"), s"short: $shortResult")
                     assert(bodies.size == 3, "a short Retry-After is followed by the retry")

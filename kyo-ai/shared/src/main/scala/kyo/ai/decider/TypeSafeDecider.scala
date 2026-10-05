@@ -104,32 +104,33 @@ private[kyo] object TypeSafeDecider extends Decider.Backend:
         val timeout       = decider.timeout.getOrElse(config.timeout)
         val meter         = decider.meter.getOrElse(config.meter)
         val retrySchedule = decider.retrySchedule.getOrElse(config.retrySchedule)
-        Async.timeoutWithError[AIGenException, Result[AIGenException, String], LLM](
-            timeout,
-            Result.Failure(AICompletionTimeoutException(provider, timeout))
-        ) {
-            Abort.run[AIGenException] {
-                HttpClient.withConfig(_.timeout(timeout)) {
-                    Abort.run[Closed] {
-                        HttpClient.postTextResponse(url, body, headers, failOnError = false).map { response =>
-                            if response.status.isSuccess then (response.fields.body: String < (Sync & Abort[AIGenException]))
-                            else
-                                val requestId = response.headers.get(requestIdHeader).fold("")(id => s"[request id $id] ")
-                                Completion.statusFailure(provider, "POST", url, response, requestId).map(Abort.fail(_))
-                        }.handle(
-                            Abort.recover[HttpException](e => Abort.fail(Completion.classifyHttp(provider, e)))(_),
-                            meter.run,
-                            Completion.awaitRetryAfter(timeout)(_),
-                            Retry[AITransientException](retrySchedule)(_)
-                        )
-                    }.map {
-                        case Result.Success(r) => r
-                        case Result.Failure(_) => Abort.panic(AIMeterClosedException())
-                        case Result.Panic(ex)  => Abort.panic(ex)
+        Clock.now.map(_ + timeout).map { deadline =>
+            Async.timeoutWithError[AIGenException, Result[AIGenException, String], LLM](
+                timeout,
+                Result.Failure(AICompletionTimeoutException(provider, timeout))
+            ) {
+                Abort.run[AIGenException] {
+                    HttpClient.withConfig(_.timeout(timeout)) {
+                        Abort.run[Closed] {
+                            HttpClient.postTextResponse(url, body, headers, failOnError = false).map { response =>
+                                if response.status.isSuccess then (response.fields.body: String < (Sync & Abort[AIGenException]))
+                                else
+                                    val requestId = response.headers.get(requestIdHeader).fold("")(id => s"[request id $id] ")
+                                    Completion.statusFailure(provider, "POST", url, response, requestId).map(Abort.fail(_))
+                            }.handle(
+                                Abort.recover[HttpException](e => Abort.fail(Completion.classifyHttp(provider, e)))(_),
+                                meter.run,
+                                Completion.retryWithin(deadline, retrySchedule)(_)
+                            )
+                        }.map {
+                            case Result.Success(r) => r
+                            case Result.Failure(_) => Abort.panic(AIMeterClosedException())
+                            case Result.Panic(ex)  => Abort.panic(ex)
+                        }
                     }
                 }
-            }
-        }.map(Abort.get(_))
+            }.map(Abort.get(_))
+        }
     end call
 
     private[kyo] def decode(body: String, questions: Chunk[Question])(using Frame): Result[AIGenException, Reply] =

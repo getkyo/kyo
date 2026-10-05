@@ -376,6 +376,40 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(cfg.modelName == "claude-x" && cfg.modelContextWindow == 1000 && cfg.provider.name == "Anthropic")
     }
 
+    "a model declared without a streaming measurement does not claim incremental delivery" in {
+        val cfg = Config.OpenAI.default.model(
+            Config.OpenAI,
+            "gpt-unmeasured",
+            1000,
+            Config.OutputMaximum.Verified(1000),
+            Config.ReasoningEncoding.Unavailable,
+            true,
+            acceptsImages = true
+        )
+        assert(!cfg.modelStreamsIncrementally)
+    }
+
+    "a harness entry never claims incremental delivery, whatever it declares" in {
+        val declared = Config.OpenAI.default.model(
+            Config.ClaudeCode,
+            "haiku",
+            1000,
+            Config.OutputMaximum.Verified(1000),
+            Config.ReasoningEncoding.Unavailable,
+            true,
+            acceptsImages = true,
+            streamsIncrementally = true
+        )
+        assert(!declared.modelStreamsIncrementally, "the harness wire reports a finished turn")
+        assert(Config.Provider.all.filterNot(_.completion.streamsIncrementally).forall(_.entries.forall(!_.modelStreamsIncrementally)))
+    }
+
+    "the same model streams on one endpoint and not on another, so the fact is per entry" in {
+        // Measured: gpt-oss-120b's result-tool argument arrives in hundreds of deltas on Baseten and in one on Groq.
+        assert(Config.Baseten.gpt_oss_120b.modelStreamsIncrementally)
+        assert(!Config.Groq.gpt_oss_120b.modelStreamsIncrementally)
+    }
+
     "every catalog entry declares an output maximum that fits inside its context window" in {
         // A model's reply limit is always well below its input limit, so this also catches the two
         // sizes being declared in the wrong order, which no type can distinguish.
