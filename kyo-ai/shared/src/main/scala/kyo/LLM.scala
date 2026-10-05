@@ -673,6 +673,7 @@ object LLM:
             // dropped. It belongs here, not in the four backends: the mismatch is between what the caller
             // stated and what the entry declares, which every backend would otherwise detect identically.
             _                <- config.reasoningMismatch.fold(Kyo.unit)(warning => Log.warn(s"kyo-ai $warning"))
+            deadline         <- Clock.now.map(_ + config.timeout)
             replyAndRepaired <-
                 // The configured timeout is this call's deadline and covers its retries, so a slow transient
                 // that retries cannot carry the call past it. The transport install below keeps an attempt's
@@ -701,8 +702,7 @@ object LLM:
                                             Abort.fail(Completion.classifyHttp(config, e))
                                         )(_),
                                         config.meter.run,
-                                        Completion.awaitRetryAfter(config.timeout)(_),
-                                        Retry[AITransientException](config.retrySchedule)(_)
+                                        Completion.retryWithin(deadline, config.retrySchedule)(_)
                                     )
                             }.map {
                                 case Result.Success(r) => r

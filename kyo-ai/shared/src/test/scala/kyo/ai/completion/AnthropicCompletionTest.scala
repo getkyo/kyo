@@ -13,6 +13,15 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
     def minimalAnthropicBody(textContent: String): String =
         s"""{"id":"msg-1","content":[{"type":"text","text":"$textContent"}],"model":"claude-sonnet-4-5-20250929","role":"assistant","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":5}}"""
 
+    /** `entry` with the environment's key, or a cancelled leaf when no usable key is set: the real-API leaves share the matrix probe. */
+    def liveAnthropic(entry: Config)(using Frame, kyo.test.AssertScope): Config < Async =
+        Config.credentialed(entry).map { config =>
+            BaseAITest.unavailability(Config.Anthropic, Absent, config).map {
+                case Present(reason) => cancel(s"Anthropic is unavailable: $reason")
+                case Absent          => config
+            }
+        }
+
     def ceilingStopBody(content: String): String =
         s"""{"id":"msg-1","content":[$content],"model":"m","role":"assistant","stop_reason":"max_tokens","stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":5}}"""
 
@@ -745,65 +754,66 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
     "extended thinking reasons before returning a correct structured answer (real Anthropic API)" in {
         // Extended thinking (Config.reasoningBudget) switches the result tool to the advisory schema and gives
         // the model a reasoning pass before it emits the structured result, the native-API analog of the Claude
-        // Code backend's reason-then-answer turn. Runs against the real API when ANTHROPIC_API_KEY is set.
-        val key = sys.env.getOrElse("ANTHROPIC_API_KEY", "")
-        assume(key.nonEmpty, "ANTHROPIC_API_KEY is not available")
-        val config = Config.Anthropic.haiku_4_5.apiKey(key).reasoningBudget(4000)
-        LLM.run(config) {
-            Abort.run[AIException] {
-                AI.initWith { ai =>
-                    for
-                        _ <- ai.userMessage(
-                            "A train travels 60 miles in 1.5 hours, then 40 miles in 0.5 hours. What is its " +
-                                "average speed in mph over the whole trip? Reason step by step, then give the integer answer."
-                        )
-                        ans <- ai.gen[MathAnswer]
-                    yield ans
+        // Code backend's reason-then-answer turn. Runs against the real API when ANTHROPIC_API_KEY holds a usable key.
+        for
+            config <- liveAnthropic(Config.Anthropic.haiku_4_5.reasoningBudget(4000))
+            result <- LLM.run(config) {
+                Abort.run[AIException] {
+                    AI.initWith { ai =>
+                        for
+                            _ <- ai.userMessage(
+                                "A train travels 60 miles in 1.5 hours, then 40 miles in 0.5 hours. What is its " +
+                                    "average speed in mph over the whole trip? Reason step by step, then give the integer answer."
+                            )
+                            ans <- ai.gen[MathAnswer]
+                        yield ans
+                    }
                 }
             }
-        }.map {
+        yield result match
             case Result.Success(ans) =>
                 assert(ans.answer == 50, s"expected 50 mph, got ${ans.answer}; reasoning: ${ans.reasoning.take(300)}")
             case other =>
-                fail(s"thinking gen failed: $other")
-        }
+                fail(s"thinking gen failed: ${BaseAITest.reported(other)}")
+        end for
     }
 
     "a configured temperature on a 4.7+ model is omitted from the wire and the gen succeeds (real Anthropic API)" in {
         // The default catalog model (claude-opus-4-8) rejects a request carrying temperature with a 400,
         // so the backend omits the parameter from 4.7 on; a configured temperature must not fail the gen.
-        val key = sys.env.getOrElse("ANTHROPIC_API_KEY", "")
-        assume(key.nonEmpty, "ANTHROPIC_API_KEY is not available")
-        val config = Config.Anthropic.default.apiKey(key).disableReasoning.temperature(0.5)
-        LLM.run(config) {
-            Abort.run[AIException] {
-                AI.initWith { ai =>
-                    ai.userMessage("What is 21 + 21? Return the integer.").andThen(ai.gen[Int])
+        for
+            config <- liveAnthropic(Config.Anthropic.default.disableReasoning.temperature(0.5))
+            result <- LLM.run(config) {
+                Abort.run[AIException] {
+                    AI.initWith { ai =>
+                        ai.userMessage("What is 21 + 21? Return the integer.").andThen(ai.gen[Int])
+                    }
                 }
             }
-        }.map {
+        yield result match
             case Result.Success(n) => assert(n == 42, s"expected 42, got $n")
-            case other             => fail(s"a temperature-set gen on a 4.7+ model must succeed with the parameter omitted: $other")
-        }
+            case other             =>
+                fail(s"a temperature-set gen on a 4.7+ model must succeed with the parameter omitted: ${BaseAITest.reported(other)}")
+        end for
     }
 
     "an explicit thinking budget on a both-shapes model stays bounded and the gen returns (real Anthropic API)" in {
         // Regression guard: sending adaptive on sonnet-4-6 silently discarded a configured budget, so
         // thinking ran unbounded and long completions never returned. The bounded enabled+budget shape
         // must ride the wire and the generation must complete.
-        val key = sys.env.getOrElse("ANTHROPIC_API_KEY", "")
-        assume(key.nonEmpty, "ANTHROPIC_API_KEY is not available")
-        val config = Config.Anthropic.sonnet_4_6.apiKey(key).reasoningBudget(12000)
-        LLM.run(config) {
-            Abort.run[AIException] {
-                AI.initWith { ai =>
-                    ai.userMessage("What is 21 + 21? Return the integer.").andThen(ai.gen[Int])
+        for
+            config <- liveAnthropic(Config.Anthropic.sonnet_4_6.reasoningBudget(12000))
+            result <- LLM.run(config) {
+                Abort.run[AIException] {
+                    AI.initWith { ai =>
+                        ai.userMessage("What is 21 + 21? Return the integer.").andThen(ai.gen[Int])
+                    }
                 }
             }
-        }.map {
+        yield result match
             case Result.Success(n) => assert(n == 42, s"expected 42, got $n")
-            case other             => fail(s"a bounded-budget gen on sonnet-4-6 must return: $other")
-        }
+            case other             => fail(s"a bounded-budget gen on sonnet-4-6 must return: ${BaseAITest.reported(other)}")
+        end for
     }
 
     "usage sums the cache fields into the input total: creation counts as read, not cached" in {

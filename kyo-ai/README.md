@@ -371,13 +371,13 @@ The stream's element row also carries `Scope` because the SSE connection is held
 
 ### Not every backend streams incrementally
 
-Whether elements arrive *as the model produces them* depends on the backend, and the difference is invisible from the stream itself. The HTTP families stream over SSE, so a chunk arrives per delta. The command harnesses (Claude Code, Codex) report a turn once it is finished, so the whole answer arrives in one piece: the elements and their order are identical and nothing fails, but time-to-first-token equals time-to-last-token, which is the number a chat UI lives on.
+Whether elements arrive *as the model produces them* depends on the model and the endpoint serving it, and the difference is invisible from the stream itself. The command harnesses (Claude Code, Codex) report a turn once it is finished, so the whole answer arrives in one piece: the elements and their order are identical and nothing fails, but time-to-first-token equals time-to-last-token, which is the number a chat UI lives on. The HTTP families stream over SSE, but some endpoints still send a model's whole answer in one delta, and the same model can stream on one host and not on another.
 
-Rather than leave that to be discovered in production feel, each backend declares it:
+Rather than leave that to be discovered in production feel, each catalog entry declares it, measured against its endpoint. An entry nobody has measured declares `false`, which withholds the guarantee rather than promising one it may not keep:
 
 ```scala
 def rendersProgressively(config: kyo.ai.Config): Boolean =
-    config.provider.completion.streamsIncrementally
+    config.modelStreamsIncrementally
 ```
 
 Read it to choose between rendering progressively and showing a pending state. A stream written against either kind is correct; only the pacing differs.
@@ -455,7 +455,7 @@ def withPreview[A](v: A < LLM): A < LLM =
     AI.withConfig(_.decider(AI.DeciderConfig.TypeSafe.jevPreview))(v)
 ```
 
-A decision's `timeout`, `meter` and `retrySchedule` default to the surrounding config's and can be set apart from them on the `DeciderConfig`: a decision endpoint answers in a fraction of a second and has its own rate limits, so the knobs sized for a completion provider are rarely the right ones. A rate-limited response's `Retry-After` is waited out, under the deadline, before the schedule's own backoff.
+A decision's `timeout`, `meter` and `retrySchedule` default to the surrounding config's and can be set apart from them on the `DeciderConfig`: a decision endpoint answers in a fraction of a second and has its own rate limits, so the knobs sized for a completion provider are rarely the right ones. A rate-limited response's `Retry-After` is waited out before the schedule's own backoff; one that cannot end before the deadline fails the call at once with `AIRateLimitException`, carrying the wait.
 
 ```scala
 def quickDecisions[A](v: A < LLM): A < (Async & Abort[AIGenException]) =

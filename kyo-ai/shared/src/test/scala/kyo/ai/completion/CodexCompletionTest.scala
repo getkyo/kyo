@@ -101,6 +101,46 @@ class CodexCompletionTest extends kyo.test.Test[Any]:
         assert(params.approvalPolicy == "never", s"the session must never prompt for approvals: ${params.approvalPolicy}")
     }
 
+    // Recorded from `codex app-server` 0.156.1 on a spent usage allowance, in arrival order: the thread's status turns systemError
+    // first, and the reason arrives after it, in an `error` notification and again in the failed `turn/completed`.
+    private val usageLimitMessage =
+        "You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Oct 3rd, 2026 4:43 PM."
+    private val recordedSystemError =
+        """{"threadId":"thread-1","status":{"type":"systemError"}}"""
+    private val recordedUsageLimitError =
+        s"""{"error":{"message":"$usageLimitMessage","codexErrorInfo":"usageLimitExceeded","additionalDetails":null,"misalignment":null},"willRetry":false,"threadId":"thread-1","turnId":"turn-1"}"""
+
+    private def recorded(method: String, json: String)(using Frame): CodexWire.RpcEvent =
+        CodexWire.RpcEvent(method, Json.decode[Structure.Value](json).getOrThrow)
+
+    "a systemError status is not the turn's failure: the reason arrives after it" in {
+        AtomicRef.init("").map { stderrTail =>
+            Abort.run[AIGenException](
+                CodexCompletion.eventText(recorded("thread/status/changed", recordedSystemError), "thread-1", "turn-1", stderrTail)
+            ).map { outcome =>
+                assert(
+                    outcome.isSuccess && outcome.getOrThrow.isEmpty,
+                    s"a status change must neither fail the turn nor emit text: $outcome"
+                )
+            }
+        }
+    }
+
+    "a spent usage allowance fails as a rate limit carrying when to retry, not as a harness malfunction" in {
+        AtomicRef.init("").map { stderrTail =>
+            Abort.run[AIGenException](
+                CodexCompletion.eventText(recorded("error", recordedUsageLimitError), "thread-1", "turn-1", stderrTail)
+            ).map {
+                case Result.Failure(limit: AIRateLimitException) =>
+                    assert(limit.provider == "Codex")
+                    assert(limit.detail == usageLimitMessage)
+                    assert(limit.retryAfter.isDefined, "the CLI names when to retry, so the failure carries it")
+                case other =>
+                    fail(s"expected AIRateLimitException, got $other")
+            }
+        }
+    }
+
     "a thread/tokenUsage/updated notification reaches the event channel" in {
         // The turn's token counts ride this one notification, and the consumer that reads them
         // (`collectTurn`) sits behind the event channel. An unrouted method never reaches the channel,
