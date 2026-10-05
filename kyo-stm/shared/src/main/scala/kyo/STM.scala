@@ -145,10 +145,12 @@ object STM:
                     val barge = attempt >= bargeThreshold()
                     // Consult the schedule for the next retry delay, or fail if exhausted
                     def retry: A < (Async & Abort[E | FailedTransaction]) =
-                        schedule.next(Clock.live.unsafe.now()).map { (delay, next) =>
-                            Async.delay(delay)(Sync.Unsafe.defer(loop(next, attempt + 1)))
-                        }.getOrElse {
-                            Abort.fail(FailedTransaction())
+                        Clock.now.map { now =>
+                            schedule.next(now).map { (delay, next) =>
+                                Async.delay(delay)(Sync.Unsafe.defer(loop(next, attempt + 1)))
+                            }.getOrElse {
+                                Abort.fail(FailedTransaction())
+                            }
                         }
                     // Execute the transaction body with a fresh log, capturing the result
                     v.handle(

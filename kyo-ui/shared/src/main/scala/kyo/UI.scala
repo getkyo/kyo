@@ -1954,12 +1954,22 @@ object UI:
             attrs: Attrs = Attrs(),
             children: Chunk[UI] = Chunk.empty,
             href: Maybe[Href] = Absent,
-            target: Maybe[Target] = Absent
+            target: Maybe[Target] = Absent,
+            download: Maybe[String] = Absent
         )(using val frame: Frame) extends Inline with Interactive with Focusable with Activatable with Clickable:
             type Self = Anchor
-            def withAttrs(a: Attrs): Anchor           = copy(attrs = a)
-            def apply(cs: HtmlChildVal*): Anchor      = copy(children = children ++ Chunk.from(cs.map(_.value)))
-            def href(v: Href): Anchor                 = copy(href = Present(v))
+            def withAttrs(a: Attrs): Anchor      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Anchor = copy(children = children ++ Chunk.from(cs.map(_.value)))
+            def href(v: Href): Anchor            = copy(href = Present(v))
+
+            /** Saves what `href` points at under `filename` instead of navigating to it (the HTML `download` attribute). Browsers
+              * honor it for same-origin, `data:` and `blob:` URLs; a cross-origin href navigates instead. An empty `filename` leaves the
+              * name to the browser.
+              *
+              * A clicked download anchor keeps the browser's default: neither a kyo click handler nor client-side routing turns it
+              * into an in-page action.
+              */
+            def download(filename: String): Anchor    = copy(download = Present(filename))
             def href(v: Signal[Href]): Reactive[Self] =
                 given Frame = frame
                 Reactive[Self](v.map(h => this.href(h): UI))

@@ -13,8 +13,31 @@ package kyo
   * Browser-side behavior is validated by real use in the compiled bundle, matching the module
   * convention: UILocation and UIWindow have no committed JS browser tests because the NodeJS test
   * environment has no DOM.
+  *
+  * The anchor interceptor's decision for a single click needs only a document, so that one runs against
+  * jsdom ([[DomTestEnv]]).
   */
 class UILocationTest extends kyo.test.Test[Any]:
+
+    "a click on a download anchor is left to the browser rather than routed" in {
+        import org.scalajs.dom
+        import scala.scalajs.js as scalajs
+        DomTestEnv.install
+        discard(UILocation.current)
+        val anchor = dom.document.createElement("a")
+        // Same (empty) host as jsdom's about:blank page but a different path, so without `download` the interceptor would
+        // route this click.
+        anchor.setAttribute("href", "about:srcdoc")
+        anchor.setAttribute("download", "rows.csv")
+        discard(dom.document.body.appendChild(anchor))
+        val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].MouseEvent)(
+            "click",
+            scalajs.Dynamic.literal(bubbles = true, cancelable = true)
+        )
+        discard(anchor.asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
+        anchor.remove()
+        assert(!event.defaultPrevented.asInstanceOf[Boolean])
+    }
 
     "UILocation Sync-effect members compile to the expected effect types (type-level gate)" in {
         // Each val ascription is a compile-time witness: it fails if the member's return type
