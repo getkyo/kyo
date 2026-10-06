@@ -130,6 +130,67 @@ class ContainerRuntimeBaseTest extends BasePodTest:
         }
     }
 
+    "singleLegOwner" - {
+
+        val both = Seq("podman" -> Absent, "docker" -> Absent)
+        def owner(pin: Maybe[String], unpinned: Seq[(String, Maybe[String])] = both, sockets: Set[String] = Set("podman", "docker")) =
+            ContainerRuntime.singleLegOwner(unpinned, pin.fold(unpinned)(p => unpinned.filter(_._1 == p)), pin, sockets.contains)
+
+        "with both runtimes runnable, exactly one of the two per-runtime forks runs the leaf" in {
+            // The build puts every daemon-touching suite in a podman fork and a docker fork, so a leaf each fork
+            // ran against its own runtime would run twice per host.
+            val runs = Seq("podman", "docker").filter(rt => owner(Present(rt)).isRight)
+            assert(runs == Seq("podman"), s"expected only the podman fork to run it, got $runs")
+            assert(owner(Present("docker")) == Left("a single-leg leaf runs once per host, in the podman fork"))
+        }
+
+        "the leaf follows the runtime that can run here" in {
+            val dockerOnly = Seq("podman" -> Present("podman is not reachable on this host"), "docker" -> Absent)
+            assert(owner(Present("docker"), dockerOnly) == Right("docker"))
+            assert(owner(Present("podman"), dockerOnly) == Left("a single-leg leaf runs once per host, in the docker fork"))
+        }
+
+        "a runtime with no socket does not own the leaf" in {
+            assert(owner(Present("docker"), sockets = Set("docker")) == Right("docker"))
+            assert(owner(Absent, sockets = Set.empty) == Left("no runtime that can run here exposes a socket for the http backend"))
+        }
+
+        "unpinned, the process runs the leaf on the owner" in {
+            assert(owner(Absent) == Right("podman"))
+        }
+
+        "with no runtime runnable the leaf carries this process's reasons" in {
+            val none = Seq(
+                "podman" -> Present("podman is not reachable on this host"),
+                "docker" -> Present("docker is not reachable on this host")
+            )
+            assert(owner(Absent, none) == Left("podman is not reachable on this host; docker is not reachable on this host"))
+        }
+    }
+
+    "hostLeavesHere" - {
+
+        "with both runtimes runnable, exactly one of the two per-runtime forks runs the host's leaves" in {
+            val runs = Seq("podman", "docker").filter(rt => ContainerRuntime.hostLeavesHere(Present("podman"), Present(rt)))
+            assert(runs == Seq("podman"), s"expected only the podman fork, got $runs")
+        }
+
+        "they follow the owner when only docker can run" in {
+            assert(ContainerRuntime.hostLeavesHere(Present("docker"), Present("docker")))
+            assert(!ContainerRuntime.hostLeavesHere(Present("docker"), Present("podman")))
+        }
+
+        "with no runtime runnable, the podman fork runs them, so they still run once" in {
+            val runs = Seq("podman", "docker").filter(rt => ContainerRuntime.hostLeavesHere(Absent, Present(rt)))
+            assert(runs == Seq("podman"), s"expected only the podman fork, got $runs")
+        }
+
+        "an unpinned process runs every leaf" in {
+            assert(ContainerRuntime.hostLeavesHere(Present("docker"), Absent))
+            assert(ContainerRuntime.hostLeavesHere(Absent, Absent))
+        }
+    }
+
     "available" - {
 
         "never reports a runtime whose installed CLI cannot reach its daemon" in {
