@@ -57,7 +57,7 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                     Sync.ensure(Sync.defer(discard(spy.close(client)))) {
                         val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(handle, readPromise)
-                        assertEventually(Sync.defer(driver.hasInFlightRead(handle))).map { _ =>
+                        untilState(driver.hasInFlightRead(handle)).andThen {
                             driver.closeHandle(handle)
                             // Drive the racer through the SAME engine queue as closeHandle's own submission: drainEngineOps runs the
                             // whole batch (closeHandle's op, then this one) to completion before the reap carrier ever waits for or
@@ -78,14 +78,10 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                                 assert(!racerClaimedFd.get(), "test setup: registerDeferredClose must already own the fd claim")
                                 // The recv is still kernel-owned at this point (registerDeferredClose's shutdown(SHUT_RD) above forces
                                 // it to EOF soon, but has not necessarily reaped yet); the real close(fd) can only run once that CQE
-                                // reaps and discharges closeAfterDrain. Bounded, not a sleep: a real settle would need to reap a CQE on
-                                // the driver's own dedicated thread, which happens on its own schedule.
-                                Abort.run[Closed | Timeout](Async.timeout(5.seconds)(spy.closed(accepted).safe.get)).map { outcome =>
-                                    assert(
-                                        outcome.isSuccess,
-                                        "the real close(fd) for the deferred handle never ran: the racing PosixHandle.close call stole " +
-                                            s"the one-shot terminal free before the credit existed, stranding it forever. Got $outcome"
-                                    )
+                                // reaps and discharges closeAfterDrain. A racing PosixHandle.close that stole the one-shot terminal free
+                                // before the credit existed strands the close forever, hanging the leaf here.
+                                Abort.run[Closed](spy.closed(accepted).safe.get).map { outcome =>
+                                    assert(outcome.isSuccess, s"the real close(fd) for the deferred handle must run; got $outcome")
                                 }
                             }
                         }
@@ -114,7 +110,7 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                     Sync.ensure(Sync.defer(discard(spy.close(client)))) {
                         val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(handle, readPromise)
-                        assertEventually(Sync.defer(driver.hasInFlightRead(handle))).map { _ =>
+                        untilState(driver.hasInFlightRead(handle)).andThen {
                             // The production double-close shape (an onFatal closeHandle plus the ReadPump-teardown closeHandle, both drained
                             // in one pass while an unrelated in-flight op keeps inFlight above zero), collapsed to its driver-level essence:
                             // two closeHandle calls for the same handle. Both are adjacent in the engine queue and drain in one
@@ -125,14 +121,10 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                             // close(fd) credit strands forever.
                             driver.closeHandle(handle)
                             driver.closeHandle(handle)
-                            // Bounded, not a sleep: the real close(fd) runs only once the recv's CQE reaps and discharges closeAfterDrain,
-                            // on the driver's own dedicated reap thread. spy.closed is a per-fd latch completed only by the real close(fd).
-                            Abort.run[Closed | Timeout](Async.timeout(5.seconds)(spy.closed(accepted).safe.get)).map { outcome =>
-                                assert(
-                                    outcome.isSuccess,
-                                    "the real close(fd) never ran: a second closeHandle stacked a redundant deferred-close guard hold behind " +
-                                        s"the single closeAfterDrain entry, stranding the terminal free forever. Got $outcome"
-                                )
+                            // The real close(fd) runs only once the recv's CQE reaps and discharges closeAfterDrain. spy.closed is a per-fd
+                            // latch completed only by the real close(fd); a stranded terminal free hangs the leaf here.
+                            Abort.run[Closed](spy.closed(accepted).safe.get).map { outcome =>
+                                assert(outcome.isSuccess, s"the real close(fd) must run; got $outcome")
                             }
                         }
                     }

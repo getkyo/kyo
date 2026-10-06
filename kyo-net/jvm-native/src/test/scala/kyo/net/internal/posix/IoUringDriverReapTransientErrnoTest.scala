@@ -30,8 +30,8 @@ import kyo.net.internal.transport.ReadOutcome
   *
   * Anti-flakiness: the one-shot override is armed, then the SAME call that submits the recv SQE (`awaitRead`) wakes the currently-parked
   * reap loop, so the armed rc fires on the very next `kyo_uring_submit_and_wait_timeout` call made after the recv SQE reaches the kernel,
-  * not on some earlier or later turn. No sleep, no busy-spin; the leaf synchronizes on the read promise resolving, bounded by
-  * `Async.timeout` as the deadlock ceiling, not the pass condition.
+  * not on some earlier or later turn. No sleep, no busy-spin; the leaf synchronizes on the read promise resolving, and a read that never
+  * resolves hangs to the leaf cap.
   */
 class IoUringDriverReapTransientErrnoTest extends Test:
 
@@ -96,7 +96,8 @@ class IoUringDriverReapTransientErrnoTest extends Test:
                     recording.armFatalRc(-PosixConstants.ENOMEM)
                     val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     drv.awaitRead(acceptedH, promise)
-                    Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
+                    // A reap loop that stalls on the -ENOMEM instead of retrying hangs the leaf to its cap.
+                    Abort.run[Closed](promise.safe.get).map { outcome =>
                         drv.closeHandle(acceptedH)
                         discard(sock.close(client))
                         outcome match
@@ -105,8 +106,6 @@ class IoUringDriverReapTransientErrnoTest extends Test:
                                     got.toArray.toList == payload.toList,
                                     s"the recv must still deliver the full payload after a transient -ENOMEM; got ${got.toArray.toList}"
                                 )
-                            case Result.Failure(_: Timeout) =>
-                                fail("the read hung: a transient -ENOMEM stalled the reap loop instead of retrying")
                             case Result.Failure(c: Closed) =>
                                 fail(
                                     s"the recv was failed Closed (\"$c\") instead of completing: a transient -ENOMEM tore the whole ring " +

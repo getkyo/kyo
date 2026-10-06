@@ -10,7 +10,7 @@ import kyo.net.Test
   *
   * This is the regression guard for a native use-after-free class (a test-construction bug that frees a
   * driver-attached engine while the driver's own queued teardown still owes it an `SSL_shutdown`; see `PollerIoDriverTlsHalfCloseEtTest`'s
-  * `awaitCondition` guard and `TlsRealEngines.withEngines`'s ownership-rule doc for the hazard this closes off). Without this gate, that
+  * `untilState` guard and `TlsRealEngines.withEngines`'s ownership-rule doc for the hazard this closes off). Without this gate, that
   * class of bug is silent 1-in-N native corruption (an unmapped-page SIGSEGV or a wild write into a live allocation, surfacing later at an
   * unrelated leaf); with it, ANY post-free call is an attributed, in-process failure naming the exact op, with no native call at all.
   */

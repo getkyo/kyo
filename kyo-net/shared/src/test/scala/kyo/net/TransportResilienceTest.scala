@@ -96,6 +96,46 @@ class TransportResilienceTest extends Test:
             Fiber.initUnscoped(Sync.ensure(Sync.defer(conn.close()))(Abort.run[Closed](body).unit))
         }
 
+    /** Wakes a churn loop when a server connection registers, so each sweep follows an arrival instead of the loop spinning. The sweep runs
+      * after the reset, so a connection that signals the already-completed promise between completion and reset is still swept.
+      */
+    final private class Arrivals:
+        private val next                     = new java.util.concurrent.atomic.AtomicReference(Promise.Unsafe.init[Unit, Any]())
+        def signal(): Unit                   = next.get().completeDiscard(Result.succeed(()))
+        def await(using Frame): Unit < Async =
+            next.get().safe.get.andThen(Sync.defer(next.set(Promise.Unsafe.init[Unit, Any]())))
+    end Arrivals
+
+    /** Close every registered server connection each time one arrives, until `stop` is set and signalled. */
+    private def churn(serverConns: java.util.Set[Connection], arrivals: Arrivals, stop: JAtomicBoolean)(using Frame): Unit < Async =
+        Loop(()) { _ =>
+            if stop.get() then Loop.done(())
+            else
+                arrivals.await.andThen(Sync.defer {
+                    val it = serverConns.iterator()
+                    while it.hasNext do
+                        val c = it.next()
+                        discard(serverConns.remove(c))
+                        try c.close()
+                        catch case _: Throwable => ()
+                    end while
+                }).andThen(Loop.continue(()))
+        }
+
+    /** A read bounded by `Async.timeout(d)`, expired on a clock of its own at the exact instant once the read is parked, so the timeout's
+      * interrupt always lands on an armed read. A read the peer ends first (a churn close) settles it the same way, and its timeout never fires.
+      */
+    private def expiringRead(conn: Connection, d: Duration)(using Frame): Unit < Async =
+        Clock.withTimeControl { tc =>
+            Fiber.initUnscoped(Abort.run[Closed | Timeout](Async.timeout(d)(conn.inbound.safe.take))).map { read =>
+                val expire =
+                    tc.awaitPendingSleepers(1)
+                        .andThen(untilTurn(Sync.defer(conn.inbound.pendingTakes().getOrElse(1) >= 1)))
+                        .andThen(tc.advance(d))
+                Async.race(read.get.unit, expire.andThen(read.get.unit))
+            }
+        }
+
     private def collect(conn: Connection, target: Int)(using Frame): Array[Byte] < (Async & Abort[Closed]) =
         Loop(Array.emptyByteArray) { acc =>
             if acc.length >= target then Loop.done(acc)
@@ -157,8 +197,10 @@ class TransportResilienceTest extends Test:
             val iters                                   = 40
             val perConn                                 = 6
             val msg                                     = "ping".getBytes("UTF-8")
+            val arrivals                                = new Arrivals
             def registeringEcho(conn: Connection): Unit =
                 discard(serverConns.add(conn))
+                arrivals.signal()
                 discard(serve(conn)(Sync.ensure(Sync.defer(discard(serverConns.remove(conn))))(echoLoop(conn))))
             end registeringEcho
             for
@@ -166,19 +208,6 @@ class TransportResilienceTest extends Test:
                 _             <- Scope.ensure(Sync.defer(cleanListener.close()))
                 churnListener <- churnListen(transport, 256)(registeringEcho)
                 _             <- Scope.ensure(Sync.defer(churnListener.close()))
-                churn = Loop(0) { _ =>
-                    if stop.get() then Loop.done(())
-                    else
-                        Sync.defer {
-                            val it = serverConns.iterator()
-                            while it.hasNext do
-                                val c = it.next()
-                                discard(serverConns.remove(c))
-                                try c.close()
-                                catch case _: Throwable => ()
-                            end while
-                        }.andThen(Async.sleep(2.millis)).andThen(Loop.continue(0))
-                }
                 load = Async.foreach(0 until clients, clients) { _ =>
                     Loop(0) { i =>
                         if i >= iters then Loop.done(())
@@ -196,8 +225,8 @@ class TransportResilienceTest extends Test:
                                 }
                             }.andThen(progress.tick).andThen(Loop.continue(i + 1))
                     }
-                }.andThen(Sync.defer(discard(stop.set(true))))
-                _ <- Async.zip(load, churn)
+                }.andThen(Sync.defer { stop.set(true); arrivals.signal() })
+                _ <- Async.zip(load, churn(serverConns, arrivals, stop))
                 _ <- assertAlive(transport, cleanListener.port, "mass-invalidation")
             yield
                 cleanListener.close()
@@ -349,9 +378,7 @@ class TransportResilienceTest extends Test:
                 _              <- Scope.ensure(Sync.defer(silentListener.close()))
                 _              <- Async.foreach(0 until 200, 40) { _ =>
                     Abort.run[NetException | Closed] {
-                        withConnection(transport, silentListener) { conn =>
-                            Abort.run[Closed | Timeout](Async.timeout(20.millis)(conn.inbound.safe.take)).unit
-                        }
+                        withConnection(transport, silentListener)(conn => expiringRead(conn, 20.millis))
                     }.andThen(progress.tick)
                 }
                 _ <- assertAlive(transport, cleanListener.port, "read-timeout")
@@ -371,12 +398,14 @@ class TransportResilienceTest extends Test:
             // every backend.
             val serverConns = java.util.concurrent.ConcurrentHashMap.newKeySet[Connection]()
             val stop        = new JAtomicBoolean(false)
+            val arrivals    = new Arrivals
             // Register the accepted connection for the churn to RST, and drain (read+discard) without echoing: the client
             // read below stays genuinely ARMED (the server never sends) until the churn closes this side, so the timeout's
             // interrupt races the peer-FIN/RST dispatch on an fd with an in-flight read. An echo would complete the read
             // first and erase the race. The drain loop closes this side on peer-close so no server-side fd leaks.
             def registeringDrain(conn: Connection): Unit =
                 discard(serverConns.add(conn))
+                arrivals.signal()
                 discard(serve(conn)(Sync.ensure(Sync.defer(discard(serverConns.remove(conn))))(drainLoop(conn))))
             end registeringDrain
             for
@@ -384,19 +413,6 @@ class TransportResilienceTest extends Test:
                 _             <- Scope.ensure(Sync.defer(cleanListener.close()))
                 churnListener <- churnListen(transport, 256)(registeringDrain)
                 _             <- Scope.ensure(Sync.defer(churnListener.close()))
-                churn = Loop(0) { _ =>
-                    if stop.get() then Loop.done(())
-                    else
-                        Sync.defer {
-                            val it = serverConns.iterator()
-                            while it.hasNext do
-                                val c = it.next()
-                                discard(serverConns.remove(c))
-                                try c.close()
-                                catch case _: Throwable => ()
-                            end while
-                        }.andThen(Async.sleep(1.milli)).andThen(Loop.continue(0))
-                }
                 load = Async.foreach(0 until 64, 64) { _ =>
                     Loop(0) { i =>
                         if i >= 120 then Loop.done(())
@@ -404,13 +420,13 @@ class TransportResilienceTest extends Test:
                             Abort.run[NetException | Closed] {
                                 withConnection(transport, churnListener) { conn =>
                                     // Arm a read the drain server never answers, bounded by a short timeout that fires
-                                    // while it is still parked.
-                                    Abort.run[Closed | Timeout](Async.timeout(8.millis)(conn.inbound.safe.take)).unit
+                                    // while it is still parked, unless the churn's close ends it first.
+                                    expiringRead(conn, 8.millis)
                                 }
                             }.andThen(progress.tick).andThen(Loop.continue(i + 1))
                     }
-                }.andThen(Sync.defer(discard(stop.set(true))))
-                _ <- Async.zip(load, churn)
+                }.andThen(Sync.defer { stop.set(true); arrivals.signal() })
+                _ <- Async.zip(load, churn(serverConns, arrivals, stop))
                 _ <- assertAlive(transport, cleanListener.port, "cancel-during-churn")
             yield
                 cleanListener.close()

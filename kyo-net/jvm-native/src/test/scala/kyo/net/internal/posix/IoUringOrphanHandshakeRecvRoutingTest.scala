@@ -40,24 +40,12 @@ import kyo.net.internal.transport.ReadOutcome
   * skipped).
   *
   * io_uring-only ([[PosixTestSockets.assumeUring]]): only io_uring has a kernel-owned recv that can outlive `onFinished` this way.
-  *
-  * Anti-flakiness: no `Thread.sleep`, no busy-spin. `awaitCondition` polls a real, observable state transition, mirroring
-  * [[IoUringQueuedRecvOrderingTest.awaitCondition]].
   */
 class IoUringOrphanHandshakeRecvRoutingTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
     private def sock = Ffi.load[SocketBindings]
-
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
 
     "IoUringDriver orphaned handshakeOwned recv" - {
 
@@ -98,9 +86,7 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
                         // that real submit (hasInFlightRead observes the registered PendingOp) before flipping the flags below: flipping them too
                         // early would have submitRecv itself observe tls=Present and target recvStagingFor instead, unlike the real orphan (whose
                         // SQE submits while driveUpgradeRead still holds upgradeActive, well before onFinished can run).
-                        awaitCondition(5.seconds)(driver.hasInFlightRead(acceptedH)).map { armed =>
-                            assert(armed, "orphan recv's submitRecv never ran (a hang, not the routing hazard under test)")
-
+                        untilState(driver.hasInFlightRead(acceptedH)).andThen {
                             // Now simulate onFinished running WHILE the recv above is still kernel-owned and in flight (the TOCTOU outcome): clear
                             // upgradeActive/upgrading and attach tls, in the SAME order onFinished writes them (PosixTransport.upgradeRole).
                             acceptedH.upgradeActive = false
@@ -123,12 +109,9 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
 
                             // Not valid TLS ciphertext for a never-handshaked engine: the expected outcome is a fatal-record teardown (the
                             // same `closeHandle` path IoUringMutualTlsStressTest's real handshakes exercise on genuinely bad data), not
-                            // delivered plaintext. What this test actually pins is the ABSENCE of a mis-routed plaintext delivery.
-                            awaitCondition(5.seconds)(acceptedH.isClosing()).map { closed =>
-                                assert(
-                                    closed,
-                                    "orphan recv's post-onFinished feed never reached a terminal state (a hang, not the fix under test)"
-                                )
+                            // delivered plaintext. What this test actually pins is the ABSENCE of a mis-routed plaintext delivery. Bytes
+                            // staged as a dead Carryover never reach the engine, so the handle never closes and the leaf hangs here.
+                            untilState(acceptedH.isClosing()).andThen {
                                 // The core regression guard: the bytes must NEVER be staged as a Carryover. Once onFinished has fully run, that
                                 // slot has no consumer left, so staging it there would silently lose the bytes forever (the actual "Closed at
                                 // collect" loss mechanism) instead of being fed to the engine (whatever the engine then does with them).
