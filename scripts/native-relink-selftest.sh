@@ -53,6 +53,7 @@ if [ "${1:-}" = "--self-test" ]; then
         rm -rf "$SELFDIR/repo"
         mkdir -p "$SELFDIR/repo/scripts" "$SELFDIR/repo/$CLASSES_REL/kyo" "$SELFDIR/repo/$WORKDIR_REL"
         ln -s "$SELF" "$SELFDIR/repo/scripts/native-relink-selftest.sh"
+        ln -s "$(dirname "$SELF")/sbt-heap-lib.sh" "$SELFDIR/repo/scripts/sbt-heap-lib.sh"
         : > "$SELFDIR/repo/$CLASSES_REL/kyo/Sample.nir"
         : > "$SELFDIR/repo/$WORKDIR_REL/build-checksum"
         : > "$SELFDIR/repo/calls.log"
@@ -137,6 +138,12 @@ STUB
     if exit_is 0 && links_run 2; then record ok "clean relink after the intermediates drop passes"
     else record no "clean relink after the intermediates drop passes"; fi
 
+    # 1b. Both links start sbt with the link role's heap, as ci-test.sh's link batches do.
+    link_heap=$(. "$(dirname "$SELF")/sbt-heap-lib.sh" 2>/dev/null; sbt_heap link)
+    if [ -n "$link_heap" ] && [ "$(grep -cxF -- "$link_heap kyo-dataNative/Test/nativeLink" "$SELFDIR/repo/calls.log")" = 2 ]
+    then record ok "both links run with the link role's heap"
+    else record no "both links run with the link role's heap"; fi
+
     # 2. A failing first link aborts before the relink.
     make_fixture; make_sbt_stub 1 0 clean; run_harness
     if exit_is 1 && links_run 1; then record ok "first link failure aborts before the relink"
@@ -192,7 +199,7 @@ STUB
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 12 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 13 ]
     exit $?
 fi
 
@@ -203,14 +210,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOG=$(mktemp)
 trap 'rm -f "$LOG"' EXIT
 
+. "$ROOT/scripts/sbt-heap-lib.sh"
+HEAP=$(sbt_heap link) || exit 2
+
 log()  { echo "=== [native-relink] $* ==="; }
 fail() { echo "=== [native-relink] FAILED: $* ===" >&2; exit "${2:-1}"; }
 
 # The single sbt invocation shape under test. CI=1 is what arms the `native-settings` drop hook, which
 # reads the environment rather than a setting.
 link() {
-    log "$1: CI=1 $SBT_CMD $PROJECT/Test/nativeLink"
-    ( cd "$ROOT" && CI=1 "$SBT_CMD" "$PROJECT/Test/nativeLink" ) 2>&1 | tee "$LOG"
+    log "$1: CI=1 $SBT_CMD $HEAP $PROJECT/Test/nativeLink"
+    ( cd "$ROOT" && CI=1 "$SBT_CMD" "$HEAP" "$PROJECT/Test/nativeLink" ) 2>&1 | tee "$LOG"
     return "${PIPESTATUS[0]}"
 }
 
