@@ -1,0 +1,33 @@
+# Differences between kyo-email's reading of Content-Type and Content-Disposition values and Stalwart mail-parser's, over
+# resources/content_type.json at commit 4eba485d9450c757b2f3ec29c44663740cff0afe (kyo-email/shared/src/test/vectors/stalwart).
+# Kept by hand: HeaderCodecParametersTest prints, in this format, each row missing here and each row here that no longer occurs.
+# The module's reading is HeaderCodec.contentType, or HeaderCodec.contentDisposition when that answers nothing. Each reading is
+# written as type/subtype; name="value"..., or null.
+# Columns, tab-separated: vector index from 0, header, the module's reading, Stalwart's reading, reason. Backslash, tab, CR and LF
+# in a value are written as \\, \t, \r and \n, and any other control character as \uXXXX.
+# Reasons, each the first rule of HeaderCodecStalwart.classifyContentType that holds:
+#   InvalidContentType: Stalwart reads a value that is not a type, a subtype and parameters (no subtype, other text after the subtype, a character outside the token grammar) as far as it goes; the module answers no media type and no disposition, and the parser applies the default of RFC 2045 section 5.2
+#   NameNotRfc2231: a parameter name holds a * outside RFC 2231's attribute [*section] [*] shape (*, 3**, 1 * 999); Stalwart reads such names by its own rules, and the module reads each as a plain parameter of that whole name, or skips it when white space splits it
+#   LanguageAttribute: Stalwart reports the RFC 2231 language as a parameter named <name>-language; the module drops the language
+#   WhiteSpaceBetweenAdjacentWords: Stalwart keeps the white space between adjacent encoded words in a quoted value; RFC 2047 section 6.2 ignores it, and the module drops it
+#   FieldEndWhiteSpace: the value ends inside an unclosed quoted string; Stalwart keeps the white space at the end of the field, which the module's header reader removes
+#   CharsetOnLaterSegment: a continuation segment after the first carries a charset'language' prefix; Stalwart removes it, and the module reads it as data, since RFC 2231 section 4.1 puts that information only at the beginning of the value
+29	application/x-stuff;\n     title*=us-ascii'en-us'This%20is%20%2A%2A%2Afun%2A%2A%2A\n	application/x-stuff; title="This is ***fun***"	application/x-stuff; title-language="en-us"; title="This is ***fun***"	LanguageAttribute
+30	application/x-stuff\n   title*0*=us-ascii'en'This%20is%20even%20more%20\n   title*1*=%2A%2A%2Afun%2A%2A%2A%20\n   title*2="isn't it!"\n	application/x-stuff; title="This is even more ***fun*** isn't it!"	application/x-stuff; title-language="en"; title="This is even more ***fun*** isn't it!"	LanguageAttribute
+31	application/pdf\n   filename*0*=iso-8859-1'es'%D1and%FA\n   filename*1*=iso-8859-1'%20r%E1pido\n   filename*2*="iso-8859-1' (versi%F3n \\'99 \\"oficial\\").pdf"\n	application/pdf; filename="Ñandúiso-8859-1' rápidoiso-8859-1' (versión '99 \\"oficial\\").pdf"	application/pdf; filename-language="es"; filename="Ñandú rápido (versión '99 \\"oficial\\").pdf"	CharsetOnLaterSegment
+34	image/jpeg;\n   name="=?iso-8859-1?B?4Q==?= =?utf-8?B?w6k=?= =?iso-8859-1?q?=ED?=.jpeg"\n	image/jpeg; name="áéí.jpeg"	image/jpeg; name="á é í.jpeg"	WhiteSpaceBetweenAdjacentWords
+39	test/\n	null	test	InvalidContentType
+47	=\n	null	=	InvalidContentType
+48	name=value\n	null	name=value	InvalidContentType
+54	á/é; á=é\n	null	á/é; á="é"	InvalidContentType
+55	inva/lid; name="   \n	inva/lid; name=""	inva/lid; name="   "	FieldEndWhiteSpace
+56	inva/lid; name="   \n    \n	inva/lid; name=""	inva/lid; name="       "	FieldEndWhiteSpace
+58	name=value\n	null	name=value	InvalidContentType
+59	test/encoded; key4*=us-ascii''foo; key*9999=ba%; key2*0=a; key3*0*=us-ascii'en'xyz; key*0="f\u0000oo"; key2*1*=b%25; key3*1=plop%; key*1=baz; *=test; =test2;\n	test/encoded; key4="foo"; key="f\u0000oobazba%"; key2="ab%"; key3="xyzplop%"; *="test"	test/encoded; key4="foo"; key2="ab%"; key3-language="en"; key3="xyzplop%"; key="f\u0000oobazba%"	NameNotRfc2231
+61	malicious/attempt; 1*2*=a; 3**=b; 4***=c; *5**6*=d;*****7*8*=e; 9*10*11*12*13*14=f; 15*x***fff*===g;1 * 999999999999999999 *= h; 18 *=*=*=*=*==i;\n	malicious/attempt; 1="a"; 3**="b"; 4***="c"; *5**6*="d"; *****7*8*="e"; 9*10*11*12*13*14="f"; 15*x***fff*="==g"	malicious/attempt; 3="b"; 4="c"; 5="d"; 15="==g"; 1="ha"; 18="*=*=*=*==i"; 7="e"; 9="f"	NameNotRfc2231
+67	text/\n	null	text	InvalidContentType
+68	text/;charset=us-ascii\n	null	text; charset="us-ascii"	InvalidContentType
+69	text/ ;charset=us-ascii\n	null	text; charset="us-ascii"	InvalidContentType
+76	text/plain/format\n	null	text/plain/format	InvalidContentType
+77	text/plain/format;charset=us-ascii\n	null	text/plain/format; charset="us-ascii"	InvalidContentType
+78	text/plain/format ;charset=us-ascii\n	null	text/plain/format; charset="us-ascii"	InvalidContentType

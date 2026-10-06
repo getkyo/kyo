@@ -514,6 +514,7 @@ lazy val kyoJVM: Project = project
         `kyo-browser`.jvm,
         `kyo-slack`.jvm,
         `kyo-telegram`.jvm,
+        `kyo-email`.jvm,
         `kyo-discord`.jvm,
         `kyo-teams`.jvm,
         `kyo-ui`.jvm,
@@ -613,6 +614,7 @@ lazy val kyoJS = project
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-telegram`.js,
+        `kyo-email`.js,
         `kyo-discord`.js,
         `kyo-teams`.js,
         `kyo-ui`.js,
@@ -701,6 +703,7 @@ lazy val kyoNative = project
         `kyo-browser`.native,
         `kyo-slack`.native,
         `kyo-telegram`.native,
+        `kyo-email`.native,
         `kyo-discord`.native,
         `kyo-teams`.native,
         `kyo-ui`.native,
@@ -787,6 +790,7 @@ lazy val kyoWasm = project
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
         `kyo-telegram`.wasm,
+        `kyo-email`.wasm,
         `kyo-discord`.wasm,
         `kyo-teams`.wasm,
         `kyo-ui`.wasm,
@@ -3885,6 +3889,56 @@ lazy val `kyo-slack` =
         )
         .jvmSettings(
             mimaCheck(false)
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-email` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-email"))
+        .dependsOn(`kyo-net` % "compile->compile;test->test", `kyo-schema`, `kyo-charset`, `kyo-mime`)
+        .dependsOn(`kyo-schema-json` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->compile")
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            Test / sourceGenerators += Def.task {
+                VectorsGen.generate(
+                    baseDirectory.value / ".." / "shared" / "src" / "test" / "vectors",
+                    (Test / sourceManaged).value,
+                    "kyo.internal.email.vectors",
+                    "kyo-email"
+                )
+            }.taskValue,
+            Test / sourceGenerators += Def.task {
+                EmailTestVectorsGen.generateDifferences(
+                    baseDirectory.value / ".." / "shared" / "src" / "test" / "resources" / "kyo" / "internal" / "email" / "mime",
+                    "kyo-email/shared/src/test/resources/kyo/internal/email/mime",
+                    (Test / sourceManaged).value
+                )
+            }.taskValue
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            Test / sourceGenerators += Def.task {
+                EmailTestVectorsGen.generateDifferences(
+                    baseDirectory.value / "src" / "test" / "resources" / "kyo" / "internal" / "email" / "mime",
+                    "kyo-email/jvm/src/test/resources/kyo/internal/email/mime",
+                    (Test / sourceManaged).value
+                )
+            }.taskValue,
+            libraryDependencies ++= Seq(
+                "org.apache.james" % "apache-mime4j-core" % "0.8.15" % Test,
+                "org.apache.james" % "apache-mime4j-dom"  % "0.8.15" % Test
+            )
         )
         .jsSettings(
             `js-settings`,
