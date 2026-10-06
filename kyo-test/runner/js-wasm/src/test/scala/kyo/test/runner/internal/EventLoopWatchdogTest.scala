@@ -28,16 +28,19 @@ class EventLoopWatchdogTest extends AsyncFunSuite with NonImplicitAssertions:
         val p = Promise[Unit]()
         discard(js.timers.setTimeout(millis)(p.success(())))
         p.future
+    end after
 
     private def ready(watchdog: EventLoopWatchdog.Instance): Future[Unit] =
         val p = Promise[Unit]()
         watchdog.onReady(() => discard(p.trySuccess(())))
         p.future
+    end ready
 
     private def firstReport(watchdog: EventLoopWatchdog.Instance, kind: String): Future[String] =
         val p = Promise[String]()
         watchdog.onReport(text => if text.startsWith(s"[$kind]") then discard(p.trySuccess(text)))
         p.future
+    end firstReport
 
     private def watched(f: EventLoopWatchdog.Instance => Future[Assertion]): Future[Assertion] =
         val watchdog = EventLoopWatchdog.Instance.start(stopProcess = false, pollMillis = 50, killGraceMillis = 200)

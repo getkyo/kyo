@@ -1,10 +1,11 @@
 package kyo.test.runner.internal
 
+import kyo.Absent
 import kyo.Duration
 import kyo.Maybe
+import kyo.Present
 import kyo.discard
 import scala.scalajs.js
-import scala.scalajs.js.annotation.*
 
 /** Watches the JS event loop from a worker thread, so a leaf that blocks the loop with a synchronous call still gets its STUCK diagnostics
   * and its timeout.
@@ -22,20 +23,27 @@ import scala.scalajs.js.annotation.*
   */
 private[runner] object EventLoopWatchdog:
 
-    /** The runner's instance, started with the first leaf of this JS environment. */
-    private lazy val runner: Instance = Instance.start(stopProcess = true, pollMillis = 250, killGraceMillis = 30000)
+    /** The runner's instance for this JS environment; absent on a runtime without the Node built-ins. */
+    private lazy val runner: Maybe[Instance] =
+        if Node.available then Present(Instance.start(stopProcess = true, pollMillis = 250, killGraceMillis = 30000)) else Absent
 
-    def leafStarted(label: String, timeout: Maybe[Duration], stuckAfter: Duration): Int = runner.leafStarted(label, timeout, stuckAfter)
+    /** Starts the runner's instance ahead of the first leaf: the inspector port is assigned on a later turn of the event loop, and a first
+      * leaf that blocked it at once would otherwise leave its report without a stack.
+      */
+    def start(): Unit = discard(runner)
 
-    def leafFinished(id: Int): Unit = runner.leafFinished(id)
+    def leafStarted(label: String, timeout: Maybe[Duration], stuckAfter: Duration): Int =
+        runner.fold(0)(_.leafStarted(label, timeout, stuckAfter))
+
+    def leafFinished(id: Int): Unit = runner.foreach(_.leafFinished(id))
 
     /** One worker and the leaves it watches. `stopProcess = false` only reports, which is how its tests observe it from the process it
       * watches.
       */
     final class Instance private (worker: js.Dynamic):
-        private var nextId                          = 0
-        private var listeners: List[String => Unit] = Nil
-        private var ready                           = false
+        private var nextId                           = 0
+        private var listeners: List[String => Unit]  = Nil
+        private var ready                            = false
         private var readyListeners: List[() => Unit] = Nil
 
         discard(worker.on(
@@ -59,17 +67,17 @@ private[runner] object EventLoopWatchdog:
 
         def leafStarted(label: String, timeout: Maybe[Duration], stuckAfter: Duration): Int =
             nextId += 1
-            worker.postMessage(js.Dynamic.literal(
+            discard(worker.postMessage(js.Dynamic.literal(
                 op = "start",
                 id = nextId,
                 label = label,
                 timeoutMs = timeout.fold(-1.0)(millis),
                 stuckMs = millis(stuckAfter)
-            ))
+            )))
             nextId
         end leafStarted
 
-        def leafFinished(id: Int): Unit = worker.postMessage(js.Dynamic.literal(op = "end", id = id))
+        def leafFinished(id: Int): Unit = discard(worker.postMessage(js.Dynamic.literal(op = "end", id = id)))
 
         /** Calls `f` with the text of each report, once the main thread is free to run it. */
         def onReport(f: String => Unit): Unit = listeners = f :: listeners
@@ -79,7 +87,7 @@ private[runner] object EventLoopWatchdog:
 
     object Instance:
         def start(stopProcess: Boolean, pollMillis: Int, killGraceMillis: Int): Instance =
-            val worker = js.Dynamic.newInstance(NodeWorkerThreads.asInstanceOf[js.Dynamic].Worker)(
+            val worker = js.Dynamic.newInstance(Node.module("node:worker_threads").Worker)(
                 WorkerSource,
                 js.Dynamic.literal(
                     eval = true,
@@ -99,6 +107,17 @@ private[runner] object EventLoopWatchdog:
 
     private def millis(d: Duration): Double = if d == Duration.Infinity then -1.0 else d.toMillis.toDouble
 
+    // The built-ins come from `process.getBuiltinModule` rather than `@JSImport` or `require`: some test links have module support off,
+    // Wasm links as an ES module, and this one call answers under all three.
+    private object Node:
+        private val process: js.Dynamic    = js.Dynamic.global.globalThis.process
+        val available: Boolean             = !js.isUndefined(process) && !js.isUndefined(process.getBuiltinModule)
+        def module(id: String): js.Dynamic = process.getBuiltinModule(id)
+        def inspector: js.Dynamic          = module("node:inspector")
+        def setDebugPort(port: Int): Unit  = process.debugPort = port
+        def debugPort: Int                 = process.debugPort.asInstanceOf[Int]
+    end Node
+
     // Slot 0 is the counter the main thread bumps, slot 1 the inspector port every worker reads when it samples. One buffer serves every
     // instance, so they agree on the port the main thread's inspector opens on.
     private object Heartbeat:
@@ -111,7 +130,7 @@ private[runner] object EventLoopWatchdog:
 
         // A port the main thread's inspector will listen on when a worker opens it. An inspector already open (`--inspect`) keeps its
         // own port; otherwise the first worker to find a free port decides it for all.
-        if !js.isUndefined(NodeInspector.url()) then discard(atomics.store(slots, 1, NodeProcess.debugPort))
+        if !js.isUndefined(Node.inspector.url()) then discard(atomics.store(slots, 1, Node.debugPort))
 
         def assignPort(worker: js.Dynamic): Unit =
             discard(worker.on(
@@ -119,13 +138,13 @@ private[runner] object EventLoopWatchdog:
                 { (msg: js.Dynamic) =>
                     if msg.op.asInstanceOf[String] == "port" && atomics.load(slots, 1).asInstanceOf[Int] == 0 then
                         val port = msg.port.asInstanceOf[Int]
-                        NodeProcess.debugPort = port
+                        Node.setDebugPort(port)
                         discard(atomics.store(slots, 1, port))
                 }: js.Function1[js.Dynamic, Unit]
             ))
 
         /** The inspector a report opened stays open after the main thread resumes; nothing else needs it. */
-        def closeInspector(): Unit = if !js.isUndefined(NodeInspector.url()) then NodeInspector.close()
+        def closeInspector(): Unit = if !js.isUndefined(Node.inspector.url()) then discard(Node.inspector.close())
     end Heartbeat
 
     // Runs in the worker, as CommonJS. `shared` is the heartbeat buffer above. A leaf is blocked when the counter has not moved since
@@ -238,19 +257,3 @@ setInterval(async () => {
 """
 
 end EventLoopWatchdog
-
-@js.native
-@JSImport("node:worker_threads", JSImport.Namespace)
-private object NodeWorkerThreads extends js.Object
-
-@js.native
-@JSImport("node:inspector", JSImport.Namespace)
-private object NodeInspector extends js.Object:
-    def url(): js.UndefOr[String] = js.native
-    def close(): Unit             = js.native
-
-// The process object itself rather than its namespace: a namespace's members are read-only, and `debugPort` must be set.
-@js.native
-@JSImport("node:process", JSImport.Default)
-private object NodeProcess extends js.Object:
-    var debugPort: Int = js.native
