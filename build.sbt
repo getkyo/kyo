@@ -3732,7 +3732,7 @@ lazy val `kyo-pod` =
                 // `runBackends` (ContainerOrchestrationItTest points readers at ContainerItTest) while the suite
                 // itself never touches a daemon.
                 val daemonHelperCall =
-                    """\b(runBackendsLong|runBackends|runBackendLong|runBackend|runRuntimes)\s*[{(]""".r
+                    """\b(runBackendsLong|runBackendsOf|runBackendsUnchecked|runBackends|runBackendLong|runBackend|runRuntimes)\s*[{(]""".r
                 val (daemonTests, plainTests) = (Test / definedTests).value.partition { test =>
                     val simpleName = test.name.split('.').last
                     val srcOpt     = testSrcDirs.flatMap(d => (d ** s"$simpleName.scala").get).headOption
