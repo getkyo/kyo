@@ -378,7 +378,7 @@ private[kyo] object TagMacro:
 
         def visit(t: TypeRepr): Type.Entry.Id =
 
-            val tpe = t.dealiasKeepOpaques.simplified.dealiasKeepOpaques
+            val tpe = canonicalTuple(t.dealiasKeepOpaques.simplified.dealiasKeepOpaques)
             val key =
                 tpe.typeSymbol.isNoSymbol match
                     case true  => tpe
@@ -524,6 +524,50 @@ private[kyo] object TagMacro:
         discard(visit(root))
         (static, dynamic)
     end deriveDB
+
+    /** Rewrites a concrete tuple type to its `TupleN` spelling.
+      *
+      * `String *: String *: Tuple1[String]` and `Tuple3[String, String, String]` are the same type, and which one reaches the macro is
+      * decided by the call site rather than by the type: a match type such as `NamedTuple.Concat` reduces to the cons chain, while a
+      * written `(a: A, b: B)` stays a `TupleN`. Encoding the two apart gives one type two tags, so a value emitted under the spelling one
+      * site inferred is never found by a handler installed under the other. A chain whose tail is abstract, and one longer than the
+      * largest `TupleN`, have no such spelling and are left alone: there every site writes the same shape already.
+      */
+    private def canonicalTuple(using q: Quotes)(tpe: q.reflect.TypeRepr): q.reflect.TypeRepr =
+        import quotes.reflect.*
+
+        def isCons(tycon: TypeRepr): Boolean =
+            tycon.typeSymbol.equals(Symbol.requiredClass("scala.*:"))
+
+        def tupleArity(symbol: Symbol): Maybe[Int] =
+            val name = symbol.fullName
+            if !name.startsWith("scala.Tuple") then Absent
+            else Maybe.fromOption(name.drop("scala.Tuple".length).toIntOption)
+        end tupleArity
+
+        def elements(current: TypeRepr, acc: List[TypeRepr]): Maybe[List[TypeRepr]] =
+            val node = current.dealiasKeepOpaques
+            node match
+                case AppliedType(tycon, List(head, tail)) if isCons(tycon) =>
+                    elements(tail, head :: acc)
+                case AppliedType(tycon, args) if tupleArity(tycon.typeSymbol).contains(args.size) =>
+                    Present(acc.reverse ++ args)
+                case _ if node =:= TypeRepr.of[EmptyTuple] => Present(acc.reverse)
+                case _                                     => Absent
+            end match
+        end elements
+
+        // Only a chain rooted at `*:` can be spelled two ways; everything else, a `TupleN` included, is
+        // already the form this rewrites to. Matching the shape first keeps the walk off every other node.
+        tpe match
+            case AppliedType(tycon, List(_, _)) if isCons(tycon) =>
+                elements(tpe, Nil) match
+                    case Present(elems) if elems.nonEmpty && elems.size <= 22 =>
+                        Symbol.requiredClass(s"scala.Tuple${elems.size}").typeRef.appliedTo(elems)
+                    case _ => tpe
+            case _ => tpe
+        end match
+    end canonicalTuple
 
     private def immediateParents(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
         import quotes.reflect.*

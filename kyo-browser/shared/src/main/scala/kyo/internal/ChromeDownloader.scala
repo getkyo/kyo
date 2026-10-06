@@ -21,6 +21,12 @@ import kyo.*
   */
 private[kyo] object ChromeDownloader:
 
+    /** The Chrome-for-Testing version the test suites launch and the offline fallback for "latest". CI installs exactly this version
+      * before any test runs and keys its browser cache on it (`scripts/chrome-preload.sh` reads it from this line), so a test that
+      * launches any other version downloads Chrome inside its leaf.
+      */
+    private[kyo] val testedVersion = "154.0.8037.92"
+
     /** Looks up the latest known-good Chrome-for-Testing Stable version from the metadata endpoint configured on
       * `cfg.metadataUrl`. On HTTP failure (404, timeout, offline) logs a warning and returns `cfg.fallbackVersion`
       * so the caller can still proceed in offline environments.

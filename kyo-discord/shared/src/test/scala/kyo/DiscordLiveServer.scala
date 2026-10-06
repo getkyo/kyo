@@ -4,12 +4,14 @@ import kyo.net.TlsTestCertShared
 
 /** A Spacebar container standing in for Discord for one leaf, removed when the leaf's `Scope` closes.
   *
-  * Spacebar (github.com/spacebarchat/server) is AGPL-3.0. The suite only runs it: the image is built locally from the source at
-  * `Commit`, fetched as GitHub's tarball and checked against `TarballSha256`, on bases pinned by digest, and nothing of it is
-  * distributed or linked. Spacebar needs Postgres: its entities declare `jsonb` columns and it excludes the SQLite drivers, so the
-  * runtime stage is the Postgres image with the built server and the build stage's `node` copied in. The build changes three lines
-  * where Spacebar's answer departs from Discord's documented one, each checked by a `grep` so a moved line fails the build: a message
-  * with no components serializes them as `[]`, not `null`; a message's `member.roles` are role ids, not role objects; and an
+  * Spacebar (github.com/spacebarchat/server) is AGPL-3.0. The suite only runs it: the image is built from
+  * `shared/src/test/spacebar/Containerfile`, out of the source at a pinned commit fetched as GitHub's tarball and checked against its
+  * SHA-256, on bases pinned by digest, and nothing of it is distributed or linked. A CI run that selects this module builds it
+  * before the tests (`scripts/fixture-images.sh`), so a leaf never reaches the internet; where it was not built,
+  * [[DiscordLiveServer.init]] fails with the command that builds it. Spacebar needs Postgres: its entities declare `jsonb` columns and it excludes the SQLite drivers,
+  * so the runtime stage is the Postgres image with the built server and the build stage's `node` copied in. The build changes three
+  * lines where Spacebar's answer departs from Discord's documented one, each checked by a `grep` so a moved line fails the build: a
+  * message with no components serializes them as `[]`, not `null`; a message's `member.roles` are role ids, not role objects; and an
   * interaction's `UpdateMessage` answer sets the message's content, not only its embeds and components.
   *
   * The module refuses a Gateway url that is not `wss`, so a TLS terminator in the container (Node's `tls`, piping each connection to
@@ -117,28 +119,21 @@ end DiscordLiveServer
 
 object DiscordLiveServer:
 
-    val Commit: String = "0eb6f04f6d8055dba0194d10c47c33e074a8a281"
+    /** The tag `scripts/fixture-images.sh` builds: the Spacebar commit's prefix, then the build's revision, which a change to the
+      * Containerfile or its scripts increments here and there together.
+      */
+    val Image: ContainerImage = ContainerImage("localhost/kyo-discord-spacebar", "0eb6f04f6d-4")
 
-    val TarballSha256: String = "72a195a37f60720550c51072e8b040284364e1b7563c3f3f730f757134a49428"
-
-    /** The build stage: the Node release Spacebar's own packaging builds with. */
-    val BuildBase: String = "docker.io/library/node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6"
-
-    /** The runtime stage, on the same Debian release as `BuildBase`, so the copied `node` finds the libraries it was linked against. */
-    val RuntimeBase: String =
-        "docker.io/library/postgres:17-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652"
-
-    /** The local tag of the built image. A change to the build below changes its last component. */
-    val Image: ContainerImage = ContainerImage("localhost/kyo-discord-spacebar", s"${Commit.take(10)}-4")
+    private val Context = "kyo-discord/shared/src/test/spacebar"
 
     val Host: String = "127.0.0.1"
 
     /** The client trusts the terminator's self-signed certificate; `TlsTestCertShared` is the one it serves. */
     val Tls: HttpTlsConfig = HttpTlsConfig(trustAll = true)
 
-    def init(using Frame): DiscordLiveServer < (Async & Scope & Abort[ContainerException | FileSystemException | HttpException]) =
+    def init(using Frame): DiscordLiveServer < (Async & Scope & Abort[ContainerException | HttpException]) =
         for
-            _                 <- ensureImage
+            _                 <- built
             (container, port) <- started(PortAttempts)(port => Container.init(containerConfig(port)).map((_, port)))
             server            <- populate(container, port)
         yield server
@@ -193,20 +188,15 @@ object DiscordLiveServer:
         end for
     end populate
 
-    /** Builds the image unless the daemon holds it. The suite runs leaves one at a time, so no two builds race. */
-    private def ensureImage(using Frame): Unit < (Async & Scope & Abort[ContainerException | FileSystemException]) =
+    // A missing local tag would otherwise be pulled from a registry named `localhost`, failing with a connection error that names
+    // neither the image's origin nor the fix.
+    private def built(using Frame): Unit < (Async & Abort[ContainerException]) =
         Abort.run[ContainerException](ContainerImage.inspect(Image)).map {
             case Result.Success(_)                                 => Kyo.unit
             case Result.Failure(_: ContainerImageMissingException) =>
-                Path.run(Path.tempDir("kyo-discord-build")).map { directory =>
-                    Path.run {
-                        (directory / "Containerfile").write(containerfile)
-                            .andThen((directory / "start.sh").write(startScript))
-                            .andThen((directory / "tls-proxy.js").write(tlsProxy))
-                    }.andThen {
-                        ContainerImage.buildFromPath(directory, "Containerfile", tags = Chunk(Image.reference)).discard
-                    }
-                }
+                Abort.panic(new IllegalStateException(
+                    s"${Image.reference} is not built; from the repository root run: podman build -t ${Image.reference} -f $Context/Containerfile $Context"
+                ))
             case Result.Failure(other) => Abort.fail(other)
             case Result.Panic(e)       => Abort.panic(e)
         }
@@ -251,60 +241,6 @@ object DiscordLiveServer:
             RegisterSettings(requireCaptcha = false, Required(false), Required(false))
         )
     end spacebarConfig
-
-    private val containerfile: String =
-        s"""FROM $BuildBase AS build
-           |WORKDIR /app
-           |RUN node -e "fetch('https://codeload.github.com/spacebarchat/server/tar.gz/$Commit').then(r => r.arrayBuffer()).then(b => require('fs').writeFileSync('/tmp/src.tgz', Buffer.from(b)))" \\
-           | && echo "$TarballSha256  /tmp/src.tgz" | sha256sum -c - \\
-           | && tar xzf /tmp/src.tgz --strip-components=1 -C /app \\
-           | && rm /tmp/src.tgz
-           |RUN sed -i 's#^\\( *\\): this.components,$$#\\1: (this.components ?? []),#' src/database/entities/Message.ts \\
-           | && grep -q ': (this.components ?? \\[\\]),' src/database/entities/Message.ts
-           |RUN sed -i 's#^\\( *\\)member_id: undefined,$$#&\\n\\1member: (this.member ? { ...this.member, roles: this.member.roles?.map((role) => (typeof role === \"string\" ? role : role.id)) } : undefined) as never,#' src/database/entities/Message.ts \\
-           | && grep -q 'typeof role === "string" ? role : role.id' src/database/entities/Message.ts
-           |RUN sed -i 's#^\\( *\\)message.embeds = body.data.embeds || \\[\\];$$#&\\n\\1if (body.data.content !== undefined) message.content = body.data.content;#' 'src/api/routes/interactions/#interaction_id/#interaction_token/callback.ts' \\
-           | && grep -q 'message.content = body.data.content;' 'src/api/routes/interactions/#interaction_id/#interaction_token/callback.ts'
-           |RUN HUSKY=0 npm ci --no-audit --no-fund && npm run build
-           |
-           |FROM $RuntimeBase
-           |COPY --from=build /usr/local/bin/node /usr/local/bin/node
-           |COPY --from=build /usr/lib/*-linux-gnu/libatomic.so.1* /usr/local/lib/
-           |RUN ldconfig && node --version
-           |COPY --from=build /app /app
-           |COPY start.sh tls-proxy.js /opt/
-           |WORKDIR /app
-           |EXPOSE 8443
-           |ENTRYPOINT ["sh", "/opt/start.sh"]
-           |""".stripMargin
-
-    private val startScript: String =
-        """set -e
-          |export PGDATA=/tmp/pgdata
-          |mkdir -p "$PGDATA" && chown postgres "$PGDATA"
-          |gosu postgres initdb -D "$PGDATA" --auth=trust -U spacebar >/dev/null
-          |gosu postgres pg_ctl -D "$PGDATA" -o "-c listen_addresses=127.0.0.1 -c fsync=off" -w start >/dev/null
-          |gosu postgres createdb -h 127.0.0.1 -U spacebar spacebar
-          |printf '%s' "$SPACEBAR_CONFIG_JSON" > /tmp/config.json
-          |printf '%s' "$TLS_CERT" > /tmp/cert.pem
-          |printf '%s' "$TLS_KEY" > /tmp/key.pem
-          |node /opt/tls-proxy.js &
-          |export DATABASE=postgres://spacebar@127.0.0.1:5432/spacebar CONFIG_PATH=/tmp/config.json PORT=3001
-          |exec node --enable-source-maps dist/bundle/start.js
-          |""".stripMargin
-
-    private val tlsProxy: String =
-        """const tls = require("node:tls");
-          |const net = require("node:net");
-          |const fs = require("node:fs");
-          |tls.createServer({ key: fs.readFileSync("/tmp/key.pem"), cert: fs.readFileSync("/tmp/cert.pem") }, (client) => {
-          |    const upstream = net.connect(3001, "127.0.0.1");
-          |    client.pipe(upstream);
-          |    upstream.pipe(client);
-          |    client.on("error", () => upstream.destroy());
-          |    upstream.on("error", () => client.destroy());
-          |}).listen(8443, "0.0.0.0");
-          |""".stripMargin
 
     // The JSON of Spacebar's API and config file.
 

@@ -10,6 +10,9 @@ package kyo
   * binds its server first and passes its port. The container reaches that server through the name its daemon gives the host.
   *
   * Tokens are strict: only [[token]] is accepted, so a leaf can see the unauthorized answer.
+  *
+  * A CI run that selects this module pulls the image at its pinned digest before the tests (`scripts/fixture-images.sh`), so a leaf
+  * never reaches a registry; where it was not pulled, [[WhatsAppLiveServer.init]] fails with the command that pulls it rather than pulling.
   */
 final case class WhatsAppLiveServer(
     container: Container,
@@ -117,7 +120,9 @@ end WhatsAppLiveServer
 
 object WhatsAppLiveServer:
 
-    /** whaloc 0.1.0, pinned by the digest of its multi-arch index (linux/amd64 and linux/arm64). */
+    /** whaloc 0.1.0, pinned by the digest of its multi-arch index (linux/amd64 and linux/arm64), which `scripts/fixture-images.sh`
+      * pulls; the two change together.
+      */
     val Image: ContainerImage =
         ContainerImage("docker.io/dgadelha/whaloc@sha256:793780655dbe3be764de559625be0026a67978a3a9527e23d9d023f613c51314")
 
@@ -134,7 +139,17 @@ object WhatsAppLiveServer:
     def init(webhook: Maybe[(Int, String)] = Absent)(using
         Frame
     ): WhatsAppLiveServer < (Async & Scope & Abort[ContainerException | HttpException]) =
-        started(PortAttempts)(port => start(port, webhook))
+        pulled.andThen(started(PortAttempts)(port => start(port, webhook)))
+
+    // kyo-pod pulls a missing image on its own, which would reach the registry from inside the leaf.
+    private def pulled(using Frame): Unit < (Async & Abort[ContainerException]) =
+        Abort.run[ContainerException](ContainerImage.inspect(Image)).map {
+            case Result.Success(_)                                 => Kyo.unit
+            case Result.Failure(_: ContainerImageMissingException) =>
+                Abort.panic(new IllegalStateException(s"${Image.reference} is not pulled; run: podman pull ${Image.reference}"))
+            case Result.Failure(other) => Abort.fail(other)
+            case Result.Panic(e)       => Abort.panic(e)
+        }
 
     /** How many host ports a server tries before its start fails with the conflict. */
     private val PortAttempts = 5

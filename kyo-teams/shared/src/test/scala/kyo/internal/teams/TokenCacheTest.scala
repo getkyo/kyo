@@ -160,6 +160,50 @@ class TokenCacheTest extends kyo.test.Test[Any]:
         }
     }
 
+    "concurrent callers start a fetch only for a call that waits on it" in {
+        // Every evaluation of the assertion fails with its own number, and a caller fails with the number of the fetch it waited on,
+        // so a number no caller saw is a fetch started by a caller that lost the race to install it. The race needs the scheduler to
+        // preempt a caller between reading the state and installing its fetch while another carrier runs, which the spinning fibers
+        // provoke. Measured on a cache that starts its fetch before installing it: on JVM 3 to 18 such fetches per 20000 rounds, 12
+        // runs out of 12 red, about 5 s; on Native 0 to 4 per 1000 rounds at about 5.6 ms a round, so it runs 2000 to stay well inside
+        // the time limit. On a single carrier (JS, Wasm) every round waits out each spinner's time slice, 4.7 s a round on JS, and
+        // 20000 rounds without spinners found none, so there the rounds only check the invariant.
+        val parallel = Runtime.getRuntime.availableProcessors() > 1
+        val rounds   = if kyo.internal.Platform.isJVM then 20000 else if parallel then 2000 else 200
+        withLocal { local =>
+            AtomicInt.init.map { evaluated =>
+                val assertion = evaluated.incrementAndGet.map(n => Abort.fail(TeamsCredentialException(n.toString)))
+                val config    = local.configWith(TeamsConfig.Credential.Federated(assertion))
+                Teams.init(config).map { teams =>
+                    AtomicBoolean.init(false).map { stop =>
+                        def spin: Unit < Sync  = stop.get.map(s => if s then Kyo.unit else spin)
+                        def round: Int < Async =
+                            evaluated.set(0).andThen(TokenCache.init(config, teams.http)).map { cache =>
+                                Latch.init(1).map { go =>
+                                    Kyo.foreach(Chunk.range(0, 32))(_ => Fiber.initUnscoped(go.await.andThen(Abort.run(cache.get)))).map {
+                                        callers =>
+                                            go.release.andThen(Kyo.foreach(callers)(_.get)).map { results =>
+                                                val waited = results.collect {
+                                                    case Result.Failure(TeamsCredentialException(n: String)) => n.toInt
+                                                }.toSet
+                                                evaluated.get.map(n => Chunk.range(1, n + 1).count(i => !waited.contains(i)))
+                                            }
+                                    }
+                                }
+                            }
+                        Kyo.foreach(Chunk.range(0, if parallel then 16 else 0))(_ => Fiber.initUnscoped(spin)).map { spinners =>
+                            Kyo.foreach(Chunk.range(0, rounds))(_ => round).map { unwaited =>
+                                stop.set(true).andThen(Kyo.foreach(spinners)(_.get)).andThen {
+                                    assert(unwaited.sum == 0, s"${unwaited.sum} fetches started with no caller waiting on them")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "a burst of calls requests the token once" in {
         withLocal { local =>
             local.reply("token").andThen(local.reply("send", resource("1:a"))).andThen {
@@ -172,7 +216,8 @@ class TokenCacheTest extends kyo.test.Test[Any]:
                             .map { results =>
                                 local.seen.map { seen =>
                                     assert(results == Chunk.fill(5)(Result.succeed(Teams.ActivityId.init("1:a").getOrThrow)))
-                                    assert((seen.count(_.label == "token"), seen.count(_.label == "send")) == (1, 5))
+                                    val counts = (seen.count(_.label == "token"), seen.count(_.label == "send"))
+                                    assert(counts == (1, 5), s"(token, send) requests: $counts")
                                 }
                             }
                     }
