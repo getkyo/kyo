@@ -13,6 +13,9 @@ import kyo.schema.rename
   * getMe answers the token's prefix as Telegram does. Its LLM and proactive messages are off, but it still greets the bot from the
   * person, on a goroutine of the bot's first call, and no setting turns that off. `init` makes that first call and confirms the
   * greeting, so a leaf waiting for the person's next message receives what it caused.
+  *
+  * A CI run that selects this module pulls the image at its pinned digest before the tests (`scripts/fixture-images.sh`), so a leaf
+  * never reaches a registry; where it was not pulled, [[TelegramLiveServer.init]] fails with the command that pulls it rather than pulling.
   */
 final case class TelegramLiveServer(container: Container, botApi: Int, admin: Int, token: Telegram.Token):
 
@@ -56,6 +59,7 @@ end TelegramLiveServer
 
 object TelegramLiveServer:
 
+    /** The digest `scripts/fixture-images.sh` pulls; the two change together. */
     val Image: ContainerImage =
         ContainerImage("ghcr.io/skrashevich/telegram-mock-ai@sha256:7e75f8f8d7902072a5e318ffe9f9b93240087601419b82f7137261b41a48d606")
 
@@ -72,7 +76,7 @@ object TelegramLiveServer:
     ): TelegramLiveServer < (Async & Scope & Abort[ContainerException | FileSystemException | HttpException | DecodeException]) =
         Random.nextStringAlphanumeric(35).map { secret =>
             val token = Telegram.Token.init(s"$BotId:$secret").getOrThrow
-            Path.run(Path.tempDir("kyo-telegram-server")).map { directory =>
+            pulled.andThen(Path.run(Path.tempDir("kyo-telegram-server"))).map { directory =>
                 Path.run((directory / "config.yaml").write(configYaml(token))).andThen {
                     Container.init(containerConfig(directory)).map { container =>
                         for
@@ -83,6 +87,16 @@ object TelegramLiveServer:
                     }
                 }
             }
+        }
+
+    // kyo-pod pulls a missing image on its own, which would reach the registry from inside the leaf.
+    private def pulled(using Frame): Unit < (Async & Abort[ContainerException]) =
+        Abort.run[ContainerException](ContainerImage.inspect(Image)).map {
+            case Result.Success(_)                                 => Kyo.unit
+            case Result.Failure(_: ContainerImageMissingException) =>
+                Abort.panic(new IllegalStateException(s"${Image.reference} is not pulled; run: podman pull ${Image.reference}"))
+            case Result.Failure(other) => Abort.fail(other)
+            case Result.Panic(e)       => Abort.panic(e)
         }
 
     // The long poll is the bot's first call, so it starts the greeting and returns once it is queued; the second call confirms it.

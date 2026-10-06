@@ -142,7 +142,7 @@ private[kyo] object SharedChrome:
     private val shared = new Instance(
         frame =>
             given Frame = frame
-            chromeConfig.map(cfg => BrowserLauncher.launch(cfg))
+            chromeConfig().map(cfg => BrowserLauncher.launch(cfg))
         ,
         frame =>
             given Frame = frame
@@ -167,8 +167,12 @@ private[kyo] object SharedChrome:
     ): A < (Async & Abort[BrowserReadException | BrowserSetupException] & S) =
         shared.withUrl(f)
 
-    /** Cross-platform Chrome launch config that downloads Chrome-for-Testing on first call (cached for subsequent calls). */
-    def chromeConfig(using Frame): Browser.LaunchConfig < (Async & Abort[BrowserSetupException]) =
-        Browser.chromeForTestingLaunchConfig()
+    /** Launch config for the Chrome-for-Testing `build` at [[ChromeDownloader.testedVersion]], the version CI installs before tests run.
+      * A test that resolved "latest" instead would download Chrome inside its leaf whenever Google publishes a new Stable.
+      */
+    def chromeConfig(build: Browser.ChromeForTestingBuild = Browser.ChromeForTestingBuild.HeadlessShell)(using
+        Frame
+    ): Browser.LaunchConfig < (Async & Abort[BrowserSetupException]) =
+        Browser.chromeForTestingLaunchConfig(build, Present(ChromeDownloader.testedVersion))
 
 end SharedChrome

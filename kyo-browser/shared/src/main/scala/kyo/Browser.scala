@@ -4176,7 +4176,7 @@ object Browser:
               */
             val default: ChromeDownloaderConfig = ChromeDownloaderConfig(
                 metadataUrl = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json",
-                fallbackVersion = "147.0.7727.57",
+                fallbackVersion = ChromeDownloader.testedVersion,
                 downloadTimeout = 5.minutes
             )
         end ChromeDownloaderConfig

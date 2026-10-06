@@ -124,8 +124,8 @@ jobs:
           os: ${{ inputs.os }}
           target: ${{ matrix.target }}
 
-      # kyo-browser auto-downloads `chrome-headless-shell` (~120 MB) on first launch and caches it under the
-      # platform's user cache dir; the setup action restores it. The action also installs Node, the native
+      # The setup action installs the Chrome builds the kyo-browser tests launch (restored from the cache, or
+      # downloaded once per version), so no test leaf downloads Chrome. It also installs Node, the native
       # libraries, and podman conditionally on the target and os, and provisions corretto:25 + sbt.
 
       # Guards issue #1821. The `native-settings` hook drops each module's Scala Native work directory

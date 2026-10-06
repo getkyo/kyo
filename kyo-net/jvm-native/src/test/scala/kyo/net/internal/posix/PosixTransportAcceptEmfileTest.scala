@@ -170,6 +170,45 @@ class PosixTransportAcceptEmfileTest extends Test:
                 end for
             }
         }
+
+        "the accept re-armed after a backoff reports the connection still queued" in {
+            assumePollerReady()
+            // The retry after the backoff hits the injected EMFILE again and backs off a second time, so the second backoff proves the re-armed
+            // accept ran. A queued connection produces no new readiness transition: an arm that waits for one strands it, no second backoff
+            // ever comes, and the leaf hangs to its cap.
+            val settled       = Promise.Unsafe.init[AcceptGuard, Any]()
+            val secondBackoff = Promise.Unsafe.init[Unit, Any]()
+            val backoffs      = new AtomicInteger(0)
+            val spy           = new EmfileAcceptSockets(Ffi.load[SocketBindings], settled)
+            val driver        = PollerIoDriver.init()
+            val transport     = TestTransports.forTesting(
+                driver,
+                spy,
+                backendIsEpoll = false,
+                onAcceptResourceBackoff = () =>
+                    if backoffs.incrementAndGet() == 2 then discard(secondBackoff.complete(Result.succeed(())))
+            )
+            discard(driver.start())
+            Sync.ensure(Sync.defer(driver.close())) {
+                for
+                    listener <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get
+                    _        <- Scope.ensure(Sync.defer(listener.close()))
+                    port = listener.port
+                    _ <-
+                        val fd = spy.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+                        Scope.ensure(Sync.defer(discard(spy.close(fd)))).andThen {
+                            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
+                            spy.connect(fd, ca, cl).safe.get.map { r =>
+                                ca.close()
+                                assert(r.value == 0, s"client connect failed errno=${r.errorCode}")
+                            }
+                        }
+                    _     <- secondBackoff.safe.get
+                    calls <- Sync.defer(spy.acceptNowCalls.get())
+                yield assert(calls >= 2, s"the re-armed accept must retry the queued connection, got $calls acceptNow calls")
+                end for
+            }
+        }
     }
 
 end PosixTransportAcceptEmfileTest
