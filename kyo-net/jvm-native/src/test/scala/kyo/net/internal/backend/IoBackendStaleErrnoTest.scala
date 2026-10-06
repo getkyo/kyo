@@ -4,7 +4,7 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.NetConfig
 import kyo.net.Test
-import kyo.net.internal.posix.SocketBindings
+import kyo.net.internal.LibcTestBindings
 
 /** Cross-backend consistency guard for stale-errno init: every I/O backend must build a working transport even when a PRIOR syscall on the
   * calling thread has left a non-zero `errno`.
@@ -21,8 +21,9 @@ import kyo.net.internal.posix.SocketBindings
   * it lives under `jvm-native` only because the posix backends (io_uring/epoll/kqueue) and the JVM Nio floor exist only there. JS's Node
   * backend has no `liburing`/`queue_init` analog, so the invariant has no JS counterpart to assert.
   *
-  * Determinism: a deliberately failing `socket(-1, -1, -1)` (EAFNOSUPPORT/EINVAL) dirties `errno` immediately before the synchronous
-  * `entry.build`, which runs the driver init inline on this same thread. No syscall clears `errno` to 0 on success, so the dirtied `errno`
+  * Determinism: a deliberately failing ISO C `remove` of a missing path (ENOENT) dirties `errno` immediately before the synchronous
+  * `entry.build`, which runs the driver init inline on this same thread. ISO C, not a POSIX socket call, so the precondition holds on the
+  * Windows CRT too, where the Nio floor is the one available backend. No syscall clears `errno` to 0 on success, so the dirtied `errno`
   * survives every internal `queue_init` to the result read: a buggy io_uring init would read it and throw here; a correct init reads the
   * return value (0) and builds. The other backends build regardless. Every available backend builds and round-trips.
   */
@@ -30,25 +31,20 @@ class IoBackendStaleErrnoTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private def sock = Ffi.load[SocketBindings]
+    private def libc = Ffi.load[LibcTestBindings]
 
     "every available I/O backend builds a working transport after a prior syscall left errno non-zero" - {
         IoBackendPlatform.registered.foreach { entry =>
             s"backend=${entry.name}" in {
-                if kyo.internal.Platform.isWindows then
-                    // The stale-errno precondition is dirtied via the POSIX socket(2) binding, whose bindings object fails
-                    // its <clinit> on the Windows CRT (bare POSIX socket symbols are absent). That ExceptionInInitializerError
-                    // is thrown uncaught on scheduler-worker threads and hangs the run to the job timeout. The invariant under
-                    // test concerns the POSIX backends' errno handling; on Windows only the NIO floor exists. Cancel instead.
-                    cancel("stale-errno precondition uses POSIX SocketBindings, unavailable on the Windows CRT")
-                else if !entry.probe.isAvailable then
+                if !entry.probe.isAvailable then
                     cancel(s"backend ${entry.name} is not available on this host: ${entry.probe.describe}")
                 else
                     // Dirty errno on THIS thread, then build synchronously: the driver init reads errno at queue_init and must ignore it.
-                    val dirty = sock.socket(-1, -1, -1)
+                    val missing = s"kyo-net-stale-errno-${java.util.UUID.randomUUID()}"
+                    val dirty   = libc.remove(missing)
                     assert(
                         dirty.value < 0 && dirty.errorCode != 0,
-                        s"precondition: socket(-1,-1,-1) must fail and set errno, got value=${dirty.value} errorCode=${dirty.errorCode}"
+                        s"precondition: remove($missing) must fail and set errno, got value=${dirty.value} errorCode=${dirty.errorCode}"
                     )
                     // Built inside ProcessSharedTransport.whileBuilding: this leaf builds a fresh, ad-hoc transport per available backend (the
                     // stale-errno precondition demands a brand new driver each time), never through NetPlatform's own single shared instance,
