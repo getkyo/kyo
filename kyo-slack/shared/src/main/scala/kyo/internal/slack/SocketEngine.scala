@@ -317,11 +317,18 @@ final private[kyo] class SocketEngine private[kyo] (
       * past Slack's acknowledgement window, and Slack redelivers its envelope. Then the socket
       * is closed and both fibers interrupted, flushed or not. `closeNow` is the equivalent
       * unconditional final teardown.
+      *
+      * A `conn.put` that returned has only queued the ack on the WebSocket: kyo-http writes that
+      * queue when the connect body returns, and discards it when the body is interrupted. So
+      * after `conn.close` the relay is given until `ackDeadline` to end on its own (the peer
+      * answers the close, its stream ends, the body returns and the queue is written) before it
+      * is interrupted.
       */
     private[kyo] def closeTransport(using Frame): Unit < Async =
         intentionalClose.set(true)
             .andThen(Abort.run[Timeout](Async.timeout(ackDeadline)(outbound.closeAwaitEmpty.unit.andThen(senderDone.get))).unit)
             .andThen(conn.close)
+            .andThen(Abort.run[Timeout](Async.timeout(ackDeadline)(relay.getResult)).unit)
             .andThen(sender.interrupt.andThen(sender.getResult.unit))
             .andThen(relay.interrupt.andThen(relay.getResult.unit))
             .andThen(outbound.close.unit)

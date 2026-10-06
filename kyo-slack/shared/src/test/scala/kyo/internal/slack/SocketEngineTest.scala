@@ -234,6 +234,43 @@ class SocketEngineTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "closeTransport lets the connect body return, so an ack the transport queued but had not written reaches the wire" in {
+        // The transport behaves as kyo-http's client WebSocket does: `put` only queues a frame, the queue is written when the
+        // connect body returns, and an interrupted body discards it. The peer answers the close only when the leaf says so: once
+        // the teardown is waiting on its deadline, or at once if the teardown already ended without waiting.
+        Clock.withTimeControl { control =>
+            for
+                feed      <- Channel.initUnscoped[String](8)
+                queued    <- Channel.initUnscoped[String](8)
+                wire      <- Channel.initUnscoped[String](8)
+                closeSent <- Fiber.Promise.init[Unit, Any]
+                answered  <- Fiber.Promise.init[Unit, Any]
+                queuing = new Transport:
+                    private[kyo] def connect[B, S](u: HttpUrl, cc: HttpWebSocket.Config)(
+                        f: Transport.Conn => B < (S & Async)
+                    )(using Frame): B < (S & Async & Abort[SlackTransportException]) =
+                        f(new Transport.Conn:
+                            private[kyo] def put(text: String)(using Frame): Unit < (Async & Abort[Closed]) = queued.put(text)
+                            private[kyo] def stream(using Frame): Stream[String, Async]                     = feed.streamUntilClosed()
+                            private[kyo] def close(using Frame): Unit < Async                               = closeSent.completeUnit.unit
+                            private[kyo] def onPeerClose(using Frame): Unit < Async                         = answered.get).map { result =>
+                            Abort.run[Closed](queued.drain.map(Kyo.foreachDiscard(_)(wire.put))).andThen(result)
+                        }
+                engine   <- SocketEngine.initUnscoped(queuing, url, cfg)
+                _        <- engine.emitAck(eventEnvelope("E1"), SlackAck.Ack)
+                ended    <- Fiber.Promise.init[Unit, Any]
+                teardown <- Fiber.initUnscoped(engine.closeTransport.andThen(ended.completeUnit))
+                _        <- closeSent.get
+                // Raced on a promise, not the fiber: awaiting a fiber links the loser's interrupt to the teardown itself.
+                _       <- Async.race(control.awaitPendingSleepers(1), ended.get)
+                _       <- answered.completeUnit
+                _       <- feed.close
+                _       <- teardown.get
+                written <- wire.drain
+            yield assert(written == Chunk("""{"envelope_id":"E1"}"""), s"got: $written")
+        }
+    }
+
     "connect returns only after the readiness gate completes; never returns with no hello and no relay completion" in {
         for
             ready <- Latch.init(1)
