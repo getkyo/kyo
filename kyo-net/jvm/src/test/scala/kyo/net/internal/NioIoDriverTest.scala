@@ -303,18 +303,32 @@ class NioIoDriverTest extends Test:
                     if result.getStatus eq SSLEngineResult.Status.OK then unwrapAll(plain + result.bytesProduced())
                     else plain
                 end unwrapAll
+                // A retry that runs before the peer's window update reaches the writer pushes nothing, and the peer can then read everything in
+                // flight. A blocking read would wait for bytes only the next retry sends, so the peer reads without blocking and an empty read waits
+                // for either more ciphertext or, while some is held back, the writer turning writable: the wakeup the driver's OP_WRITE gives the pump.
+                val selector = Selector.open()
+                peer.configureBlocking(false)
+                discard(peer.register(selector, SelectionKey.OP_READ))
+                val writable = writer.register(selector, 0)
                 @scala.annotation.tailrec
                 def drain(plain: Long): Long =
                     if plain >= expected then plain
                     else
                         if pending then discard(driver.write(handle, record, record.size))
-                        discard(peer.read(netIn))
+                        if peer.read(netIn) == 0 then
+                            discard(writable.interestOps(if pending then SelectionKey.OP_WRITE else 0))
+                            discard(selector.select())
+                            selector.selectedKeys().clear()
+                        end if
                         netIn.flip()
                         val more = unwrapAll(plain)
                         discard(netIn.compact())
                         drain(more)
-                assert(drain(0L) == expected)
-                assert(!pending)
+                try
+                    assert(drain(0L) == expected)
+                    assert(!pending)
+                finally selector.close()
+                end try
             finally
                 given Frame = Frame.internal
                 writer.close()
