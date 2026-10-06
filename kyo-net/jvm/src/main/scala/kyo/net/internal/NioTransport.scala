@@ -55,7 +55,8 @@ import scala.util.control.NonFatal
   * Note: TCP_NODELAY is set on all non-Unix-domain connections to disable Nagle's algorithm and reduce latency.
   */
 final private[kyo] class NioTransport private (
-    val driver: NioIoDriver
+    val driver: NioIoDriver,
+    clock: Clock
 ) extends TransportImpl[NioHandle]:
 
     /** The driver pool powering this transport. A single-driver pool wrapping `driver`: connect, listen, accept, and the TLS handshake all run
@@ -151,7 +152,7 @@ final private[kyo] class NioTransport private (
     end applySocketBuffers
 
     private def initTracked(handle: NioHandle, channelCapacity: Int)(using AllowUnsafe, Frame): Connection[NioHandle] =
-        Connection.init(handle, driver, channelCapacity, handle.peerCloseGrace, handle.closeFlushGrace)
+        Connection.init(handle, driver, channelCapacity, handle.peerCloseGrace, handle.closeFlushGrace, clock = clock)
 
     /** The NIO floor terminates TLS inline with the JDK SSLEngine, so it can serve only the "jdk" implementation. A connection pinning any
       * other [[NetTlsConfig.tlsProvider]] fails closed (see `startTlsHandshake`). The cross-backend test matrix reads this to skip non-jdk
@@ -1301,7 +1302,7 @@ final private[kyo] class NioTransport private (
     end acceptAllPendingTls
 
     /** Arm a `Clock`-driven deadline for one accepted connection's server TLS handshake. When `tls.handshakeTimeout` is finite, schedule
-      * `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the clock executor, never a blocked carrier) and fail `connPromise` with a
+      * `clock.unsafe.sleep(d).onComplete(...)` on the transport's clock (a timer fiber, never a blocked carrier) and fail `connPromise` with a
       * `Closed` when the deadline fires. `connPromise.completeDiscard` completes the promise at most once, so the deadline and the handshake
       * outcome are mutually exclusive: a deadline that fires after the handshake already completed is a no-op, and a handshake that completes
       * after the deadline already failed `connPromise` is a no-op. The deadline-failed `connPromise` runs the existing `onComplete` Failure arm
@@ -1316,7 +1317,7 @@ final private[kyo] class NioTransport private (
         handshakeTimeout: Duration
     )(using allow: AllowUnsafe, frame: Frame): Unit =
         if handshakeTimeout.isFinite then
-            val timer = DeadlineTimer.arm(handshakeTimeout)
+            val timer = DeadlineTimer.arm(clock, handshakeTimeout)
             timer.onComplete { _ =>
                 connPromise.completeDiscard(Result.fail(NetTlsHandshakeTimeoutException(host, port, handshakeTimeout)))
             }
@@ -1327,7 +1328,7 @@ final private[kyo] class NioTransport private (
     end armHandshakeDeadline
 
     /** Arm a `Clock`-driven deadline for one in-flight client TCP connect, mirroring [[armHandshakeDeadline]]. When the caller's `connectTimeout` is finite,
-      * schedule `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the clock executor, never a blocked carrier) and fail `connPromise`
+      * schedule `clock.unsafe.sleep(d).onComplete(...)` on the transport's clock (a timer fiber, never a blocked carrier) and fail `connPromise`
       * with `NetConnectTimeoutException(host, port, connectTimeout)` when the deadline fires. `connPromise.completeDiscard` completes the promise
       * at most once, so the deadline and the OS connect outcome are mutually exclusive: a deadline that fires after the connect already completed
       * is a no-op, and a connect that completes after the deadline already failed `connPromise` is a no-op. This is the close-cause
@@ -1347,7 +1348,7 @@ final private[kyo] class NioTransport private (
             // at-most-once completeDiscard made it a no-op); handing the deadline off at the TCP boundary, with the promise still pending
             // through the handshake, makes it live.
             val disarmed = AtomicBoolean.Unsafe.init(false)
-            val timer    = DeadlineTimer.arm(connectTimeout)
+            val timer    = DeadlineTimer.arm(clock, connectTimeout)
             timer.onComplete { _ =>
                 if !disarmed.get() then
                     // port < 0 is the Unix sentinel the connect-failure leaves already use; a Unix socket has no port to report.
@@ -1627,14 +1628,15 @@ end NioTransport
 
 /** Factory and SSL helpers for `NioTransport`. */
 private[kyo] object NioTransport:
-    def init()(using AllowUnsafe, Frame): NioTransport =
+    /** `clock` times every connect and handshake deadline and each connection's `peerCloseGrace`. */
+    def init(clock: Clock = Clock.live)(using AllowUnsafe, Frame): NioTransport =
         // Build the concrete NioIoDriver via the floor backend (NioBackend is the registry's Nio entry). NioTransport
         // needs the concrete NioIoDriver (it calls NIO-specific channel-registration methods), so it is constructed
         // directly here; the registry-level backend selection (-Dkyo.net.backend, the posix/Nio choice) happens in
         // IoBackendPlatform.transport, which invokes this init only when the Nio floor is the selected entry.
         val driver = kyo.net.internal.backend.NioBackend.createDriver()
         discard(driver.start())
-        new NioTransport(driver)
+        new NioTransport(driver, clock)
     end init
 
     /** Create an SSLContext from NetTlsConfig.
