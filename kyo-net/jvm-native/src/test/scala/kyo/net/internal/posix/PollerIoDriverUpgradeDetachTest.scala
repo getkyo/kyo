@@ -16,7 +16,8 @@ import kyo.net.internal.transport.WriteResult
   *     the upgrade handoff, and never completes the promise, so the later sweep finds Absent;
   *   - a stray deposit IN THE GAP between the sweep and the `isUpgraded` write, which only the handshake's first producer arm can observe.
   *
-  * Each leaf pins one shape with the exact production ordering; a bounded await that never completes is the strand. The pump parked on such a
+  * Each leaf pins one shape with the exact production ordering; a strand is a promise nothing completes, so a regression hangs the leaf to
+  * its cap. The pump parked on such a
   * promise is a fiber nothing ever resumes, invisible to the leak gates (no map entry, no open-fd owner), which is why these are driver-level
   * contract tests rather than transport-observable ones.
   */
@@ -29,28 +30,6 @@ class PollerIoDriverUpgradeDetachTest extends Test:
             cancel("PollerIoDriver needs epoll (Linux) or kqueue (macOS/BSD)")
 
     private def sock = kyo.ffi.Ffi.load[SocketBindings]
-
-    /** Poll `cond` on the fiber scheduler (never a thread block) until it holds or `bound` elapses; returns whether it held. */
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
-    /** Bounded await on a read promise: Present(result) when it completes, Absent when nothing completes it within `bound` (the strand). */
-    private def awaitOutcome(p: Promise.Unsafe[ReadOutcome, Abort[Closed]], bound: Duration)(using
-        Frame,
-        kyo.test.AssertScope
-    ): Maybe[Result[Closed, ReadOutcome]] < Async =
-        Abort.run[Closed | Timeout](Async.timeout(bound)(p.safe.get)).map {
-            case Result.Success(outcome)        => Present(Result.succeed(outcome))
-            case Result.Failure(_: Timeout)     => Absent
-            case Result.Failure(closed: Closed) => Present(Result.fail(closed))
-            case Result.Panic(e)                => Present(Result.panic(e))
-        }
 
     "an awaitRead deposited after the upgrade sweep is failed, not stranded" in {
         assumePoller()
@@ -71,16 +50,9 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                     handle.isUpgraded = true
                     val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(handle, p)
-                    awaitOutcome(p, 10.seconds).map {
-                        case Present(Result.Failure(_)) => succeed
-                        case Absent                     =>
-                            assert(
-                                false,
-                                "read deposited after the upgrade sweep was stranded: nothing completed it " +
-                                    s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined}, upgradeActive=${handle.upgradeActive})"
-                            )
-                        case other =>
-                            assert(false, s"unexpected outcome $other")
+                    Abort.run[Closed](p.safe.get).map {
+                        case Result.Failure(_) => succeed
+                        case other             => assert(false, s"unexpected outcome $other")
                     }
                 }
             }
@@ -123,21 +95,15 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                         handle.upgradeActive = true
                         handle.upgrading = true
                         assert(driver.write(clientH, Span.fromUnsafe(flight), 0) == WriteResult.Done)
-                        awaitCondition(2.seconds) {
+                        untilState {
                             handle.upgradeHandoff.get() match
                                 case PosixHandle.UpgradeHandoff.Carryover(bytes) => bytes.length == flight.length
                                 case _                                           => false
-                        }.map { consumed =>
-                            assert(
-                                consumed,
-                                "the upgrade-window dispatch never routed the flight into the handoff " +
-                                    s"(handoff=${handle.upgradeHandoff.get()}, pendingReadPromise=${handle.pendingReadPromise.get().isDefined})"
-                            )
                         }.andThen {
                             driver.cancel(handle)
                             handle.isUpgraded = true
-                            awaitOutcome(p, 10.seconds).map {
-                                case Present(Result.Failure(_)) =>
+                            Abort.run[Closed](p.safe.get).map {
+                                case Result.Failure(_) =>
                                     // The flight itself must survive in the handoff for the handshake to replay: failing the pump promise is
                                     // teardown, not data loss.
                                     handle.upgradeHandoff.get() match
@@ -145,12 +111,6 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                                             assert(bytes.toList == flight.toList, s"handoff bytes ${bytes.toList} != ${flight.toList}")
                                         case other =>
                                             assert(false, s"the flight must stay staged in the handoff; got $other")
-                                case Absent =>
-                                    assert(
-                                        false,
-                                        "pump read consumed by the upgrade window was stranded: the sweep missed it " +
-                                            s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined})"
-                                    )
                                 case other =>
                                     assert(false, s"unexpected outcome $other")
                             }
@@ -182,16 +142,9 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                     driver.awaitRead(handle, p)
                     handle.isUpgraded = true
                     driver.armUpgradeProducerRead(handle)
-                    awaitOutcome(p, 10.seconds).map {
-                        case Present(Result.Failure(_)) => succeed
-                        case Absent                     =>
-                            assert(
-                                false,
-                                "stray deposit in the sweep-to-marker gap was stranded: the producer arm did not fail the occupant " +
-                                    s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined})"
-                            )
-                        case other =>
-                            assert(false, s"unexpected outcome $other")
+                    Abort.run[Closed](p.safe.get).map {
+                        case Result.Failure(_) => succeed
+                        case other             => assert(false, s"unexpected outcome $other")
                     }
                 }
             }

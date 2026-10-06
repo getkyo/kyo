@@ -71,7 +71,7 @@ class ReadPumpTest extends Test:
                     n
                 }.map { n =>
                     if n > 0 then Loop.continue(sent + n.toInt)
-                    else Async.sleep(1.millis).andThen(Loop.continue(sent))
+                    else turn.andThen(Loop.continue(sent))
                 }
         }
     end sendAll
@@ -249,7 +249,7 @@ class ReadPumpTest extends Test:
                 // Closed arm, rather than racing the read so the pump offers to an already-closed channel (the teardown path). A fixed
                 // sleep left that race open under load. Closing then fails the parked put; the pump's backpressure callback treats Closed
                 // as a no-op, so closeFn is never called on this path.
-                assertEventually(Sync.defer(channel.pendingPuts().getOrElse(0) == 1)).andThen(Sync.defer(channel.close())).map { _ =>
+                untilState(channel.pendingPuts().getOrElse(0) == 1).andThen(Sync.defer(channel.close())).map { _ =>
                     assert(closed.isEmpty, "closing the channel under backpressure must not tear the pump down (the Closed arm is a no-op)")
                     spy.close()
                     discard(sock.close(peerFd))

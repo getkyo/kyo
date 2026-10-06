@@ -23,22 +23,13 @@ import kyo.net.Test
   * io_uring-only ([[PosixTestSockets.assumeUring]]): only io_uring had the missing override; the poller and NIO drivers already salvage.
   *
   * Anti-flakiness: waits for `conn.inbound.size() == 1` (chunk A landed) then for `!driver.hasInFlightRead(handle)` (chunk B's recv reaped
-  * and its put parked, not still in flight) before detaching, and polls the async engine-FIFO-queued salvage's observable effect. No sleep.
-  * Every scenario reclaims its client fd and handle via `Sync.ensure` so a failed assertion (a real regression) surfaces as that assertion,
-  * not a cascading fd-leak failure from the abandoned cleanup.
+  * and its put parked, not still in flight) before detaching, and re-checks the async engine-FIFO-queued salvage's observable effect once
+  * per scheduler turn. A dropped salvage hangs the leaf. Every scenario reclaims its client fd and handle via `Sync.ensure` so a failed
+  * assertion (a real regression) surfaces as that assertion, not a cascading fd-leak failure from the abandoned cleanup.
   */
 class IoUringUpgradeHandoffDropTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
 
     /** Build a fresh io_uring driver, start it, and run `f` with the driver guaranteed closed afterward. Each scenario gets its own ring so
       * the three tests never share driver-level state.
@@ -80,9 +71,7 @@ class IoUringUpgradeHandoffDropTest extends Test:
                         assert(sock.sendNow(client, Buffer.fromArray[Byte](chunkA), chunkA.length.toLong, 0).value == chunkA.length.toLong)
 
                         // Wait for chunk A to land in the (capacity-1) inbound channel: the pump's first offer succeeds, filling it.
-                        awaitCondition(5.seconds)(conn.inbound.size().getOrElse(-1) == 1).map { landed =>
-                            assert(landed, "chunk A never landed in the inbound channel (a hang, not the race under test)")
-
+                        untilState(conn.inbound.size().getOrElse(-1) == 1).andThen {
                             assert(sock.sendNow(
                                 client,
                                 Buffer.fromArray[Byte](chunkB),
@@ -92,9 +81,7 @@ class IoUringUpgradeHandoffDropTest extends Test:
 
                             // Chunk B's recv reaps, offerToChannel's offer fails (channel full, chunk A unconsumed), and the pump parks on
                             // putFiber instead of re-arming: hasInFlightRead drops to false and STAYS false (nothing re-arms a parked pump).
-                            awaitCondition(5.seconds)(!driver.hasInFlightRead(handle)).map { parked =>
-                                assert(parked, "chunk B's recv never reaped / its put never parked (a hang, not the race under test)")
-
+                            untilState(!driver.hasInFlightRead(handle)).andThen {
                                 handle.upgrading = true
                                 // The detach hands its bytes over through a fiber. This leaf parks chunk B's put deliberately, so the
                                 // handover is exactly what must not be read early: settling it is part of what the leaf asserts.
@@ -112,12 +99,12 @@ class IoUringUpgradeHandoffDropTest extends Test:
                                 // detachForUpgrade raced it, must be salvaged into upgradeHandoff as a Carryover instead of silently dropped.
                                 // The parked put's onComplete callback (ReadPump.offerToChannel's putFiber.onComplete, which invokes
                                 // driver.onInboundClosedDuringRead) fires as a rescheduled fiber resumption, not necessarily inline with
-                                // inbound.close()'s synchronous queue flush, so poll rather than asserting immediately.
-                                awaitCondition(5.seconds) {
+                                // inbound.close()'s synchronous queue flush, so wait for it rather than asserting immediately.
+                                untilState {
                                     handle.upgradeHandoff.get() match
                                         case _: PosixHandle.UpgradeHandoff.Carryover => true
                                         case _                                       => false
-                                }.map { salvaged =>
+                                }.andThen {
                                     handle.upgradeHandoff.get() match
                                         case c: PosixHandle.UpgradeHandoff.Carryover =>
                                             assert(
@@ -163,8 +150,7 @@ class IoUringUpgradeHandoffDropTest extends Test:
                         handle.lastPlaintextRead.set(Present(bytes))
                         driver.onInboundClosedDuringRead(handle, Span.fromUnsafe(bytes))
 
-                        awaitCondition(5.seconds)(delivered.get() != null).map { fulfilled =>
-                            assert(fulfilled, "the parked Waiter was never fulfilled (the salvage never reached it, or hung)")
+                        untilState(delivered.get() != null).andThen {
                             delivered.get() match
                                 case Result.Success(span) =>
                                     assert(

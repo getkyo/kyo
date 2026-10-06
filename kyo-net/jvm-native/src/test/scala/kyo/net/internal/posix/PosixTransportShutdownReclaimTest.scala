@@ -143,8 +143,8 @@ class PosixTransportShutdownReclaimTest extends Test:
                 )
             discard(driver.start())
             // A RAW listening socket entirely outside the transport (the connect-side idiom above): the kernel's backlog completes the
-            // TCP connect, the client's want-read handshake sends nothing and parks awaiting bytes this peer never sends, and no deadline
-            // exists on the connect path, so the promise-settlement discharge is the ONLY route that can ever release the fd and engine.
+            // TCP connect, the client's want-read handshake sends nothing and parks awaiting bytes this peer never sends, and the connect
+            // below arms no deadline, so the promise-settlement discharge is the ONLY route that can ever release the fd and engine.
             // An interrupted caller (a timeout, a losing race arm, an enclosing abort) settles the connect promise exactly like the
             // upgrade path's abandoned caller does.
             val rawServer = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
@@ -166,15 +166,21 @@ class PosixTransportShutdownReclaimTest extends Test:
                         ol.close()
                 for
                     fiber <-
-                        Fiber.init(Abort.run[NetException](transport.connectTls("127.0.0.1", port, NetTlsConfig(trustAll = true)).safe.get))
-                    _    <- assertEventually(Sync.defer(engine.stepCount.get() >= 1))
+                        // Both deadlines off: a finite one would discharge the parked handshake on its own and pass the leaf without the interrupt.
+                        Fiber.init(Abort.run[NetException](transport.connectTls(
+                            "127.0.0.1",
+                            port,
+                            NetTlsConfig(trustAll = true, handshakeTimeout = Duration.Infinity),
+                            Duration.Infinity
+                        ).safe.get))
+                    _    <- untilState(engine.stepCount.get() >= 1)
                     done <- fiber.interrupt
                     _ = assert(done, "fiber.interrupt returned false: the parked connect handshake fiber was not interrupted")
                     // The settlement discharge must release everything the abandoned handshake held: the engine freed and the fd closed,
                     // each exactly once. A stranded handshake leaves the engine unfreed and the fd open forever (nothing else can reach
                     // them: no Connection was ever wired, no deadline is armed, and the process-shared transport is never closed).
-                    _ <- assertEventually(Sync.defer(engine.freed.get()))
-                    _ <- assertEventually(Sync.defer(spy.closeCounts.size() >= 1))
+                    _ <- untilState(engine.freed.get())
+                    _ <- untilState(spy.closeCounts.size() >= 1)
                 yield
                     import scala.jdk.CollectionConverters.*
                     val counts = spy.closeCounts.asScala.toMap
@@ -214,21 +220,22 @@ class PosixTransportShutdownReclaimTest extends Test:
             )
             discard(driver.start())
             val unbounded = serverTls.copy(handshakeTimeout = Duration.Infinity)
-            // Closes the driver on any path that ends before the explicit driver.close() below (a failed assertEventually, a timeout).
+            // Closes the driver on any path that ends before the explicit driver.close() below (a failed assertion, the leaf cap).
             // Registered first, so it runs after the listener and client fd guards. Idempotent.
             Scope.ensure(Sync.defer(driver.close())).andThen(
                 transport.listenTls("127.0.0.1", 0, 4, unbounded)(_ => ()).safe.get
             ).map { listener =>
                 // Guards the listener even on a path that fails before the explicit close()/driver.close() below run (e.g. connectRaw or
-                // an assertEventually failing). Idempotent, so it is a harmless no-op after the explicit listener.close() on the success path.
+                // an assertion failing). Idempotent, so it is a harmless no-op after the explicit listener.close() on the success path.
                 Scope.ensure(Sync.defer(listener.close())).andThen {
-                    val baseline = backend.registerReadCount.get()
                     // A raw, non-TLS client: the server's handshake starts and then parks on a read for a ClientHello that never arrives. No
                     // Connection exists for an in-flight handshake, so nothing else tracks this fd.
                     connectRaw(listener.port).map { clientFd =>
                         // Same guard for the raw client fd: closed explicitly below on success, but reclaimed here on any earlier failure.
                         Scope.ensure(Sync.defer(discard(sock.close(clientFd)))).andThen {
-                            assertEventually(Sync.defer(backend.registerReadCount.get() > baseline)).map { _ =>
+                            // Barrier on the handshake's own registration: a read-registration count would also count the listener's accept
+                            // arm, which the poll carrier applies after listenTls returns, and let the close below find nothing to discharge.
+                            untilState(transport.pendingHandshakeCount > 0).andThen {
                                 // Close ONLY the listener. The transport stays open, exactly as the process-shared transport does.
                                 //
                                 // The client fd stays OPEN and silent across the assertion below, and that is what makes this discriminating. Closing
@@ -236,7 +243,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                                 // the engine is freed whether or not the listener discharged anything. Verified by removing the discharge and watching
                                 // an earlier version of this leaf still pass. With the peer held open there is no other route to engine.free().
                                 listener.close()
-                                assertEventually(Sync.defer(captured.get() != null && captured.get().freeCount.get() == 1)).map { _ =>
+                                untilState(captured.get() != null && captured.get().freeCount.get() == 1).andThen {
                                     val engine = captured.get()
                                     assert(
                                         engine.freeCount.get() == 1,

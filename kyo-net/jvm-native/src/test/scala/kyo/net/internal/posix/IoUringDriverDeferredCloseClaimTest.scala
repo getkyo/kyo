@@ -52,7 +52,7 @@ class IoUringDriverDeferredCloseClaimTest extends Test:
                     Sync.ensure(Sync.defer(discard(spy.close(client)))) {
                         val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(handle, readPromise)
-                        assertEventually(Sync.defer(driver.hasInFlightRead(handle))).map { _ =>
+                        untilState(driver.hasInFlightRead(handle)).andThen {
                             // Simulate an immediate-close transport-path closer: win claimFdClose and close the fd directly (bypassing
                             // the driver), leaving the recv SQE kernel-owned. The fd number is immediately free for reuse.
                             assert(handle.claimFdClose(), "test setup: nothing else has claimed the fd yet")
@@ -90,7 +90,7 @@ class IoUringDriverDeferredCloseClaimTest extends Test:
                                         assert(spy.sendNow(peerFd, Buffer.fromArray(probe), 1, 0).value == 1)
                                         val recvBuf = Buffer.alloc[Byte](1)
                                         Sync.ensure(Sync.defer(recvBuf.close())) {
-                                            assertEventually(Sync.defer(spy.recvNow(victimFd, recvBuf, 1, 0).value == 1)).map { _ =>
+                                            untilState(spy.recvNow(victimFd, recvBuf, 1, 0).value == 1).andThen {
                                                 assert(
                                                     recvBuf.get(0) == 7.toByte,
                                                     "the victim connection must deliver the real byte, not a stale EOF"

@@ -47,7 +47,7 @@ class TransportListenerFdReleaseTest extends Test:
             val released = listener.released.safe
             for
                 awaiter <- Fiber.initUnscoped(released.get)
-                _       <- assertEventually(released.waiters.map(_ >= 1))
+                _       <- untilTurn(released.waiters.map(_ >= 1))
                 _       <- awaiter.interrupt
                 _       <- awaiter.getResult
                 early   <- released.done
@@ -86,7 +86,7 @@ class TransportListenerFdReleaseTest extends Test:
                                 received.close()
                                 received.released.safe.get
                             case _ => ()
-                        }.andThen(assertEventually(rebind(port))).andThen(Loop.continue)
+                        }.andThen(untilTurn(rebind(port))).andThen(Loop.continue)
                 }
             }
         }

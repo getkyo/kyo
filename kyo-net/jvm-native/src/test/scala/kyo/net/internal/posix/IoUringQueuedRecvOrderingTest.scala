@@ -26,24 +26,12 @@ import kyo.net.internal.transport.ReadOutcome
   *
   * io_uring-only ([[PosixTestSockets.assumeUring]]): only io_uring submits a kernel-owned recv SQE this queue exists to serialize; the
   * pollers' synchronous reads have no such hazard (see [[PosixHandle.queuedRecv]]'s doc).
-  *
-  * Anti-flakiness: no `Thread.sleep`, no busy-spin. `awaitCondition` polls real, observable state transitions (`hasInFlightRead`, the
-  * `queuedRecv` slot, a promise's `poll()`).
   */
 class IoUringQueuedRecvOrderingTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
     private def sock = Ffi.load[SocketBindings]
-
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
 
     "IoUringDriver queued recv ordering" - {
 
@@ -69,22 +57,17 @@ class IoUringQueuedRecvOrderingTest extends Test:
                     val promise1 = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, promise1)
 
-                    awaitCondition(5.seconds)(driver.hasInFlightRead(acceptedH)).map { armed1 =>
-                        assert(armed1, "recv #1's submitRecv never ran (a hang, not the ordering hazard under test)")
-
+                    untilState(driver.hasInFlightRead(acceptedH)).andThen {
                         // Arm recv #2 for the SAME handle BEFORE recv #1 has completed.
                         val promise2 = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(acceptedH, promise2)
 
-                        awaitCondition(5.seconds) {
+                        // A recv #2 that raced a second SQE instead of queueing never satisfies this barrier.
+                        untilState {
                             acceptedH.queuedRecv match
                                 case _: PosixHandle.QueuedRecv.Queued => true
                                 case _                                => false
-                        }.map { queued =>
-                            assert(
-                                queued,
-                                s"recv #2 was not queued (slot=${acceptedH.queuedRecv}); it may have raced a second SQE instead"
-                            )
+                        }.andThen {
                             // recv #2 must NOT have resolved: it is sitting in the queue, no SQE submitted for it at all.
                             assert(promise2.poll().isEmpty, s"queued recv #2 must stay pending; got ${promise2.poll()}")
 
@@ -95,8 +78,7 @@ class IoUringQueuedRecvOrderingTest extends Test:
                                     payload1.length.toLong
                             )
 
-                            awaitCondition(5.seconds)(promise1.poll().isDefined).map { resolved1 =>
-                                assert(resolved1, "recv #1 never resolved after real data arrived")
+                            untilState(promise1.poll().isDefined).andThen {
                                 promise1.poll() match
                                     case Present(Result.Success(ReadOutcome.Bytes(bytes))) =>
                                         assert(
@@ -107,8 +89,7 @@ class IoUringQueuedRecvOrderingTest extends Test:
                                 end match
 
                                 // recv #1 completing must have drained the queue: recv #2's real SQE is now in flight.
-                                awaitCondition(5.seconds)(driver.hasInFlightRead(acceptedH)).map { armed2 =>
-                                    assert(armed2, "recv #2 was never submitted after recv #1 drained (queue never fired)")
+                                untilState(driver.hasInFlightRead(acceptedH)).andThen {
                                     assert(
                                         acceptedH.queuedRecv match
                                             case _: PosixHandle.QueuedRecv.Queued => false
@@ -122,8 +103,7 @@ class IoUringQueuedRecvOrderingTest extends Test:
                                             payload2.length.toLong
                                     )
 
-                                    awaitCondition(5.seconds)(promise2.poll().isDefined).map { resolved2 =>
-                                        assert(resolved2, "recv #2 never resolved after its (queued, then fired) real data arrived")
+                                    untilState(promise2.poll().isDefined).andThen {
                                         promise2.poll() match
                                             case Present(Result.Success(ReadOutcome.Bytes(bytes))) =>
                                                 assert(

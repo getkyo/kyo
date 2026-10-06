@@ -212,6 +212,23 @@ abstract class Test extends kyo.test.Test[Any]:
         end for
     end tlsLeaves
 
+    /** Re-check `cond` once per scheduler turn until it holds, for state no event reports (a fiber parking on a promise, the kernel releasing
+      * a port). The turn is a trivial fiber this one awaits, which suspends it so scheduled fibers run; on JS every task is a macrotask, so a
+      * turn also lets the Node event loop run its I/O phase. No clock is read, and a state that never arrives hangs to the leaf cap.
+      */
+    def untilTurn[S](cond: => Boolean < (Async & S))(using Frame): Unit < (Async & S) =
+        Loop(())(_ => cond.map(holds => if holds then Loop.done(()) else turn.andThen(Loop.continue(()))))
+
+    /** [[untilTurn]] for a plain condition on state another carrier advances (a driver's poll or reap carrier), which the wait must not
+      * disturb: it adds no wakeup, no registration and no reap of its own.
+      */
+    def untilState(cond: => Boolean)(using Frame): Unit < Async =
+        untilTurn(Sync.defer(cond))
+
+    /** One scheduler turn, as [[untilTurn]] describes: pacing for a loop that must let other fibers and I/O run, with no clock. */
+    def turn(using Frame): Unit < Async =
+        Fiber.initUnscoped(()).map(_.get)
+
     /** Run `scenario` against this backend's transport.
       *
       * The transport is the entry's process-lifetime instance, built on first use and shared by every leaf for that backend, exactly as
