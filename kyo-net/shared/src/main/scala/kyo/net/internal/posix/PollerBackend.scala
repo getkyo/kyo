@@ -32,6 +32,12 @@ private[net] trait PollerBackend:
       */
     def registerRead(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int
 
+    /** Register read interest on a listen `fd` for an accept, reporting a listen fd that is ALREADY ready. A connection an `EMFILE`/`ENFILE`
+      * accept left queued produces no new readiness transition, so an arm that waited for one would strand it until another client connects.
+      * Otherwise as [[registerRead]].
+      */
+    def registerAccept(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int
+
     /** Register one-shot write interest on `fd`. `scratch` is the per-driver [[PollScratch]] (see [[registerRead]]). `id` is the owning handle id,
       * encoded into the kqueue knote's `udata` for the stale-event guard (ignored by epoll; see [[registerRead]]). Returns the underlying register
       * syscall rc (<0 = failure).
@@ -268,6 +274,11 @@ final private[net] class PollScratch(
     var wakeFd: Int                                = -1
     var wakeDrainBuf: kyo.ffi.Buffer[Byte]         = null
     @volatile var wakeArmBuf: kyo.ffi.Buffer[Byte] = null
+
+    /** Set by a backend's decode when a wait failed because the poller fd itself is invalid (`EBADF`, or epoll's `EINVAL`). Unlike every other
+      * wait failure it is permanent, so the driver stops instead of re-polling. Poll-loop-carrier-owned.
+      */
+    var pollerLost: Boolean = false
 
     /** The fixed kqueue `EVFILT_USER` ident used as the wakeup key. Distinct from any socket fd (a large sentinel), so a delivered wake event
       * is recognized and consumed by the poll loop rather than dispatched to a connection. Unused on epoll.
