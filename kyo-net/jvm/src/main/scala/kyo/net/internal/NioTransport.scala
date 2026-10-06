@@ -1726,6 +1726,8 @@ private[kyo] object NioTransport:
         }
     end loadCaCertTrustManagers
 
+    private val pkcs8KeyAlgorithms: Chunk[String] = Chunk("RSA", "EC", "Ed25519", "Ed448")
+
     /** Load PEM certificate chain and private key into KeyManagers for SSLContext.
       *
       * Reads PEM-encoded X.509 certificate chain and PKCS#8 private key, loads them into an in-memory PKCS12 keystore, and returns
@@ -1762,8 +1764,16 @@ private[kyo] object NioTransport:
                 .replaceAll("\\s", "")
             val keyDer  = java.util.Base64.getDecoder.decode(keyBase64)
             val keySpec = new PKCS8EncodedKeySpec(keyDer)
-            val kf      = KeyFactory.getInstance("RSA")
-            kf.generatePrivate(keySpec)
+            // A PKCS#8 key may be any algorithm (the native engines accept them all), and a KeyFactory refuses an encoding of another
+            // algorithm, so the key is the one factory that accepts it.
+            pkcs8KeyAlgorithms.iterator
+                .map(alg =>
+                    Result.catching[java.security.spec.InvalidKeySpecException](KeyFactory.getInstance(alg).generatePrivate(keySpec))
+                )
+                .collectFirst { case Result.Success(key) => key }
+                .getOrElse(throw new java.security.spec.InvalidKeySpecException(
+                    s"the private key is not a PKCS#8 key of ${pkcs8KeyAlgorithms.mkString(", ")}"
+                ))
         }
 
         // Build in-memory PKCS12 keystore. This is where a key that parses but does not match the certificate is rejected, so the failure
@@ -1780,35 +1790,17 @@ private[kyo] object NioTransport:
         }
     end loadPemKeyManagers
 
-    /** Returns the SHA-256 hash of the server's leaf certificate DER bytes per RFC 5929 tls-server-end-point.
-      *
-      * Reads the peer certificate chain from the SSLEngine session after handshake completion. Returns Absent when:
+    /** Returns the RFC 5929 tls-server-end-point hash of the server's leaf certificate, read from the SSLEngine session after handshake
+      * completion through [[JdkSslEngine.peerEndPointHash]]. Returns Absent when:
       *   - The connection is not TLS (handle.tls is Absent).
       *   - The underlying channel is closed (connection was closed before this was called).
       *   - The engine has no peer certificates (e.g. the connection is a plain-TCP server-side accepted connection).
+      *   - The certificate's signature has no single hash.
       */
     private[kyo] def serverCertificateHash(handle: NioHandle): Maybe[Span[Byte]] =
-        import java.security.MessageDigest
         // Guard: if the channel is already closed, the connection is torn down, so return Absent.
         if !handle.channel.isOpen then Absent
-        else
-            handle.tls match
-                case Absent            => Absent
-                case Present(tlsState) =>
-                    try
-                        val certs = tlsState.engine.getSession.getPeerCertificates
-                        if certs == null || certs.isEmpty then Absent
-                        else
-                            val leafDer = certs(0).getEncoded
-                            val digest  = MessageDigest.getInstance("SHA-256")
-                            val hash    = digest.digest(leafDer)
-                            Present(Span.from(hash))
-                        end if
-                    catch
-                        case _: javax.net.ssl.SSLPeerUnverifiedException => Absent
-                        case _: Exception                                => Absent
-            end match
-        end if
+        else handle.tls.flatMap(tlsState => JdkSslEngine.peerEndPointHash(tlsState.engine))
     end serverCertificateHash
 
     /** Compute the RFC 8446 6.1 / RFC 5246 7.2.1 close reason for a TLS NIO connection from the handle's observed read-side close signals.

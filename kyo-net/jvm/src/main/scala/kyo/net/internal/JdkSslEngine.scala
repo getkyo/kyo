@@ -23,7 +23,7 @@ import kyo.ffi.Buffer
   * Concurrency: all engine ops for a connection route through the per-driver `submitEngineOp` FIFO, which drains one op at a time on a
   * single dedicated worker carrier. This guarantees that no two callers (read pump, write pump, handshake) can call `engine.wrap` or
   * `engine.unwrap` concurrently, and that the `netIn` / `netOut` / `appIn` vars are never mutated by two carriers at the same time.
-  * [[certSha256]] is read once at handshake completion on that same serialized path and cached by the transport (the leaf cert is fixed for
+  * [[serverEndPointHash]] is read once at handshake completion on that same serialized path and cached by the transport (the leaf cert is fixed for
   * the connection), and [[free]] is enqueued on the FIFO, so neither runs on the caller's carrier against a live engine. The FIFO serializes
   * these calls without a per-instance lock, so no carrier ever blocks on one.
   * Note: `NioTransport` uses `SSLEngine` directly (via `NioTlsState`), not via this class; its own engine access is on the NIO poll loop and
@@ -46,8 +46,8 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
     // ONLY on the per-driver `submitEngineOp` FIFO worker carrier (see the class scaladoc), so the bare `var` carries no cross-carrier hazard.
     private var oneRecord: ByteBuffer = ByteBuffer.allocate(packetCap)
 
-    // The peer leaf-cert SHA-256, captured ONCE when the handshake completes (see captureCertHash, called from handshakeStep on the FIFO worker
-    // carrier where the session is finalized). @volatile so certSha256 can return it from any carrier without touching the live engine: the
+    // The peer leaf-cert tls-server-end-point hash, captured ONCE when the handshake completes (see captureCertHash, called from handshakeStep
+    // on the FIFO worker carrier where the session is finalized). @volatile so serverEndPointHash can return it from any carrier without touching the live engine: the
     // STARTTLS wiring carrier (PosixTransport.wireUpgraded -> installCertHash) reads it after the FIFO carrier wrote it, instead of racing
     // engine.getSession against a session not yet populated/visible there. Absent until the handshake completes (and for a server engine with no
     // client cert).
@@ -85,7 +85,7 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
         try
             val r = doHandshakeStep()
             // The handshake just completed on this serialized FIFO carrier (r == 1: FINISHED / NOT_HANDSHAKING), so the session is finalized and
-            // safe to read here. Capture the peer cert hash now; certSha256 then serves it from any carrier, fixing the cert-hash-after-STARTTLS
+            // safe to read here. Capture the peer cert hash now; serverEndPointHash then serves it from any carrier, fixing the cert-hash-after-STARTTLS
             // race where the wiring carrier read getPeerCertificates against a session not yet populated/visible from there (io_uring/jdk).
             if r == 1 then captureCertHash()
             r
@@ -260,29 +260,18 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
             Span.fromUnsafe(arr)
     end readBuffered
 
-    /** The peer leaf-cert SHA-256 (RFC 5929 tls-server-end-point), captured at handshake completion (see [[cachedCertHash]] / captureCertHash).
+    /** The peer leaf-cert tls-server-end-point hash (RFC 5929), captured at handshake completion (see [[cachedCertHash]] / captureCertHash).
       * Returns the captured value WITHOUT touching the live engine, so it is safe to call from any carrier. Absent before the handshake completes
       * and for a server engine with no client certificate.
       */
-    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]] = cachedCertHash
+    def serverEndPointHash()(using AllowUnsafe): Maybe[Span[Byte]] = cachedCertHash
 
-    /** Compute the peer leaf-cert SHA-256 from the now-finalized session and cache it. Called only from [[handshakeStep]] at handshake completion,
+    /** Compute the peer leaf-cert hash from the now-finalized session and cache it. Called only from [[handshakeStep]] at handshake completion,
       * on the per-driver FIFO worker carrier where the session is populated and engine access is serialized, so the read cannot race the
       * read/write engine ops. Idempotent: a non-empty hash is computed at most once; a server engine with no peer cert stays Absent.
       */
     private def captureCertHash()(using AllowUnsafe): Unit =
-        if cachedCertHash.isEmpty then
-            cachedCertHash =
-                try
-                    val certs = engine.getSession.getPeerCertificates
-                    if certs == null || certs.isEmpty then Absent
-                    else
-                        val leafDer = certs(0).getEncoded
-                        val digest  = java.security.MessageDigest.getInstance("SHA-256")
-                        Present(Span.fromUnsafe(digest.digest(leafDer)))
-                    end if
-                catch case _: Throwable => Absent
-    end captureCertHash
+        if cachedCertHash.isEmpty then cachedCertHash = JdkSslEngine.peerEndPointHash(engine)
 
     def shutdownStep()(using AllowUnsafe): Int =
         // Mark the outbound side closed, then wrap to emit this side's close_notify into netOut for the driver to drain and flush. wrap on a
@@ -302,5 +291,26 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
     def free()(using AllowUnsafe): Unit =
         try engine.closeOutbound()
         catch case _: Throwable => ()
+
+end JdkSslEngine
+
+private[net] object JdkSslEngine:
+
+    /** The RFC 5929 tls-server-end-point hash of `engine`'s peer leaf certificate, with the hash [[TlsServerEndPoint.hashOf]] selects.
+      * Absent when the session has no peer certificate, the peer is unverified, or the certificate's signature has no single hash.
+      */
+    def peerEndPointHash(engine: SSLEngine): Maybe[Span[Byte]] =
+        try
+            val certs = engine.getSession.getPeerCertificates
+            if certs == null || certs.isEmpty then Absent
+            else
+                val leafDer = certs(0).getEncoded
+                TlsServerEndPoint.hashOf(leafDer).map { hash =>
+                    // Unsafe: the digest array is fresh and held by nothing else.
+                    Span.fromUnsafe(java.security.MessageDigest.getInstance(hash.jdkName).digest(leafDer))
+                }
+            end if
+        catch case _: Exception => Absent
+    end peerEndPointHash
 
 end JdkSslEngine

@@ -47,6 +47,7 @@
 #include <openssl/bio.h>
 #include <openssl/x509.h>
 #include <openssl/evp.h>
+#include <openssl/objects.h>
 #include <openssl/err.h>
 #include <openssl/crypto.h>
 
@@ -102,8 +103,8 @@ int kyo_ossl_write_plain(long ssl_ptr, const unsigned char *buf, int len) {
 }
 int kyo_ossl_pending(long ssl_ptr) { return kyo_ossl_pending_impl(ssl_ptr); }
 int kyo_ossl_shutdown_step(long ssl_ptr) { return kyo_ossl_shutdown_step_impl(ssl_ptr); }
-int kyo_ossl_peer_cert_sha256(long ssl_ptr, unsigned char *out_buf, int out_len) {
-    return kyo_ossl_peer_cert_sha256_impl(ssl_ptr, out_buf, out_len);
+int kyo_ossl_peer_cert_end_point_hash(long ssl_ptr, unsigned char *out_buf, int out_len) {
+    return kyo_ossl_peer_cert_end_point_hash_impl(ssl_ptr, out_buf, out_len);
 }
 
 #else
@@ -221,7 +222,7 @@ int kyo_ossl_shutdown_step(long ssl_ptr) {
     return -1;
 }
 
-int kyo_ossl_peer_cert_sha256(long ssl_ptr, unsigned char *out_buf, int out_len) {
+int kyo_ossl_peer_cert_end_point_hash(long ssl_ptr, unsigned char *out_buf, int out_len) {
     (void)ssl_ptr;
     (void)out_buf;
     (void)out_len;

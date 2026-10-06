@@ -858,13 +858,13 @@ final private[net] class PosixTransport private[posix] (
       * lifetime, so the hash is computed ONCE here and then served from a cache. This is called from each connection-wiring site (a directly
       * connected client, an accepted server connection, a STARTTLS upgrade). Every call site runs at handshake completion, BEFORE
       * `connection.start()` launches the read and write pumps, so no read or write engine op for this connection can exist yet: the single
-      * `certSha256()` read here cannot race any other engine touch. The installed function then does NO engine touch: it reads the cached value
+      * `serverEndPointHash()` read here cannot race any other engine touch. The installed function then does NO engine touch: it reads the cached value
       * and returns Absent once the connection is closed. Without the cache, `serverCertificateHash` would touch the live engine on the caller's
       * carrier, racing the driver's FIFO read/write ops (concurrent native `SSL` access is undefined behavior, and the touch could read a freed
       * `ssl`). The cache also makes `serverCertificateHash` return Absent deterministically after close.
       */
     private def installCertHash(connection: InternalConnection[PosixHandle], handle: PosixHandle)(using AllowUnsafe): Unit =
-        val cached = handle.tls.flatMap(_.certSha256())
+        val cached = handle.tls.flatMap(_.serverEndPointHash())
         connection.certHashFn = Present(() => if connection.isOpen then cached else Absent)
         if handle.tls.isDefined then installStatus(connection, handle)
     end installCertHash

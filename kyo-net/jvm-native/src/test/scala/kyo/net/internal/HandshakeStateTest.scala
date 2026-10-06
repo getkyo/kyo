@@ -32,7 +32,7 @@ class HandshakeStateTest extends Test:
         def writePlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int      = 0
         def hasBufferedPlaintext(using AllowUnsafe): Boolean                     = false
         def readBuffered()(using AllowUnsafe): Span[Byte]                        = Span.empty
-        def certSha256()(using AllowUnsafe): Maybe[Span[Byte]]                   = Absent
+        def serverEndPointHash()(using AllowUnsafe): Maybe[Span[Byte]]           = Absent
         def shutdownStep()(using AllowUnsafe): Int                               = 0
         def free()(using AllowUnsafe): Unit                                      = ()
     end stubEngine

@@ -172,4 +172,110 @@ OnBE4RP7UrqA7cRm1tkCj+Y=
         }
     end writeWrongHostPems
 
+    /** A self-signed localhost certificate whose own signature hash is not SHA-256, with the RFC 5929 tls-server-end-point hash of its DER
+      * computed with that hash.
+      */
+    final case class SignedCert(signatureAlgorithm: String, certPem: String, keyPem: String, endPointHash: Array[Byte])
+
+    /** P-384 key, signed with `ecdsa-with-SHA384`: its tls-server-end-point hash is SHA-384, 48 bytes. */
+    val ecdsaSha384: SignedCert = SignedCert(
+        "ecdsa-with-SHA384",
+        """-----BEGIN CERTIFICATE-----
+MIIB2DCCAV6gAwIBAgIUC2eqW8uFsTe3vurLoKiCiZ+BR1MwCgYIKoZIzj0EAwMw
+FDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTAwNDA1MjE0MFoYDzIxMjYwOTEw
+MDUyMTQwWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwdjAQBgcqhkjOPQIBBgUrgQQA
+IgNiAASJBUlc5+8Xz1xKAQVT+iaenNqbzPU65Vf5d9Fltc7tmlfy9SuVx9nlNioQ
+XxjAOS70l/CxvpTnn8rCCnrrlguK/WcMG0kTt7tE237x6Etgyuw/6UuW+fy1i9vo
+mvXw1JGjbzBtMB0GA1UdDgQWBBTzTa50DW3khgq53v7cpso3hvl8FzAfBgNVHSME
+GDAWgBTzTa50DW3khgq53v7cpso3hvl8FzAPBgNVHRMBAf8EBTADAQH/MBoGA1Ud
+EQQTMBGCCWxvY2FsaG9zdIcEfwAAATAKBggqhkjOPQQDAwNoADBlAjEAma9ls6l2
+dN4NzFxd6bg0/88cBHt699BsvxwgMuAGKvR4YBTo7XxBEjCYSWfX6G5JAjA1XVFW
+LgUku3cLF8SaGYzhernIuRrz9r9JJPgviEoHf7sc/hDTPnKp8nPJrZokibA=
+-----END CERTIFICATE-----
+""",
+        """-----BEGIN PRIVATE KEY-----
+MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDDwTX2nH2sfMGHquVLM
+gp0OOit8e/NKsEylGqzqaqc7N5ZcaJu3ExEn7zf4Emf7hG2hZANiAASJBUlc5+8X
+z1xKAQVT+iaenNqbzPU65Vf5d9Fltc7tmlfy9SuVx9nlNioQXxjAOS70l/CxvpTn
+n8rCCnrrlguK/WcMG0kTt7tE237x6Etgyuw/6UuW+fy1i9vomvXw1JE=
+-----END PRIVATE KEY-----
+""",
+        Array(
+            0x0f, 0xb1, 0xa5, 0xdd, 0x9f, 0xfe, 0x6d, 0x5b, 0x0c, 0x0d, 0xa3, 0x14, 0xe3, 0x8c, 0xb7, 0x15,
+            0xea, 0xa1, 0x87, 0x49, 0x79, 0x6d, 0x1e, 0xb9, 0xc2, 0x52, 0xda, 0xd5, 0xd4, 0x71, 0xfb, 0xe1,
+            0x46, 0x6f, 0xff, 0xc3, 0x4f, 0xfa, 0x0b, 0x15, 0x0c, 0x2d, 0x4f, 0xad, 0x77, 0x09, 0xb8, 0x4d
+        ).map(_.toByte)
+    )
+
+    /** RSA 2048 key, signed with `sha512WithRSAEncryption`: its tls-server-end-point hash is SHA-512, 64 bytes. */
+    val rsaSha512: SignedCert = SignedCert(
+        "sha512WithRSAEncryption",
+        """-----BEGIN CERTIFICATE-----
+MIIDJzCCAg+gAwIBAgIUYwusfEmLXdGPIP9hyTNkyCLu5KcwDQYJKoZIhvcNAQEN
+BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTAwNDA1MjE0MVoYDzIxMjYw
+OTEwMDUyMTQxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
+AQUAA4IBDwAwggEKAoIBAQCbkP/V2emJuN/Rcc0k+7razTqoi1vtWPa+/5GfadIE
+2ExeteZio5R3vuny3HXd/Sn7BpyhQ4K35YWEKQ8umh6VNQGu5f2DW4ngf/FAjge9
+nwfozhv2cCQE3z+Z70x7mGG+xOW5c5U7Ud4fbdDAn/1HoVERgsYy2L2ZoYxDKmi5
+3nfcKcCTRVYy6snEuqwuQUKyR1GFrytK092DbwHxQHvb0z4sCFVClu0Ipr/wxFbt
+N0ByZakyfZ/nVobm4NgroEw8ETrNq6qiNLEepaiE7d77PJ5ADMN9FqApBbFYeJ+X
+k2i8As9ntNuT2SuDm8Oac/s4ig7TEnw42jgOc2CqEvxJAgMBAAGjbzBtMB0GA1Ud
+DgQWBBSFGIm01udI+dHbhymASexkj9waETAfBgNVHSMEGDAWgBSFGIm01udI+dHb
+hymASexkj9waETAPBgNVHRMBAf8EBTADAQH/MBoGA1UdEQQTMBGCCWxvY2FsaG9z
+dIcEfwAAATANBgkqhkiG9w0BAQ0FAAOCAQEAdhCsEbUvzQNktNlUZZmcRBOlfba+
+0lABh7sYuOTepnD7OnApOB4BDrSmNcLtSTP5q2mqRHh+jf9CefJT4lXQbvtdyMjP
+QQj8+IV90tM6xcsyuckwH5GzwBFQbUwwjsGa+zYARi3FRJ3Qup+0clA1HGBSju7n
+bjycyRi3uOizm/n5zZrSO9U52Zl3YzWlJw8L8wEHR+jnoPAPVCmqpF2HSlwCvLfF
+pzzNg86npnp+Ci1iHXhi848IJ19iK3PJFPvU5n+D10FoDXnjSOmCj3rDZJGQEBJA
+KnXK5De3sWDVUpHpc/ZW5yvUSsagB3tlqlYfVpXs8fn9TddJomez0srgTg==
+-----END CERTIFICATE-----
+""",
+        """-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCbkP/V2emJuN/R
+cc0k+7razTqoi1vtWPa+/5GfadIE2ExeteZio5R3vuny3HXd/Sn7BpyhQ4K35YWE
+KQ8umh6VNQGu5f2DW4ngf/FAjge9nwfozhv2cCQE3z+Z70x7mGG+xOW5c5U7Ud4f
+bdDAn/1HoVERgsYy2L2ZoYxDKmi53nfcKcCTRVYy6snEuqwuQUKyR1GFrytK092D
+bwHxQHvb0z4sCFVClu0Ipr/wxFbtN0ByZakyfZ/nVobm4NgroEw8ETrNq6qiNLEe
+paiE7d77PJ5ADMN9FqApBbFYeJ+Xk2i8As9ntNuT2SuDm8Oac/s4ig7TEnw42jgO
+c2CqEvxJAgMBAAECggEACV2rzsqQK+bXMCXuLZQrm3FltFtc4nz2W2jJnKkN/ZVZ
+gQ4/MPXGQjCv/HDXdnuqeQmHM+emSWoRJXQkt4U3OCZ5KSLW+39EXXbL0JDR2Hxo
+SSo3jBkTohN1dyVtcQzV6Fq0YKZGeCF6rQu7Lg2z0wncS/XtTDG5CzSAXFQuT++u
+jJVlAy72KZYU8CPrrCTcgTaxL46bDj+afetSuhJ4ZHcRyzaMef7HMvs9XAx4Ckhu
+EFLoBITDmoJaImfU8qW4Kv4s5UNgurc5UNuo3q2oTc/W7dnZ46QcSarQIi52Svk7
+2dRahCUfzrmaVOH6KOspy2Ea44FZgB5y0EJm4Iqh8QKBgQDJDw31f2iPnoa7m0Fw
+fG1bl/BKYjXvdy90FuDJuNHs5XzV/L5dNfaEPMgt/ZwAhbKff868ArOc2by8KTO2
+yPtR7MDe5JxwB/ICWxmuIzXmdXBoUIgLZibC2acco7ogfrm590LYjBmZ9ROWeosT
+rQy1bjthHlGuFZ54emS5SQscjQKBgQDGE407ZJORMKcFpezSEE21LsPJSl9kj12v
+uLHn2aCjZ3BdRC4cm2nwkLZi73hwQ82IZSwAaEAAYBFZGzGufiHoa9bjB5nQ3JJ8
+EIp1zqnT67eHxWGoI964BIh8ShV4td9GHGQoDHxEjLVLFRzyb/0PFO1ncXo2yEt0
+OhMUGiW1rQKBgQC7SLmw/+BvP7SzVtirJkxbsHlVYIxrJrNeSN1VKkLpj48saUUN
+4HFkFpZFOOKzHdcYed4iBcY3ih8jiqGwVyC73HSAa6VJOi11glS2f/f6V1TA5psD
+O0FJ6aKfq+d503G/x5JN0psabU60siuQxXZ8HlVTjwF4zoySHzhp259tFQKBgC6/
+9pmKB3pBLWqb2uVJi82zl+oub41geRA8W2EJcGygwViB+xAtbjelMCbxtk9o8V27
+40LFWDW+dtm9HWC9zGr66OD0rk0pgjld/hAIEvU9sTeOUppIvQxZpY0QPzkaU/RM
+RydcqwfS3gc2mHpwDB4/JjlAA0RiycxI2K/p6/SRAoGBAKr7+U2S3v/KpmGAiV+o
+zvdR5BYVOEZScx2ddSOJ9oe1uUlCjxOm82rZiS4bDwSHoN4w7bnKPTWQs0mpjQ53
+ixPfEav2j/msO1RFPWhSOXVwL2IMZh5DuIde8SnJkFz1SvWKwqiJBEL6goAtGjhx
+stl71P5LQvj25ak33JCT8QnM
+-----END PRIVATE KEY-----
+""",
+        Array(
+            0xa7, 0x00, 0xb4, 0xcf, 0x04, 0xca, 0x6d, 0x27, 0x57, 0xb6, 0x40, 0x0c, 0x21, 0xd8, 0xa5, 0x4c,
+            0xce, 0x2f, 0x65, 0xf7, 0x36, 0x7b, 0x5c, 0xec, 0xb7, 0xd6, 0xcb, 0xb3, 0x37, 0x25, 0xe2, 0xf7,
+            0xc4, 0x85, 0xe8, 0x9f, 0xe4, 0x66, 0x78, 0xb8, 0xb1, 0x1e, 0xd9, 0x04, 0x48, 0xfe, 0x52, 0xde,
+            0x18, 0xb3, 0xff, 0xbd, 0x38, 0x6f, 0xd2, 0xbe, 0x4c, 0x88, 0x50, 0xa6, 0x06, 0xdb, 0xff, 0x0a
+        ).map(_.toByte)
+    )
+
+    /** Write `cert`'s PEMs to fresh temp paths, returning (certPath, keyPath), mirroring [[writePems]]. */
+    def writeSignedPems(cert: SignedCert)(using Frame): (String, String) < Sync =
+        val tag      = uniquePathTag()
+        val certPath = s"/tmp/kyo-tls-signed-$tag-cert.pem"
+        val keyPath  = s"/tmp/kyo-tls-signed-$tag-key.pem"
+        Abort.run[FileSystemException](Path.run(Path(certPath).write(cert.certPem).andThen(Path(keyPath).write(cert.keyPem)))).map {
+            case Result.Success(_) => (certPath, keyPath)
+            case other             => throw new RuntimeException(s"failed to write the ${cert.signatureAlgorithm} TLS test cert: $other")
+        }
+    end writeSignedPems
+
 end TlsTestCertShared
