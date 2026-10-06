@@ -8,5 +8,5 @@ import kyo.Maybe
   */
 private[runner] object EventLoopWatchdog:
     def leafStarted(label: String, timeout: Maybe[Duration], stuckAfter: Duration): Int = 0
-    def leafFinished(id: Int): Unit                                                      = ()
+    def leafFinished(id: Int): Unit                                                     = ()
 end EventLoopWatchdog
