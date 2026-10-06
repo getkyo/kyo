@@ -105,6 +105,34 @@ class ContainerPredefItTest extends BasePodTest:
         }
     }
 
+    "readiness loop" - {
+        // The loop runs inside the fixture's own image, under whatever `sh` and `sleep` it ships, so it is exercised under busybox here
+        // rather than on the host.
+        val idle = Container.Config(ContainerImage("alpine", "latest"))
+            .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")
+            .stopTimeout(0.seconds)
+
+        "passes on the probe's first success" - runBackendLong {
+            val probe = Chunk("sh", "-c", "echo x >> /tmp/probes; [ \"$(wc -l < /tmp/probes)\" -ge 5 ]")
+            Container.initWith(idle) { c =>
+                for
+                    ready <- c.exec(Command("sh", "-c", ContainerPredef.readinessScript(probe, 30.seconds)))
+                    count <- c.exec("sh", "-c", "wc -l < /tmp/probes")
+                yield
+                    assert(ready.exitCode.toInt == 0, s"the loop exited ${ready.exitCode}, stderr=${ready.stderr}")
+                    assert(count.stdout.trim == "5", s"expected the loop to stop at the fifth probe, got ${count.stdout.trim}")
+            }
+        }
+
+        "fails once the budget is spent" - runBackendLong {
+            Container.initWith(idle) { c =>
+                c.exec(Command("sh", "-c", ContainerPredef.readinessScript(Chunk("false"), 1.second))).map { r =>
+                    assert(r.exitCode.toInt == 1, s"expected exit 1 from a probe that never passes, got ${r.exitCode}")
+                }
+            }
+        }
+    }
+
     "Postgres" - {
         "psql SELECT 1 returns 1" - runBackendLong {
             Postgres.initWith(Postgres.Config.default) { pg =>
@@ -134,6 +162,30 @@ class ContainerPredefItTest extends BasePodTest:
                 yield
                     assert(rSel.exitCode.toInt == 0, s"SELECT exited ${rSel.exitCode}, stderr=${rSel.stderr}")
                     assert(rSel.stdout.trim == "kyo", s"expected 'kyo', got '${rSel.stdout.trim}'")
+            }
+        }
+
+        "the handle is returned once the server started after the init scripts answers" - runBackendLong {
+            // The image runs /docker-entrypoint-initdb.d on a temporary server that serves only the unix socket
+            // (listen_addresses ''), then stops it and starts the real one. A fixture handed over while the init
+            // script below sleeps talks to a server that is about to go away.
+            assume(
+                ContainerRuntime.daemonSharesFilesystem,
+                "the daemon is a sibling container; a locally-written path is not the path it mounts"
+            )
+            val hostDir = Path("/tmp/" + uniqueName("kyo-pg-init"))
+            Path.run {
+                for
+                    _      <- hostDir.mkDir
+                    _      <- (hostDir / "slow-init.sh").write("sleep 4\n")
+                    listen <- Scope.run {
+                        val cfg =
+                            Postgres.Config.default.withContainer(_.bind(hostDir, Path("/docker-entrypoint-initdb.d"), readOnly = true))
+                        Postgres.initWith(cfg)(pg => pg.psql("SHOW listen_addresses").map(r => s"${r.stdout.trim}${r.stderr.trim}"))
+                    }
+                    _ <- hostDir.removeAll
+                yield assert(listen == "*", s"the fixture was handed over before the real server was up: '$listen'")
+                end for
             }
         }
     }
