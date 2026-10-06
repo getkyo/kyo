@@ -29,9 +29,8 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     //
     // globallySequential, not just sequential: the resource these suites share is the container daemon, which reaches beyond any one suite.
     // `sequential` only orders a suite's own leaves inside the process-global pool, so two container suites sharing a fork would still
-    // interleave, and the per-leaf container-leak check below diffs the daemon's whole container list: a container another leaf created
-    // inside this leaf's window is indistinguishable from one this leaf leaked, and the leaf fails for it. The build puts every
-    // daemon-touching suite in one fork per daemon so this flag covers all of them.
+    // interleave their operations on the daemon. The build puts every daemon-touching suite in one fork per daemon so this flag covers
+    // all of them.
     //
     // Only socket leak-checking is disabled: the NIO transport defers a connection's fd close to its idle selector's
     // next select() (which nothing wakes), so the fd outlives the run and its opaque socket:[inode] matches no allowlist.
