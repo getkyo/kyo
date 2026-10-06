@@ -1274,6 +1274,10 @@ object Path extends PathPlatformSpecific:
       * Backend failures are reported through [[FileWatchException]]. Event
       * loss and watched-root loss are values in the stream instead, represented
       * by [[Change.Overflow]] and [[Change.Invalidated]].
+      *
+      * A host watcher lists the root on every scan, and Windows refuses to rename a directory while any handle beneath it
+      * is open. A move of the root's ancestor that lands during a scan therefore fails with [[FileAccessDeniedException]]
+      * there and can be retried; moving the root itself is not affected.
       */
     trait Watcher:
         def events: Stream[Change, Async & Scope & Abort[FileWatchException]]

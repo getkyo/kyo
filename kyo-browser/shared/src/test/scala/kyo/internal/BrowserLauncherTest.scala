@@ -8,7 +8,7 @@ class BrowserLauncherTest extends BaseChromeTest:
 
     "launch returns wsUrl starting with ws://" in {
         Scope.run {
-            SharedChrome.chromeConfig.map { cfg =>
+            SharedChrome.chromeConfig().map { cfg =>
                 BrowserLauncher.launch(cfg).map { wsUrl =>
                     assert(wsUrl.startsWith("ws://"))
                 }
@@ -18,7 +18,7 @@ class BrowserLauncherTest extends BaseChromeTest:
 
     "wsUrl contains host and port" in {
         Scope.run {
-            SharedChrome.chromeConfig.map { cfg =>
+            SharedChrome.chromeConfig().map { cfg =>
                 BrowserLauncher.launch(cfg).map { wsUrl =>
                     // Chrome emits the URL using 127.0.0.1 (not localhost). Accept either.
                     assert(wsUrl.contains("127.0.0.1") || wsUrl.contains("localhost"))
@@ -30,7 +30,7 @@ class BrowserLauncherTest extends BaseChromeTest:
 
     "two concurrent launches use different ports" in {
         Scope.run {
-            SharedChrome.chromeConfig.map { cfg =>
+            SharedChrome.chromeConfig().map { cfg =>
                 Async.zip(
                     BrowserLauncher.launch(cfg),
                     BrowserLauncher.launch(cfg)
@@ -78,7 +78,7 @@ class BrowserLauncherTest extends BaseChromeTest:
 
     "extraArgs are passed through" in {
         Scope.run {
-            SharedChrome.chromeConfig.map { cfg =>
+            SharedChrome.chromeConfig().map { cfg =>
                 val config = cfg.copy(extraArgs = Chunk("--disable-field-trial-config"))
                 BrowserLauncher.launch(config).map { wsUrl =>
                     assert(wsUrl.startsWith("ws://"))
@@ -346,7 +346,7 @@ class BrowserLauncherTest extends BaseChromeTest:
     // End to end: the sweep every run performs at startup leaves a Chrome launched by a live run reachable.
     "killOrphans leaves the Chrome of a live launch reachable" in {
         Scope.run {
-            SharedChrome.chromeConfig.map { cfg =>
+            SharedChrome.chromeConfig().map { cfg =>
                 BrowserLauncher.launch(cfg).map { wsUrl =>
                     BrowserLauncher.killOrphans(BrowserLauncher.userDataDirPrefix, command = "pgrep").andThen {
                         // `init` probes the connection with Browser.getVersion and fails if Chrome is gone.

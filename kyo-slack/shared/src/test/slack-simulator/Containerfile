@@ -1,0 +1,10 @@
+FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
+WORKDIR /app
+RUN node -e "fetch('https://codeload.github.com/ClydeDz/slack-simulator/tar.gz/87373b8855e68307737ef577f0875c0118940523').then(r => r.arrayBuffer()).then(b => require('fs').writeFileSync('/tmp/src.tgz', Buffer.from(b)))" \
+ && echo "57bf9176cd04ea399ba7242096ce7dced1f827644abb9be90933ec72502ff325  /tmp/src.tgz" | sha256sum -c - \
+ && tar xzf /tmp/src.tgz --strip-components=1 -C /app \
+ && rm /tmp/src.tgz
+RUN sed -i 's#url: `ws://#url: `wss://#' src/server/routes/slackApi.ts && grep -q 'url: `wss://' src/server/routes/slackApi.ts
+RUN yarn install --frozen-lockfile && yarn build:server
+EXPOSE 4500
+CMD ["node", "dist/server/server/index.js"]

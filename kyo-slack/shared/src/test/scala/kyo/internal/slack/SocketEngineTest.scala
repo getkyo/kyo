@@ -174,6 +174,33 @@ class SocketEngineTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "an opener interrupted as soon as its connect starts leaves no connect running" in {
+        // The connect runs on its own fiber, and the connect interrupts the opener on entry, so over many rounds the interrupt
+        // lands on every step the opener takes after starting it. A forked fiber is queued on its parent's worker, so the
+        // connect starts during the opener's setup only when another worker steals it; the sleeping fibers keep the other
+        // workers waking and stealing, without which no round reaches that window. A connect left running never releases
+        // `exited` and the leaf times out.
+        Scope.run {
+            Kyo.foreachDiscard(1 to 16)(_ => Fiber.init(Loop.foreach(Async.sleep(50.micros).andThen(Loop.continue)))).andThen {
+                Kyo.foreachDiscard(1 to 2000) { _ =>
+                    for
+                        openerRef <- Fiber.Promise.init[Fiber[Result[SlackException, SocketEngine], Any], Any]
+                        exited    <- Latch.init(1)
+                        interrupting = new Transport:
+                            private[kyo] def connect[B, S](u: HttpUrl, cc: HttpWebSocket.Config)(
+                                f: Transport.Conn => B < (S & Async)
+                            )(using Frame): B < (S & Async & Abort[SlackTransportException]) =
+                                Sync.ensure(exited.release)(openerRef.get.map(_.interrupt).andThen(Async.never))
+                        opener <- Fiber.initUnscoped(Abort.run[SlackException](SocketEngine.initUnscoped(interrupting, url, cfg)))
+                        _      <- openerRef.complete(Result.succeed(opener))
+                        _      <- exited.await
+                        result <- opener.getResult
+                    yield assert(result.isPanic, s"the opener ends interrupted; got: $result")
+                }
+            }
+        }.andThen(succeed)
+    }
+
     "closeTransport against a peer that stopped reading ends at the ack deadline and closes the socket" in {
         for
             stuck  <- Latch.init(1)
