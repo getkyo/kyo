@@ -395,33 +395,33 @@ private[kyo] object SocketEngine:
             senderDone       <- Fiber.Promise.init[Unit, Any]
             closeInbound = SocketEngine.closeInbound(inbound, inboundResidue)
             wsConfig     = HttpWebSocket.Config(autoPingInterval = config.keepAliveInterval)
-            relay <- Fiber.initUnscoped {
-                Abort.run[SlackTransportException] {
-                    transport.connect(wsUrl, wsConfig) { conn =>
-                        // `senderDone` completes only after the stream ended, so every ack it polled was put.
-                        val senderBody =
-                            Abort.run[Closed](outbound.streamUntilClosed().foreach(conn.put))
-                                .andThen(senderDone.completeUnit.unit)
-                        Fiber.initUnscoped(senderBody).map { senderFiber =>
-                            connectReady.complete(Result.succeed((conn, senderFiber))).andThen {
-                                // onPeerClose resolves the race on a backend that leaves the stream open after an abnormal close.
-                                val receiver = Abort.run[Closed](conn.stream.foreach(inbound.put)).unit
-                                Async.race(receiver, conn.onPeerClose).andThen(closeInbound)
-                            }
-                        }
-                    }
-                }.map {
-                    // A completion after readiness is a no-op: the gate already holds the pair.
-                    case Result.Success(_)  => Kyo.unit
-                    case Result.Failure(ex) => connectReady.complete(Result.fail(ex)).unit
-                    case Result.Panic(ex)   => connectReady.complete(Result.panic(ex)).unit
-                }
-            }
             built  <- AtomicBoolean.init(false)
             engine <- Scope.run {
-                // The relay and the sender are unscoped and own the socket, so an opener that fails or is
-                // interrupted before the engine exists releases them here: nothing else holds them.
-                Scope.ensure {
+                // The relay and the sender are unscoped and own the socket, so an opener that fails or is interrupted before
+                // the engine exists releases them here: nothing else holds them. The release is registered as the relay is
+                // forked, with no step between, since an interrupt landing between the two would leave the connect running.
+                Scope.acquireRelease(Fiber.initUnscoped {
+                    Abort.run[SlackTransportException] {
+                        transport.connect(wsUrl, wsConfig) { conn =>
+                            // `senderDone` completes only after the stream ended, so every ack it polled was put.
+                            val senderBody =
+                                Abort.run[Closed](outbound.streamUntilClosed().foreach(conn.put))
+                                    .andThen(senderDone.completeUnit.unit)
+                            Fiber.initUnscoped(senderBody).map { senderFiber =>
+                                connectReady.complete(Result.succeed((conn, senderFiber))).andThen {
+                                    // onPeerClose resolves the race on a backend that leaves the stream open after an abnormal close.
+                                    val receiver = Abort.run[Closed](conn.stream.foreach(inbound.put)).unit
+                                    Async.race(receiver, conn.onPeerClose).andThen(closeInbound)
+                                }
+                            }
+                        }
+                    }.map {
+                        // A completion after readiness is a no-op: the gate already holds the pair.
+                        case Result.Success(_)  => Kyo.unit
+                        case Result.Failure(ex) => connectReady.complete(Result.fail(ex)).unit
+                        case Result.Panic(ex)   => connectReady.complete(Result.panic(ex)).unit
+                    }
+                }) { relay =>
                     built.get.map { done =>
                         if done then Kyo.unit
                         else
@@ -433,7 +433,7 @@ private[kyo] object SocketEngine:
                                 }
                             }.andThen(outbound.close.unit).andThen(closeInbound)
                     }
-                }.andThen {
+                }.map { relay =>
                     connectReady.get.map { (conn, sender) =>
                         built.set(true).andThen(new SocketEngine(
                             conn,

@@ -406,15 +406,22 @@ class PathWatchTest extends kyo.test.Test[Any]:
     }
 
     "watcher invalidates when an ancestor is moved away" in {
-        hostRoot("kyo-path-watch-ancestor-moved").map { dir =>
-            val fileSystem = FileSystem.host
-            val ancestor   = dir / "moved-watch-ancestor"
-            val root       = ancestor / "root"
-            Scope.run {
-                fileSystem.mkDir(root).andThen {
-                    fileSystem.openWatcher(root, WatchOptions(capacity = 1)).map { watcher =>
-                        fileSystem.move(ancestor, dir / "moved-ancestor-target", Path.MoveOptions()).andThen {
-                            watcher.events.take(1).run.map(events => assert(events == Chunk(PathChange.Invalidated(root))))
+        // A scan holds the root open while it lists it, and Windows refuses to rename a directory with an open
+        // handle anywhere beneath it. On the live clock a scan every 5ms could overlap the move and fail it as
+        // access denied, which a Windows run did. Holding the clock keeps every scan away from the move.
+        Clock.withTimeControl { clock =>
+            hostRoot("kyo-path-watch-ancestor-moved").map { dir =>
+                val fileSystem = FileSystem.host
+                val ancestor   = dir / "moved-watch-ancestor"
+                val root       = ancestor / "root"
+                Scope.run {
+                    fileSystem.mkDir(root).andThen {
+                        fileSystem.openWatcher(root, WatchOptions(capacity = 1)).map { watcher =>
+                            fileSystem.move(ancestor, dir / "moved-ancestor-target", Path.MoveOptions()).andThen {
+                                clock.advance(10.millis).andThen {
+                                    watcher.events.take(1).run.map(events => assert(events == Chunk(PathChange.Invalidated(root))))
+                                }
+                            }
                         }
                     }
                 }
