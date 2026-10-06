@@ -3,23 +3,16 @@ package kyo.scheduler
 import java.util.concurrent.Executor
 import scala.annotation.nowarn
 
-/** Monotonic milliseconds from an arbitrary origin, re-read every 128 calls.
+/** Monotonic milliseconds from an arbitrary origin, read on every call.
   *
-  * A duration source, never a calendar time. The kernel's safepoint judges the slice deadlines built from these readings against
-  * `System.nanoTime` in milliseconds, so the two must stay on the same basis.
+  * A duration source, never a calendar time. The scheduler reads it once per slice to build the slice deadline, and the kernel's
+  * safepoint judges that deadline against a fresh `System.nanoTime` in milliseconds, so the two must stay on the same basis. A cached
+  * reading would date the deadline in the past and stop the slice at its first safepoint.
   */
 @nowarn
-final class InternalClock(executor: Executor = null) {
+final class InternalClock(executor: Executor = null, now: () => Long = () => InternalClock.monotonicMillis()) {
 
-    var steps = 0
-    var curr  = InternalClock.monotonicMillis()
-
-    def currentMillis(): Long = {
-        steps += 1
-        if ((steps & 128) == 0)
-            curr = InternalClock.monotonicMillis()
-        curr
-    }
+    def currentMillis(): Long = now()
 
     def stop(): Unit = {}
 
