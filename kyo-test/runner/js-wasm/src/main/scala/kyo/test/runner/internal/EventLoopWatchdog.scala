@@ -12,7 +12,7 @@ import scala.scalajs.js
   *
   * A leaf's timeout and heartbeat are timers on the event loop, and a synchronous call that never returns (a busy wait, a blocking
   * native call) leaves no turn for either: the run hangs with no output until the CI job is killed. The main thread bumps a counter in
-  * shared memory every few hundred milliseconds; the worker sees the counter stop. Once a running leaf has been blocked past its heartbeat
+  * shared memory every 100 ms; the worker sees the counter stop. Once a running leaf has been blocked past its heartbeat
   * interval it prints `[STUCK]`, and once it has been blocked past its timeout plus a grace period it prints `[TIMEOUT]` and, in the
   * runner's own instance, stops the process: nothing can unwind the blocked call, since terminating the main thread's execution aborts
   * Node.
