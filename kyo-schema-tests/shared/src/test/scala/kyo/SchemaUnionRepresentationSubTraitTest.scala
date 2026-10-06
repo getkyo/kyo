@@ -77,7 +77,8 @@ class SchemaUnionRepresentationSubTraitTest extends kyo.test.Test[Any]:
         }
 
         "sub-traits mixed into one another derive, each leaf once" in {
-            // 2^11 paths lead to SSRFChainLeaf; the derivation visits each sub-trait once, so this compiles at all.
+            // 2^23 paths lead to SSRFChainLeaf, so the derivation compiles only if it visits, probes and derives each sub-trait and
+            // variant once: a cost per path, such as a given probe that expands `Schema.derived`, would not finish.
             Schema[SSRFChain].structure match
                 case sum: Structure.Type.Sum => assert(sum.variants.map(_.name) == Chunk("SSRFChainLeaf"))
                 case other                   => fail(s"expected a sum, got $other")

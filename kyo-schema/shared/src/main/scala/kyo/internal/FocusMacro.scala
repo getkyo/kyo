@@ -2858,6 +2858,12 @@ import scala.util.control.NonFatal
       * derived at the call site, where the caller's own emission (inline variants, recursion guards) applies. An ambiguous or
       * diverging search is an error, as it is for `Schema[T]` used on its own: the inline emission would silently replace whichever
       * given the user meant.
+      *
+      * A search that resolves to `Schema.derived` expands it, so probing a variant this way derives the variant in full only to
+      * discard it, and a sealed sub-trait's derivation probes its own variants in turn: one probe per path through the hierarchy,
+      * exponential when sub-traits are mixed into one another. The probe therefore searches without `Schema.derived` first, which
+      * expands nothing; only a type that has some other given goes through the full search, which settles priority and ambiguity
+      * exactly as before.
       */
     private def explicitSchemaGiven[T: Type](sumName: String, variantName: String)(using Quotes): Option[Expr[Schema[T]]] =
         import quotes.reflect.*
@@ -2874,14 +2880,19 @@ import scala.util.control.NonFatal
                 s"Cannot derive the Schema of $sumName: the given Schema[${TypeRepr.of[T].show}] for its variant $variantName is $kind. " +
                     failure.explanation
             )
-        Implicits.search(TypeRepr.of[Schema[T]]) match
-            case found: ImplicitSearchSuccess if !derivedSyms.contains(headSymbol(found.tree)) =>
-                Some(found.tree.asExprOf[Schema[T]])
-            case _: ImplicitSearchSuccess    => None
-            case failure: AmbiguousImplicits => failed("ambiguous", failure)
-            case failure: DivergingImplicit  => failed("diverging", failure)
-            case _: ImplicitSearchFailure    => None
-        end match
+        def fullSearch: Option[Expr[Schema[T]]] =
+            Implicits.search(TypeRepr.of[Schema[T]]) match
+                case found: ImplicitSearchSuccess if !derivedSyms.contains(headSymbol(found.tree)) =>
+                    Some(found.tree.asExprOf[Schema[T]])
+                case _: ImplicitSearchSuccess    => None
+                case failure: AmbiguousImplicits => failed("ambiguous", failure)
+                case failure: DivergingImplicit  => failed("diverging", failure)
+                case _: ImplicitSearchFailure    => None
+            end match
+        end fullSearch
+        Implicits.searchIgnoring(TypeRepr.of[Schema[T]])(derivedSyms*) match
+            case _: NoMatchingImplicits => None
+            case _                      => fullSearch
     end explicitSchemaGiven
 
     /** Returns `Tag[A].asInstanceOf[Tag[Any]]` if a Tag is in scope, otherwise `Tag[Any]`. */

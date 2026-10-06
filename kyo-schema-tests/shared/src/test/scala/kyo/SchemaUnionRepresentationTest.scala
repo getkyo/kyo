@@ -69,7 +69,19 @@ sealed trait SSRFChain9                extends SSRFChain with SSRFChain8
 sealed trait SSRFChain10               extends SSRFChain with SSRFChain9
 sealed trait SSRFChain11               extends SSRFChain with SSRFChain10
 sealed trait SSRFChain12               extends SSRFChain with SSRFChain11
-final case class SSRFChainLeaf(x: Int) extends SSRFChain12 derives CanEqual
+sealed trait SSRFChain13               extends SSRFChain with SSRFChain12
+sealed trait SSRFChain14               extends SSRFChain with SSRFChain13
+sealed trait SSRFChain15               extends SSRFChain with SSRFChain14
+sealed trait SSRFChain16               extends SSRFChain with SSRFChain15
+sealed trait SSRFChain17               extends SSRFChain with SSRFChain16
+sealed trait SSRFChain18               extends SSRFChain with SSRFChain17
+sealed trait SSRFChain19               extends SSRFChain with SSRFChain18
+sealed trait SSRFChain20               extends SSRFChain with SSRFChain19
+sealed trait SSRFChain21               extends SSRFChain with SSRFChain20
+sealed trait SSRFChain22               extends SSRFChain with SSRFChain21
+sealed trait SSRFChain23               extends SSRFChain with SSRFChain22
+sealed trait SSRFChain24               extends SSRFChain with SSRFChain23
+final case class SSRFChainLeaf(x: Int) extends SSRFChain24 derives CanEqual
 
 @kyo.schema.tagOnly
 sealed trait SSRFColor derives CanEqual, Schema
