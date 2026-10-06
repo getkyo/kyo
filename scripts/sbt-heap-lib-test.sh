@@ -21,16 +21,59 @@ check() {  # check <name> <actual> <expected>
 
 echo "Running sbt-heap-lib self-tests..."
 
-for role in compile docs classnames test-jvm run link publish tool; do
-    want=$(sbt_heap_role_mb "$role")
-    check "$role on a 32GB runner is its table value" "$(SBT_HEAP_MEMORY_MB=32768 sbt_heap "$role")" "-J-Xmx${want}M"
+# derive <memory MB> <SBT_TASK_LIMIT, 0 for unset> <JvmMemory.java args...>
+derive() {
+    local mem="$1" limit="$2"; shift 2
+    if [ "$limit" = 0 ]; then (unset SBT_TASK_LIMIT; SBT_HEAP_MEMORY_MB="$mem" sbt_heap_derive "$@")
+    else SBT_TASK_LIMIT="$limit" SBT_HEAP_MEMORY_MB="$mem" sbt_heap_derive "$@"; fi
+}
+
+for mem in 8192 16384 65536; do
+    for limit in 1 0; do
+        for pair in test-jvm:test docs:docs run:node; do
+            role=${pair%%:*}; kind=${pair#*:}
+            total=$(( $(derive "$mem" "$limit" driver "$role") + $(derive "$mem" "$limit" forks "$kind") * $(derive "$mem" "$limit" fork-heap "$kind") ))
+            check "$role and its forks fit the budget at ${mem}MB, task limit $limit" \
+                "$(( total <= mem - mem / 4 ))" "1"
+        done
+    done
 done
 
-check "a role above runner memory less the reserve is clamped to it" \
-    "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap_mb link)" "$((7168 - SBT_HEAP_RESERVE_MB))"
-check "a role within runner memory less the reserve is not clamped" \
-    "$(SBT_HEAP_MEMORY_MB=16384 sbt_heap_mb compile)" "$(sbt_heap_role_mb compile)"
-check "a runner smaller than the reserve still gets 1GB" "$(SBT_HEAP_MEMORY_MB=2048 sbt_heap_mb tool)" "1024"
+for role in compile classnames link publish tool; do
+    check "$role, with no JVM beside it, gets the whole budget of a 16GB runner" "$(derive 16384 1 driver "$role")" "12288"
+done
+
+check "a 16GB runner under CI's task limit runs one test fork" "$(derive 16384 1 forks test)" "1"
+check "a 16GB runner with no task limit still runs one test fork, since two would starve the driver" "$(derive 16384 0 forks test)" "1"
+check "a 64GB runner runs the build's cap of two test forks" "$(derive 65536 0 forks test)" "2"
+
+# Measured needs, each at the runner size it was measured on.
+# ubuntu-latest reports 15989MB of its 16GB.
+check "the test-jvm driver on a 16GB CI runner holds the 4716MB live heap measured over the CI JVM row" \
+    "$(( $(derive 15989 1 driver test-jvm) >= 4716 ))" "1"
+check "a test fork on a 16GB CI runner holds kyo-tasty's suites, which fail at 4096MB and fill 5120MB" \
+    "$(( $(derive 15989 1 fork-heap test) >= 5120 ))" "1"
+# ubuntu-24.04-arm, which runs the checks workflow with no task limit, reports 15947MB.
+check "the docs driver on the checks runner holds the 8708MB live heap measured over doctest" \
+    "$(( $(derive 15947 0 driver docs) >= 8708 ))" "1"
+check "a doctest fork on the checks runner holds the 1744MB it was measured at" \
+    "$(( $(derive 15947 0 fork-heap docs) >= 1744 ))" "1"
+check "classnames on the checks runner holds the 9188MB live heap measured over checkClassNames" \
+    "$(( $(derive 15947 0 driver classnames) >= 9188 ))" "1"
+check "compile on a 16GB CI runner holds the 6943MB live heap measured over the JVM compile phases" \
+    "$(( $(derive 15989 1 driver compile) >= 6943 ))" "1"
+check "link on a 16GB CI runner holds the 7054MB live heap measured over the Native link phase" \
+    "$(( $(derive 15989 1 driver link) >= 7054 ))" "1"
+check "run on a 16GB CI runner holds the 5932MB live heap measured linking kyo-ui's JS tests" \
+    "$(( $(derive 15989 1 driver run) >= 5932 ))" "1"
+check "a Node test process on a 16GB CI runner holds the 2209MB a JS test task's Node processes reached" \
+    "$(( $(derive 15989 1 fork-heap node) >= 2209 ))" "1"
+check "link on the 7GB macos-14 runner holds the 5120MB its link measured" \
+    "$(( $(derive 7168 1 driver link) >= 5120 ))" "1"
+check "the JVM test phase stays under windows-arm64's 19318MB commit limit with its 3717MB idle commit and two JVMs' 1600MB off-heap" \
+    "$(( $(derive 16384 1 driver test-jvm) + $(derive 16384 1 fork-heap test) + 3717 + 2 * 1600 <= 19318 ))" "1"
+check "the JS test phase stays under windows-arm64's 19318MB commit limit with its 3717MB idle commit and the driver's 1600MB off-heap" \
+    "$(( $(derive 16384 1 driver run) + $(derive 16384 1 fork-heap node) + 3717 + 1600 <= 19318 ))" "1"
 
 SBT_HEAP_MEMORY_MB=16384 sbt_heap nope >/dev/null 2>&1
 check "an unknown role fails with 2" "$?" "2"

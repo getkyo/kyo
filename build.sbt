@@ -74,6 +74,9 @@ Global / commands += TestKyo.doneCommand
 // at 1, so docs build one module at a time while compilation and tests stay parallel.
 lazy val DocTag = Tags.Tag("doc")
 
+// A Node process: every JS and Wasm test task starts one, sized by project/JvmMemory.java.
+lazy val NodeTag = Tags.Tag("node")
+
 // CI concurrency controls:
 // - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
 // - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
@@ -90,14 +93,13 @@ Global / concurrentRestrictions := {
     val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
     val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
     val cores       = java.lang.Runtime.getRuntime.availableProcessors()
-    val isCI        = sys.env.contains("CI")
-    val testLimit   = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
+    val testLimit   = JvmMemory.testTaskCap()
     // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
     // podman fork and a docker fork (KYO_POD_RUNTIME pinning), so this bounds container-daemon
     // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon); real
-    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). 2 everywhere: each fork's heap
-    // is 5GB (Test / javaOptions), so the cap is what bounds the forks' memory on any machine.
-    val forkLimit = 2
+    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). The forks share the driver's
+    // memory budget, so the count is what fits it (project/JvmMemory.java).
+    val forkLimit = JvmMemory.testForks()
     Seq(
         Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
         Tags.limit(Tags.Update, if (updateLimit != "0") updateLimit.toInt else 1),
@@ -113,6 +115,9 @@ Global / concurrentRestrictions := {
         // Serialize scaladoc: each run is a forked JVM sized by the module it documents.
         // See DocTag above.
         Tags.limit(DocTag, 1),
+        // Doctest and scaladoc forks share the docs driver's memory budget, and Node test processes the run driver's.
+        Tags.limitSum(JvmMemory.docsForks(), DoctestTag, DocTag),
+        Tags.limit(NodeTag, JvmMemory.nodeProcesses()),
         FormatOnCompile.restriction
     )
 }
@@ -193,11 +198,10 @@ lazy val `kyo-settings` = Seq(
                     docLog.log(if (level == sbt.util.Level.Error) sbt.util.Level.Warn else level, line)
                 }
             }
-            // Named so a module that documents locally documents on a runner: the JVM default is a
-            // quarter of physical RAM, 4G beside the driver on the 16G runner that runs this.
+            // Named so a module that documents locally documents on a runner, inside the docs driver's budget.
             val exit = Fork.java(
                 ForkOptions()
-                    .withRunJVMOptions(Vector("-Xmx2G", "-cp", tool.mkString(sep)))
+                    .withRunJVMOptions(Vector(s"-Xmx${JvmMemory.docsForkHeapMb()}m", "-cp", tool.mkString(sep)))
                     .withOutputStrategy(OutputStrategy.LoggedOutput(tee)),
                 Seq(
                     "dotty.tools.scaladoc.Main",
@@ -261,13 +265,11 @@ lazy val `kyo-settings` = Seq(
     // workload, only compile and the Scala.js/Wasm linker, whose large graph needs COH's header
     // savings to fit the driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
     Test / javaOptions += "-XX:-UseCompactObjectHeaders",
-    // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM: 4GB on the 16GB CI
-    // runners, too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
-    // classpaths under globalK-way leaf concurrency), and 24GB on a 96GB workstation, where a few
-    // concurrent forks saturate the machine. With the ForkedTestGroup cap at 2, two 5GB forks plus the
-    // driver fit a 16GB box.
-    Test / javaOptions += "-Xmx5g",
-    doctestPredef := Seq("import kyo.*"),
+    // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM, sized against nothing
+    // that runs beside them.
+    Test / javaOptions += s"-Xmx${JvmMemory.testForkHeapMb()}m",
+    doctestPredef          := Seq("import kyo.*"),
+    doctestForkJavaOptions := Seq(s"-Xmx${JvmMemory.docsForkHeapMb()}m", "-Xss10M", "-XX:ActiveProcessorCount=2"),
     // Scala 3.9 modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
     // dedups naturally. Scala 3.3 modules must NOT have kyo-doctest on the Test
     // compile classpath, because its scala3-library 3.9 clashes with the module's 3.3
@@ -318,6 +320,7 @@ lazy val `locale-fork-settings` = Seq(
 
 Global / excludeLintKeys += doctestPredef
 Global / excludeLintKeys += doctestExtraClasspath
+Global / excludeLintKeys += doctestForkJavaOptions
 // coverageExcludedFiles is read only under `sbt coverage ...`; a plain build would lint it as unused.
 Global / excludeLintKeys += coverageExcludedFiles
 // checkClassNames reads it per project through a dynamic ScopeFilter, which the lint cannot see.
@@ -1481,7 +1484,7 @@ lazy val `kyo-sql-sqlite` =
             // and koffi itself.
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}"))
                     .withEnv(kyoSqliteFfiEnvMap(target.value, target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
@@ -1496,7 +1499,7 @@ lazy val `kyo-sql-sqlite` =
             `wasm-settings`,
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}", "--experimental-wasm-exnref"))
                     .withEnv(kyoSqliteFfiEnvMap(target.value, target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
@@ -1604,7 +1607,7 @@ lazy val `kyo-sql-doltlite` =
             // and koffi itself, or every leaf fails on LibraryNotFound.
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}"))
                     .withEnv(kyoDoltLiteFfiEnvMap(target.value, target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value
@@ -1621,7 +1624,7 @@ lazy val `kyo-sql-doltlite` =
             `wasm-settings`,
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}", "--experimental-wasm-exnref"))
                     .withEnv(kyoDoltLiteFfiEnvMap(target.value, target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value
@@ -1657,7 +1660,7 @@ lazy val `kyo-system-doltfs` =
             // ITS target: this module declares no FFI of its own and only borrows the engine for tests.
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}"))
                     .withEnv(kyoDoltLiteFfiEnvMap((`kyo-sql-doltlite`.js / target).value, target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value
@@ -1691,7 +1694,7 @@ lazy val `kyo-system-doltfs` =
             `wasm-settings`,
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}", "--experimental-wasm-exnref"))
                     .withEnv(kyoDoltLiteFfiEnvMap((`kyo-sql-doltlite`.wasm / target).value, target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value
@@ -1751,7 +1754,7 @@ lazy val `kyo-sql-tests` =
             // panics on a null facade instead of reporting an engine it could not load.
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}"))
                     .withEnv(kyoSqliteFfiEnvMap((`kyo-sql-sqlite`.js / target).value, target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
@@ -1773,7 +1776,7 @@ lazy val `kyo-sql-tests` =
             // Same reason as the js leg above; the Wasm runtime reaches the engine through koffi as well.
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}", "--experimental-wasm-exnref"))
                     .withEnv(kyoSqliteFfiEnvMap((`kyo-sql-sqlite`.wasm / target).value, target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
@@ -1954,7 +1957,7 @@ lazy val `kyo-ffi-it` =
                 val bundled = ffiOut / s"${prefix}kyo_it_bundled-$osTag-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
-                        .withArgs(List("--max_old_space_size=5120"))
+                        .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}"))
                         .withEnv(Map("KYO_FFI_KYO_IT_BUNDLED_PATH" -> bundled.getAbsolutePath))
                 )
             },
@@ -2004,7 +2007,7 @@ lazy val `kyo-ffi-plugin` =
             scriptedLaunchOpts := {
                 scriptedLaunchOpts.value ++
                     Seq(
-                        "-Xmx1024M",
+                        s"-Xmx${JvmMemory.testForkHeapMb()}m",
                         "-Dplugin.version=" + version.value,
                         "-Dkyo.version=" + version.value,
                         // The sub-builds link against kyo artifacts this build publishLocal'd, so their
@@ -2067,7 +2070,7 @@ lazy val `kyo-ffi-plugin` =
                 if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
                     Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777 boot-server named-pipe flake)"))
                 else
-                    Def.task((scripted.toTask("")).value)
+                    Def.task((scripted.toTask("")).value).tag(Tags.ForkedTestGroup)
             }).value
         )
 
@@ -2252,7 +2255,7 @@ lazy val `kyo-config` =
             // start rather than written by a test.
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}"))
                     .withEnv(Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1"))
             )
         )
@@ -2265,7 +2268,7 @@ lazy val `kyo-config` =
             // (which fully replaces wasm-settings' jsEnv) re-adds that flag alongside the env var.
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}", "--experimental-wasm-exnref"))
                     .withEnv(Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1"))
             )
         )
@@ -2347,7 +2350,7 @@ lazy val `kyo-stats-machine` =
                 val shim = ffiOut / s"${prefix}machine_macos-$osTag-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
-                        .withArgs(List("--max_old_space_size=5120"))
+                        .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}"))
                         .withEnv(Map(
                             "KYO_MACHINE_DISABLED"       -> "true",
                             "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath
@@ -2391,7 +2394,7 @@ lazy val `kyo-stats-machine` =
                 new NodeJSEnv(
                     NodeJSEnv.Config()
                         .withArgs(List(
-                            "--max_old_space_size=5120",
+                            s"--max_old_space_size=${JvmMemory.nodeHeapMb()}",
                             "--experimental-wasm-exnref"
                         ))
                         .withEnv(Map(
@@ -2983,7 +2986,7 @@ lazy val `kyo-net` =
             // Point the Node runtime at the plugin-compiled koffi natives and bootstrap koffi into node_modules before tests run.
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}"))
                     .withEnv(kyoNetFfiEnvMap(target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
@@ -2995,7 +2998,7 @@ lazy val `kyo-net` =
             `wasm-settings`,
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}", "--experimental-wasm-exnref"))
                     .withEnv(kyoNetFfiEnvMap(target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
@@ -3128,7 +3131,7 @@ lazy val `kyo-aeron` =
                 val lib    = ffiOut / s"${prefix}kyo_aeron-$osDetect-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
-                        .withArgs(List("--max_old_space_size=5120"))
+                        .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}"))
                         .withEnv(Map("KYO_FFI_KYO_AERON_PATH" -> lib.getAbsolutePath))
                 )
             },
@@ -3185,7 +3188,7 @@ lazy val `kyo-aeron` =
                 val lib    = ffiOut / s"${prefix}kyo_aeron-$osDetect-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
-                        .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                        .withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}", "--experimental-wasm-exnref"))
                         .withEnv(Map(
                             "KYO_FFI_KYO_AERON_PATH" -> lib.getAbsolutePath,
                             // Wasm (ESModule) has no `require` global; KoffiFacade resolves koffi via
@@ -4479,10 +4482,12 @@ lazy val `js-settings` = Seq(
     Compile / doc / sources := Seq.empty,
     fork                    := false,
     // Node test process options are configured through jsEnv.
-    Test / javaOptions                          := Nil,
-    bspEnabled                                  := false,
-    Test / parallelExecution                    := false,
-    jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
+    Test / javaOptions          := Nil,
+    bspEnabled                  := false,
+    Test / parallelExecution    := false,
+    Test / loadedTestFrameworks := (Test / loadedTestFrameworks).tag(NodeTag).value,
+    Test / executeTests         := (Test / executeTests).tag(NodeTag).value,
+    jsEnv                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List(s"--max_old_space_size=${JvmMemory.nodeHeapMb()}"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
     // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
     // resolving one throws at run time, invisible to compile and link. The tzdb artifact supplies the zones;
@@ -4510,12 +4515,14 @@ lazy val `wasm-settings` = Seq(
     Compile / doc / sources := Seq.empty,
     fork                    := false,
     // Node test process options are configured through jsEnv.
-    Test / javaOptions       := Nil,
-    bspEnabled               := false,
-    Test / parallelExecution := false,
-    jsEnv                    := new NodeJSEnv(
+    Test / javaOptions          := Nil,
+    bspEnabled                  := false,
+    Test / parallelExecution    := false,
+    Test / loadedTestFrameworks := (Test / loadedTestFrameworks).tag(NodeTag).value,
+    Test / executeTests         := (Test / executeTests).tag(NodeTag).value,
+    jsEnv                       := new NodeJSEnv(
         NodeJSEnv.Config().withArgs(List(
-            "--max_old_space_size=5120",
+            s"--max_old_space_size=${JvmMemory.nodeHeapMb()}",
             // exnref: the WASM backend emits exnref exception-handling opcodes Node needs to load it.
             "--experimental-wasm-exnref"
         ))
@@ -4571,7 +4578,7 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
                 .getOrElse(sys.error("no version in .scalafmt.conf"))
         },
         scriptedLaunchOpts := Seq(
-            "-Xmx1024M",
+            s"-Xmx${JvmMemory.testForkHeapMb()}m",
             "-Dplugin.version=" + version.value,
             // Path to the runner-classpath file written by scriptedDependencies below.
             "-Dkyo.doctest.runnerCpFile=" + (target.value / "doctest-runner-cp.txt").getAbsolutePath,
@@ -4603,7 +4610,7 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
             if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
                 Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777 boot-server named-pipe flake)"))
             else
-                Def.task((scripted.toTask("")).value)
+                Def.task((scripted.toTask("")).value).tag(Tags.ForkedTestGroup)
         }).value
     )
 
@@ -4641,7 +4648,7 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
         addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.22.0"),
         addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % "0.5.12"),
         scriptedLaunchOpts := Seq(
-            "-Xmx1024M",
+            s"-Xmx${JvmMemory.testForkHeapMb()}m",
             "-Dplugin.version=" + version.value
         ),
         scriptedBufferLog := false,
@@ -4655,7 +4662,7 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
             if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
                 Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777 boot-server named-pipe flake)"))
             else
-                Def.task((scripted.toTask("")).value)
+                Def.task((scripted.toTask("")).value).tag(Tags.ForkedTestGroup)
         }).value,
         // Bundle the cross-binding conformance suite (kyo-compat/test + test-streams)
         // into the plugin jar as resources, plus an INDEX, so an external binding can
@@ -4857,9 +4864,8 @@ lazy val `kyo-test-sbt-publish` =
             buildInfoObject                        := "BuildInfo",
             libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.20" % Test,
             scriptedLaunchOpts                     := Seq(
-                // The native sub-build links a real binary in this JVM; 1G (enough for the other
-                // three) OOMs inside nativeLink.
-                "-Xmx4G",
+                // The native sub-build links a real binary in this JVM: 1G OOMs inside nativeLink, 4G passes.
+                s"-Xmx${JvmMemory.testForkHeapMb()}m",
                 "-Dplugin.version=" + version.value,
                 "-Dkyo.scalaVersion=" + scala39Version
             ),
@@ -4888,6 +4894,6 @@ lazy val `kyo-test-sbt-publish` =
                 if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
                     Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777)"))
                 else
-                    Def.task((scripted.toTask("")).value)
+                    Def.task((scripted.toTask("")).value).tag(Tags.ForkedTestGroup)
             }).value
         )

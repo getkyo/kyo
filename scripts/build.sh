@@ -38,7 +38,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Every sbt this script starts takes its heap from the role table; sourcing it also clears an inherited
+# Every sbt this script starts takes its role's heap from this library; sourcing it also clears an inherited
 # SBT_OPTS, whose options the launcher would otherwise place after the role's heap.
 . "$SCRIPT_DIR/sbt-heap-lib.sh"
 
@@ -81,7 +81,7 @@ done
 
 case "$ENV_KIND" in direct|podman|podman-ci) ;; *) die_usage "unknown env '$ENV_KIND'" ;; esac
 case "$ARCH" in native|x86|arm) ;; *) die_usage "unknown arch '$ARCH'" ;; esac
-sbt_heap_role_mb "$RAW_ROLE" >/dev/null || die_usage "unknown role '$RAW_ROLE'"
+sbt_heap_mb "$RAW_ROLE" >/dev/null 2>&1 || die_usage "unknown role '$RAW_ROLE'"
 
 # The CI setup action stages BoringSSL and Aeron unconditionally (kyo-aeronJVM's ffiCompile links
 # -laeron_driver_static and the kyo-net TLS tests link real libssl/libcrypto), so the CI-faithful

@@ -103,7 +103,7 @@ The sbt JVM is configured by the checked-in `.jvmopts`, so no environment setup 
 
 #### The sbt Heap
 
-The driver heap is chosen in one place, `scripts/sbt-heap-lib.sh`, by the role the sbt process plays: `compile`, `docs`, `test-jvm`, `run`, `link`, `publish` or `tool`. Each role's value is what that driver measured as needing on a 16GB CI runner, clamped to the memory of the machine it runs on. CI and `scripts/build.sh` start every sbt through it, and the `checks` workflow fails on a heap set anywhere else (`scripts/sbt-heap-check.sh`).
+The driver heap is chosen in one place, `scripts/sbt-heap-lib.sh`, by the role the sbt process plays: `compile`, `docs`, `test-jvm`, `run`, `link`, `publish` or `tool`. Every heap is derived from the machine's memory by `project/JvmMemory.java`, which the build also uses for the processes beside a driver (test, doctest and scaladoc forks, and the Node processes of JS and Wasm tests): a quarter of memory is left to the OS and off-heap, and a driver splits the rest with the JVMs that can run beside it in proportion to their measured needs. The needs decide how many forks fit and each one's fraction, never a heap directly, and `scripts/sbt-heap-lib-test.sh` checks every heap against them at the runner sizes they were measured on. CI and `scripts/build.sh` start every sbt through it, and the `checks` workflow fails on a heap set anywhere else (`scripts/sbt-heap-check.sh`).
 
 A bare `sbt` carries no heap flag, so the JVM picks a quarter of physical memory. For the heap CI uses, start sbt through `scripts/sbt.sh` with a role; for any other heap, add `-J-Xmx`, which the launcher places after the role's:
 

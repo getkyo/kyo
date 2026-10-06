@@ -12,78 +12,45 @@
 # after the -J flags, so sourcing this file clears SBT_OPTS: an inherited SBT_OPTS heap (a developer's
 # "-Xms32G -Xmx32G") would otherwise override the role's in every driver.
 #
-# Each role's value is what that driver needs on a 16GB runner. A smaller runner clamps it to its
-# memory minus SBT_HEAP_RESERVE_MB, the room a capped driver's off-heap (metaspace, code cache, thread
-# stacks: 1.0 to 1.6GB measured) and the OS and runner agent need beside it.
+# Every heap is derived from the machine's memory by project/JvmMemory.java, which build.sbt uses for the
+# forked JVMs beside each driver, so a driver and its forks split one budget.
 #
 # Roles:
 #   compile     compile-main and compile-test drivers, the doc site build
-#   docs        doctest and scaladoc, which compile every module's tests at the build's task limit
+#   docs        doctest and scaladoc, which compile every module's tests; doctest and scaladoc forks run beside it
 #   classnames  checkClassNames, which compiles in one driver every JVM module's tests the doctest step
 #               left uncompiled; at 8192 it ran out of heap compiling kyo-net's tests
-#   test-jvm    the JVM run phase; its tests run in forked JVMs (build.sbt Test / javaOptions)
-#   run         the JS, Wasm and Native run phases; tests run in Node or the linked binary
+#   test-jvm    the JVM run phase; forked test JVMs run beside it
+#   run         the JS, Wasm and Native run phases; tests run in Node or the linked binary beside it
 #   link        Native link batches and the heavy-module pre-link; clang jobs fork beside it
 #   publish     publishLocal and ci-release over many modules, one ++ reapply per module
 #   tool        planning, ffiCompileAll, packaging checks, release staging, formatting
 
-SBT_HEAP_RESERVE_MB=4096
+# Resolved through a symlink, which build-selftest.sh uses to source this file from a stub directory.
+sbt_heap_lib_path="${BASH_SOURCE[0]}"
+if [ -L "$sbt_heap_lib_path" ]; then
+    sbt_heap_lib_link=$(readlink "$sbt_heap_lib_path")
+    case "$sbt_heap_lib_link" in /*) sbt_heap_lib_path="$sbt_heap_lib_link" ;; *) sbt_heap_lib_path="$(dirname "$sbt_heap_lib_path")/$sbt_heap_lib_link" ;; esac
+fi
+SBT_HEAP_JVM_MEMORY="$(cd "$(dirname "$sbt_heap_lib_path")/.." && pwd)/project/JvmMemory.java"
+# Git Bash paths (/c/...) mean nothing to a Windows java.
+command -v cygpath >/dev/null 2>&1 && SBT_HEAP_JVM_MEMORY=$(cygpath -m "$SBT_HEAP_JVM_MEMORY")
 
 if [ -n "${SBT_OPTS:-}" ]; then
     echo "sbt-heap: clearing inherited SBT_OPTS so the role's heap applies (was: $SBT_OPTS)" >&2
     unset SBT_OPTS
 fi
 
-sbt_heap_role_mb() {
-    case "$1" in
-        compile)    echo 8192 ;;
-        docs)       echo 12288 ;;
-        classnames) echo 12288 ;;
-        test-jvm)   echo 12288 ;;
-        run)        echo 6144 ;;
-        link)       echo 8192 ;;
-        publish)    echo 6144 ;;
-        tool)       echo 3072 ;;
-        *)          return 1 ;;
-    esac
-}
+sbt_heap_derive() { java "$SBT_HEAP_JVM_MEMORY" "$@"; }
 
 # The memory this runner gives its processes, in MB: the cgroup limit when one is set (a container or a
-# limited CI job), else the machine's physical memory. Empty when neither can be read.
-# SBT_HEAP_MEMORY_MB replaces the detection, so the self-tests run the same code at a chosen size.
-sbt_heap_memory_mb() {
-    if [ -n "${SBT_HEAP_MEMORY_MB:-}" ]; then echo "$SBT_HEAP_MEMORY_MB"; return; fi
-    local total="" limit=""
-    if [ -r /proc/meminfo ]; then
-        total=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo)
-    elif command -v sysctl >/dev/null 2>&1; then
-        total=$(sysctl -n hw.memsize 2>/dev/null | awk '{ print int($1 / 1048576) }')
-    fi
-    if [ -r /sys/fs/cgroup/memory.max ]; then
-        limit=$(cat /sys/fs/cgroup/memory.max)
-    elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
-        limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
-    fi
-    # cgroup v2 writes "max" for no limit; v1 writes a value near 2^63.
-    case "$limit" in
-        ''|max) limit="" ;;
-        *) limit=$(awk -v b="$limit" 'BEGIN { m = int(b / 1048576); if (m < 1073741824) print m }') ;;
-    esac
-    if [ -n "$limit" ] && { [ -z "$total" ] || [ "$limit" -lt "$total" ]; }; then total="$limit"; fi
-    echo "$total"
-}
+# limited CI job), else the machine's physical memory. SBT_HEAP_MEMORY_MB replaces the detection, so the
+# self-tests run the same code at a chosen size.
+sbt_heap_memory_mb() { sbt_heap_derive memory; }
 
 # The heap in MB for role $1 on this runner.
 sbt_heap_mb() {
-    local want mem cap
-    want=$(sbt_heap_role_mb "$1") || { echo "sbt-heap: unknown role '$1'" >&2; return 2; }
-    mem=$(sbt_heap_memory_mb)
-    if [ -n "$mem" ]; then
-        cap=$((mem - SBT_HEAP_RESERVE_MB))
-        [ "$cap" -lt 1024 ] && cap=1024
-        [ "$want" -gt "$cap" ] && want="$cap"
-    fi
-    echo "$want"
+    sbt_heap_derive driver "$1" 2>/dev/null || { echo "sbt-heap: unknown role '$1'" >&2; return 2; }
 }
 
 # The sbt launcher flag for role $1, e.g. -J-Xmx6144M.
