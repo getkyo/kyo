@@ -334,6 +334,18 @@ object Tag extends kyo.internal.TagPlatformSpecific:
             Array.fill[Maybe[Comparison]](cacheEntries)(Absent)
         }
 
+        private[kyo] def cacheSlot(thread: Thread): Int = thread.hashCode & (threadSlots - 1)
+
+        private[kyo] def cacheIndex[A, B](a: Tag[A], b: Tag[B], mode: Mode): Int =
+            var hash = (TagHash.of(a).toLong << 32) | (TagHash.of(b) & 0xffffffffL)
+            hash += mode.factor
+            hash ^= (hash >>> 30)
+            hash *= 0xbf58476d1ce4e5b9L
+            hash ^= (hash >>> 27)
+            hash &= Long.MaxValue
+            (hash & (cacheEntries - 1)).toInt
+        end cacheIndex
+
         private def dynamicHashCode(tag: String, map: Map[Entry.Id, Any]): Int =
             val builder = new java.lang.StringBuilder(tag)
             map.toSeq.sortBy(_._1).foreach { (key, value) =>
@@ -364,14 +376,8 @@ object Tag extends kyo.internal.TagPlatformSpecific:
           */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
             // Use memoized hashes to select a slot, then verify the actual compared tags before reusing a result.
-            var hash = (TagHash.of(a).toLong << 32) | (TagHash.of(b) & 0xffffffffL)
-            hash += mode.factor
-            hash ^= (hash >>> 30)
-            hash *= 0xbf58476d1ce4e5b9L
-            hash ^= (hash >>> 27)
-            hash &= Long.MaxValue
-            val idx   = (hash & (cacheEntries - 1)).toInt
-            val cache = cacheSlots(Thread.currentThread().hashCode & (threadSlots - 1))
+            val idx   = cacheIndex(a, b, mode)
+            val cache = cacheSlots(cacheSlot(Thread.currentThread()))
             cache(idx) match
                 case Present(cached) if (a eq cached.a) && (b eq cached.b) && mode == cached.mode =>
                     cached.result

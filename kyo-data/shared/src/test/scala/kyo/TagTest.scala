@@ -73,6 +73,96 @@ class TagTest extends kyo.test.Test[Any]:
         }
     }
 
+    "comparisons racing on shared cache slots".notJs - {
+        "every thread reads the verdict of the comparison it asked for" in {
+            // One thread per core, all sharing one array of slots, each checking comparisons that share one entry: every
+            // check either publishes that entry or reads one another core just published. The allocations around each
+            // check and the collections recycle the memory a replaced entry occupied, which is what a reader that sees an
+            // entry before its construction finds instead.
+            import Tag.internal.Mode
+            val tags: Seq[Tag[Any]] = Seq(
+                Tag[Any],
+                Tag[AnyVal],
+                Tag[AnyRef],
+                Tag[Int],
+                Tag[Long],
+                Tag[String],
+                Tag[CharSequence],
+                Tag[java.io.Serializable],
+                Tag[Seq[Int]],
+                Tag[List[Int]],
+                Tag[Iterable[Int]],
+                Tag[Vector[String]],
+                Tag[Option[String]],
+                Tag[Some[String]],
+                Tag[Throwable],
+                Tag[Exception],
+                Tag[RuntimeException],
+                Tag[IllegalArgumentException],
+                Tag[Number],
+                Tag[Chunk[Int]]
+            ).map(_.asInstanceOf[Tag[Any]])
+            val comparisons =
+                for
+                    a    <- tags
+                    b    <- tags
+                    mode <- Seq(Mode.Subtype, Mode.Equality)
+                yield (a, b, mode)
+            val sharing  = comparisons.groupBy((a, b, mode) => Tag.internal.cacheIndex(a, b, mode)).values.maxBy(_.size).toArray
+            val expected = sharing.map((a, b, mode) => Tag.internal.checkTypes(a, b, mode))
+            assert(sharing.length >= 3, s"only ${sharing.length} comparisons share an entry")
+
+            val count            = Math.max(2, Runtime.getRuntime().availableProcessors())
+            val failure          = new java.util.concurrent.atomic.AtomicReference[String](null)
+            val start            = new java.util.concurrent.CountDownLatch(1)
+            val perThread        = 200000
+            val ids              = new java.util.concurrent.atomic.AtomicInteger(0)
+            def worker(): Thread =
+                val thread = new Thread(() =>
+                    start.await()
+                    val index = ids.getAndIncrement()
+                    val sink  = new Array[AnyRef](64)
+                    var i     = 0
+                    while i < perThread && failure.get() == null do
+                        val k            = i % sharing.length
+                        val (a, b, mode) = sharing(k)
+                        sink(i & 63) = Array[AnyRef](Integer.valueOf(i))
+                        if index == 0 && i % 5000 == 0 then java.lang.System.gc()
+                        try
+                            val result = Tag.internal.checkTypes(a, b, mode)
+                            if result != expected(k) then
+                                discard(failure.compareAndSet(null, s"${a.show} $mode ${b.show}: got $result, expected ${expected(k)}"))
+                        catch
+                            case ex: Throwable => discard(failure.compareAndSet(null, s"${a.show} $mode ${b.show}: $ex"))
+                        end try
+                        i += 1
+                    end while
+                )
+                thread.setDaemon(true)
+                thread
+            end worker
+
+            // Thread hashes are fixed at construction, so build threads until enough of them pick the same array of slots.
+            val bySlot  = scala.collection.mutable.HashMap.empty[Int, List[Thread]]
+            var workers = List.empty[Thread]
+            var built   = 0
+            while workers.isEmpty do
+                val thread = worker()
+                val slot   = Tag.internal.cacheSlot(thread)
+                val group  = thread :: bySlot.getOrElse(slot, Nil)
+                bySlot(slot) = group
+                if group.size == count then workers = group
+                built += 1
+                assert(built < 1000000, "no array of slots gathered enough threads")
+            end while
+
+            workers.foreach(_.start())
+            start.countDown()
+            workers.foreach(_.join())
+            assert(failure.get() == null, failure.get())
+        }
+    }
+
     "dynamic captured lambda bodies" - {
         trait Higher[F[_]]
         def original[A: Tag]: Tag[Higher[[X] =>> Either[A, X]]] = Tag.dynamic[Higher[[X] =>> Either[A, X]]]
