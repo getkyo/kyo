@@ -174,6 +174,33 @@ class SocketEngineTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "an opener interrupted as soon as its connect starts leaves no connect running" in {
+        // The connect runs on its own fiber, and the connect interrupts the opener on entry, so over many rounds the interrupt
+        // lands on every step the opener takes after starting it. A forked fiber is queued on its parent's worker, so the
+        // connect starts during the opener's setup only when another worker steals it; the sleeping fibers keep the other
+        // workers waking and stealing, without which no round reaches that window. A connect left running never releases
+        // `exited` and the leaf times out.
+        Scope.run {
+            Kyo.foreachDiscard(1 to 16)(_ => Fiber.init(Loop.foreach(Async.sleep(50.micros).andThen(Loop.continue)))).andThen {
+                Kyo.foreachDiscard(1 to 2000) { _ =>
+                    for
+                        openerRef <- Fiber.Promise.init[Fiber[Result[SlackException, SocketEngine], Any], Any]
+                        exited    <- Latch.init(1)
+                        interrupting = new Transport:
+                            private[kyo] def connect[B, S](u: HttpUrl, cc: HttpWebSocket.Config)(
+                                f: Transport.Conn => B < (S & Async)
+                            )(using Frame): B < (S & Async & Abort[SlackTransportException]) =
+                                Sync.ensure(exited.release)(openerRef.get.map(_.interrupt).andThen(Async.never))
+                        opener <- Fiber.initUnscoped(Abort.run[SlackException](SocketEngine.initUnscoped(interrupting, url, cfg)))
+                        _      <- openerRef.complete(Result.succeed(opener))
+                        _      <- exited.await
+                        result <- opener.getResult
+                    yield assert(result.isPanic, s"the opener ends interrupted; got: $result")
+                }
+            }
+        }.andThen(succeed)
+    }
+
     "closeTransport against a peer that stopped reading ends at the ack deadline and closes the socket" in {
         for
             stuck  <- Latch.init(1)
@@ -205,6 +232,43 @@ class SocketEngineTest extends kyo.test.Test[Any]:
             assert(result == Result.succeed(()))
             assert(closedPending == 0, s"the socket is closed after the bounded flush; still pending: $closedPending")
         end for
+    }
+
+    "closeTransport lets the connect body return, so an ack the transport queued but had not written reaches the wire" in {
+        // The transport behaves as kyo-http's client WebSocket does: `put` only queues a frame, the queue is written when the
+        // connect body returns, and an interrupted body discards it. The peer answers the close only when the leaf says so: once
+        // the teardown is waiting on its deadline, or at once if the teardown already ended without waiting.
+        Clock.withTimeControl { control =>
+            for
+                feed      <- Channel.initUnscoped[String](8)
+                queued    <- Channel.initUnscoped[String](8)
+                wire      <- Channel.initUnscoped[String](8)
+                closeSent <- Fiber.Promise.init[Unit, Any]
+                answered  <- Fiber.Promise.init[Unit, Any]
+                queuing = new Transport:
+                    private[kyo] def connect[B, S](u: HttpUrl, cc: HttpWebSocket.Config)(
+                        f: Transport.Conn => B < (S & Async)
+                    )(using Frame): B < (S & Async & Abort[SlackTransportException]) =
+                        f(new Transport.Conn:
+                            private[kyo] def put(text: String)(using Frame): Unit < (Async & Abort[Closed]) = queued.put(text)
+                            private[kyo] def stream(using Frame): Stream[String, Async]                     = feed.streamUntilClosed()
+                            private[kyo] def close(using Frame): Unit < Async                               = closeSent.completeUnit.unit
+                            private[kyo] def onPeerClose(using Frame): Unit < Async                         = answered.get).map { result =>
+                            Abort.run[Closed](queued.drain.map(Kyo.foreachDiscard(_)(wire.put))).andThen(result)
+                        }
+                engine   <- SocketEngine.initUnscoped(queuing, url, cfg)
+                _        <- engine.emitAck(eventEnvelope("E1"), SlackAck.Ack)
+                ended    <- Fiber.Promise.init[Unit, Any]
+                teardown <- Fiber.initUnscoped(engine.closeTransport.andThen(ended.completeUnit))
+                _        <- closeSent.get
+                // Raced on a promise, not the fiber: awaiting a fiber links the loser's interrupt to the teardown itself.
+                _       <- Async.race(control.awaitPendingSleepers(1), ended.get)
+                _       <- answered.completeUnit
+                _       <- feed.close
+                _       <- teardown.get
+                written <- wire.drain
+            yield assert(written == Chunk("""{"envelope_id":"E1"}"""), s"got: $written")
+        }
     }
 
     "connect returns only after the readiness gate completes; never returns with no hello and no relay completion" in {

@@ -191,13 +191,15 @@ object TeamsLocal:
     end Local
 
     def withLocal[A](test: Local => A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
-        Clock.withTimeControl(_ => serve(HttpServerConfig.default.port(0).host("127.0.0.1"), "http")(test))
+        Clock.withTimeControl(_ => serve(controlled, "http")(test))
 
     /** [[withLocal]] over TLS with a self-signed certificate, which the default `tls` does not trust. */
     def withLocalTls[A](test: Local => A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
-        Clock.withTimeControl(_ =>
-            serve(HttpServerConfig.default.port(0).host("127.0.0.1").tls(kyo.internal.TlsTestHelper.serverTlsConfig), "https")(test)
-        )
+        Clock.withTimeControl(_ => serve(controlled.tls(kyo.internal.TlsTestHelper.serverTlsConfig), "https")(test))
+
+    // The server's idle wait runs on the leaf's controlled clock, so a leaf advancing past it would have the server close a kept-alive
+    // connection while the client takes it from its pool for the next request, which then fails at the transport.
+    private def controlled: HttpServerConfig = HttpServerConfig.default.port(0).host("127.0.0.1").idleTimeout(Duration.Infinity)
 
     /** [[withLocal]] on the real clock, for a live leaf whose other peer is a real server: its request timeouts must be able to fire. */
     def withLocalOnRealClock[A](test: Local => A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
