@@ -75,10 +75,11 @@ class TagTest extends kyo.test.Test[Any]:
 
     "comparisons racing on shared cache slots".notJs - {
         "every thread reads the verdict of the comparison it asked for" in {
-            // One thread per core, all sharing one array of slots, each checking comparisons that share one entry: every
-            // check either publishes that entry or reads one another core just published. The allocations around each
-            // check and the collections recycle the memory a replaced entry occupied, which is what a reader that sees an
-            // entry before its construction finds instead.
+            // One thread per core, all sharing one array of slots and checking comparisons that share one entry. Writers
+            // cycle through the comparisons, so the entry is replaced on nearly every check; readers repeat one of them, so
+            // most of their checks are hits that load the entry nanoseconds apart, which is how often a read lands right
+            // after another core published it. The allocations and collections recycle the memory a replaced entry
+            // occupied, which is what a reader that sees an entry before its construction finds instead.
             import Tag.internal.Mode
             val tags: Seq[Tag[Any]] = Seq(
                 Tag[Any],
@@ -115,19 +116,21 @@ class TagTest extends kyo.test.Test[Any]:
             val count            = Math.max(2, Runtime.getRuntime().availableProcessors())
             val failure          = new java.util.concurrent.atomic.AtomicReference[String](null)
             val start            = new java.util.concurrent.CountDownLatch(1)
-            val perThread        = 200000
+            val perWriter        = 200000
             val ids              = new java.util.concurrent.atomic.AtomicInteger(0)
+            val writing          = new java.util.concurrent.atomic.AtomicInteger(count / 2)
             def worker(): Thread =
                 val thread = new Thread(() =>
                     start.await()
-                    val index = ids.getAndIncrement()
-                    val sink  = new Array[AnyRef](64)
-                    var i     = 0
-                    while i < perThread && failure.get() == null do
-                        val k            = i % sharing.length
+                    val index  = ids.getAndIncrement()
+                    val writer = index % 2 == 1
+                    val sink   = new Array[AnyRef](64)
+                    var i      = 0
+                    while (if writer then i < perWriter else writing.get() > 0) && failure.get() == null do
+                        val k            = if writer then i % sharing.length else 0
                         val (a, b, mode) = sharing(k)
                         sink(i & 63) = Array[AnyRef](Integer.valueOf(i))
-                        if index == 0 && i % 5000 == 0 then java.lang.System.gc()
+                        if index == 0 && i % 100000 == 0 then java.lang.System.gc()
                         try
                             val result = Tag.internal.checkTypes(a, b, mode)
                             if result != expected(k) then
@@ -137,6 +140,7 @@ class TagTest extends kyo.test.Test[Any]:
                         end try
                         i += 1
                     end while
+                    if writer then discard(writing.decrementAndGet())
                 )
                 thread.setDaemon(true)
                 thread
