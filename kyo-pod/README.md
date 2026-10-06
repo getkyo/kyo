@@ -385,7 +385,7 @@ HttpContainerBackend(socket=/var/run/docker.sock, apiVersion=v1.43, runtime=podm
                      cli=CONTAINER_HOST=unix:///var/run/docker.sock podman ps)
 ```
 
-The runtime is the daemon's own answer (`GET /version`), not a guess from the socket path: podman serves the Docker Engine API and `/var/run/docker.sock` is commonly a symlink to the podman machine's socket, so the path is a poor witness. The `cli=` part is the command that reaches the same daemon from a shell, and it names the variable that runtime actually reads: podman reads `CONTAINER_HOST` and ignores `DOCKER_HOST`. It is there because kyo-pod probes and picks a socket that works, which is not necessarily the endpoint your CLI is configured for; when `podman ps` shows nothing and your code is managing containers, that line is the reconciliation.
+The runtime is the daemon's own answer (the headers of its `_ping` reply), not a guess from the socket path: podman serves the Docker Engine API and `/var/run/docker.sock` is commonly a symlink to the podman machine's socket, so the path is a poor witness. The `cli=` part is the command that reaches the same daemon from a shell, and it names the variable that runtime actually reads: podman reads `CONTAINER_HOST` and ignores `DOCKER_HOST`. It is there because kyo-pod probes and picks a socket that works, which is not necessarily the endpoint your CLI is configured for; when `podman ps` shows nothing and your code is managing containers, that line is the reconciliation.
 
 ## Networks
 
