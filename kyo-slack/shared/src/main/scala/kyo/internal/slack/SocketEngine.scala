@@ -317,11 +317,18 @@ final private[kyo] class SocketEngine private[kyo] (
       * past Slack's acknowledgement window, and Slack redelivers its envelope. Then the socket
       * is closed and both fibers interrupted, flushed or not. `closeNow` is the equivalent
       * unconditional final teardown.
+      *
+      * A `conn.put` that returned has only queued the ack on the WebSocket: kyo-http writes that
+      * queue when the connect body returns, and discards it when the body is interrupted. So
+      * after `conn.close` the relay is given until `ackDeadline` to end on its own (the peer
+      * answers the close, its stream ends, the body returns and the queue is written) before it
+      * is interrupted.
       */
     private[kyo] def closeTransport(using Frame): Unit < Async =
         intentionalClose.set(true)
             .andThen(Abort.run[Timeout](Async.timeout(ackDeadline)(outbound.closeAwaitEmpty.unit.andThen(senderDone.get))).unit)
             .andThen(conn.close)
+            .andThen(Abort.run[Timeout](Async.timeout(ackDeadline)(relay.getResult)).unit)
             .andThen(sender.interrupt.andThen(sender.getResult.unit))
             .andThen(relay.interrupt.andThen(relay.getResult.unit))
             .andThen(outbound.close.unit)
@@ -395,33 +402,33 @@ private[kyo] object SocketEngine:
             senderDone       <- Fiber.Promise.init[Unit, Any]
             closeInbound = SocketEngine.closeInbound(inbound, inboundResidue)
             wsConfig     = HttpWebSocket.Config(autoPingInterval = config.keepAliveInterval)
-            relay <- Fiber.initUnscoped {
-                Abort.run[SlackTransportException] {
-                    transport.connect(wsUrl, wsConfig) { conn =>
-                        // `senderDone` completes only after the stream ended, so every ack it polled was put.
-                        val senderBody =
-                            Abort.run[Closed](outbound.streamUntilClosed().foreach(conn.put))
-                                .andThen(senderDone.completeUnit.unit)
-                        Fiber.initUnscoped(senderBody).map { senderFiber =>
-                            connectReady.complete(Result.succeed((conn, senderFiber))).andThen {
-                                // onPeerClose resolves the race on a backend that leaves the stream open after an abnormal close.
-                                val receiver = Abort.run[Closed](conn.stream.foreach(inbound.put)).unit
-                                Async.race(receiver, conn.onPeerClose).andThen(closeInbound)
-                            }
-                        }
-                    }
-                }.map {
-                    // A completion after readiness is a no-op: the gate already holds the pair.
-                    case Result.Success(_)  => Kyo.unit
-                    case Result.Failure(ex) => connectReady.complete(Result.fail(ex)).unit
-                    case Result.Panic(ex)   => connectReady.complete(Result.panic(ex)).unit
-                }
-            }
             built  <- AtomicBoolean.init(false)
             engine <- Scope.run {
-                // The relay and the sender are unscoped and own the socket, so an opener that fails or is
-                // interrupted before the engine exists releases them here: nothing else holds them.
-                Scope.ensure {
+                // The relay and the sender are unscoped and own the socket, so an opener that fails or is interrupted before
+                // the engine exists releases them here: nothing else holds them. The release is registered as the relay is
+                // forked, with no step between, since an interrupt landing between the two would leave the connect running.
+                Scope.acquireRelease(Fiber.initUnscoped {
+                    Abort.run[SlackTransportException] {
+                        transport.connect(wsUrl, wsConfig) { conn =>
+                            // `senderDone` completes only after the stream ended, so every ack it polled was put.
+                            val senderBody =
+                                Abort.run[Closed](outbound.streamUntilClosed().foreach(conn.put))
+                                    .andThen(senderDone.completeUnit.unit)
+                            Fiber.initUnscoped(senderBody).map { senderFiber =>
+                                connectReady.complete(Result.succeed((conn, senderFiber))).andThen {
+                                    // onPeerClose resolves the race on a backend that leaves the stream open after an abnormal close.
+                                    val receiver = Abort.run[Closed](conn.stream.foreach(inbound.put)).unit
+                                    Async.race(receiver, conn.onPeerClose).andThen(closeInbound)
+                                }
+                            }
+                        }
+                    }.map {
+                        // A completion after readiness is a no-op: the gate already holds the pair.
+                        case Result.Success(_)  => Kyo.unit
+                        case Result.Failure(ex) => connectReady.complete(Result.fail(ex)).unit
+                        case Result.Panic(ex)   => connectReady.complete(Result.panic(ex)).unit
+                    }
+                }) { relay =>
                     built.get.map { done =>
                         if done then Kyo.unit
                         else
@@ -433,7 +440,7 @@ private[kyo] object SocketEngine:
                                 }
                             }.andThen(outbound.close.unit).andThen(closeInbound)
                     }
-                }.andThen {
+                }.map { relay =>
                     connectReady.get.map { (conn, sender) =>
                         built.set(true).andThen(new SocketEngine(
                             conn,

@@ -91,6 +91,10 @@ private[net] object PosixConstants:
     val ECONNABORTED: Int = if isMacOrBsd then 53 else 103
     // EBUSY is 16 on both Linux and macOS/BSD; the io_uring reap loop treats it as a transient retry condition.
     val EBUSY: Int = 16
+    // EBADF (9) and EINVAL (22) are the same on Linux and macOS/BSD. A poller wait failing with either (epoll_wait's EINVAL: the fd is not an
+    // epoll fd) means the poller fd itself is gone, which no later wait can recover.
+    val EBADF: Int  = 9
+    val EINVAL: Int = 22
 
     // ENOENT is 2 on both Linux and macOS/BSD. IORING_OP_ASYNC_CANCEL answers -ENOENT when it cannot find the target, which for a cancel
     // issued against an in-flight op means the op completed on its own between the submit and the kernel's lookup.

@@ -5,9 +5,11 @@ import kyo.internal.slack.TransportTest
 /** A slack-simulator container standing in for Slack for one leaf, removed when the leaf's `Scope` closes with the directory its app
   * list was staged in.
   *
-  * slack-simulator (github.com/ClydeDz/slack-simulator) is GPL-3.0. The suite only runs it: the image is built locally from the source
-  * at `Commit`, fetched as GitHub's tarball and checked against `TarballSha256`, on a base pinned by digest, and nothing of it is
-  * distributed or linked. The build changes one line: `apps.connections.open` answers a `wss` Socket Mode url instead of `ws`, since
+  * slack-simulator (github.com/ClydeDz/slack-simulator) is GPL-3.0. The suite only runs it: the image is built from
+  * `shared/src/test/slack-simulator/Containerfile`, out of the source at a pinned commit fetched as GitHub's tarball and checked against
+  * its SHA-256, on a base pinned by digest, and nothing of it is distributed or linked. A CI run that selects this module builds it
+  * before the tests (`scripts/fixture-images.sh`), so a leaf never reaches the internet; where it was not built,
+  * [[SlackLiveServer.init]] fails with the command that builds it. The build changes one line: `apps.connections.open` answers a `wss` Socket Mode url instead of `ws`, since
   * the module refuses any other scheme before it connects. The suite then connects over `TransportTest.plainLocal`, which speaks `ws`
   * whatever the url says, so the container target exercises the Socket Mode protocol and not its TLS, which the real target covers.
   *
@@ -53,14 +55,12 @@ end SlackLiveServer
 
 object SlackLiveServer:
 
-    val Commit: String = "87373b8855e68307737ef577f0875c0118940523"
+    /** The tag `scripts/fixture-images.sh` builds: the slack-simulator commit's prefix, then the build's revision, which a change to
+      * the Containerfile increments here and there together.
+      */
+    val Image: ContainerImage = ContainerImage("localhost/kyo-slack-simulator", "87373b8855-1")
 
-    val TarballSha256: String = "57bf9176cd04ea399ba7242096ce7dced1f827644abb9be90933ec72502ff325"
-
-    val Base: String = "docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c"
-
-    /** The local tag of the built image. A change to the build below changes its last component. */
-    val Image: ContainerImage = ContainerImage("localhost/kyo-slack-simulator", s"${Commit.take(10)}-1")
+    private val Context = "kyo-slack/shared/src/test/slack-simulator"
 
     val Host: String = "127.0.0.1"
 
@@ -76,7 +76,7 @@ object SlackLiveServer:
 
     def init(using Frame): SlackLiveServer < (Async & Scope & Abort[ContainerException | FileSystemException | HttpException]) =
         for
-            _                 <- ensureImage
+            _                 <- built
             appToken          <- Random.nextStringAlphanumeric(24).map(s => s"xapp-1-$AppId-$s")
             botToken          <- Random.nextStringAlphanumeric(24).map(s => s"xoxb-1-$s")
             directory         <- Path.run(Path.tempDir("kyo-slack-server"))
@@ -101,16 +101,15 @@ object SlackLiveServer:
             }
         }
 
-    /** Builds the image unless the daemon holds it. The suite runs leaves one at a time, so no two builds race. */
-    private def ensureImage(using Frame): Unit < (Async & Scope & Abort[ContainerException | FileSystemException]) =
+    // A missing local tag would otherwise be pulled from a registry named `localhost`, failing with a connection error that names
+    // neither the image's origin nor the fix.
+    private def built(using Frame): Unit < (Async & Abort[ContainerException]) =
         Abort.run[ContainerException](ContainerImage.inspect(Image)).map {
             case Result.Success(_)                                 => Kyo.unit
             case Result.Failure(_: ContainerImageMissingException) =>
-                Path.run(Path.tempDir("kyo-slack-build")).map { directory =>
-                    Path.run((directory / "Containerfile").write(containerfile)).andThen {
-                        ContainerImage.buildFromPath(directory, "Containerfile", tags = Chunk(Image.reference)).discard
-                    }
-                }
+                Abort.panic(new IllegalStateException(
+                    s"${Image.reference} is not built; from the repository root run: podman build -t ${Image.reference} -f $Context/Containerfile $Context"
+                ))
             case Result.Failure(other) => Abort.fail(other)
             case Result.Panic(e)       => Abort.panic(e)
         }
@@ -133,19 +132,6 @@ object SlackLiveServer:
             case Result.Success(_) => Kyo.unit
             case other             => Abort.fail(ContainerHealthCheckException(container.id, s"slack-simulator: $other", attempts = 1))
         }
-
-    private val containerfile: String =
-        s"""FROM $Base
-           |WORKDIR /app
-           |RUN node -e "fetch('https://codeload.github.com/ClydeDz/slack-simulator/tar.gz/$Commit').then(r => r.arrayBuffer()).then(b => require('fs').writeFileSync('/tmp/src.tgz', Buffer.from(b)))" \\
-           | && echo "$TarballSha256  /tmp/src.tgz" | sha256sum -c - \\
-           | && tar xzf /tmp/src.tgz --strip-components=1 -C /app \\
-           | && rm /tmp/src.tgz
-           |RUN sed -i 's#url: `ws://#url: `wss://#' src/server/routes/slackApi.ts && grep -q 'url: `wss://' src/server/routes/slackApi.ts
-           |RUN yarn install --frozen-lockfile && yarn build:server
-           |EXPOSE 4500
-           |CMD ["node", "dist/server/server/index.js"]
-           |""".stripMargin
 
     private def appsJson(appToken: String, botToken: String)(using Frame): String =
         Json.encode(Apps(Chunk(App(

@@ -62,7 +62,7 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
         // A Chrome this leaf fails to reap would otherwise run for the rest of the suite.
         def kill: Unit < Async =
             Abort.run[CommandException](Command("pkill", "-9", "-f", "--", token).textWithExitCode).unit
-        Abort.run[BrowserSetupException](SharedChrome.chromeConfig).map { obtained =>
+        Abort.run[BrowserSetupException](SharedChrome.chromeConfig()).map { obtained =>
             val cfg = obtained match
                 case Result.Success(base) => base.copy(extraArgs = Chunk(token))
                 case other                => cancel(s"no Chrome to launch here: $other")

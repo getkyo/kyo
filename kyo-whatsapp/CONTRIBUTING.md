@@ -286,7 +286,10 @@ Tests extend `BaseWhatsAppTest` and live in `shared/src/test`, with no platform 
   clock, so such a test sets a request timeout no step reaches.
 - `WhatsAppLiveTest` has one set of leaves for two targets: Meta's Cloud API when
   `KYO_WHATSAPP_TOKEN` is set, otherwise a whaloc container (`WhatsAppLiveServer`, pinned by
-  digest, started through kyo-pod). What a person does in the chat is an `Act`: Meta's target
+  digest, started through kyo-pod). A CI run whose test selection includes kyo-whatsapp pulls
+  that digest before the tests (`scripts/fixture-images.sh`) and a leaf never pulls it: where it
+  is missing, the leaf fails with the `podman pull` command, so a digest change updates
+  `WhatsAppLiveServer.Image` and its entry in `scripts/fixture-images.sh` together. What a person does in the chat is an `Act`: Meta's target
   asks the person for it, the container's target injects it through whaloc's control plane, and
   both assert the same notification. A leaf whaloc does not reproduce passes its reason as
   `realOnly` and is cancelled on the container; it never asserts whaloc's divergence. Its
