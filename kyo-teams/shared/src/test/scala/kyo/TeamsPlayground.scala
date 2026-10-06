@@ -41,7 +41,9 @@ object TeamsPlayground:
 
     val ConversationText: String = "kyo-teams-live"
 
-    private val Port = 56150
+    // Below Linux's ephemeral range (32768 to 60999). The Playground binds its port once to test it and falls back to a random port
+    // when that bind fails, and an outbound connection's local port inside the range can take it first.
+    private val Port = 5615
 
     private val Context = "kyo-teams/shared/src/test/playground"
 
@@ -66,6 +68,9 @@ object TeamsPlayground:
             .copy(image = Image)
             // Without it the Playground opens a browser on its UI at start.
             .env("TEAMSAPPTESTER_BROWSER", "none")
+            // --disable-telemetry stops the Playground's events but not the Application Insights SDK's own usage reports, which
+            // probe the cloud metadata address (169.254.169.254) and post to applicationinsights.azure.com from inside the leaf.
+            .env("APPLICATION_INSIGHTS_NO_STATSBEAT", "true")
             .port(Port, 0)
             .requireService(true)
             // The bot endpoint is never called: the leaves drive the connector, so the Playground's wait for it only logs.

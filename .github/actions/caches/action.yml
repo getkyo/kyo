@@ -37,13 +37,10 @@ runs:
           echo "~/.sbt"
           echo "~/.ivy2/cache"
           echo "KYO_CACHE_PATHS"
-          echo "browser-key=kyo-browser-${{ inputs.os }}-${{ hashFiles('kyo-browser/shared/src/main/scala/kyo/Browser.scala', 'kyo-browser/shared/src/main/scala/kyo/internal/ChromeDownloader.scala') }}"
+          # The entry holds exactly what chrome-preload.sh installs, so its key is that script plus the version it installs.
+          echo "browser-key=kyo-browser-${{ inputs.os }}-$(bash scripts/chrome-preload.sh version)-${{ hashFiles('scripts/chrome-preload.sh', 'scripts/fetch-lib.sh') }}"
           echo "browser-prefix=kyo-browser-${{ inputs.os }}-"
-          echo "browser-paths<<KYO_CACHE_PATHS"
-          echo "~/.cache/kyo-browser"
-          echo "~/Library/Caches/kyo-browser"
-          echo "~/AppData/Local/kyo-browser"
-          echo "KYO_CACHE_PATHS"
+          echo "browser-paths=~/.cache/kyo-browser"
         } >> "$GITHUB_OUTPUT"
 
     - id: restore-deps
@@ -63,6 +60,21 @@ runs:
         path: ${{ steps.spec.outputs.browser-paths }}
         key: ${{ steps.spec.outputs.browser-key }}
         restore-keys: ${{ steps.spec.outputs.browser-prefix }}
+
+    # KYO_BROWSER_CACHE points the tests at the one directory the entry lists. Their default is the platform cache
+    # directory, which differs per OS (%LOCALAPPDATA%\cache on Windows), and Chrome under a path the entry does not
+    # list is neither saved nor found, so a test leaf downloads it on every run.
+    - name: Install the tested Chrome
+      if: ${{ inputs.mode == 'restore' && inputs.browser == 'true' }}
+      shell: bash
+      run: |
+        root="$HOME/.cache/kyo-browser"
+        case "${{ inputs.os }}" in
+          windows-*) native_root=$(cygpath -w "$root") ;;
+          *)         native_root="$root" ;;
+        esac
+        echo "KYO_BROWSER_CACHE=$native_root" >> "$GITHUB_ENV"
+        bash scripts/chrome-preload.sh install "${{ inputs.os }}" "$root"
 
     # Carries the exact-hit flags to the save call later in the job. actions/cache/save builds the whole
     # archive before it learns the key exists, so without them every main leg on an unchanged build would
