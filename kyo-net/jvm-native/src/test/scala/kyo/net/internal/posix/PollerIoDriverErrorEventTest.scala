@@ -24,9 +24,9 @@ import kyo.net.internal.transport.ReadOutcome
   * Gate: `PosixTestSockets.assumePoller()` (real loopback pair). The SO_ERROR != 0 assertion is cross-poller; the test does NOT assert the exact
   * value 104 (ECONNRESET is 54 on macOS, 104 on Linux) to remain cross-platform.
   *
-  * Anti-flakiness: per-fd registration latches arm the injection only after both interests have executed on the change worker;
-  * `Async.timeout(5.seconds)` is the deadlock ceiling for leaf 1 (a driver that dropped the event would hang); leaf 2 uses a 2s timeout that expires as the
-  * PASS signal.
+  * Anti-flakiness: per-fd registration latches arm the injection only after both interests have executed on the change worker. In leaf 1 a
+  * driver that dropped the event hangs the leaf. Leaf 2 fences on poll cycles: the injection is consumed in one cycle, and a writable armed
+  * afterwards completes only in a later cycle, strictly after the injecting cycle's dispatch.
   *
   * Uses a `RecordingPollerBackend(PollerBackend.default())` with the authorized synthetic error-only injection. SO_ERROR is read from the
   * real kernel via `RecordingSocketBindings`, not a scripted value. Per-fd registration latches arm the injection only after both interests
@@ -66,7 +66,7 @@ class PollerIoDriverErrorEventTest extends Test:
             // can run dispatchError; there is no constructible interleaving that yields Closed).
             //
             // Anti-flakiness: registeredRead/registeredWrite latch on the real registrations executing on the change worker, then the injection
-            // is armed; Async.timeout(5.seconds) is only the deadlock ceiling (a driver that dropped the event would hang).
+            // is armed.
             PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
                 val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
                 val real     = PollerBackend.default()
@@ -90,10 +90,10 @@ class PollerIoDriverErrorEventTest extends Test:
                     _ <- backend.registeredRead(acceptedFd).safe.get
                     _ <- backend.registeredWrite(acceptedFd).safe.get
                     _ = backend.syntheticErrorFd.set(acceptedFd)
-                    // The pending read must be failed Closed by the error dispatch (confirmed real SO_ERROR). Bounded so a driver
-                    // that dropped the event and left the read pending forever fails fast with a timeout rather than hanging.
-                    readOutcome  <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
-                    writeOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(writePromise.safe.get))
+                    // The pending read must be failed Closed by the error dispatch (confirmed real SO_ERROR). A driver that dropped the
+                    // event leaves the read pending forever.
+                    readOutcome  <- Abort.run[Closed](readPromise.safe.get)
+                    writeOutcome <- Abort.run[Closed | NetException](writePromise.safe.get)
                     _            <- Sync.defer {
                         driver.close()
                         // Close the accepted fd (driver.close does not close socket fds; closeHandle would, but it wasn't called here).
@@ -105,9 +105,7 @@ class PollerIoDriverErrorEventTest extends Test:
                         // The pending read is failed by the real error: either the error dispatch fails it Closed, or the recv itself reaps the
                         // errno and surfaces a typed receive failure (ReadOutcome.Failed). Both mean the read was failed, not stranded.
                         case Result.Success(ReadOutcome.Failed(_)) => succeed
-                        case Result.Failure(_: Timeout)            =>
-                            fail("error event dropped: the pending read was never failed and hung")
-                        case other => fail(s"unexpected read outcome: $other")
+                        case other                                 => fail(s"unexpected read outcome: $other")
                     end match
                     writeOutcome match
                         // A real reset fd is genuinely write-ready: the real kernel delivers the write bit and dispatchWritable completes
@@ -116,8 +114,6 @@ class PollerIoDriverErrorEventTest extends Test:
                         case Result.Success(_)         => succeed
                         case Result.Failure(_: Closed) =>
                             fail("a real reset fd is write-ready; the pending writable must complete Success, not Closed")
-                        case Result.Failure(_: Timeout) =>
-                            fail("error event dropped: the pending writable was stranded and hung")
                         case other => fail(s"unexpected write outcome: $other")
                     end match
                 end for
@@ -140,7 +136,8 @@ class PollerIoDriverErrorEventTest extends Test:
             // the same `soError != 0` check, so exercising the drop via the pending read covers the writable drop the recycled-connect guard
             // protects (a real connected socket is genuinely writable, so a real writable event is not a stale event and cannot stand in here).
             //
-            // Anti-flakiness: the 2s Timeout expiring with the read still pending IS the PASS signal (a driver that mishandled the stale event would complete it Closed).
+            // Anti-flakiness: the read still pending once the injecting poll cycle has fully dispatched IS the PASS signal (a driver that
+            // mishandled the stale event would have completed it Closed within that cycle).
             PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
                 val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
                 val real     = PollerBackend.default()
@@ -159,22 +156,24 @@ class PollerIoDriverErrorEventTest extends Test:
                 for
                     // Wait until read interest has executed on the change worker, then arm the one-shot synthetic error injection for the next
                     // poll cycle: the real getsockopt on the live fd returns 0, so the driver must drop the event.
-                    _ <- backend.registeredRead(acceptedFd).safe.get
+                    _      <- backend.registeredRead(acceptedFd).safe.get
+                    cycles <- DriverCycles.init(driver)
                     _ = backend.syntheticErrorFd.set(acceptedFd)
-                    // The stale error-only event must NOT complete the read. Give the poll loop ample time to fire and (correctly) drop it;
-                    // the bounded wait expiring with the read still pending is the PASS signal (a driver that mishandled the stale event would complete it Closed instead).
-                    readOutcome <- Abort.run[Timeout | Closed](Async.timeout(2.seconds)(readPromise.safe.get))
-                    _           <- Sync.defer {
+                    // The stale error-only event must NOT complete the read. The injection is consumed inside one poll, whose dispatch runs
+                    // to completion before the next cycle starts, so a writable armed after consumption completes strictly after that dispatch.
+                    _ <- cycles.until(backend.syntheticErrorFd.get() == -1)
+                    _ <- cycles.next
+                    readOutcome = readPromise.poll()
+                    _ <- Sync.defer {
+                        cycles.close()
                         driver.close()
                         PosixTestSockets.closePeerForEof(spy, clientFd)
                         PosixTestSockets.closePeerForEof(spy, acceptedFd)
                     }
                 yield
                     readOutcome match
-                        case Result.Failure(_: Timeout) => succeed // event dropped: the read is still pending, as it must be.
-                        case Result.Failure(c: Closed)  =>
-                            fail(s"stale error-only event (SO_ERROR=0) failed the live read: ${c.getMessage}")
-                        case other => fail(s"unexpected read outcome: $other")
+                        case Absent => succeed // event dropped: the read is still pending, as it must be.
+                        case other  => fail(s"stale error-only event (SO_ERROR=0) completed the live read: $other")
                     end match
                 end for
             }
