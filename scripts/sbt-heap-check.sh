@@ -50,8 +50,9 @@ check_tree() {
     local vars starts
     while IFS= read -r f; do
         case "$f" in */scripts/sbt.sh|*/scripts/sbt-heap-check.sh) continue ;; esac
-        # Exempt only on code: a comment that names the lib or scripts/sbt.sh exempts nothing.
-        grep -v '^[[:space:]]*#' "$f" | grep -q 'sbt-heap-lib\.sh\|scripts/sbt\.sh\|/sbt\.sh"' && continue
+        # Exempt only on code: a comment that names the lib or scripts/sbt.sh exempts nothing. grep -c, not -q: -q exits at the first
+        # match, and on a script larger than a pipe buffer the first grep then dies of SIGPIPE, which pipefail turns into no exemption.
+        grep -v '^[[:space:]]*#' "$f" | grep -c 'sbt-heap-lib\.sh\|scripts/sbt\.sh\|/sbt\.sh"' >/dev/null && continue
         vars=$(sbt_assigned_vars "$f")
         starts="$SBT_START|${CMD_AT}\"?\\\$\\{?(${SBT_VAR_NAME}${vars:+|$vars})\\}?\"?([[:space:]]|$)"
         while IFS=: read -r n line; do
@@ -155,6 +156,14 @@ self_test() {
     reset
     printf '#!/bin/bash\nCMD=ls\n"$CMD" -l\ntool="$HOME/bin/sbtx"\n"$tool" y\n' > "$dir/scripts/l.sh"
     expect "a variable holding something other than sbt passes" 0 ""
+
+    reset
+    {
+        printf '#!/bin/bash\n. "$here/sbt-heap-lib.sh"\n'
+        for _ in $(seq 1 2000); do printf ': padding that puts the lib line far ahead of the end of a file larger than a pipe buffer\n'; done
+        printf 'sbt "$(sbt_heap tool)" x\n'
+    } > "$dir/scripts/m.sh"
+    expect "a script larger than a pipe buffer that sources the lib passes" 0 ""
 
     echo "Results: $pass/$((pass+fail)) passed, $fail failed"
     [ "$fail" = 0 ]
