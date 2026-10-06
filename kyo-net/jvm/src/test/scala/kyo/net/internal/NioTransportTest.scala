@@ -27,23 +27,13 @@ class NioTransportTest extends Test:
     /** Create a transport and register its driver to close at leaf-scope exit. An owned transport (unlike the process-shared one) must be closed,
       * or its never-exiting selector poll loop keeps a scheduler worker busy and the suite fails the end-of-run leak check.
       */
-    def mkTransport()(using Frame): NioTransport < (Sync & Scope) =
-        Sync.defer(NioTransport.init()).map { t =>
+    def mkTransport(clock: Clock = Clock.live)(using Frame): NioTransport < (Sync & Scope) =
+        Sync.defer(NioTransport.init(clock)).map { t =>
             Scope.ensure(Sync.defer {
                 import AllowUnsafe.embrace.danger
                 t.pool.next().close()
             }).andThen(t)
         }
-
-    /** Poll a condition driven by a real FIN through the OS (the reclaim runs on the transport carrier, out of the test's reach). */
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(5.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
 
     // -----------------------------------------------------------------------
     // Construction
@@ -137,23 +127,16 @@ class NioTransportTest extends Test:
                     ByteBuffer.allocate(engine.getSession.getPacketBufferSize),
                     ByteBuffer.allocate(engine.getSession.getApplicationBufferSize)
                 ))
-                Abort.run[kyo.net.NetException | Timeout](
-                    Async.timeout(5.seconds)(
-                        transport.upgradeToTls(
-                            conn,
-                            kyo.net.NetTlsConfig(trustAll = true, sniHostname = Present("localhost")),
-                            16
-                        ).safe.get
-                    )
+                // A missing reject parks the re-upgrade, which hangs the leaf to its cap.
+                Abort.run[kyo.net.NetException](
+                    transport.upgradeToTls(conn, kyo.net.NetTlsConfig(trustAll = true, sniHostname = Present("localhost")), 16).safe.get
                 ).map { second =>
                     latch.countDown()
                     conn.close()
                     serverSock.close()
                     second match
                         case Result.Failure(_: kyo.net.NetException) => succeed
-                        case Result.Failure(_: Timeout)              =>
-                            assert(false, "the re-upgrade hung instead of failing typed (the reject is missing)")
-                        case other =>
+                        case other                                   =>
                             assert(false, s"a second upgrade of an upgraded handle must fail typed; got $other")
                     end match
                 }
@@ -626,21 +609,28 @@ class NioTransportTest extends Test:
                         // A plaintext client: it completes the TCP accept and never sends a ClientHello, so the server handshake registers and parks.
                         transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
                             Scope.ensure(Sync.defer(client.close())).andThen {
-                                // Barrier: wait until the handshake has actually registered. Without it this races the accept and could close a listener
-                                // with nothing to discharge, passing for the wrong reason.
-                                assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount > 0)).map { _ =>
+                                // Barrier: wait until the handshake has actually registered, re-checked once per selector cycle of the transport's
+                                // driver, where the accept registers it. Without it this races the accept and could close a listener with nothing to
+                                // discharge, passing for the wrong reason.
+                                NioIoDriverTest.Cycles.init(transport.driver).map { cycles =>
+                                    cycles.until(transport.pendingAcceptHandshakeCount > 0).andThen(cycles.close())
+                                }.map { _ =>
                                     listener.close()
-                                    assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount == 0)).map { _ =>
-                                        // The discharge fails the handshake promise, whose existing teardown arm reaps the handle and closes the channel,
-                                        // which this still-connected client observes as its inbound terminating.
-                                        Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take))).map {
-                                            outcome =>
-                                                client.close()
-                                                assert(
-                                                    outcome.isSuccess,
-                                                    s"the listener close must release its stalled handshake's channel, got $outcome"
-                                                )
-                                        }
+                                    // The discharge runs inside close() on this carrier, so the registry is empty once it returns.
+                                    assert(
+                                        transport.pendingAcceptHandshakeCount == 0,
+                                        "the listener close must discharge its accepted handshake"
+                                    )
+                                }.andThen {
+                                    // The discharge fails the handshake promise, whose existing teardown arm reaps the handle and closes the channel,
+                                    // which this still-connected client observes as its inbound terminating.
+                                    Abort.run[Closed](client.inbound.safe.take).map { outcome =>
+                                        client.close()
+                                        val released = outcome match
+                                            case Result.Success(span) => span.isEmpty
+                                            case Result.Failure(_)    => true
+                                            case _                    => false
+                                        assert(released, s"the listener close must release its stalled handshake's channel, got $outcome")
                                     }
                                 }
                             }
@@ -695,37 +685,43 @@ class NioTransportTest extends Test:
     "threads peerCloseGrace end-to-end: an abandoned backpressured accepted connection is reclaimed after the client FIN" in {
         given Frame = Frame.internal
         // Cap-1 inbound + 64-byte read chunk so a 128-byte client write becomes two reads, the second overflowing the channel and parking the
-        // accepted-side ReadPump with no armed read. Short grace so the reclaim fires promptly. Without NioTransport threading config.peerCloseGrace
-        // into the handle and the Connection, the grace defaults to Infinity and the abandoned connection is never reclaimed (isOpen stays true).
-        val config =
-            NetConfig(channelCapacity = 1, readChunkSize = 64.bytes, peerCloseGrace = 200.millis.grace)
+        // accepted-side ReadPump with no armed read. Without NioTransport threading config.peerCloseGrace and its clock into the handle and the
+        // Connection, the grace defaults to Infinity and the abandoned connection is never reclaimed.
+        val grace     = 200.millis
+        val config    = NetConfig(channelCapacity = 1, readChunkSize = 64.bytes, peerCloseGrace = grace.grace)
         val acceptedP = new IOPromise[Closed, kyo.net.Connection]
-        mkTransport().map { transport =>
-            for
-                listener <- transport.listen("127.0.0.1", 0, 50, config) { conn =>
-                    acceptedP.completeDiscard(Result.succeed(conn))
-                }.safe.get
-                client   <- Sync.defer(new java.net.Socket("127.0.0.1", listener.port))
-                accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[kyo.net.Connection, Abort[Closed]]].safe.get
-                _        <- Sync.defer {
-                    client.getOutputStream.write(Array.fill[Byte](128)(1))
-                    client.getOutputStream.flush()
-                }
-                // A pump that overflows the channel parks by registering a put, so awaiting a pending put guarantees the
-                // FIN lands on a parked pump; a FIN before parking is reclaimed via the EOF path, leaving grace reclaim untested.
-                parked <- awaitCondition(5.seconds)(accepted.inbound.pendingPuts().getOrElse(0) > 0)
-                _ = assert(
-                    parked,
-                    "the accepted-side pump never parked on the full inbound channel, so the FIN below would not exercise the grace reclaim"
-                )
-                _         <- Sync.defer(client.close()) // FIN with the pump parked
-                reclaimed <- awaitCondition(5.seconds)(!accepted.isOpen)
-                _         <- Sync.defer(listener.close())
-            yield assert(
-                reclaimed,
-                "NioTransport must thread peerCloseGrace so an abandoned backpressured accepted connection is reclaimed after the client FIN"
-            )
-            end for
+        Clock.withTimeControl { tc =>
+            Clock.get.map(mkTransport(_)).map { transport =>
+                for
+                    listener <- transport.listen("127.0.0.1", 0, 50, config) { conn =>
+                        acceptedP.completeDiscard(Result.succeed(conn))
+                    }.safe.get
+                    client   <- Sync.defer(new java.net.Socket("127.0.0.1", listener.port))
+                    accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[kyo.net.Connection, Abort[Closed]]].safe.get
+                    _        <- Sync.defer {
+                        client.getOutputStream.write(Array.fill[Byte](128)(1))
+                        client.getOutputStream.flush()
+                    }
+                    // The pump arms its grace on the transport's clock exactly when it parks on the full channel, so the pending sleeper IS the
+                    // parked state: the FIN below lands on a parked pump, not the ordinary EOF path.
+                    _ <- tc.awaitPendingSleepers(1)
+                    _ = assert(
+                        accepted.inbound.pendingPuts().getOrElse(0) == 1,
+                        "the accepted-side pump must be parked on the full channel"
+                    )
+                    _ <- Sync.defer(client.close()) // FIN with the pump parked
+                    // Each grace expiry probes for the FIN and either reclaims or re-arms; nothing orders the FIN's arrival against a probe, so
+                    // advance one grace at a time and wait for the pump's answer to each.
+                    closing = accepted.onClosing.safe
+                    _ <- Loop.foreach {
+                        tc.advance(grace).andThen(Async.race(closing.get.map(_ => true), tc.awaitPendingSleepers(1).map(_ => false))).map {
+                            reclaimed => if reclaimed then Loop.done(()) else Loop.continue
+                        }
+                    }
+                    _ <- Sync.defer(listener.close())
+                yield assert(!accepted.isOpen, "an abandoned backpressured accepted connection must be reclaimed after the client FIN")
+                end for
+            }
         }
     }
 

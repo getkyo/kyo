@@ -1,7 +1,6 @@
 package kyo.net
 
 import kyo.*
-import kyo.net.internal.TlsProviderPlatform
 
 /** The acceptance gate for the per-operation configuration model: a setting reaches the operation that was given it, on the ONE shared
   * [[NetPlatform.transport]], with no new transport built.
@@ -14,13 +13,13 @@ import kyo.net.internal.TlsProviderPlatform
   * The transport identity is asserted alongside every leaf, so "each caller got its own setting" is never satisfied by having quietly built a
   * second transport. The driver-count half of the no-new-transport proof lives in the jvm-native `ProcessSharedTransportTest`, which can reach
   * `Diagnostics` to count them.
+  *
+  * The deadline leaves are the exception: a deadline fires at an exact virtual instant only on a transport whose clock the leaf controls, so
+  * each builds one transport of its own and runs both operations on it. The shape is the same, two values on one instance.
   */
 class TransportPerOperationConfigTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    private def assumeTls(): Unit =
-        if !TlsProviderPlatform.hasAvailableEngine then cancel("no TLS engine provider is available on this host")
 
     // 192.0.2.1 is in RFC 5737 TEST-NET-1: reserved and routable but unanswered, so a TCP connect parks in SYN_SENT until a deadline fires
     // rather than being refused. The same black hole TransportConnectTimeoutProducedTest uses.
@@ -106,93 +105,68 @@ class TransportPerOperationConfigTest extends Test:
         }
     }
 
-    "connectTimeout is per connect, not per transport".notNative in {
-        given Frame   = Frame.internal
-        val transport = NetPlatform.transport
-        val tight     = 200.millis
-        val generous  = 30.seconds
-        // Both connects go to the same black hole on the same transport. The tight one must fail with ITS OWN deadline while the generous one
-        // is still parked: a shared or construction-captured deadline would either fail both or neither.
-        Fiber.initUnscoped(
-            Abort.run[NetException](transport.connect(blackHoleHost, blackHolePort, generous).safe.get)
-        ).map { generousFiber =>
-            // Guarantees the generous fiber is interrupted (releasing its half-open connect) even if an assertion below throws before the
-            // explicit `generousFiber.interrupt` call is reached.
-            Scope.ensure(generousFiber.interrupt.unit).andThen {
-                Abort.run[NetException | Closed | Timeout](
-                    Async.timeout(10.seconds)(transport.connect(blackHoleHost, blackHolePort, tight).safe.get)
-                ).map { tightOutcome =>
-                    // The generous connect must STILL BE PARKED at this moment. Without this check the leaf proves only that the tight connect
-                    // timed out, which a single shared deadline would also produce: the assertions below would pass unchanged if both connects
-                    // were racing one 200ms timer. Poll before interrupting, since interrupting settles it.
-                    generousFiber.poll.map { generousStillPending =>
-                        assert(
-                            generousStillPending.isEmpty,
-                            s"the connect that asked for $generous must still be parked when the $tight one has already fired; " +
-                                s"it settled as $generousStillPending, which is what a shared or construction-captured deadline looks like"
-                        )
-                        generousFiber.interrupt
-                    }.map { _ =>
-                        tightOutcome match
-                            case Result.Failure(e: NetConnectTimeoutException) =>
-                                assert(
-                                    e.timeout == tight,
-                                    s"the connect that asked for $tight must fail with its own deadline, got ${e.timeout}"
-                                )
-                                assert(NetPlatform.transport eq transport, "the connect must have used the one shared transport")
-                            case Result.Success(conn) =>
-                                // Regression path: the black-hole connect unexpectedly succeeded, handing back a live connection. Close it so
-                                // a failing run does not also leak the socket.
-                                conn.close()
-                                assert(false, s"expected the tight per-connect deadline to fail, but the connect unexpectedly succeeded")
-                            case other =>
-                                assert(
-                                    false,
-                                    s"expected the tight per-connect deadline to produce NetConnectTimeoutException($tight), got $other " +
-                                        "(a Timeout means no deadline was armed for this call)"
-                                )
-                        end match
-                    }
-                }
-            }
-        }
+    "connectTimeout is per connect, not per transport" - eachBackendOnClock { (transport, tc) =>
+        if kyo.internal.Platform.isNative then cancel("a TEST-NET-1 connect can fail fast as unreachable on Native instead of parking")
+        val tight    = 200.millis
+        val generous = 30.seconds
+        // Both connects go to the same black hole on the same transport. Each must fail on ITS OWN deadline: a shared or construction-captured
+        // deadline would fail both at one instant, and the generous one would leave no timer armed after the tight one fired.
+        for
+            generousOutcome <- Fiber.init(Abort.run[NetException](transport.connect(blackHoleHost, blackHolePort, generous).safe.get))
+            tightOutcome    <- Fiber.init(Abort.run[NetException](transport.connect(blackHoleHost, blackHolePort, tight).safe.get))
+            _               <- tc.awaitPendingSleepers(2)
+            _               <- tc.advance(tight)
+            tightResult     <- tightOutcome.get
+            _               <- tc.awaitPendingSleepers(1)
+            _               <- tc.advance(generous.minusOrZero(tight))
+            generousResult  <- generousOutcome.get
+        yield
+            def timeoutOf(result: Result[NetException, Connection]): Maybe[Duration] = result match
+                case Result.Failure(e: NetConnectTimeoutException) => Present(e.timeout)
+                case Result.Success(conn)                          => conn.close(); Absent
+                case _                                             => Absent
+            assert(timeoutOf(tightResult) == Present(tight), s"the $tight connect must fail on its own deadline, got $tightResult")
+            assert(
+                timeoutOf(generousResult) == Present(generous),
+                s"the $generous connect must fail on its own deadline, got $generousResult"
+            )
+        end for
     }
 
-    "two listeners on one transport reap stalled handshakes on their own deadlines" in {
-        assumeTls()
-        given Frame = Frame.internal
-        TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-            val transport = NetPlatform.transport
-            val material  = NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath))
-            // Same transport, same TLS material, two deadlines. A plaintext client completes each TCP accept and never sends a ClientHello, so
-            // both server handshakes park; only the listener that asked for a finite deadline may reap its connection.
+    "two listeners on one transport reap stalled handshakes on their own deadlines" - eachBackendTlsOnClock {
+        (transport, tc, material, clientTls) =>
+            // Same transport, same TLS material, two deadlines. A plaintext client completes each TCP accept and never sends a ClientHello, so both
+            // server handshakes park; only the listener that asked for a finite deadline may reap its connection.
             val reaping   = material.copy(handshakeTimeout = 150.millis)
             val unbounded = material.copy(handshakeTimeout = Duration.Infinity)
-            // Every acquisition below is Scope.ensure-guarded: if a later listen/connect/read fails, an earlier one would otherwise never
-            // reach its trailing close() call in the yield.
+            val noLimit   = clientTls.copy(handshakeTimeout = Duration.Infinity)
             for
                 reapingListener   <- transport.listenTls("127.0.0.1", 0, 16, reaping)(_ => ()).safe.get
                 _                 <- Scope.ensure(Sync.defer(reapingListener.close()))
                 unboundedListener <- transport.listenTls("127.0.0.1", 0, 16, unbounded)(_ => ()).safe.get
                 _                 <- Scope.ensure(Sync.defer(unboundedListener.close()))
-                reapedClient      <- transport.connect("127.0.0.1", reapingListener.port).safe.get
+                reapedClient      <- transport.connect("127.0.0.1", reapingListener.port, Duration.Infinity).safe.get
                 _                 <- Scope.ensure(Sync.defer(reapedClient.close()))
-                heldClient        <- transport.connect("127.0.0.1", unboundedListener.port).safe.get
-                _                 <- Scope.ensure(Sync.defer(heldClient.close()))
+                heldClient        <- transport.connect("127.0.0.1", unboundedListener.port, Duration.Infinity).safe.get
+                // A witness completes its handshake on the unbounded listener, which accepts in connection order: the held client was accepted
+                // first, so a deadline wrongly armed for it is pending before the advance.
+                witness <- transport.connectTls("127.0.0.1", unboundedListener.port, noLimit).safe.get
+                _       <- Scope.ensure(Sync.defer(witness.close()))
+                _       <- tc.awaitPendingSleepers(1)
+                _       <- tc.advance(150.millis)
                 // The reaped side closes the accepted fd, which this client observes as its inbound terminating.
-                reaped <- Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](reapedClient.inbound.safe.take)))
-                // The unbounded side must still be held open at that moment, proving the two listeners did not share a deadline.
-                held <- Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](heldClient.inbound.safe.take)))
+                reaped <- Abort.run[Closed](reapedClient.inbound.safe.take)
+                // The unbounded side is still alive past the other listener's deadline: its handshake completes now.
+                held <- Abort.run[NetException](transport.upgradeToTls(heldClient, noLimit, 16).safe.get)
             yield
-                reapedClient.close()
-                heldClient.close()
-                reapingListener.close()
-                unboundedListener.close()
-                assert(reaped.isSuccess, s"the 150ms listener must reap its stalled handshake, got $reaped")
-                assert(held.isFailure, s"the Infinity listener must not reap its stalled handshake, got $held")
-                assert(NetPlatform.transport eq transport, "both listeners must have come from the one shared transport")
+                held.foreach(_.close())
+                val wasReaped = reaped match
+                    case Result.Success(span) => span.isEmpty
+                    case Result.Failure(_)    => true
+                    case _                    => false
+                assert(wasReaped, s"the 150ms listener must reap its stalled handshake, got $reaped")
+                assert(held.isSuccess, s"the Infinity listener must not reap its stalled handshake, got $held")
             end for
-        }
     }
 
 end TransportPerOperationConfigTest

@@ -1,7 +1,9 @@
 package kyo.net.internal.posix
 
 import kyo.*
+import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.Connection
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.TlsProviderPlatform
@@ -14,8 +16,8 @@ import kyo.net.internal.TlsTestCert
   * leaving an entry whose exactly-once gate the timer already spent. No later discharge can fire it, and on this transport nothing else
   * reclaims it, since a transport is process-lifetime and the entry's owning listener can outlive it indefinitely.
   *
-  * A tight deadline against a peer that never sends a ClientHello lands in that window often, so the leaf drives many handshakes and then
-  * requires the registry to drain to empty. Retention only, never a double-free: the spent gate is what makes the entry inert.
+  * A deadline fired the moment it is armed, against a peer that never sends a ClientHello, lands in that window often, so the leaf drives
+  * many handshakes and then requires the registry to drain to empty. Retention only, never a double-free: the spent gate is what makes the entry inert.
   */
 class PosixTransportHandshakeRegistryTest extends Test:
 
@@ -41,34 +43,59 @@ class PosixTransportHandshakeRegistryTest extends Test:
             val backend = PollerBackend.default()
             val driver  = TestDrivers.forBackend(backend, backend.create(), sock)
             discard(driver.start())
-            val transport = TestTransports.forTesting(driver, sock, backendIsEpoll = false)
-            // 1ms: short enough that the timer routinely fires inside the arm-then-publish window this leaf exists for.
+            val timeout   = 1.milli
             val serverTls = NetTlsConfig(
                 certChainPath = Present(TlsTestCert.certPath),
                 privateKeyPath = Present(TlsTestCert.keyPath),
-                handshakeTimeout = 1.milli
+                handshakeTimeout = timeout
             )
-            transport.listenTls("127.0.0.1", 0, 64, serverTls)(_ => ()).safe.get.map { listener =>
-                // Each client completes the TCP accept and then sends nothing, so every server handshake parks and is reaped by the deadline.
-                Loop(0) { i =>
-                    if i >= 40 then Loop.done(())
-                    else
-                        connectRaw(listener.port).map { clientFd =>
-                            // Hold briefly so the 1ms deadline fires against a parked handshake, then release the client fd.
-                            Async.sleep(3.millis).andThen(Sync.defer(discard(sock.close(clientFd)))).andThen(Loop.continue(i + 1))
-                        }
-                }.andThen {
-                    // Every handshake has settled by its deadline; the registry must hold nothing for them.
-                    // assertEventually fails the leaf if the count never reaches 0; the follow-up assert states what a non-zero count means.
-                    assertEventually(Sync.defer(transport.pendingHandshakeCount == 0)).map { _ =>
-                        val remaining = transport.pendingHandshakeCount
-                        listener.close()
-                        driver.close()
-                        assert(
-                            remaining == 0,
-                            s"the handshake registry retained $remaining settled obligation(s): an entry whose gate the deadline already " +
-                                "spent can never be discharged, and nothing else reclaims it on a process-lifetime transport"
-                        )
+            Clock.withTimeControl { tc =>
+                Clock.get.map { clock =>
+                    val transport = TestTransports.forTesting(driver, sock, backendIsEpoll = false, clock = clock)
+                    val served    = Promise.Unsafe.init[Connection, Any]()
+                    transport.listenTls("127.0.0.1", 0, 64, serverTls)(conn =>
+                        discard(served.complete(Result.succeed(conn)))
+                    ).safe.get.map {
+                        listener =>
+                            // Each client completes the TCP accept and then sends nothing, so every server handshake parks and is reaped by the
+                            // deadline. The advance waits for the deadline to be armed and fires it at once, concurrently with the accept
+                            // carrier publishing the registration: the arm-then-publish window this leaf exists for. The client's EOF is the
+                            // reap's latch.
+                            Loop(0) { i =>
+                                if i >= 40 then Loop.done(())
+                                else
+                                    for
+                                        fired    <- Fiber.init(tc.awaitPendingSleepers(1).andThen(tc.advance(timeout)))
+                                        clientFd <- connectRaw(listener.port)
+                                        _        <- fired.get
+                                        buf      <- Sync.defer(Buffer.alloc[Byte](1))
+                                        eof      <- sock.recv(clientFd, buf, 1, 0).safe.get
+                                        _        <- Sync.defer { buf.close(); discard(sock.close(clientFd)) }
+                                    yield
+                                        assert(
+                                            eof.value <= 0,
+                                            s"iteration $i: the reap must close the accepted fd, got ${eof.value} byte(s)"
+                                        )
+                                        Loop.continue(i + 1)
+                            }.andThen {
+                                // A client's EOF can precede its accept carrier's own re-unregister, so the drain point is a sentinel handshake
+                                // that completes: accepts run serially, so its accept proves every reaped one finished its bookkeeping, and its
+                                // handler runs only after its own entry is removed. Time stays held, so the sentinel's deadline never fires.
+                                transport.connectTls("127.0.0.1", listener.port, NetTlsConfig(trustAll = true)).safe.get.map { client =>
+                                    served.safe.get.map { server =>
+                                        val remaining = transport.pendingHandshakeCount
+                                        client.close()
+                                        server.close()
+                                        listener.close()
+                                        driver.close()
+                                        assert(
+                                            remaining == 0,
+                                            s"the handshake registry retained $remaining settled obligation(s): an entry whose gate the deadline " +
+                                                "already spent can never be discharged, and nothing else reclaims it on a process-lifetime transport"
+                                        )
+                                    }
+                                }
+                            }
                     }
                 }
             }

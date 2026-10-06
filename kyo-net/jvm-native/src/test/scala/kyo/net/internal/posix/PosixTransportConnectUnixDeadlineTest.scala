@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.NetUnixConnectTimeoutException
 import kyo.net.Test
+import kyo.net.TlsTestCertShared
 
 /** The `connectUnix` deadline, driven through a stall it can actually bound.
   *
@@ -24,7 +25,7 @@ class PosixTransportConnectUnixDeadlineTest extends Test:
 
     "PosixTransport connectUnix deadline" - {
 
-        "a Unix connect the driver never completes fails with the typed Unix timeout leaf" in {
+        "a Unix connect the driver never completes fails with the typed Unix timeout leaf at its deadline" in {
             PosixTestSockets.assumePoller()
             given Frame = Frame.internal
             val sock    = Ffi.load[SocketBindings]
@@ -32,35 +33,44 @@ class PosixTransportConnectUnixDeadlineTest extends Test:
             val real    = TestDrivers.forBackend(backend, backend.create(), sock)
             val driver  = RecordingIoDriver(real)
             discard(driver.start())
-            val transport = TestTransports.forTesting(driver, sock, backendIsEpoll = false)
-            val path      = s"/tmp/kyo-uds-deadline-${java.lang.System.nanoTime()}.sock"
-            val timeout   = 200.millis
+            val path    = s"/tmp/kyo-uds-deadline-${TlsTestCertShared.uniquePathTag()}.sock"
+            val timeout = 200.millis
 
             // The completion arm (the one PosixTransport selects for io_uring) is where a connect goes through driver.awaitConnect and can
             // therefore be left pending. The readiness arm settles the promise inline for AF_UNIX and never reaches the driver at all, which
             // is why the deadline is a no-op there. labelOverride drives that selection without needing a real ring, so this leaf runs on
             // every host rather than only where io_uring exists.
             driver.labelOverride = Present("IoUringDriver")
-            transport.listenUnix(path, 16)(_ => ()).safe.get.map { listener =>
-                // From here the driver takes the connect submission and does nothing with it: the promise stays pending with no outcome
-                // coming, which is the shape every real stall class produces.
-                driver.stallConnect = true
-                Abort.run[kyo.net.NetException | Closed](transport.connectUnix(path, timeout).safe.get).map { outcome =>
-                    listener.close()
-                    driver.close()
-                    // Any connection that somehow completed must not leak.
-                    outcome.foreach(_.close())
-                    outcome match
-                        case Result.Failure(e: NetUnixConnectTimeoutException) =>
-                            assert(e.timeout == timeout, s"expected the connect's own $timeout deadline, got ${e.timeout}")
-                            assert(e.path == path, s"expected the Unix path in the leaf, got ${e.path}")
-                            succeed
-                        case other =>
-                            fail(
-                                s"expected NetUnixConnectTimeoutException($timeout) once the driver stalls the connect, got $other: " +
-                                    "the deadline is the only thing that can free a caller whose connect the transport never completes"
-                            )
-                    end match
+            Clock.withTimeControl { tc =>
+                Clock.get.map { clock =>
+                    val transport = TestTransports.forTesting(driver, sock, backendIsEpoll = false, clock = clock)
+                    for
+                        listener <- transport.listenUnix(path, 16)(_ => ()).safe.get
+                        // From here the driver takes the connect submission and does nothing with it: the promise stays pending with no
+                        // outcome coming, which is the shape every real stall class produces.
+                        _       <- Sync.defer { driver.stallConnect = true }
+                        outcome <- Fiber.init(Abort.run[kyo.net.NetException | Closed](transport.connectUnix(path, timeout).safe.get))
+                        _       <- tc.awaitPendingSleepers(1)
+                        _       <- tc.advance(timeout.minusOrZero(1.millis))
+                        _       <- tc.awaitPendingSleepers(1)
+                        _       <- tc.advance(1.millis)
+                        result  <- outcome.get
+                    yield
+                        listener.close()
+                        driver.close()
+                        // Any connection that somehow completed must not leak.
+                        result.foreach(_.close())
+                        result match
+                            case Result.Failure(e: NetUnixConnectTimeoutException) =>
+                                assert(e.timeout == timeout, s"expected the connect's own $timeout deadline, got ${e.timeout}")
+                                assert(e.path == path, s"expected the Unix path in the leaf, got ${e.path}")
+                            case other =>
+                                fail(
+                                    s"expected NetUnixConnectTimeoutException($timeout) once the driver stalls the connect, got $other: " +
+                                        "the deadline is the only thing that can free a caller whose connect the transport never completes"
+                                )
+                        end match
+                    end for
                 }
             }
         }
