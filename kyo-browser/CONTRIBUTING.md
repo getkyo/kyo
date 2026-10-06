@@ -1051,6 +1051,15 @@ by a detached fiber that parks on `Async.never`; when the kyo scheduler shuts do
 the fiber is interrupted and finalizers destroy Chrome and its temp user-data dir. A
 test never tears Chrome down itself (`SharedChrome.scala:104`).
 
+A test that needs a `LaunchConfig` of its own takes it from
+`SharedChrome.chromeConfig(build)`, never `Browser.chromeForTestingLaunchConfig()`
+with its default "latest" version. `chromeConfig` pins
+`ChromeDownloader.testedVersion`, the version CI installs before tests run
+(`scripts/chrome-preload.sh`, called from `.github/actions/caches`) and keys the
+browser cache on. Any other version is downloaded inside the leaf, which costs up to
+190 MB per run and fails the leaf when the download outlasts its timeout. Bumping
+the tested Chrome is a one-line change to `testedVersion`; the cache key follows it.
+
 The first integration call pays a ~2.8s cold-Chrome boot. `BrowserTest` absorbs it
 with a one-time `warmupGate` (CAS-once `AtomicBoolean`, fires `Browser.eval("1+1")`
 exactly once per class instance) so later per-call schedule budgets in

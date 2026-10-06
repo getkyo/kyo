@@ -23,13 +23,24 @@ final private[kyo] class TokenCache private (config: TeamsConfig, http: HttpClie
                 case Ready(token, expiresAt) if now < expiresAt - config.tokenRefreshMargin => token
                 case current: Fetching => current.fiber.getResult.map(result => settle(current, result))
                 case current           =>
-                    Fiber.initUnscoped[Failure, Fetched, Any, Any](fetch).map { fiber =>
-                        val fetching = new Fetching(fiber)
-                        state.compareAndSet(current, fetching).map { won =>
-                            if won then fiber.getResult.map(result => settle(fetching, result))
-                            else fiber.interrupt.andThen(get)
-                        }
+                    Async.uninterruptible(claim(current)).map {
+                        case Present(fetching) => fetching.fiber.getResult.map(result => settle(fetching, result))
+                        case Absent            => get
                     }
+            }
+        }
+
+    // The fetch fiber waits on `go` until this caller has won the state, so a caller that loses the race never starts a request. The
+    // claim runs where the caller's interrupt cannot reach: a won claim always opens `go`, or the callers waiting on the fiber would
+    // wait forever.
+    private def claim(current: State)(using Frame): Maybe[Fetching] < Async =
+        Promise.init[Unit, Any].map { go =>
+            Fiber.initUnscoped[Failure, Fetched, Any, Any](go.get.andThen(fetch)).map { fiber =>
+                val fetching = new Fetching(fiber)
+                state.compareAndSet(current, fetching).map { won =>
+                    if won then go.completeUnitDiscard.andThen(Present(fetching))
+                    else fiber.interrupt.andThen(Absent)
+                }
             }
         }
 

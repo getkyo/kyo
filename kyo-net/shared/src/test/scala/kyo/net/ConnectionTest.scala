@@ -121,6 +121,27 @@ class ConnectionTest extends Test:
         }
     }
 
+    "Connection.onClosing" - {
+        "a waiter that gives up on onClosing does not complete it" - eachBackend { transport =>
+            transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { listener =>
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
+                        Scope.ensure(Sync.defer(conn.close())).andThen {
+                            Async.race(conn.onClosing.safe.get.map(_ => "closing"), Kyo.lift("gave up")).map { winner =>
+                                assert(winner == "gave up")
+                                assert(
+                                    !conn.onClosing.done(),
+                                    "a waiter giving up on onClosing must leave it pending while the connection is open"
+                                )
+                                assert(conn.isOpen)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "NetAddress equality" - {
         "Tcp addresses are equal when structurally identical" in {
             val a1 = NetAddress.Tcp("localhost", 5432)
