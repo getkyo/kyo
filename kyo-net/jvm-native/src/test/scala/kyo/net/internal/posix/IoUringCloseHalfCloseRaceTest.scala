@@ -35,28 +35,15 @@ import kyo.net.internal.transport.ReadOutcome
   * io_uring-only ([[PosixTestSockets.assumeUring]]): the poller backends (epoll/kqueue) synchronously deregister interest before
   * closing the fd, so there is no kernel-owned in-flight op to force-complete and no equivalent self-induced completion to race.
   *
-  * Anti-flakiness: no `Thread.sleep`, no busy-spin. The only wait is `awaitCondition` (mirrors
-  * [[IoUringHandshakeTimeoutOrderingTest.awaitCondition]]), a bounded poll on a real driver-carrier state transition via `Async.sleep`
-  * between checks, not a timer-based settle. No data is ever sent on `client`, so the in-flight recv has exactly one way to complete:
-  * the close path's own SHUT_RD.
+  * Anti-flakiness: no clock. The only wait is on the recording ring's reaps until `isClosing()` holds, which `closeNow` sets inside the
+  * reap that drains the recv. No data is ever sent on `client`, so the in-flight recv has exactly one way to complete: the close path's own
+  * SHUT_RD; a close that never settles hangs the leaf to its cap.
   */
 class IoUringCloseHalfCloseRaceTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
     private def sock = Ffi.load[SocketBindings]
-
-    /** Poll a real condition until it holds or the bound elapses, re-checking each turn after a short Async.sleep. Mirrors
-      * [[IoUringHandshakeTimeoutOrderingTest.awaitCondition]].
-      */
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
 
     "IoUringDriver local-close half-close-state race" - {
 
@@ -70,7 +57,8 @@ class IoUringCloseHalfCloseRaceTest extends Test:
             if rc != 0 then
                 ring.close()
                 throw Closed("IoUringCloseHalfCloseRaceTest", summon[Frame], s"queue_init failed: rc=$rc")
-            val driver = TestDrivers.forBindings(uring, ring)
+            val recording = RecordingIoUringBindings(uring, ring)
+            val driver    = TestDrivers.forBindings(recording, ring)
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
@@ -81,8 +69,7 @@ class IoUringCloseHalfCloseRaceTest extends Test:
                     driver.awaitRead(acceptedH, promise)
                     // Local close; no peer-initiated close ever happens (the test never sends on or closes `client` before this).
                     driver.closeHandle(acceptedH)
-                    awaitCondition(5.seconds)(acceptedH.isClosing()).map { settled =>
-                        assert(settled, "close sequence did not settle within 5s (closeNow never ran: a hang, not the race under test)")
+                    recording.awaitReapUntil(acceptedH.isClosing()).andThen {
                         promise.poll() match
                             case Present(Result.Failure(_: Closed)) => ()
                             case other => fail(s"in-flight recv promise must resolve Closed (not stranded) on local close; got $other")

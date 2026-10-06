@@ -78,12 +78,12 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
                 discard(clientSock.write(buffer(chunkA)))
 
                 Sync.ensure(cleanup) {
-                    assertEventually(conn.inbound.size().getOrElse(-1) == 1 && handle.pendingRead.isDefined).andThen {
+                    untilState(conn.inbound.size().getOrElse(-1) == 1 && handle.pendingRead.isDefined).andThen {
                         discard(clientSock.write(buffer(chunkB)))
 
                         // Chunk B's 'data' clears the pending read and offerToChannel parks its put (channel full, A unconsumed); the pump does NOT
                         // re-arm while parked, so pendingRead stays empty.
-                        assertEventually(handle.pendingRead.isEmpty)
+                        untilState(handle.pendingRead.isEmpty)
                     }.andThen {
                         handle.upgrading = true
                         val buffered = conn.detachForUpgrade().poll() match

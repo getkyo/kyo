@@ -14,17 +14,13 @@ import kyo.*
   */
 object TlsTestCertShared:
 
-    // A /tmp name must be unique per call: nanoTime alone can tie across concurrent callers (its
-    // granularity is platform-dependent, about 40ns on an aarch64 VM, and a suite start fans a
-    // whole backend x provider matrix out at once), and a tied name means one cell
-    // truncate-rewrites the very pem another cell's TLS setup is reading, which surfaces as a
-    // truncated-key handshake failure. The counter makes the name unique within the process; the
-    // nanoTime keeps names from colliding across processes sharing /tmp.
-    private val pathSeq = new java.util.concurrent.atomic.AtomicLong(0)
-
-    /** A unique component for a /tmp path minted by a test fixture; see the note on `pathSeq`. */
+    /** A unique component for a /tmp path minted by a test fixture, across concurrent callers and across processes sharing /tmp. A tied name
+      * means one cell truncate-rewrites the very pem another cell's TLS setup is reading, which surfaces as a truncated-key handshake failure.
+      * A random UUID, not a clock reading: the clock's granularity (about 40ns on an aarch64 VM) ties when a suite start fans the whole backend
+      * x provider matrix out at once.
+      */
     private[net] def uniquePathTag(): String =
-        s"${java.lang.System.nanoTime()}-${pathSeq.incrementAndGet()}"
+        java.util.UUID.randomUUID().toString
 
     val certPem: String =
         """-----BEGIN CERTIFICATE-----

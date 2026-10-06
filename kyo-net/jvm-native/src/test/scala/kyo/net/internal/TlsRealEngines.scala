@@ -82,8 +82,8 @@ object TlsRealEngines:
       * while the driver's queued teardown still owes it an `SSL_shutdown`, a native use-after-free (unmapped reuse crashes immediately,
       * recycled reuse corrupts a live allocation and surfaces later at an unrelated leaf). Prefer [[singleEngine]] instead, which leaves the
       * free entirely to whichever path (the driver's own free sink, or the test's own cleanup) actually needs it; `NativeSslEngine.free()` is
-      * CAS-guarded exactly-once so calling it from both is harmless. See `PollerIoDriverTlsHalfCloseEtTest`'s `awaitCondition(...)
-      * (!acceptedH.tls.isDefined)` for the guard a caller that still wants this method's convenience must add.
+      * CAS-guarded exactly-once so calling it from both is harmless. See `PollerIoDriverTlsHalfCloseEtTest`'s `untilState(
+      * !acceptedH.tls.isDefined)` for the guard a caller that still wants this method's convenience must add.
       */
     def withEngines[A, S](f: (TlsEngine, TlsEngine) => A < S)(using Frame, AllowUnsafe): A < (S & Sync) =
         if !boringSslAvailable() then

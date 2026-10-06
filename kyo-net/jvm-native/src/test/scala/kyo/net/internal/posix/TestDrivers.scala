@@ -32,3 +32,34 @@ object TestDrivers:
         IoUringDriver.init(uring, ring, sockets)
 
 end TestDrivers
+
+/** Poll or reap cycles of a posix driver, each observed through a real event: an always-writable loopback socket whose write readiness the
+  * cycle delivers. Driver state is re-checked after each cycle, so a wait needs no clock and a state that never arrives hangs to the leaf cap.
+  * Arming the fence registers interest and wakes the loop, and on io_uring its readiness is a reaped CQE, so a leaf asserting a wakeup or a
+  * reap count of its own cannot use it.
+  */
+final class DriverCycles private (driver: kyo.net.internal.transport.IoDriver[PosixHandle], handle: PosixHandle, peer: Int)(using
+    AllowUnsafe
+):
+
+    def next(using Frame): Unit < Async =
+        val p = Promise.Unsafe.init[Unit, Abort[Closed | kyo.net.NetException]]()
+        driver.awaitWritable(handle, p)
+        p.safe.getResult.unit
+    end next
+
+    def until(cond: => Boolean)(using Frame): Unit < Async =
+        Loop(())(_ => if cond then Loop.done(()) else next.andThen(Loop.continue(())))
+
+    def close()(using Frame): Unit =
+        driver.closeHandle(handle)
+        discard(Ffi.load[SocketBindings].close(peer))
+    end close
+end DriverCycles
+
+object DriverCycles:
+    def init(driver: kyo.net.internal.transport.IoDriver[PosixHandle])(using Frame, AllowUnsafe): DriverCycles < Async =
+        PosixTestSockets.loopbackPair().map { (client, peer) =>
+            new DriverCycles(driver, PosixHandle.socket(client, 64, Absent, Frame.internal), peer)
+        }
+end DriverCycles

@@ -20,7 +20,7 @@ class HostResolverTest extends Test:
     // The HostResolver cache is a process-global keyed by (host, familyHint). Each leaf uses a freshly minted host so it is COLD by construction:
     // a per-run nonce plus a monotonic sequence guarantees the key was never resolved before (in this run or a prior one reusing the JVM), so no
     // production cache-clearing affordance is needed to observe a cold cache.
-    private val runNonce                       = java.lang.System.nanoTime()
+    private val runNonce                       = kyo.net.TlsTestCertShared.uniquePathTag()
     private val hostSeq                        = new AtomicInteger(0)
     private def freshHost(tag: String): String = s"$tag-${hostSeq.incrementAndGet()}-$runNonce"
 

@@ -70,15 +70,6 @@ class IoUringDriverTest extends Test:
         promise.safe.get
     end readVia
 
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     "IoUringDriver" - {
 
         // ---- real-ring echo / close leaves ----
@@ -509,8 +500,7 @@ class IoUringDriverTest extends Test:
                     // transient `-ENOMEM` from kyo_uring_submit_and_wait_timeout (plausible under many concurrently-running rings) as a fatal
                     // ring rc, self-destructing the whole ring mid-test; closeHandle's ringExited fast path then frees the buffer immediately
                     // regardless of recvInFlight. See IoUringDriverReapTransientErrnoTest for the deterministic reproduction.
-                    awaitCondition(5.seconds)(acceptedH.recvInFlight).map { armed =>
-                        assert(armed, "recv's submitRecv never ran (a hang, not the close-ordering hazard under test)")
+                    untilState(acceptedH.recvInFlight).andThen {
                         // closeHandle while the recv SQE is in flight: it must NOT free the read buffer while the kernel still owns it.
                         // closeHandle only ENQUEUES the close onto the engine FIFO, and registerDeferredClose itself forces the pending
                         // recv to EOF via shutdown(SHUT_RD) (the deferral never waits on the peer), so a direct assert after closeHandle
