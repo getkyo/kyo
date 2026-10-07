@@ -767,6 +767,36 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     then record ok "outside Actions the build stays in the caller's session"
     else record no "outside Actions the build stays in the caller's session"; fi
 
+    # 57-59: a JVM that prints HotSpot's fatal-error header and then neither exits nor goes quiet is killed once
+    # FATAL_GRACE has passed, so the run fails instead of waiting out the job limit. The stand-ins are real JVMs, so the
+    # pid in the header is one the OS knows (a shell's $$ under Git Bash is not a Windows pid). Stuck keeps printing,
+    # so the stale-output watchdog never fires and only the fatal guard can end it; Gone exits like a forked test JVM
+    # that crashed.
+    printf '%s\n' 'public class Stuck { public static void main(String[] a) throws Exception {' \
+        '  System.out.println("#  EXCEPTION_HEAP_CORRUPTION (0xc0000374) at pc=0x00007ffb33102c78, pid=" + ProcessHandle.current().pid() + ", tid=1");' \
+        '  while (true) { System.out.println("handler"); Thread.sleep(200); } } }' > "$SELFDIR/Stuck.java"
+    printf '%s\n' 'public class Gone { public static void main(String[] a) {' \
+        '  System.out.println("#  SIGSEGV (0xb) at pc=0x0000000000000000, pid=" + ProcessHandle.current().pid() + ", tid=1"); } }' \
+        > "$SELFDIR/Gone.java"
+    STUCK_JVM="exec java \"$SELFDIR/Stuck.java\""
+    started=$SECONDS
+    run_runner_env "$STUCK_JVM" JVM test FATAL_GRACE=1
+    if ! exit_is 0 && calls_count 1 && out_has "hit a fatal error" && out_has "killing it" && [ $((SECONDS - started)) -lt 60 ]
+    then record ok "a JVM stuck after its fatal error is killed and fails the run"
+    else record no "a JVM stuck after its fatal error is killed and fails the run"; fi
+
+    FAKE_PLAN="kyo-dataNative"
+    started=$SECONDS
+    run_runner_env 'if [[ "$*" == *"--phase link"* ]]; then exit 0; fi; '"$STUCK_JVM" Native test FATAL_GRACE=1 STALE_TIMEOUT=600
+    if exit_is 1 && out_has "killing it" && out_has "FAILED: test batch kyo-dataNative" && [ $((SECONDS - started)) -lt 120 ]
+    then record ok "a Native test batch stuck after its fatal error is killed and fails the run"
+    else record no "a Native test batch stuck after its fatal error is killed and fails the run"; fi
+
+    run_runner_env "java \"$SELFDIR/Gone.java\"; sleep 3; exit 0" JVM compile FATAL_GRACE=1
+    if exit_is 0 && calls_count 4 && out_has "hit a fatal error" && out_lacks "killing it"
+    then record ok "a JVM that exited after its fatal error is left alone"
+    else record no "a JVM that exited after its fatal error is left alone"; fi
+
     # Negative control: a deliberately wrong expectation MUST flip FAIL,
     # proving the harness is not vacuous. Not counted in the scenario total.
     run_runner JVM test 'exit 0'
@@ -775,7 +805,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
     # The pinned count catches a case that stops running without failing; a new case raises it.
-    EXPECTED_TOTAL=67
+    EXPECTED_TOTAL=70
     if [ "$TOTAL" -ne "$EXPECTED_TOTAL" ]; then
         echo "ran $TOTAL cases, expected $EXPECTED_TOTAL: a case stopped running, or a new one needs EXPECTED_TOTAL raised"
     fi
@@ -885,6 +915,69 @@ WASM_TEST_BATCH="${WASM_TEST_BATCH:-}"
 
 log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 
+# A JVM that dies on a native fault prints HotSpot's fatal-error header, writes hs_err_pid<pid>.log and is meant to
+# exit. On windows-arm64 a heap corruption (0xc0000374) leaves it in its error handler instead: a native double free
+# there was still alive 400s later, with -XX:-CreateCoredumpOnCrash and -XX:ErrorLogTimeout=15 as well, and a CI job
+# whose sbt driver crashed this way idled until the 4h job limit. So the runner kills the JVM the header names once
+# FATAL_GRACE has passed. The grace outlasts the default 120s ErrorLogTimeout, so the report is as complete as it
+# will get; the workflow's failure-only step prints it.
+FATAL_GRACE=${FATAL_GRACE:-150}
+
+# jvm_running <pid>: whether <pid> is still a java process, so a pid another program reused after the JVM exited on its
+# own is left alone.
+jvm_running() {
+    case "$(uname -s)" in
+        MINGW* | MSYS* | CYGWIN*)
+            tasklist //FI "PID eq $1" //FI "IMAGENAME eq java.exe" 2> /dev/null | grep -q "java.exe"
+            ;;
+        *)
+            local name
+            name=$(ps -p "$1" -o comm= 2> /dev/null)
+            [ "${name##*/}" = java ]
+            ;;
+    esac
+}
+
+kill_jvm() {
+    case "$(uname -s)" in
+        MINGW* | MSYS* | CYGWIN*) taskkill //F //T //PID "$1" //FI "IMAGENAME eq java.exe" > /dev/null 2>&1 ;;
+        *) kill -KILL "$1" 2> /dev/null ;;
+    esac
+}
+
+# fatal_guard <log>: for each JVM a fatal-error header in <log> names, waits FATAL_GRACE and kills it if still running.
+fatal_guard() {
+    local file="$1" handled=" " pid
+    while :; do
+        sleep "$POLL_INTERVAL"
+        for pid in $(grep -a -oE '^#  [A-Z_]+ \(0x[0-9a-fA-F]+\) at pc=0x[0-9a-fA-F]+, pid=[0-9]+' "$file" 2> /dev/null | sed -E 's/.*pid=//'); do
+            case "$handled" in *" $pid "*) continue ;; esac
+            handled="$handled$pid "
+            log "JVM $pid hit a fatal error; its hs_err_pid$pid.log is in its working directory"
+            sleep "$FATAL_GRACE"
+            # Logged before the kill: once the JVM dies the run's pipeline ends and this guard is stopped with it.
+            if jvm_running "$pid"; then
+                log "JVM $pid is still running ${FATAL_GRACE}s after its fatal error: killing it"
+                kill_jvm "$pid"
+            fi
+        done
+    done
+}
+
+# sbt_tee <log> <sbt args...>: one sbt run, streamed and copied into <log> under fatal_guard; returns sbt's exit code.
+sbt_tee() {
+    local file="$1" guard rc
+    shift
+    : > "$file"
+    fatal_guard "$file" &
+    guard=$!
+    sbt "$@" 2>&1 | tee "$file"
+    rc=${PIPESTATUS[0]}
+    kill "$guard" 2> /dev/null
+    wait "$guard" 2> /dev/null
+    return "$rc"
+}
+
 # A transient Maven Central error (403/429/5xx) during resolution fails an sbt phase before any build
 # output. Retry with backoff on that signature; a real compile error or unresolvable version carries no
 # such marker (or reproduces every attempt) and still fails. tee keeps output streaming for the console
@@ -896,8 +989,8 @@ sbt_resolve_retry() {
     heap=$(sbt_heap "$1") || return 2; shift
     tmp="$(mktemp)"
     while :; do
-        sbt "$heap" "$@" 2>&1 | tee "$tmp"
-        rc=${PIPESTATUS[0]}
+        sbt_tee "$tmp" "$heap" "$@"
+        rc=$?
         if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
         if [ "$attempt" -lt "$MAX_RETRIES" ] &&
             grep -qE 'Error downloading|[Ff]orbidden: https?://|Server returned HTTP response code: (403|429|50[0-9])|download error' "$tmp"; then
@@ -924,8 +1017,8 @@ sbt_run_resolve_retry() {
     heap=$(sbt_heap "$1") || return 2; shift
     tmp="$(mktemp)"
     while :; do
-        sbt "$heap" "$@" 2>&1 | tee "$tmp"
-        rc=${PIPESTATUS[0]}
+        sbt_tee "$tmp" "$heap" "$@"
+        rc=$?
         if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
         if [ "$attempt" -lt "$MAX_RETRIES" ] &&
             grep -q 'sbt\.librarymanagement\.ResolveException' "$tmp" &&
@@ -1215,6 +1308,7 @@ run_watched() {
             sbt "${cmd[@]}" >> "$LOG" 2>&1 &
         fi
         sbt_pid=$!
+        fatal_guard "$LOG" & guard_pid=$!
         tail -f "$LOG" 2>/dev/null & tail_pid=$!
         last_size=$(file_size "$LOG"); stale_seconds=0
         while kill -0 "$sbt_pid" 2>/dev/null; do
@@ -1234,6 +1328,7 @@ run_watched() {
             fi
         done
         wait "$sbt_pid" 2>/dev/null; exit_code=$?
+        kill "$guard_pid" 2>/dev/null; wait "$guard_pid" 2>/dev/null
         kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null; tail_pid=""
         if [ "$exit_code" -eq 0 ]; then log "$label passed"; return 0; fi
         check_log; rc=$?
