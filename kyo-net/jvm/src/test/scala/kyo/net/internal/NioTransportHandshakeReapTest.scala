@@ -1,52 +1,97 @@
 package kyo.net.internal
 
 import kyo.*
+import kyo.net.NetException
+import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.transport.ReadOutcome
 
-/** A NIO handshake-deadline reap removes the driver's pendingReads entry for the reaped handle.
+/** A failed NIO accept handshake reaps its handle through the driver, so the driver's `pendingReads` entry for it goes away.
   *
-  * The server TLS accept path arms a read on the accepted handle (creating the driver's `pendingReads[channel] -> handle` entry) while the
-  * handshake runs. When the handshake fails or its deadline fires, a connPromise teardown that ran a bare `clientChannel.close()` would never reap
-  * the handle through the driver, so the `pendingReads` entry (and its armed promise) would stay stranded: a slowloris handshake-stall would leak one
-  * driver map entry per connection. Routing that teardown through `driver.closeHandle(handle)` (the same seam PosixTransport.teardown
-  * uses) removes the entry and fails the parked read.
+  * The server TLS accept path arms a read on the accepted handle (the driver's `pendingReads[channel] -> handle` entry) while the handshake
+  * waits for the client's next flight. The handshake's failure arm, reached by a handshake failure, the handshake deadline, and a listener
+  * close, must route through `driver.closeHandle(handle)` before closing the channel: a bare channel close cancels the selection key but
+  * leaves the entry and its armed promise in the driver, one per stalled handshake.
   *
-  * This drives that driver seam deterministically (no timing): arm a read to create the entry, then show that a bare channel
-  * close leaves the entry stranded, while `driver.closeHandle` (what the deadline teardown calls) removes it. The
-  * `hasPendingRead` accessor is the empty-map leak witness. The cross-backend behavioral reap is covered by TransportHandshakeTimeoutTest; this
-  * pins the NIO-specific internal cleanup the bare close skipped.
+  * Observed through the driver's own `Diagnostics` registration, the same state the end-of-run stranded-op gate reads. That gate does not
+  * catch this leak by itself, because it treats a closed driver as clean and the NIO probe reports no cycle count. A peer or socket-table
+  * observation cannot discriminate: the bare close still closes the socket, so the client sees its inbound end and the server socket reaches
+  * TIME_WAIT with or without the reap; only the driver's entry and its armed promise leak. The client runs on a separate transport so the
+  * server driver's `pendingReads` holds only the accepted handshake's read.
   */
 class NioTransportHandshakeReapTest extends Test:
 
     import AllowUnsafe.embrace.danger
-    given Frame = Frame.internal
 
-    "a bare channel close leaves the pendingReads entry stranded, driver.closeHandle removes it" in {
-        NioLoopbackPair.open().map { (client, sv) =>
-            val driver = NioIoDriver.init()
-            val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
-            try
-                discard(driver.registerChannel(handle))
-                // Arm a read: this is what the server handshake does while waiting for the ClientHello; it creates the pendingReads[channel] -> handle
-                // entry that the deadline teardown must clean up.
-                val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-                driver.awaitRead(handle, readPromise)
-                assert(driver.hasPendingRead(handle), "arming a read must register the pendingReads entry")
+    lazy val serverTlsConfig: NetTlsConfig = NetTlsConfig(
+        certChainPath = Present(TlsTestCert.certPath),
+        privateKeyPath = Present(TlsTestCert.keyPath),
+        handshakeTimeout = Duration.Infinity
+    )
 
-                // Closing only the channel does NOT remove the driver's pendingReads entry.
-                try client.close()
-                catch case _: java.io.IOException => ()
-                assert(driver.hasPendingRead(handle), "a bare channel close must leave the pendingReads entry (the leak this reproduces)")
+    /** The `pendingReads` count `driver` reports in its `Diagnostics` dump, or Absent when the driver is not registered. */
+    private def pendingReads(driver: NioIoDriver): Maybe[Int] =
+        val marker = "=== NioIoDriver@" + java.lang.System.identityHashCode(driver) + " ===\n"
+        val dump   = kyo.internal.Diagnostics.dumpAll()
+        val at     = dump.indexOf(marker)
+        if at < 0 then Absent
+        else
+            val body = dump.substring(at + marker.length).takeWhile(_ != '\n')
+            Maybe.fromOption("pendingReads=(\\d+)".r.findFirstMatchIn(body).map(_.group(1).toInt))
+        end if
+    end pendingReads
 
-                // Routing through driver.closeHandle removes the entry and fails the parked read.
-                driver.closeHandle(handle)
-                assert(!driver.hasPendingRead(handle), "driver.closeHandle must remove the pendingReads entry (the reap seam)")
-                assert(readPromise.done(), "driver.closeHandle must complete the parked read promise")
-            finally
-                sv.close()
-                driver.close()
-            end try
+    /** Poll the driver dump until `cond` holds or `bound` passes; the bound is a ceiling, the condition is the pass signal. */
+    private def awaitPendingReads(driver: NioIoDriver, bound: Duration)(cond: Maybe[Int] => Boolean)(using Frame): Maybe[Int] < Async =
+        val deadline = java.lang.System.nanoTime() + bound.toNanos
+        Loop(()) { _ =>
+            val now = pendingReads(driver)
+            if cond(now) || java.lang.System.nanoTime() >= deadline then Loop.done(now)
+            else Async.sleep(5.millis).andThen(Loop.continue(()))
+        }
+    end awaitPendingReads
+
+    "a failed accept handshake's teardown removes its pendingReads entry from the driver" in {
+        val server = NioTransport.init()
+        val client = NioTransport.init()
+        Scope.ensure(Sync.defer {
+            server.pool.next().close()
+            client.pool.next().close()
+        }).andThen {
+            Abort.run[NetException | Closed] {
+                server.listenTls("127.0.0.1", 0, 16, serverTlsConfig)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        client.connect("127.0.0.1", listener.port).safe.get.map { conn =>
+                            Scope.ensure(Sync.defer(conn.close())).andThen {
+                                // One ClientHello, then a stall: the server answers and parks a read for the client's next flight.
+                                val hello = StalledTlsClient.clientHello(listener.port)
+                                assert(hello.nonEmpty, "the client engine produced no ClientHello")
+                                conn.outbound.safe.put(hello).andThen(conn.inbound.safe.take).map { serverFlight =>
+                                    assert(serverFlight.nonEmpty, "the server handshake answered the ClientHello with no bytes")
+                                }.andThen {
+                                    awaitPendingReads(server.driver, 10.seconds)(_ == Present(1)).map { armed =>
+                                        assert(
+                                            armed == Present(1),
+                                            s"the stalled handshake must hold one armed read on the driver; got $armed"
+                                        )
+                                    }
+                                }.andThen {
+                                    // The listener close fails the handshake; its failure arm tears the handle down and closes the channel, which
+                                    // the client observes as its inbound terminating. The reap runs before that close, so it has run by then.
+                                    listener.close()
+                                    Abort.run[Timeout](Async.timeout(10.seconds)(StalledTlsClient.awaitInboundClosed(conn))).map { closed =>
+                                        assert(closed.isSuccess, s"the listener close must tear down the stalled handshake; got $closed")
+                                        val after = pendingReads(server.driver)
+                                        assert(
+                                            after == Present(0),
+                                            s"the handshake teardown must reap the handle through the driver, leaving no pendingReads entry; got $after"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }.map(Abort.get)
         }
     }
 

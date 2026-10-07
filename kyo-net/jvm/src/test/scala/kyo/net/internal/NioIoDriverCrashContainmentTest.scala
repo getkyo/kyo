@@ -41,7 +41,7 @@ class NioIoDriverCrashContainmentTest extends Test:
     "NioIoDriver select-cycle crash containment" - {
         "a throw inside a select cycle completes the done-fiber as a panic and still closes the selector" in {
             val selector = new ThrowingSelector
-            val driver   = NioIoDriver.forSelector(selector)
+            val driver   = TestNioDrivers.forSelector(selector)
             val done     = driver.start()
 
             // Without containment this get would hang: the chain would be gone with the promise never completed.

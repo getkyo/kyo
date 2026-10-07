@@ -35,7 +35,7 @@ import scala.jdk.CollectionConverters.*
   * from the last handshake record or a coalesced TCP segment). Without this, the selector may never fire again because the kernel buffer is
   * empty even though decrypted bytes are available.
   */
-final private[kyo] class NioIoDriver private (@volatile private[net] var selector: Selector)
+final private[kyo] class NioIoDriver private[internal] (@volatile private[net] var selector: Selector)
     extends IoDriver[NioHandle]:
 
     // Unsafe: created at driver construction with no ambient AllowUnsafe; the danger bridge builds it here and every get/compareAndSet runs
@@ -68,12 +68,6 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     // Pending read requests: channel -> handle (promise stored on handle.readArm)
     private val pendingReads =
         new java.util.concurrent.ConcurrentHashMap[SocketChannel, NioHandle]()
-
-    /** Test-observability seam: whether a pending read is still registered for `handle`'s channel. A handshake teardown that reaps the handle
-      * through `closeHandle` removes this entry; a bare channel close leaves it stranded (a pendingReads leak). Read-only, no mutation.
-      */
-    private[kyo] def hasPendingRead(handle: NioHandle)(using AllowUnsafe): Boolean =
-        pendingReads.containsKey(handle.channel)
 
     // Pending writable requests: channel -> promise
     private val pendingWritables =
@@ -509,12 +503,6 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         handle.readArm.get() match
             case Present(cell) => cell.probe
             case Absent        => false
-
-    /** Test-observability seam: the current read-arm slot state as a label ("absent", "probe", or "pump"). Read-only, no mutation. */
-    private[net] def readArmState(handle: NioHandle)(using AllowUnsafe): String =
-        handle.readArm.get() match
-            case Present(cell) => if cell.probe then "probe" else "pump"
-            case Absent        => "absent"
 
     /** Append one probe chunk. Selector-carrier single appender; the CAS loop only guards a concurrent drainer's getAndSet. */
     private def stashGraceBytes(handle: NioHandle, arr: Array[Byte])(using AllowUnsafe): Unit =
@@ -2135,13 +2123,4 @@ private[kyo] object NioIoDriver:
     /** Factory for `NioIoDriver`. Opens a fresh `Selector` for each driver instance. */
     def init()(using AllowUnsafe): NioIoDriver =
         new NioIoDriver(Selector.open())
-
-    /** Build a driver over a caller-supplied selector.
-      *
-      * `private[net]` for the crash-containment test, which needs a selector whose `select()` throws: the constructor is class-private, and the
-      * contract under test is that a Throwable escaping a select cycle still reaches the terminal exit and closes the selector, which cannot be
-      * provoked through a real one.
-      */
-    private[net] def forSelector(selector: Selector)(using AllowUnsafe): NioIoDriver =
-        new NioIoDriver(selector)
 end NioIoDriver

@@ -6,7 +6,6 @@ import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import kyo.*
 import kyo.net.NetConfig
-import kyo.net.NetConnectionClosedException
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
@@ -608,10 +607,9 @@ class NioTransportTest extends Test:
         }
     }
 
-    // A connection accepted by listenTls but whose handshake has not completed has no Connection yet, so nothing else knows it exists.
-    // Before this was tracked, nothing reclaimed it: a listener close tore down only the accept and the server channel,
-    // and the process-shared transport is never closed at all, so a peer that completed the TCP accept and then stalled held its channel and
-    // handle until the process exited.
+    // A connection accepted by listenTls but whose handshake has not completed has no Connection yet, so nothing else knows it exists. Without
+    // the per-listener registry, a listener close tears down only the accept and the server channel, and the process-shared transport is never
+    // closed at all, so a peer that completed the TCP accept and then stalled holds its channel and handle until the process exits.
     //
     // Pinned with NO deadline armed (handshakeTimeout = Infinity, what a kyo-http server ships), so the listener close is the only thing that
     // can reclaim it; with a finite deadline the timer would eventually do it and this would pass either way. The stalled peer is held OPEN
@@ -623,24 +621,26 @@ class NioTransportTest extends Test:
             Abort.run[NetException | Closed] {
                 transport.listenTls("127.0.0.1", 0, 16, unbounded)(_ => ()).safe.get.map { listener =>
                     Scope.ensure(Sync.defer(listener.close())).andThen {
-                        // A plaintext client: it completes the TCP accept and never sends a ClientHello, so the server handshake registers and parks.
+                        // A plaintext client that sends one ClientHello and then stalls, so the server handshake parks for the client's next flight.
                         transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
                             Scope.ensure(Sync.defer(client.close())).andThen {
-                                // Barrier: wait until the handshake has actually registered. Without it this races the accept and could close a listener
-                                // with nothing to discharge, passing for the wrong reason.
-                                assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount > 0)).map { _ =>
+                                // Barrier: the accept path registers the handshake before it starts it, so a server handshake flight proves the
+                                // registration. Without it this races the accept and could close a listener with nothing to discharge, passing
+                                // for the wrong reason.
+                                val hello = StalledTlsClient.clientHello(listener.port)
+                                assert(hello.nonEmpty, "the client engine produced no ClientHello")
+                                client.outbound.safe.put(hello).andThen(client.inbound.safe.take).map { serverFlight =>
+                                    assert(serverFlight.nonEmpty, "the server handshake answered the ClientHello with no bytes")
                                     listener.close()
-                                    assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount == 0)).map { _ =>
-                                        // The discharge fails the handshake promise, whose existing teardown arm reaps the handle and closes the channel,
-                                        // which this still-connected client observes as its inbound terminating.
-                                        Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take))).map {
-                                            outcome =>
-                                                client.close()
-                                                assert(
-                                                    outcome.isSuccess,
-                                                    s"the listener close must release its stalled handshake's channel, got $outcome"
-                                                )
-                                        }
+                                    // The close drain fails the handshake promise, whose existing teardown arm reaps the handle and closes the channel,
+                                    // which this still-connected client observes as its inbound terminating.
+                                    Abort.run[Timeout](Async.timeout(3.seconds)(StalledTlsClient.awaitInboundClosed(client))).map {
+                                        outcome =>
+                                            client.close()
+                                            assert(
+                                                outcome.isSuccess,
+                                                s"the listener close must release its stalled handshake's channel, got $outcome"
+                                            )
                                     }
                                 }
                             }
@@ -651,37 +651,66 @@ class NioTransportTest extends Test:
         }
     }
 
-    // The companion to the leaf above, for the window it cannot reach. The registration runs on the selector carrier while
-    // dischargeListenerHandshakes runs on the closing carrier, so a listener can close AFTER the accept loop's `!listener.isClosed` guard and
-    // BEFORE the handshake is tracked. That entry would then survive every reclaim path: the sweep has passed, a second close is a CAS no-op,
-    // and the process-shared transport is never closed, so no later sweep exists. Driven through the production function directly, since the
-    // interleaving cannot be forced through the public surface.
-    "a handshake tracked after its listener already closed is reclaimed at registration" in {
-        val transport = NioTransport.init()
+    // The listener close races the accept loop: handshakes are being admitted on the selector carrier while the close drains on the test
+    // carrier. Whichever side wins for a given handshake, it must be reclaimed, so every client whose TCP connect succeeded observes its
+    // connection closed. The admit-or-reclaim race itself is not forced, so this is a liveness guard over many interleavings, not the proof
+    // of the exactly-once argument on NioListener's in-flight set. Clients run on a separate transport so their reads never share the server's
+    // selector.
+    "a burst of stalled handshakes accepted around a listener close is reclaimed in full" in {
+        val server    = NioTransport.init()
+        val clients   = NioTransport.init()
         val unbounded = serverTlsConfig.copy(handshakeTimeout = Duration.Infinity)
-        Scope.ensure(Sync.defer { import kyo.AllowUnsafe.embrace.danger; transport.pool.next().close() }).andThen {
+        val burst     = 64
+        Scope.ensure(Sync.defer {
+            import kyo.AllowUnsafe.embrace.danger
+            server.pool.next().close()
+            clients.pool.next().close()
+        }).andThen {
             Abort.run[NetException | Closed] {
-                transport.listenTls("127.0.0.1", 0, 16, unbounded)(_ => ()).safe.get.map { listener =>
-                    Sync.defer {
-                        listener.close()
-                        val connPromise = new IOPromise[NetException, Connection[NioHandle]]
-                        val reclaimed   = transport.trackAcceptHandshake(listener.asInstanceOf[NioListener], connPromise)
-                        assert(
-                            reclaimed,
-                            "a handshake tracked after its listener closed must be reclaimed at registration, or its channel and handle are held for the process lifetime"
-                        )
-                        assert(
-                            transport.pendingAcceptHandshakeCount == 0,
-                            s"the reclaimed entry must not stay in the registry, count=${transport.pendingAcceptHandshakeCount}"
-                        )
-                        connPromise.poll() match
-                            case Present(Result.Failure(_: NetConnectionClosedException)) =>
-                                succeed
-                            case other =>
-                                fail(
-                                    s"the reclaim must fail the handshake promise so its teardown arm reaps the handle and channel, got $other"
-                                )
-                        end match
+                server.listenTls("127.0.0.1", 0, burst * 2, unbounded)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        val hello = StalledTlsClient.clientHello(listener.port)
+                        assert(hello.nonEmpty, "the client engine produced no ClientHello")
+                        // Released once per client after its first read, so the close lands with half the burst already parked in the
+                        // handshake and the other half still connecting, being accepted, or being admitted.
+                        Latch.init(burst / 2).map { halfParked =>
+                            // Absent: the connect was refused, so nothing was connected. Present(true): the client saw its connection
+                            // closed. Present(false): it stayed open past the ceiling, a handshake nothing reclaimed.
+                            def stall(i: Int): Maybe[Boolean] < Async =
+                                Abort.run[NetException | Closed](clients.connect("127.0.0.1", listener.port).safe.get).map {
+                                    case Result.Success(conn) =>
+                                        Abort.run[Closed](conn.outbound.safe.put(hello).andThen(conn.inbound.safe.take)).map { first =>
+                                            halfParked.release.andThen {
+                                                val closedOrOpen: Boolean < Async =
+                                                    if first.isFailure then true
+                                                    else
+                                                        Abort.run[Timeout](
+                                                            Async.timeout(10.seconds)(StalledTlsClient.awaitInboundClosed(conn))
+                                                        )
+                                                            .map(_.isSuccess)
+                                                closedOrOpen.map { closed =>
+                                                    conn.close()
+                                                    Present(closed)
+                                                }
+                                            }
+                                        }
+                                    case _ =>
+                                        halfParked.release.andThen(Absent)
+                                }
+                            Fiber.initUnscoped(halfParked.await.andThen(Sync.defer(listener.close()))).map { closer =>
+                                Async.foreach(0 until burst, burst)(stall).map { outcomes =>
+                                    closer.get.andThen {
+                                        val connected = outcomes.count(_.isDefined)
+                                        val stranded  = outcomes.count(_ == Present(false))
+                                        assert(connected >= burst / 2, s"only $connected of $burst connects succeeded")
+                                        assert(
+                                            stranded == 0,
+                                            s"$stranded of $connected connected clients were never released by the listener close"
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }.map(Abort.get)
