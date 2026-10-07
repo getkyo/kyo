@@ -73,10 +73,57 @@ class TagTest extends kyo.test.Test[Any]:
         }
     }
 
+    "subtype comparison cache" - {
+        import Tag.internal.ComparisonCache
+        import Tag.internal.Mode
+
+        // The cache keys on identity and hash alone, so distinct encodings stand in for tags. A cache of its own keeps the leaves
+        // independent of the per-thread caches every other leaf shares.
+        val target     = "*target".asInstanceOf[Tag[Any]]
+        val candidates = (0 until 64).map(i => s"*candidate$i".asInstanceOf[Tag[Any]])
+
+        def sharingASet(cache: ComparisonCache, n: Int)(using kyo.test.AssertScope): Seq[Tag[Any]] =
+            val found = candidates.groupBy(cache.set(_, target, Mode.Subtype)).values.find(_.size >= n)
+            assert(found.isDefined, s"no $n candidates share a set")
+            found.get.take(n)
+        end sharingASet
+
+        "two comparisons that share a set both stay cached" in {
+            val cache     = ComparisonCache(64)
+            val Seq(x, y) = sharingASet(cache, 2): @unchecked
+            val set       = cache.set(x, target, Mode.Subtype)
+            cache.put(set, x, target, Mode.Subtype, true)
+            cache.put(set, y, target, Mode.Subtype, false)
+            assert(cache.get(set, x, target, Mode.Subtype) == Present(true))
+            assert(cache.get(set, y, target, Mode.Subtype) == Present(false))
+        }
+
+        "a third comparison in a set evicts the least recently used one" in {
+            val cache        = ComparisonCache(64)
+            val Seq(x, y, z) = sharingASet(cache, 3): @unchecked
+            val set          = cache.set(x, target, Mode.Subtype)
+            cache.put(set, x, target, Mode.Subtype, true)
+            cache.put(set, y, target, Mode.Subtype, true)
+            assert(cache.get(set, x, target, Mode.Subtype) == Present(true))
+            cache.put(set, z, target, Mode.Subtype, true)
+            assert(cache.get(set, x, target, Mode.Subtype) == Present(true))
+            assert(cache.get(set, z, target, Mode.Subtype) == Present(true))
+            assert(cache.get(set, y, target, Mode.Subtype) == Absent)
+        }
+
+        "an entry answers only its own mode" in {
+            val cache = ComparisonCache(64)
+            val x     = candidates.head
+            val set   = cache.set(x, target, Mode.Subtype)
+            cache.put(set, x, target, Mode.Subtype, true)
+            assert(cache.get(set, x, target, Mode.Equality) == Absent)
+        }
+    }
+
     "comparisons racing on shared cache slots".notJs - {
         "every thread reads the verdict of the comparison it asked for" in {
-            // One thread per core, all sharing one array of slots and checking comparisons that share one entry. Writers
-            // cycle through the comparisons, so the entry is replaced on nearly every check; readers repeat one of them, so
+            // One thread per core, all sharing one cache and checking at least three comparisons that share one set. Writers
+            // cycle through the comparisons, so the set's entries are replaced on nearly every check; readers repeat one of them, so
             // most of their checks are hits that load the entry nanoseconds apart, which is how often a read lands right
             // after another core published it. The allocations and collections recycle the memory a replaced entry
             // occupied, which is what a reader that sees an entry before its construction finds instead.
@@ -109,9 +156,10 @@ class TagTest extends kyo.test.Test[Any]:
                     b    <- tags
                     mode <- Seq(Mode.Subtype, Mode.Equality)
                 yield (a, b, mode)
-            val sharing  = comparisons.groupBy((a, b, mode) => Tag.internal.cacheIndex(a, b, mode)).values.maxBy(_.size).toArray
+            val cache    = Tag.internal.comparisonCaches(0)
+            val sharing  = comparisons.groupBy((a, b, mode) => cache.set(a, b, mode)).values.maxBy(_.size).toArray
             val expected = sharing.map((a, b, mode) => Tag.internal.checkTypes(a, b, mode))
-            assert(sharing.length >= 3, s"only ${sharing.length} comparisons share an entry")
+            assert(sharing.length >= 3, s"only ${sharing.length} comparisons share a set")
 
             val count            = Math.max(2, Runtime.getRuntime().availableProcessors())
             val failure          = new java.util.concurrent.atomic.AtomicReference[String](null)
@@ -146,7 +194,7 @@ class TagTest extends kyo.test.Test[Any]:
                 thread
             end worker
 
-            // Thread hashes are fixed at construction, so build threads until enough of them pick the same array of slots.
+            // Thread hashes are fixed at construction, so build threads until enough of them pick the same cache.
             val bySlot  = scala.collection.mutable.HashMap.empty[Int, List[Thread]]
             var workers = List.empty[Thread]
             var built   = 0
@@ -157,7 +205,7 @@ class TagTest extends kyo.test.Test[Any]:
                 bySlot(slot) = group
                 if group.size == count then workers = group
                 built += 1
-                assert(built < 1000000, "no array of slots gathered enough threads")
+                assert(built < 1000000, "no cache gathered enough threads")
             end while
 
             workers.foreach(_.start())
