@@ -26,10 +26,14 @@ object ContainerPredef:
     /** The in-container readiness shell loop for `probe`, bounded by `budget`: probe until it exits 0 or the
       * budget elapses. Split out from [[readinessLoop]] so a fixture's configured budget can be asserted to
       * reach the generated script in a unit test, without standing up a container.
+      *
+      * The pause between probes backs off 0.1, 0.2, 0.4 s, then holds at 0.5 s, so readiness is noticed within
+      * 0.5 s of the service answering, against up to 2 s with a fixed `sleep 2`. A `sleep` that rejects a
+      * fractional argument falls back to whole seconds.
       */
     private[kyo] def readinessScript(probe: Chunk[String], budget: Duration): String =
         val quoted = probe.map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
-        s"""end=$$(($$(date +%s)+${budget.toSeconds})); while [ "$$(date +%s)" -lt "$$end" ]; do $quoted >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"""
+        s"""end=$$(($$(date +%s)+${budget.toSeconds})); d=0.1; while [ "$$(date +%s)" -lt "$$end" ]; do $quoted >/dev/null 2>&1 && exit 0; sleep $$d 2>/dev/null || sleep 1; case $$d in 0.1) d=0.2 ;; 0.2) d=0.4 ;; *) d=0.5 ;; esac; done; exit 1"""
     end readinessScript
 
     /** Whether a readiness exec that the daemon failed is worth one more attempt.
@@ -164,9 +168,10 @@ object ContainerPredef:
       * (Apache 2.0).
       *
       * Defaults to `postgres:16-alpine` with user/password/database = `"test"` / `"test"` / `"test"`. The container runs
-      * `postgres -c fsync=off` for test-speed. Healthcheck issues `psql -c "SELECT 1"` so the handle is only returned once init scripts
-      * have created `POSTGRES_DB` — this avoids the `pg_isready` race where the readiness probe passes during the temporary-listener phase
-      * before init scripts run.
+      * `postgres -c fsync=off` for test-speed. Healthcheck issues `psql -c "SELECT 1"`, which passes once `POSTGRES_DB` exists. That
+      * alone can pass on the image's init-time server, which runs the init scripts on the unix socket only and then stops; the handle
+      * waits for the real server because `requireService` also holds a connection on the published TCP port, which only the real
+      * server listens on.
       *
       * @see
       *   [Docker postgres image](https://hub.docker.com/_/postgres)

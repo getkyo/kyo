@@ -146,6 +146,61 @@ private[kyo] trait ContainerRuntimeBase:
 
     lazy val available: Seq[String] = assigned.collect { case (rt, Absent) => rt }
 
+    /** The socket a single-leg leaf runs against in this process, or why this process does not run it.
+      *
+      * The build puts every daemon-touching suite in both per-runtime forks, so a leaf registered against each fork's own runtime runs
+      * once per fork. A single-leg leaf belongs to one runtime for the whole host: the first one that can run here unpinned and has a
+      * socket. Only the fork pinned to it runs the leaf; the other registers it cancelled, so a filter that selects it never selects
+      * nothing.
+      */
+    lazy val singleLeg: Either[String, String] =
+        import AllowUnsafe.embrace.danger
+        singleLegOwner(unpinnedAssignment, assigned, getEnv("KYO_POD_RUNTIME"), rt => findSocket(rt).isDefined)
+            .flatMap(rt => findSocket(rt).toRight(s"$rt exposes no socket for the http backend"))
+    end singleLeg
+
+    /** Whether this process runs the leaves that belong to the host rather than to one runtime: the single-leg leaves, and every leaf the
+      * runtime helpers did not register, which reaches no daemon or reaches whichever one auto-detection finds.
+      *
+      * The build puts every daemon-touching suite in both per-runtime forks, so those leaves would run once per fork. They run in the fork
+      * pinned to the [[singleLeg]] owner, or in the podman fork when no runtime can run here, so that exactly one fork runs them.
+      */
+    lazy val runsHostLeaves: Boolean =
+        import AllowUnsafe.embrace.danger
+        hostLeavesHere(owner(unpinnedAssignment, rt => findSocket(rt).isDefined), getEnv("KYO_POD_RUNTIME"))
+    end runsHostLeaves
+
+    /** [[runsHostLeaves]] from the host's owner runtime and the pin. An unpinned process runs every leaf. */
+    private[kyo] def hostLeavesHere(owner: Maybe[String], pin: Maybe[String]): Boolean =
+        pin.forall(_ == owner.getOrElse("podman"))
+
+    /** The assignment this host would get with no pin: every runtime, runnable or with its reason. */
+    private lazy val unpinnedAssignment: Seq[(String, Maybe[String])] =
+        import AllowUnsafe.embrace.danger
+        val reachable = Seq("podman" -> hasPodman, "docker" -> hasDocker)
+        assignment(kyo.internal.Platform.isWindows, reachable, distinctDaemons(reachable.collect { case (n, true) => n }), Absent)
+    end unpinnedAssignment
+
+    /** The first runtime of the unpinned assignment that can run here and exposes a socket. */
+    private[kyo] def owner(unpinned: Seq[(String, Maybe[String])], hasSocket: String => Boolean): Maybe[String] =
+        Maybe.fromOption(unpinned.collectFirst { case (rt, Absent) if hasSocket(rt) => rt })
+
+    /** [[singleLeg]]'s runtime from its inputs: the host's unpinned assignment, this process's assignment, the pin, and which runtimes
+      * expose a socket.
+      */
+    private[kyo] def singleLegOwner(
+        unpinned: Seq[(String, Maybe[String])],
+        assigned: Seq[(String, Maybe[String])],
+        pin: Maybe[String],
+        hasSocket: String => Boolean
+    ): Either[String, String] =
+        owner(unpinned, hasSocket) match
+            case Present(rt) if pin.forall(_ == rt)      => Right(rt)
+            case Present(rt)                             => Left(s"a single-leg leaf runs once per host, in the $rt fork")
+            case Absent if unpinned.exists(_._2.isEmpty) => Left("no runtime that can run here exposes a socket for the http backend")
+            case Absent                                  => Left(assigned.flatMap(_._2.toOption).mkString("; "))
+    end singleLegOwner
+
     /** Drops a runtime whose socket is the same file as one already kept, keeping the first.
       *
       * `podman-docker` installs `/var/run/docker.sock` as a symlink to the podman socket, so both names resolve to ONE daemon. Registering
