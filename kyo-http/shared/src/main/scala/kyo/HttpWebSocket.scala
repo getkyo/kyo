@@ -97,9 +97,10 @@ object HttpWebSocket:
       * @param bufferSize
       *   Channel capacity for inbound and outbound message queues. Controls backpressure — when a channel is full, the sender suspends.
       * @param maxFrameSize
-      *   Maximum size of a single HttpWebSocket frame, narrowed where it is used as kyo-core's stream reads narrow their buffers: zero
-      *   becomes one byte and a size beyond `Int.MaxValue` becomes `Int.MaxValue`, the most one frame payload can hold. Frames exceeding
-      *   this limit cause the connection to close. Default is 16 MiB,
+      *   Maximum size of a received message: a single frame, or all the frames of a fragmented message together. It is narrowed where it
+      *   is used as kyo-core's stream reads narrow their buffers: zero becomes one byte and a size beyond `Int.MaxValue` becomes
+      *   `Int.MaxValue`, the most one payload can hold. A message exceeding this limit closes the connection with code 1009. Default is
+      *   16 MiB,
       *   which comfortably handles realistic single-frame payloads (Chrome CDP screenshots up to ~4K, large RPC responses, base64-encoded
       *   binary uploads) while still capping pathological remotes. Lower it for memory-sensitive deployments; raise it for clients that need
       *   to receive larger frames in one go.

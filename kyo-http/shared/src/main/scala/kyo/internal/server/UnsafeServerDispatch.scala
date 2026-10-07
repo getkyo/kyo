@@ -460,7 +460,7 @@ private[kyo] object UnsafeServerDispatch:
                 val leftover = parser.takeRemainingBytes()
                 if !leftover.isEmpty then
                     discard(streamCtx.inbound.offer(leftover))
-                dispatchWebSocket(wsHandler, streamCtx, request, parser)
+                dispatchWebSocket(wsHandler, streamCtx, request, parser, closeNow)
             case _: WebSocketHttpHandler =>
                 // WS handler but no upgrade headers -- not a valid WS handshake
                 answerAndContinue(() => writeErrorResponse(streamCtx, HttpRouter.FindError.NotFound))
@@ -515,13 +515,14 @@ private[kyo] object UnsafeServerDispatch:
       *
       * Creates a ChannelBackedStream from the connection's channels, sends the 101 Switching Protocols response via
       * WebSocketCodec.acceptUpgrade, then runs the HttpWebSocket session. The HTTP parser is NOT restarted — HttpWebSocket is terminal for
-      * the connection.
+      * the connection, which `closeNow` ends once the session does.
       */
     private def dispatchWebSocket(
         wsHandler: WebSocketHttpHandler,
         streamCtx: Http1StreamContext,
         request: ParsedRequest,
-        parser: Http1Parser
+        parser: Http1Parser,
+        closeNow: () => Unit
     )(using AllowUnsafe, Frame): Unit =
         val headers = request.headers
         // Carry the query string into the handler's request url: a WebSocket upgrade target
@@ -530,17 +531,19 @@ private[kyo] object UnsafeServerDispatch:
         val url  = HttpUrl(Absent, "", 0, request.pathAsString, request.queryRawString)
         val conn = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
         discard(IOTask.detached(
-            Abort.run[Any](
-                WebSocketCodec.acceptUpgrade(conn, headers, wsHandler.wsConfig).andThen {
-                    serveWebSocket(conn, streamCtx.inbound, streamCtx.outbound, wsHandler, headers, url)
-                }
-            ).map {
-                case Result.Failure(error) =>
-                    Log.error(s"UnsafeServerDispatch: HttpWebSocket upgrade failed: $error")
-                case Result.Panic(t) =>
-                    Log.error("UnsafeServerDispatch: HttpWebSocket upgrade panic", t)
-                case Result.Success(_) => Kyo.unit
-            }.unit
+            Sync.ensure(Sync.Unsafe.defer(closeNow())) {
+                Abort.run[Any](
+                    WebSocketCodec.acceptUpgrade(conn, headers, wsHandler.wsConfig).andThen {
+                        serveWebSocket(conn, streamCtx.inbound, streamCtx.outbound, wsHandler, headers, url)
+                    }
+                ).map {
+                    case Result.Failure(error) =>
+                        Log.error(s"UnsafeServerDispatch: HttpWebSocket upgrade failed: $error")
+                    case Result.Panic(t) =>
+                        Log.error("UnsafeServerDispatch: HttpWebSocket upgrade panic", t)
+                    case Result.Success(_) => Kyo.unit
+                }.unit
+            }
         ))
     end dispatchWebSocket
 
@@ -577,9 +580,12 @@ private[kyo] object UnsafeServerDispatch:
                                     conn,
                                     readBufferCapacity(wsHandler.wsConfig.maxFrameSize),
                                     (cr: (Int, String)) => closeReasonRef.set(Present(cr)),
+                                    closeFn.tupled,
                                     mask = false
                                 ) { (frame, remaining) =>
-                                    inbound.put(frame).andThen(Loop.continue(remaining))
+                                    // Once the handler has returned, inbound is closed and the reader keeps reading to the peer's
+                                    // Close, dropping the messages that arrive before it.
+                                    Abort.run[Closed](inbound.put(frame)).andThen(Loop.continue(remaining))
                                 }
                             }
                         }.map { readFiber =>
@@ -632,8 +638,10 @@ private[kyo] object UnsafeServerDispatch:
                                             // hasn't already observed EOF, install a 1000 close reason. Then close outbound in
                                             // every case, since the write fiber exits only once outbound is closed, and await it
                                             // so the queued frames and any close frame hit the wire before the Sync.ensure
-                                            // finalizer interrupts it. The wait is bounded by closeTimeout, so a peer that stops
-                                            // reading cannot hold the session open.
+                                            // finalizer interrupts it. The reader is awaited next, until the peer's Close, its EOF
+                                            // or a protocol failure: the server closes the TCP connection once the close handshake
+                                            // is done (RFC 6455 section 7.1.1). Both waits share closeTimeout, so a peer that stops
+                                            // reading or never answers the Close cannot hold the session open.
                                             closeReasonRef.get.map {
                                                 case Absent =>
                                                     readFiber.done.map { isDone =>
@@ -642,8 +650,11 @@ private[kyo] object UnsafeServerDispatch:
                                                     }
                                                 case _ => Kyo.unit
                                             }.andThen(WebSocketCodec.closeKeepingQueued(outbound))
+                                                .andThen(inbound.closeDiscard.unit)
                                                 .andThen(Abort.run[Timeout](
-                                                    Async.timeout(wsHandler.wsConfig.closeTimeout)(writeFiber.get)
+                                                    Async.timeout(
+                                                        wsHandler.wsConfig.closeTimeout
+                                                    )(writeFiber.get.andThen(readFiber.getResult))
                                                 ).unit)
                                         }
                                     }

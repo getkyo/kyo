@@ -243,24 +243,40 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
 
     // ── Fragmented messages (continuation frames) ──────────────
 
+    /** What one read in the server role produced: the message or the failure, the close code and reason the reader failed the connection
+      * with, the Close the peer sent, and the bytes the reader wrote back.
+      */
+    case class ReadOutcome(
+        result: Result[Closed, HttpWebSocket.Payload],
+        failedWith: Maybe[(Int, String)],
+        peerClose: Maybe[(Int, String)],
+        written: Array[Byte]
+    )
+
+    private def readOne(conn: MockConn, maxSize: Int = Int.MaxValue, mask: Boolean = false)(using Frame): ReadOutcome < Async =
+        AtomicRef.initWith(Absent: Maybe[(Int, String)]) { failed =>
+            AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closed =>
+                Abort.run[Closed](WebSocketCodec.readFrameWith(
+                    conn.read,
+                    conn,
+                    maxSize,
+                    cr => closed.set(Present(cr)),
+                    cr => failed.set(Present(cr)),
+                    mask
+                )((frame, _) => frame)).map { result =>
+                    failed.get.map(f => closed.get.map(c => ReadOutcome(result, f, c, conn.written)))
+                }
+            }
+        }
+
+    private def text(s: String): Array[Byte] = s.getBytes(Utf8)
+
     "fragmented messages (continuation frames) reassemble into a single message" - {
-        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1".ignore(
-            "WebSocketCodec.readFrameWith does not yet reassemble multi-frame continuation messages; it delivers each frame raw (proper reassembly is a follow-up)"
-        ) in {
-            // Spec: a WebSocket message MAY be split across multiple frames per RFC 6455.
-            // The first frame carries the opcode (text or binary) with FIN=0; subsequent
-            // frames use opcode 0x0 (continuation) with FIN=0; the final frame uses
-            // opcode 0x0 with FIN=1. WebSocketCodec.readFrameWith should reassemble
-            // the concatenated payload and yield a single Payload value with the
-            // original text opcode.
-            //
-            // Current behavior: readFrameWith delivers each frame raw (opcode 0x1 for
-            // the first, 0x0 for the continuations), and maxFrameSize is checked per
-            // individual frame. The kyo-http 16 MiB default is a per-frame pragmatic
-            // ceiling; proper reassembly is the follow-up.
-            val frame1 = makeFrame(opcode = 0x1, fin = false, payload = "AAA".getBytes(Utf8))
-            val frame2 = makeFrame(opcode = 0x0, fin = false, payload = "BBB".getBytes(Utf8))
-            val frame3 = makeFrame(opcode = 0x0, fin = true, payload = "CCC".getBytes(Utf8))
+        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1" in {
+            // The server-role reader requires masked client frames (RFC 6455 section 5.1).
+            val frame1 = makeMaskedFrame(opcode = 0x1, fin = false, payload = text("AAA"))
+            val frame2 = makeMaskedFrame(opcode = 0x0, fin = false, payload = text("BBB"))
+            val frame3 = makeMaskedFrame(opcode = 0x0, fin = true, payload = text("CCC"))
             val mock   = new MockConn(frame1 ++ frame2 ++ frame3)
             WebSocketCodec.readFrameWith(mock.read, mock) { (payload, _) =>
                 payload match
@@ -268,6 +284,248 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                         assert(s == "AAABBBCCC")
                     case other =>
                         fail(s"expected Text payload with reassembled content, got $other")
+            }
+        }
+
+        "a binary message in three frames reaches a client as one" in {
+            val frames = makeFrame(0x2, fin = false, Array[Byte](1, 2)) ++
+                makeFrame(0x0, fin = false, Array[Byte](3)) ++
+                makeFrame(0x0, fin = true, Array[Byte](4, 5, 6))
+            readOne(new MockConn(frames), mask = true).map { outcome =>
+                outcome.result match
+                    case Result.Success(HttpWebSocket.Payload.Binary(data)) =>
+                        assert(data.toArrayUnsafe.toSeq == Seq[Byte](1, 2, 3, 4, 5, 6))
+                    case other => fail(s"expected one reassembled Binary, got $other")
+            }
+        }
+
+        "a character whose UTF-8 bytes are split between fragments decodes whole" in {
+            val bytes  = text("café!")
+            val frames = makeMaskedFrame(0x1, fin = false, bytes.take(4)) ++ makeMaskedFrame(0x0, fin = true, bytes.drop(4))
+            readOne(new MockConn(frames)).map(outcome => assert(outcome.result == Result.Success(HttpWebSocket.Payload.Text("café!"))))
+        }
+
+        "a message arrives whole when every byte is its own read" in {
+            val frames = makeMaskedFrame(0x1, fin = false, text("he")) ++
+                makeMaskedFrame(0x9, fin = true, text("p")) ++
+                makeMaskedFrame(0x0, fin = true, text("llo"))
+            val conn = new MockConn(frames):
+                override def read(using Frame): Stream[Span[Byte], Async] =
+                    Stream.init(frames.toSeq.map(b => Span.fromUnsafe(Array(b))))
+            readOne(conn).map(outcome => assert(outcome.result == Result.Success(HttpWebSocket.Payload.Text("hello"))))
+        }
+
+        "a Ping between fragments is answered and the message still arrives whole (RFC 6455 section 5.4)" in {
+            val frames = makeMaskedFrame(0x1, fin = false, text("AAA")) ++
+                makeMaskedFrame(0x9, fin = true, text("hi")) ++
+                makeMaskedFrame(0x0, fin = true, text("BBB"))
+            readOne(new MockConn(frames)).map { outcome =>
+                assert(outcome.result == Result.Success(HttpWebSocket.Payload.Text("AAABBB")))
+                assert(outcome.written.toSeq == makeFrame(0xa, fin = true, text("hi")).toSeq)
+            }
+        }
+
+        "a Pong between fragments is skipped and the message still arrives whole" in {
+            val frames = makeMaskedFrame(0x2, fin = false, Array[Byte](1)) ++
+                makeMaskedFrame(0xa, fin = true, text("x")) ++
+                makeMaskedFrame(0x0, fin = true, Array[Byte](2))
+            readOne(new MockConn(frames)).map { outcome =>
+                outcome.result match
+                    case Result.Success(HttpWebSocket.Payload.Binary(data)) => assert(data.toArrayUnsafe.toSeq == Seq[Byte](1, 2))
+                    case other                                              => fail(s"expected Binary(1, 2), got $other")
+                assert(outcome.written.isEmpty)
+            }
+        }
+
+        "a Close between fragments ends the read with the peer's code and delivers nothing" in {
+            val closePayload = Array[Byte](0x03, 0xe8.toByte) ++ text("bye")
+            val frames       = makeMaskedFrame(0x1, fin = false, text("AAA")) ++
+                makeMaskedFrame(0x8, fin = true, closePayload) ++
+                makeMaskedFrame(0x0, fin = true, text("BBB"))
+            readOne(new MockConn(frames)).map { outcome =>
+                assert(outcome.result.isFailure)
+                assert(outcome.peerClose == Present((1000, "bye")))
+                assert(outcome.failedWith == Absent)
+            }
+        }
+
+        "the message after a fragmented one is read on its own" in {
+            val frames = makeMaskedFrame(0x1, fin = false, text("AB")) ++
+                makeMaskedFrame(0x0, fin = true, text("C")) ++
+                makeMaskedFrame(0x2, fin = true, Array[Byte](7))
+            val conn = new MockConn(frames)
+            WebSocketCodec.readFrameWith(conn.read, conn) { (first, rest) =>
+                WebSocketCodec.readFrameWith(rest, conn)((second, _) => (first, second))
+            }.map {
+                case (HttpWebSocket.Payload.Text(first), HttpWebSocket.Payload.Binary(second)) =>
+                    assert(first == "ABC")
+                    assert(second.toArrayUnsafe.toSeq == Seq[Byte](7))
+                case other => fail(s"expected Text(ABC) then Binary(7), got $other")
+            }
+        }
+
+        "a continuation frame with no message to continue fails the connection with 1002" in {
+            readOne(new MockConn(makeMaskedFrame(0x0, fin = true, text("orphan")))).map { outcome =>
+                assert(outcome.result.isFailure)
+                assert(outcome.failedWith.map(_._1) == Present(1002))
+            }
+        }
+
+        "a continuation frame after a complete message fails the connection with 1002" in {
+            val frames = makeMaskedFrame(0x1, fin = true, text("done")) ++ makeMaskedFrame(0x0, fin = true, text("late"))
+            val conn   = new MockConn(frames)
+            WebSocketCodec.readFrameWith(conn.read, conn)((first, rest) => (first, rest)).map { (first, rest) =>
+                assert(first == HttpWebSocket.Payload.Text("done"))
+                val restConn = new MockConn(Array.empty):
+                    override def read(using Frame): Stream[Span[Byte], Async] = rest
+                readOne(restConn).map { outcome =>
+                    assert(outcome.result.isFailure)
+                    assert(outcome.failedWith.map(_._1) == Present(1002))
+                }
+            }
+        }
+
+        "a data frame that starts a message before the fragmented one ends fails the connection with 1002" in {
+            Kyo.foreach(Chunk(0x1, 0x2)) { opcode =>
+                val frames = makeMaskedFrame(0x1, fin = false, text("AAA")) ++ makeMaskedFrame(opcode, fin = true, text("BBB"))
+                readOne(new MockConn(frames)).map(outcome => (opcode, outcome.result.isFailure, outcome.failedWith.map(_._1)))
+            }.map(outcomes => assert(outcomes == Chunk((0x1, true, Present(1002)), (0x2, true, Present(1002)))))
+        }
+
+        "the size limit applies to a fragmented message as a whole: its limit in bytes passes, one byte over fails with 1009" in {
+            def fragments(last: Int) =
+                makeMaskedFrame(0x2, fin = false, new Array[Byte](4)) ++
+                    makeMaskedFrame(0x0, fin = false, new Array[Byte](4)) ++
+                    makeMaskedFrame(0x0, fin = true, new Array[Byte](last))
+            readOne(new MockConn(fragments(2)), maxSize = 10).map { atLimit =>
+                readOne(new MockConn(fragments(3)), maxSize = 10).map { overLimit =>
+                    atLimit.result match
+                        case Result.Success(HttpWebSocket.Payload.Binary(data)) => assert(data.size == 10)
+                        case other => fail(s"a 10-byte message under a 10-byte limit failed: $other")
+                    assert(overLimit.result.isFailure)
+                    assert(overLimit.failedWith.map(_._1) == Present(1009))
+                }
+            }
+        }
+
+        "a Ping between fragments does not count toward the message's size limit" in {
+            val frames = makeMaskedFrame(0x1, fin = false, text("abc")) ++
+                makeMaskedFrame(0x9, fin = true, text("ping!")) ++
+                makeMaskedFrame(0x0, fin = true, text("def"))
+            readOne(new MockConn(frames), maxSize = 6).map(outcome =>
+                assert(outcome.result == Result.Success(HttpWebSocket.Payload.Text("abcdef")))
+            )
+        }
+
+        "a fragmented text message that is not UTF-8 fails the connection with 1007" in {
+            val frames = makeMaskedFrame(0x1, fin = false, text("ok")) ++ makeMaskedFrame(0x0, fin = true, Array(0xff.toByte))
+            readOne(new MockConn(frames)).map { outcome =>
+                assert(outcome.result.isFailure)
+                assert(outcome.failedWith.map(_._1) == Present(1007))
+            }
+        }
+    }
+
+    "frames the RFC forbids fail the connection with their close code" - {
+        "a text frame that is not UTF-8: 1007 (RFC 6455 section 8.1)" in {
+            readOne(new MockConn(makeMaskedFrame(0x1, fin = true, Array(0x61, 0xc3.toByte)))).map { outcome =>
+                assert(outcome.result.isFailure)
+                assert(outcome.failedWith.map(_._1) == Present(1007))
+            }
+        }
+
+        "a frame with a reserved bit set: 1002 (RFC 6455 section 5.2)" in {
+            val frame = makeMaskedFrame(0x1, fin = true, text("rsv"))
+            frame(0) = (frame(0) | 0x40).toByte
+            readOne(new MockConn(frame)).map { outcome =>
+                assert(outcome.result.isFailure)
+                assert(outcome.failedWith.map(_._1) == Present(1002))
+            }
+        }
+
+        "a frame with an undefined opcode: 1002" in {
+            Kyo.foreach(Chunk(0x3, 0x7, 0xb, 0xf)) { opcode =>
+                readOne(new MockConn(makeMaskedFrame(opcode, fin = true, Array.empty))).map(_.failedWith.map(_._1))
+            }.map(codes => assert(codes == Chunk.fill(4)(Present(1002))))
+        }
+
+        "a frame over the size limit: 1009" in {
+            readOne(new MockConn(makeMaskedFrame(0x1, fin = true, text("hello"))), maxSize = 4).map { outcome =>
+                assert(outcome.result.isFailure)
+                assert(outcome.failedWith.map(_._1) == Present(1009))
+            }
+        }
+
+        "an unmasked client frame: 1002" in {
+            readOne(new MockConn(makeFrame(0x1, fin = true, text("hello")))).map(outcome =>
+                assert(outcome.failedWith.map(_._1) == Present(1002))
+            )
+        }
+
+        "a Close with a one-byte payload: 1002 (RFC 6455 section 5.5.1)" in {
+            readOne(new MockConn(makeMaskedFrame(0x8, fin = true, Array[Byte](0x03)))).map { outcome =>
+                assert(outcome.peerClose == Absent)
+                assert(outcome.failedWith.map(_._1) == Present(1002))
+            }
+        }
+
+        "a Close with a code no endpoint sends: 1002 (RFC 6455 section 7.4)" in {
+            Kyo.foreach(Chunk(999, 1004, 1005, 1006, 1015, 2000, 5000)) { code =>
+                val payload = Array(((code >> 8) & 0xff).toByte, (code & 0xff).toByte)
+                readOne(new MockConn(makeMaskedFrame(0x8, fin = true, payload))).map(o => (code, o.failedWith.map(_._1)))
+            }.map(outcomes => assert(outcomes.forall(_._2 == Present(1002)), s"outcomes: $outcomes"))
+        }
+
+        "a Close with a code an endpoint may send is the peer's close" in {
+            Kyo.foreach(Chunk(1000, 1003, 1007, 1014, 3000, 4999)) { code =>
+                val payload = Array(((code >> 8) & 0xff).toByte, (code & 0xff).toByte)
+                readOne(new MockConn(makeMaskedFrame(0x8, fin = true, payload))).map(o => (o.peerClose, o.failedWith))
+            }.map(outcomes =>
+                assert(outcomes == Chunk(1000, 1003, 1007, 1014, 3000, 4999).map(code => (Present((code, "")), Absent)))
+            )
+        }
+
+        "a Close whose reason is not UTF-8: 1007" in {
+            readOne(new MockConn(makeMaskedFrame(0x8, fin = true, Array[Byte](0x03, 0xe8.toByte, 0xff.toByte)))).map { outcome =>
+                assert(outcome.peerClose == Absent)
+                assert(outcome.failedWith.map(_._1) == Present(1007))
+            }
+        }
+
+        "a transport EOF mid-message fails the read without a close code" in {
+            readOne(new MockConn(makeMaskedFrame(0x1, fin = false, text("cut")))).map { outcome =>
+                assert(outcome.result.isFailure)
+                assert(outcome.failedWith == Absent)
+            }
+        }
+    }
+
+    "writing" - {
+        "a Close without a status is written with an empty payload, since 1005 is never sent (RFC 6455 section 7.4.1)" in {
+            val conn = new MockConn(Array.empty)
+            WebSocketCodec.writeClose(conn, 1005, "", mask = false).andThen(assert(conn.written.toSeq == Seq[Byte](0x88.toByte, 0)))
+        }
+
+        "a frame is written whole, so a frame another fiber writes meanwhile cannot land inside it" in {
+            Fiber.Promise.init[Unit, Any].map { firstWriteStarted =>
+                Fiber.Promise.init[Unit, Any].map { resumeFirst =>
+                    val writes = new java.util.concurrent.ConcurrentLinkedQueue[Array[Byte]]()
+                    val conn   = new MockConn(Array.empty):
+                        override def write(data: Span[Byte])(using Frame): Unit < Async =
+                            Sync.defer(discard(writes.add(data.toArray))).andThen {
+                                firstWriteStarted.completeUnit.map(first => if first then resumeFirst.get else Kyo.unit)
+                            }
+                    for
+                        first <- Fiber.initUnscoped(WebSocketCodec.writeFrame(conn, HttpWebSocket.Payload.Text("first"), mask = false))
+                        _     <- firstWriteStarted.get
+                        _     <- WebSocketCodec.writeFrame(conn, HttpWebSocket.Payload.Text("second"), mask = false)
+                        _     <- resumeFirst.completeUnit
+                        _     <- first.get
+                    yield
+                        val wire = writes.toArray(Array.empty[Array[Byte]]).flatten.toSeq
+                        assert(wire == (makeFrame(0x1, fin = true, text("first")) ++ makeFrame(0x1, fin = true, text("second"))).toSeq)
+                    end for
+                }
             }
         }
     }
@@ -281,7 +539,14 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                 val readConn = new MockConn(writeConn.written)
                 // The written frame is unmasked (a server-to-client frame), so it is read in the client role (mask =
                 // true), which expects unmasked incoming frames per RFC 6455 section 5.1.
-                Abort.run[Closed](WebSocketCodec.readFrameWith(readConn.read, readConn, Int.MaxValue, _ => Kyo.unit, mask = true)(
+                Abort.run[Closed](WebSocketCodec.readFrameWith(
+                    readConn.read,
+                    readConn,
+                    Int.MaxValue,
+                    _ => Kyo.unit,
+                    _ => Kyo.unit,
+                    mask = true
+                )(
                     (
                         frame,
                         _
@@ -326,7 +591,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             // a 4-byte cap, so the SIZE check is what fires.
             val frame = makeFrame(0x1, fin = true, "hello".getBytes(Utf8))
             val conn  = new MockConn(frame)
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, _ => Kyo.unit, mask = true)((frame, _) => frame)).map {
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, _ => Kyo.unit, _ => Kyo.unit, mask = true)((frame, _) =>
+                frame
+            )).map {
                 result =>
                     assert(result.isFailure)
             }
@@ -391,7 +658,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         "rejects a masked server frame in the client role (Tomcat Bug 69844)" in {
             val masked = makeMaskedFrame(0x1, fin = true, "hello".getBytes(Utf8))
             val conn   = new MockConn(masked)
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)(
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, _ => Kyo.unit, mask = true)(
                 (
                     frame,
                     _
@@ -417,8 +684,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                 0x00.toByte
             )
             val conn = new MockConn(frame)
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
-                frame
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, _ => Kyo.unit, mask = true)(
+                (frame, _) =>
+                    frame
             )).map { result =>
                 assert(result.isFailure)
             }
@@ -445,8 +713,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             )
             val conn = new MockConn(frame)
             // Client role (mask = true) so the unmasked attack frame passes the masking check and the length check fires.
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
-                frame
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, _ => Kyo.unit, mask = true)(
+                (frame, _) =>
+                    frame
             )).map {
                 case Result.Failure(_: Closed) => succeed("a negative declared length was rejected")
                 case other                     => fail(s"a negative declared length was accepted, got $other")
@@ -473,8 +742,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             ) ++ payload
             val conn = new MockConn(frame)
             // Client role (mask = true) so the unmasked attack frame passes the masking check and the length check fires.
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
-                frame
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, _ => Kyo.unit, mask = true)(
+                (frame, _) =>
+                    frame
             )).map {
                 case Result.Failure(_: Closed) => succeed("a length exceeding Int range was rejected")
                 case other                     => fail(s"a 2^32+100 length was truncated to 100 and accepted, got $other")
@@ -498,7 +768,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             )
             val conn = new MockConn(frame)
             // Client role (mask = true) so the unmasked attack frame passes the masking check and the cap is what fires.
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, _ => Kyo.unit, mask = true)((frame, _) => frame)).map {
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, _ => Kyo.unit, _ => Kyo.unit, mask = true)((frame, _) =>
+                frame
+            )).map {
                 case Result.Failure(_: Closed) => succeed("a 65536-byte frame was rejected against a 4-byte cap")
                 case other                     => fail(s"a 65536-byte frame passed a 4-byte cap, got $other")
             }
@@ -703,8 +975,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         val textFrame   = Array[Byte]((0x80 | 0x01).toByte, textPayload.length.toByte) ++ textPayload
 
         val conn = new MockConn(pingFrame ++ textFrame)
-        Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
-            frame
+        Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, _ => Kyo.unit, mask = true)(
+            (frame, _) =>
+                frame
         )).map {
             case Result.Success(HttpWebSocket.Payload.Text(text)) =>
                 assert(text == "after-ping")
@@ -736,17 +1009,6 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                 assert(text == "afterpong")
             case other =>
                 fail(s"Expected Text after Pong, got $other")
-        }
-    }
-
-    "unknown opcode causes Abort[Closed]" in {
-        val unknownFrame = Array[Byte](
-            (0x80 | 0x0f).toByte, // FIN + opcode 15 (unknown)
-            0x00.toByte           // no payload
-        )
-        val conn = new MockConn(unknownFrame)
-        Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame)).map { result =>
-            assert(result.isFailure)
         }
     }
 

@@ -1080,9 +1080,12 @@ final private[kyo] class HttpClientBackend private (
                                     transportStream,
                                     readBufferCapacity(config.maxFrameSize),
                                     (cr: (Int, String)) => closeReasonRef.set(Present(cr)),
+                                    closeFn.tupled,
                                     mask = true
                                 ) { (frame, remaining) =>
-                                    inbound.put(frame).andThen(Loop.continue(remaining))
+                                    // Once the handler has returned, inbound is closed and the reader keeps reading to the peer's
+                                    // Close, dropping the messages that arrive before it.
+                                    Abort.run[Closed](inbound.put(frame)).andThen(Loop.continue(remaining))
                                 }
                             }
                         }.map { readFiber =>
@@ -1136,7 +1139,9 @@ final private[kyo] class HttpClientBackend private (
                                             // frame is written. As the server dispatch does, a handler that returns without closing closes
                                             // with 1000 (unless the peer already ended the stream), outbound is closed in every case so the
                                             // writer exits, and the session waits for the writer to write the queued frames and the close
-                                            // frame, for at most the session's closeTimeout.
+                                            // frame, then for the reader to reach the server's Close or EOF, since a client closes the TCP
+                                            // connection only after sending and receiving a Close (RFC 6455 section 7.1.1). Both waits
+                                            // share the session's closeTimeout.
                                             closeReasonRef.get.map {
                                                 case Absent =>
                                                     readFiber.done.map { isDone =>
@@ -1145,8 +1150,9 @@ final private[kyo] class HttpClientBackend private (
                                                     }
                                                 case _ => Kyo.unit
                                             }.andThen(WebSocketCodec.closeKeepingQueued(outbound))
+                                                .andThen(inbound.closeDiscard.unit)
                                                 .andThen(Abort.run[Timeout](
-                                                    Async.timeout(config.closeTimeout)(writeFiber.get)
+                                                    Async.timeout(config.closeTimeout)(writeFiber.get.andThen(readFiber.getResult))
                                                 ).unit).andThen(result)
                                         }
                                     }

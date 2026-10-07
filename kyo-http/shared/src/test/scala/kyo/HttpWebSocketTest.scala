@@ -993,6 +993,215 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
         }
     }
 
+    // ==================== Fragmented messages (RFC 6455 section 5.4) ====================
+
+    "fragmented messages from a raw peer" - {
+
+        val upgradeRequest =
+            "GET /ws/frag HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+
+        /** A frame with a payload under 126 bytes, masked with a fixed key when `mask` is set. */
+        def wireFrame(opcode: Int, fin: Boolean, payload: Array[Byte], mask: Boolean): Array[Byte] =
+            val b0 = (if fin then 0x80 | opcode else opcode).toByte
+            if mask then
+                val key = Array[Byte](0x0a, 0x1b, 0x2c, 0x3d)
+                Array[Byte](b0, (0x80 | payload.length).toByte) ++ key ++
+                    Array.tabulate(payload.length)(i => (payload(i) ^ key(i % 4)).toByte)
+            else Array[Byte](b0, payload.length.toByte) ++ payload
+            end if
+        end wireFrame
+
+        def utf8(s: String): Array[Byte] = s.getBytes("UTF-8")
+
+        def send(conn: kyo.net.Connection, bytes: Array[Byte])(using Frame): Unit < (Async & Abort[Closed]) =
+            conn.outbound.safe.put(Span.fromUnsafe(bytes))
+
+        /** The head the peer sent up to its blank line, and the bytes read after it. */
+        def readHead(conn: kyo.net.Connection, acc: Array[Byte])(using Frame): (String, Array[Byte]) < (Async & Abort[Closed]) =
+            val text = new String(acc, "ISO-8859-1")
+            val end  = text.indexOf("\r\n\r\n")
+            if end >= 0 then (text.substring(0, end), acc.drop(end + 4))
+            else conn.inbound.safe.take.map(d => readHead(conn, acc ++ d.toArray))
+        end readHead
+
+        /** The next frame's first byte and unmasked payload (under 126 bytes), and the bytes read after it. */
+        def readFrame(conn: kyo.net.Connection, acc: Array[Byte])(using
+            Frame
+        ): ((Int, Array[Byte]), Array[Byte]) < (Async & Abort[Closed]) =
+            val total =
+                if acc.length < 2 then Int.MaxValue
+                else 2 + (if (acc(1) & 0x80) != 0 then 4 else 0) + (acc(1) & 0x7f)
+            if acc.length >= total then
+                val len     = acc(1) & 0x7f
+                val payload =
+                    if (acc(1) & 0x80) == 0 then acc.slice(2, 2 + len)
+                    else Array.tabulate(len)(i => (acc(6 + i) ^ acc(2 + i % 4)).toByte)
+                ((acc(0) & 0xff, payload), acc.drop(total))
+            else conn.inbound.safe.take.map(d => readFrame(conn, acc ++ d.toArray))
+            end if
+        end readFrame
+
+        def closeCodeOf(payload: Array[Byte]): Int = ((payload(0) & 0xff) << 8) | (payload(1) & 0xff)
+
+        /** The bytes the peer sends before its EOF. */
+        def readToEof(conn: kyo.net.Connection, acc: Array[Byte])(using Frame): Array[Byte] < Async =
+            Abort.run[Closed](conn.inbound.safe.take).map {
+                case Result.Success(d) => readToEof(conn, acc ++ d.toArray)
+                case _                 => acc
+            }
+
+        /** Runs `peer` on a raw connection to a server whose handler is `handler`, once the upgrade is answered. */
+        def withRawClient[A](handler: (HttpRequest[Any], HttpWebSocket) => Unit < (Async & Abort[Closed]))(
+            peer: (kyo.net.Connection, Array[Byte]) => A < (Async & Abort[Closed])
+        )(using Frame, kyo.test.AssertScope): A < (Async & Scope & Abort[Any]) =
+            withWsServer(HttpHandler.webSocket("ws/frag")(handler)) { url =>
+                Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(url.host, url.port).safe.get).map { conn =>
+                    // Unsafe: the raw peer's socket is released when the test ends.
+                    Scope.ensure(Sync.Unsafe.defer(conn.close())).andThen {
+                        send(conn, upgradeRequest.getBytes("ISO-8859-1")).andThen(readHead(conn, Array.empty)).map { (head, rest) =>
+                            assert(head.startsWith("HTTP/1.1 101"), s"upgrade response: $head")
+                            peer(conn, rest)
+                        }
+                    }
+                }
+            }
+
+        /** Runs `client` against a raw server peer that answers the upgrade and then runs `peer`. */
+        def withRawServer[A, B](
+            client: HttpWebSocket => A < (Async & Abort[Closed]),
+            config: HttpWebSocket.Config = HttpWebSocket.Config()
+        )(
+            peer: (kyo.net.Connection, Array[Byte]) => B < (Async & Abort[Closed])
+        )(using Frame, kyo.test.AssertScope): (A, B) < (Async & Scope & Abort[Any]) =
+            Channel.initWith[kyo.net.Connection](1) { accepted =>
+                // Unsafe: the listener's accept callback hands each connection to the test, which closes it when the test ends.
+                Sync.Unsafe.defer(kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16)(conn =>
+                    discard(accepted.unsafe.offer(conn))
+                )).map { listening =>
+                    listening.safe.use { listener =>
+                        Scope.ensure(Sync.Unsafe.defer(listener.close())).andThen {
+                            Fiber.initUnscoped(HttpClient.webSocket(
+                                s"ws://127.0.0.1:${listener.port}/ws/frag",
+                                config = config
+                            )(client)).map { clientFiber =>
+                                accepted.take.map { conn =>
+                                    Scope.ensure(Sync.Unsafe.defer(conn.close())).andThen {
+                                        readHead(conn, Array.empty).map { (head, rest) =>
+                                            val key = head.linesIterator.collectFirst {
+                                                case line if line.toLowerCase.startsWith("sec-websocket-key:") =>
+                                                    line.substring("sec-websocket-key:".length).trim
+                                            }.getOrElse(fail(s"no Sec-WebSocket-Key in $head"))
+                                            val accept = java.util.Base64.getEncoder.encodeToString(
+                                                kyo.crypto.Sha1.hash(Span.fromUnsafe(utf8(key +
+                                                    "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))).toArray
+                                            )
+                                            send(
+                                                conn,
+                                                s"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: $accept\r\n\r\n"
+                                                    .getBytes("ISO-8859-1")
+                                            ).andThen(peer(conn, rest)).map(b => clientFiber.get.map(a => (a, b)))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        end withRawServer
+
+        "a server reassembles a text message sent in three frames with a Ping between them" in {
+            withRawClient((_, ws) => ws.take().map(ws.put)) { (conn, rest) =>
+                send(conn, wireFrame(0x1, fin = false, utf8("AAA"), mask = true))
+                    .andThen(send(conn, wireFrame(0x0, fin = false, utf8("BBB"), mask = true)))
+                    .andThen(send(conn, wireFrame(0x9, fin = true, utf8("hi"), mask = true)))
+                    .andThen(send(conn, wireFrame(0x0, fin = true, utf8("CCC"), mask = true)))
+                    .andThen(readFrame(conn, rest)).map { (pong, rest2) =>
+                        readFrame(conn, rest2).map { (echo, _) =>
+                            assert(pong._1 == 0x8a && pong._2.toSeq == utf8("hi").toSeq)
+                            assert(echo._1 == 0x81 && new String(echo._2, "UTF-8") == "AAABBBCCC")
+                        }
+                    }
+            }
+        }
+
+        "a server fails the connection with Close 1002 on a continuation frame with no message to continue, then closes it" in {
+            withRawClient((_, ws) => Abort.run[Closed](ws.take()).unit) { (conn, rest) =>
+                send(conn, wireFrame(0x0, fin = true, utf8("orphan"), mask = true)).andThen(readFrame(conn, rest)).map { (close, rest2) =>
+                    readToEof(conn, rest2).map { trailing =>
+                        assert(close._1 == 0x88 && closeCodeOf(close._2) == 1002)
+                        assert(trailing.isEmpty, s"bytes after the Close: ${trailing.toSeq}")
+                    }
+                }
+            }
+        }
+
+        "a server answers a peer's Close with its own and then closes the connection (RFC 6455 section 7.1.1)" in {
+            withRawClient((_, ws) => ws.stream.foreach(ws.put).handle(Abort.run[Closed]).unit) { (conn, rest) =>
+                send(conn, wireFrame(0x8, fin = true, Array[Byte](0x03, 0xe8.toByte) ++ utf8("bye"), mask = true))
+                    .andThen(readFrame(conn, rest)).map { (close, rest2) =>
+                        readToEof(conn, rest2).map { trailing =>
+                            assert(close._1 == 0x88 && closeCodeOf(close._2) == 1000)
+                            assert(trailing.isEmpty, s"bytes after the Close: ${trailing.toSeq}")
+                        }
+                    }
+            }
+        }
+
+        "a server fails the connection with Close 1002 on a data frame that starts a message mid-message" in {
+            withRawClient((_, ws) => Abort.run[Closed](ws.take()).unit) { (conn, rest) =>
+                send(conn, wireFrame(0x2, fin = false, Array[Byte](1), mask = true))
+                    .andThen(send(conn, wireFrame(0x1, fin = true, utf8("new"), mask = true)))
+                    .andThen(readFrame(conn, rest)).map { (close, _) =>
+                        assert(close._1 == 0x88 && closeCodeOf(close._2) == 1002)
+                    }
+            }
+        }
+
+        "a client reassembles a binary message sent in three frames with a Ping between them, and answers the Ping masked" in {
+            withRawServer(ws => ws.take()) { (conn, rest) =>
+                send(conn, wireFrame(0x2, fin = false, Array[Byte](1, 2), mask = false))
+                    .andThen(send(conn, wireFrame(0x9, fin = true, utf8("hi"), mask = false)))
+                    .andThen(send(conn, wireFrame(0x0, fin = false, Array[Byte](3), mask = false)))
+                    .andThen(send(conn, wireFrame(0x0, fin = true, Array[Byte](4, 5), mask = false)))
+                    .andThen(readFrame(conn, rest)).map { (pong, rest2) =>
+                        // The client closes once its handler returns, and waits for the server's Close or EOF before it lets go.
+                        readFrame(conn, rest2).map((close, _) => Sync.Unsafe.defer(conn.close()).andThen((pong, close)))
+                    }
+            }.map { (message, frames) =>
+                val (pong, close) = frames
+                message match
+                    case HttpWebSocket.Payload.Binary(data) => assert(data.toArray.toSeq == Seq[Byte](1, 2, 3, 4, 5))
+                    case other                              => fail(s"expected one reassembled Binary, got $other")
+                assert(pong._1 == 0x8a && pong._2.toSeq == utf8("hi").toSeq)
+                assert(close._1 == 0x88 && closeCodeOf(close._2) == 1000)
+            }
+        }
+
+        "a client fails the connection with a masked Close 1002 on a continuation frame with no message to continue" in {
+            withRawServer(ws => Abort.run[Closed](ws.take())) { (conn, rest) =>
+                send(conn, wireFrame(0x0, fin = true, utf8("orphan"), mask = false)).andThen(readFrame(conn, rest))
+            }.map { (taken, closeAndRest) =>
+                val (close, _) = closeAndRest
+                assert(taken.isFailure, s"the client received $taken")
+                assert(close._1 == 0x88 && closeCodeOf(close._2) == 1002)
+            }
+        }
+
+        "a client fails the connection with Close 1009 on a fragmented message over its maxFrameSize" in {
+            withRawServer(ws => Abort.run[Closed](ws.take()), HttpWebSocket.Config(maxFrameSize = 150.bytes)) { (conn, rest) =>
+                send(conn, wireFrame(0x2, fin = false, new Array[Byte](100), mask = false))
+                    .andThen(send(conn, wireFrame(0x0, fin = true, new Array[Byte](100), mask = false)))
+                    .andThen(readFrame(conn, rest))
+            }.map { (taken, closeAndRest) =>
+                val (close, _) = closeAndRest
+                assert(taken.isFailure, s"the client received $taken")
+                assert(close._1 == 0x88 && closeCodeOf(close._2) == 1009)
+            }
+        }
+    }
+
     // ==================== HttpWebSocket.connect (local, no network) ====================
 
     def echo(ws: HttpWebSocket)(using Frame): Unit < Async =

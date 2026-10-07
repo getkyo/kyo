@@ -1521,6 +1521,106 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
+        /** Helper: encode a masked client frame with the given FIN bit and opcode, payload under 126 bytes. */
+        def encodeClientFrame(opcode: Int, fin: Boolean, payload: Array[Byte]): Array[Byte] =
+            val maskKey = Array[Byte](0x21, 0x43, 0x65, 0x07)
+            val masked  = Array.tabulate(payload.length)(i => (payload(i) ^ maskKey(i % 4)).toByte)
+            Array[Byte]((if fin then 0x80 | opcode else opcode).toByte, (0x80 | payload.length).toByte) ++ maskKey ++ masked
+        end encodeClientFrame
+
+        def closeCode(frameBytes: Array[Byte]): (Int, Int) =
+            (frameBytes(0) & 0x0f, ((frameBytes(2) & 0xff) << 8) | (frameBytes(3) & 0xff))
+
+        "WS fragmented text with a Ping between its frames: the Pong, then the echo as one message" in {
+            val handler = HttpHandler.webSocket("ws")(wsEcho)
+            val router  = routerOf(Seq(handler), Absent)
+
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+
+            discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
+
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+
+            collectWsUpgradeResponse(outbound).map { response =>
+                assert(response.contains("101"), s"Expected 101, got: $response")
+                discard(inbound.offer(Span.fromUnsafe(encodeClientFrame(0x1, fin = false, "AAA".getBytes(StandardCharsets.UTF_8)))))
+                discard(inbound.offer(Span.fromUnsafe(encodeClientPingFrame("hi".getBytes(StandardCharsets.UTF_8)))))
+                discard(inbound.offer(Span.fromUnsafe(encodeClientFrame(0x0, fin = true, "BBB".getBytes(StandardCharsets.UTF_8)))))
+                readWsFrame(outbound).map { pong =>
+                    readWsFrame(outbound).map { echo =>
+                        assert(pong.toSeq == Seq[Byte](0x8a.toByte, 2, 'h', 'i'))
+                        assert(echo(0) == 0x81.toByte, s"Expected one final text frame, got first byte ${echo(0) & 0xff}")
+                        assert(decodeServerTextFrame(echo) == "AAABBB")
+                        discard(inbound.close())
+                        succeed
+                    }
+                }
+            }
+        }
+
+        "WS invalid fragment sequences: the server fails the connection with Close 1002 and the handler's take fails" in {
+            val sequences = Chunk(
+                encodeClientFrame(0x0, fin = true, "orphan".getBytes(StandardCharsets.UTF_8)),
+                encodeClientFrame(0x1, fin = false, "AAA".getBytes(StandardCharsets.UTF_8)) ++
+                    encodeClientFrame(0x2, fin = true, "BBB".getBytes(StandardCharsets.UTF_8))
+            )
+            Kyo.foreach(sequences) { sequence =>
+                Fiber.Promise.init[Result[Closed, HttpWebSocket.Payload], Any].map { taken =>
+                    val handler = HttpHandler.webSocket("ws") { (_, ws) =>
+                        Abort.run[Closed](ws.take()).map(r => taken.completeDiscard(Result.succeed(r)))
+                    }
+                    val router   = routerOf(Seq(handler), Absent)
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](64)
+
+                    discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
+
+                    UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+
+                    collectWsUpgradeResponse(outbound).map { response =>
+                        assert(response.contains("101"), s"Expected 101, got: $response")
+                        discard(inbound.offer(Span.fromUnsafe(sequence)))
+                        readWsFrame(outbound).map { close =>
+                            taken.get.map { result =>
+                                discard(inbound.close())
+                                (closeCode(close), result.isFailure)
+                            }
+                        }
+                    }
+                }
+            }.map(outcomes => assert(outcomes == Chunk(((0x8, 1002), true), ((0x8, 1002), true))))
+        }
+
+        "WS fragmented message over maxFrameSize: the server fails the connection with Close 1009 and delivers nothing" in {
+            Fiber.Promise.init[Result[Closed, HttpWebSocket.Payload], Any].map { taken =>
+                val config  = HttpWebSocket.Config(maxFrameSize = 5.bytes)
+                val handler = HttpHandler.webSocket("ws", config) { (_, ws) =>
+                    Abort.run[Closed](ws.take()).map(r => taken.completeDiscard(Result.succeed(r)))
+                }
+                val router   = routerOf(Seq(handler), Absent)
+                val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+                val outbound = Channel.Unsafe.init[Span[Byte]](64)
+
+                discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
+
+                UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+
+                collectWsUpgradeResponse(outbound).map { response =>
+                    assert(response.contains("101"), s"Expected 101, got: $response")
+                    discard(inbound.offer(Span.fromUnsafe(encodeClientFrame(0x2, fin = false, Array[Byte](1, 2, 3)))))
+                    discard(inbound.offer(Span.fromUnsafe(encodeClientFrame(0x0, fin = true, Array[Byte](4, 5, 6)))))
+                    readWsFrame(outbound).map { close =>
+                        taken.get.map { result =>
+                            discard(inbound.close())
+                            assert(closeCode(close) == (0x8, 1009))
+                            assert(result.isFailure, s"the handler received $result")
+                        }
+                    }
+                }
+            }
+        }
+
         "WS upgrade on non-WS route returns 404" in {
             // Only a regular HTTP handler, no WS handler
             val handler = HttpHandler.getText("ws")(_ => "hello")
