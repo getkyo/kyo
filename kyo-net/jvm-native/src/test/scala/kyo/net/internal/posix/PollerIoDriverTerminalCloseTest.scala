@@ -34,7 +34,7 @@ class PollerIoDriverTerminalCloseTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle    = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)
                 val engine    = new RecordingTlsEngine(rawEngine)
                 handle.tls = Present(engine)
@@ -67,7 +67,7 @@ class PollerIoDriverTerminalCloseTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle    = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)
                 val engine    = new RecordingTlsEngine(rawEngine)
                 handle.tls = Present(engine)
@@ -97,7 +97,7 @@ class PollerIoDriverTerminalCloseTest extends Test:
             val pollerFd = real.create()
             val driver   = TestDrivers.forBackend(real, pollerFd, spy)
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle    = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)
                 val engine    = new RecordingTlsEngine(rawEngine)
                 handle.tls = Present(engine)

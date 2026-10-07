@@ -185,10 +185,10 @@ private[kyo] object MpscLongQueue:
       * burst (an interest change per fiber doing I/O in a cycle) fits in the chunk the driver is born with, which is what keeps a poll cycle
       * off the allocator entirely.
       */
-    final val ChunkCapacity: Int = ChunkSlots - 1
+    final private val ChunkCapacity: Int = ChunkSlots - 1
 
     // Doubled capacity mask, matching the doubled indices. Producers may run `Mask` past the consumer, which is ChunkCapacity commands.
-    final private val Mask: Long = ((ChunkSlots - 1) << 1).toLong
+    final private val Mask: Long = (ChunkCapacity << 1).toLong
 
     // A slot holds this while it carries no command. It is the zero a fresh chunk's array is born with, so a chunk needs no fill pass.
     final private val Vacant: Long = 0L

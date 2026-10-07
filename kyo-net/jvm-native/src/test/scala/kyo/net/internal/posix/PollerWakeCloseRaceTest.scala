@@ -72,7 +72,7 @@ class PollerWakeCloseRaceTest extends Test:
 
             // Arm write-readiness through the public connect path: awaitConnect -> armSocketWritable -> submitChange -> triggerWake -> backend.wake,
             // which fires onWakeEnter. A loopback fd is immediately writable, so the wake path is the one under test (not the readiness delivery).
-            val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val handle  = PosixHandle.socket(clientFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
             val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
             driver.awaitConnect(handle, promise)
 

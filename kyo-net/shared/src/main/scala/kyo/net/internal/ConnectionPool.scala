@@ -42,7 +42,9 @@ final private[kyo] class ConnectionPool[K, C](
     // polled again and its client never closed. Absent for an infinite timeout; interrupted by close().
     @volatile private var reaper: Maybe[Fiber.Unsafe[Unit, Any]] = Absent
 
-    /** True once `close()` has run. For testing the client's close/release path only. */
+    /** True once `close()` has run. A client reads it before resending a request whose pooled connection closed before any response byte, so
+      * a closed pool surfaces that failure instead of sending the request again on a fresh connection.
+      */
     private[kyo] def isClosed(using AllowUnsafe): Boolean = closed
 
     // Test seam (default no-op): a deterministic interleaving point for the release-vs-close linearizability regression in

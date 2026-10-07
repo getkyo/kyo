@@ -11,8 +11,7 @@ class HandleIdTest extends Test:
             val id = HandleId.of(fd = 42, generation = 7)
             assert(id.fd == 42)
             assert(id.generation == 7)
-            val repacked = HandleId.fromPacked(id.packed)
-            assert(repacked.packed == id.packed)
+            assert(HandleId.of(id.fd, id.generation).packed == id.packed)
             succeed
         }
 
@@ -44,9 +43,9 @@ class HandleIdTest extends Test:
             succeed
         }
 
-        "fromPacked is the inverse of packed" in {
+        "of rebuilds a next-allocated id from its fd and generation" in {
             val id      = HandleId.next(11)
-            val rebuilt = HandleId.fromPacked(id.packed)
+            val rebuilt = HandleId.of(id.fd, id.generation)
             assert(rebuilt.fd == id.fd)
             assert(rebuilt.generation == id.generation)
             assert(rebuilt.packed == id.packed)

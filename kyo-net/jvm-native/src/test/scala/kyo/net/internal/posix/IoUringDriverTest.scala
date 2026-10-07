@@ -87,8 +87,8 @@ class IoUringDriverTest extends Test:
             PosixTestSockets.assumeUring()
             withRealDriver { driver =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val clientH   = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val payload   = Span.fromUnsafe(Array.tabulate[Byte](16)(i => (i + 1).toByte))
                     val w         = driver.write(clientH, payload, 0)
                     assert(w == WriteResult.Done, s"write result=$w")
@@ -110,7 +110,7 @@ class IoUringDriverTest extends Test:
                     if i >= 50 then Loop.done(succeed)
                     else
                         PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                            val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                             val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             driver.awaitRead(acceptedH, promise)
                             // Close the handle while the recv SQE is in flight: cancel fails the promise, the buffer is freed only on reap.
@@ -148,7 +148,7 @@ class IoUringDriverTest extends Test:
                     val driver = IoUringDriver.init()
                     discard(driver.start())
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(acceptedH, promise) // recv SQE in flight, no data: the reap loop parks in wait holding cqePtr
                         driver.close()                       // tear the driver down while that wait is in flight
@@ -186,7 +186,7 @@ class IoUringDriverTest extends Test:
                     case Present((addr, len)) =>
                         val handle = PosixHandle.socket(
                             fd,
-                            PosixHandle.DefaultReadBufferSize,
+                            PosixTestSockets.ReadBufferSize,
                             connectTarget = Present((addr, len)),
                             createdAt = Frame.internal
                         )
@@ -284,7 +284,7 @@ class IoUringDriverTest extends Test:
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, _) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val payload   = Array.tabulate[Byte](16)(i => (i + 1).toByte)
                     // The peer sends exactly 16 bytes; the real recv CQE carries res=16 and the driver delivers exactly those bytes.
                     assert(sock.sendNow(client, Buffer.fromArray[Byte](payload), payload.length.toLong, 0).value == 16L)
@@ -302,7 +302,7 @@ class IoUringDriverTest extends Test:
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, _) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     // Closing the peer cleanly makes the real recv CQE arrive with res=0 (EOF).
                     PosixTestSockets.closePeerForEof(sock, client)
                     readVia(drv, acceptedH).map { got =>
@@ -317,7 +317,7 @@ class IoUringDriverTest extends Test:
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, _) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     drv.awaitRead(acceptedH, promise)
                     // A real RST: SO_LINGER {l_onoff=1, l_linger=0} + close. The kernel fills the pending recv CQE with res=-ECONNRESET=-104 on
@@ -347,8 +347,8 @@ class IoUringDriverTest extends Test:
             withRecordingDriver(1) { (drv, _) =>
                 PosixTestSockets.loopbackPair().map { case (clientA, acceptedA) =>
                     PosixTestSockets.loopbackPair().map { case (clientB, acceptedB) =>
-                        val accAH = PosixHandle.socket(acceptedA, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        val accBH = PosixHandle.socket(acceptedB, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val accAH = PosixHandle.socket(acceptedA, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
+                        val accBH = PosixHandle.socket(acceptedB, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         val gate  = new java.util.concurrent.CountDownLatch(1)
                         val pinIn = Promise.Unsafe.init[Unit, Abort[Closed]]()
                         drv.submitEngineOp { () =>
@@ -438,7 +438,7 @@ class IoUringDriverTest extends Test:
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val clientH = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val payload = Span.fromUnsafe(Array.tabulate[Byte](8)(i => i.toByte))
                     val reaped  = recording.awaitReap()
                     // Observe the per-write buffer OPEN while its send SQE is prepped-but-unsubmitted, deterministically and without any
@@ -495,7 +495,7 @@ class IoUringDriverTest extends Test:
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     val reaped    = recording.awaitReap()
                     drv.awaitRead(acceptedH, promise) // recv SQE with no data: stays in flight
@@ -553,7 +553,7 @@ class IoUringDriverTest extends Test:
             // (a different carrier) must not throw the confined-arena cross-thread error; the read completes with the byte the peer sent.
             withRecordingDriver(256) { (drv, _) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     assert(sock.sendNow(client, Buffer.fromArray[Byte](Array[Byte](42)), 1L, 0).value == 1L)
                     readVia(drv, acceptedH).map { got =>
                         drv.closeHandle(acceptedH)
@@ -569,7 +569,7 @@ class IoUringDriverTest extends Test:
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, _) =>
                 listenAndConnect().map { case (serverFd, clientFd) =>
-                    val serverH = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val serverH = PosixHandle.socket(serverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
                     drv.awaitAccept(serverH, promise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
                     promise.safe.get.map { fd =>
@@ -588,7 +588,7 @@ class IoUringDriverTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     // accept(2) on a connected (non-listening) socket fails with a real negative CQE (EINVAL on Linux, not a transient errno). The
                     // driver surfaces a non-transient accept failure as a typed NetConnectionIoException(accept) naming the listener and the errno.
-                    val connectedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val connectedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val promise    = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
                     drv.awaitAccept(connectedH, promise)
                     promise.safe.getResult.map { result =>
@@ -616,8 +616,8 @@ class IoUringDriverTest extends Test:
             withRecordingDriver(1) { (drv, _) =>
                 listenOnly().map { serverFd =>
                     PosixTestSockets.loopbackPair().map { case (clientR, acceptedR) =>
-                        val readH   = PosixHandle.socket(acceptedR, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        val listenH = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val readH   = PosixHandle.socket(acceptedR, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
+                        val listenH = PosixHandle.socket(serverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         val gate    = new java.util.concurrent.CountDownLatch(1)
                         val pinIn   = Promise.Unsafe.init[Unit, Abort[Closed]]()
                         drv.submitEngineOp { () =>
@@ -657,7 +657,7 @@ class IoUringDriverTest extends Test:
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, _) =>
                 listenOnly().map { serverFd =>
-                    val serverH = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val serverH = PosixHandle.socket(serverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     // Two clients connect; two sequential accepts must complete with two distinct accepted fds.
                     connectTo(serverFd).map { c1 =>
                         val p1 = Promise.Unsafe.init[Int, Abort[Closed]]()
@@ -690,7 +690,7 @@ class IoUringDriverTest extends Test:
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val reaped    = recording.awaitReap()
                     drv.awaitRead(acceptedH, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
                     // The peer sends one byte so the recv SQE completes and the reap loop runs wait_cqe then peek_cqe in one drain cycle.
@@ -720,7 +720,7 @@ class IoUringDriverTest extends Test:
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the read")
                 withRecordingDriver(256) { (drv, recording) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle = PosixHandle.socket(driverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(RecordingTlsEngine(serverEngine))
                         val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         val reaped  = recording.awaitReap()
@@ -777,7 +777,7 @@ class IoUringDriverTest extends Test:
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle = PosixHandle.socket(driverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(serverEngine)
                         val reaped = recording.awaitReap()
                         val w      = driver.write(handle, Span.fromUnsafe(Array.fill[Byte](32)(0x42.toByte)), 0)
@@ -815,7 +815,7 @@ class IoUringDriverTest extends Test:
                 val recordingServer = RecordingTlsEngine(serverEngine)
                 withRecordingDriver(256) { (drv, _) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle = PosixHandle.socket(driverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(recordingServer)
                         val msgs = Seq("io-uring-read-0".getBytes("UTF-8"), "io-uring-read-1".getBytes("UTF-8"))
 
@@ -867,7 +867,7 @@ class IoUringDriverTest extends Test:
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the writes")
                 withRecordingDriver(256) { (drv, recording) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle = PosixHandle.socket(driverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(serverEngine)
                         val N        = 3
                         val payloads = Array.tabulate(N)(k => Array.tabulate[Byte](20)(i => ((k * 20 + i + 1) % 127).toByte))

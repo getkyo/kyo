@@ -160,7 +160,7 @@ class PosixTransportListenerCloseTest extends Test:
             withUnstartedDriver { (_, driver, start, sockets, backend) =>
                 val fd = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
                 assert(fd >= 0)
-                val handle              = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle              = PosixHandle.socket(fd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val read                = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 val submittedAfterClose = new java.util.concurrent.atomic.AtomicBoolean(false)
                 // Closing from inside the registration puts the closing deregister in the same drain, after a read arm that is already
@@ -188,7 +188,7 @@ class PosixTransportListenerCloseTest extends Test:
             withUnstartedDriver { (_, driver, start, sockets, backend) =>
                 val fd = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
                 assert(fd >= 0)
-                val handle = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle = PosixHandle.socket(fd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val read   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, read)
                 val closed = sockets.closed(fd)

@@ -23,10 +23,14 @@ object PosixTestSockets:
     // via SO_NOSIGPIPE / MSG_NOSIGNAL, but raw SocketBindings calls in test helpers do not.
     SigpipeInit.install()
 
-    // Test-only constants absent from PosixConstants (which only has SHUT_RDWR = 2).
+    // Test-only constants absent from PosixConstants.
     // SO_LINGER: 0x0080 on macOS/BSD (socket.h), 13 on Linux (asm-generic/socket.h).
     val SO_LINGER: Int = if PosixConstants.isMacOrBsd then 0x0080 else 13
     val SHUT_WR: Int   = 1
+    // MSG_PEEK: 0x2 on both Linux (bits/socket.h) and macOS/BSD (sys/socket.h).
+    val MSG_PEEK: Int = 0x2
+
+    val ReadBufferSize: Int = NetConfig.bytesAtUse(NetConfig.DefaultReadChunkSize)
 
     private def sock(using AllowUnsafe) = Ffi.load[SocketBindings]
 
@@ -263,7 +267,7 @@ object PosixTestSockets:
     def drainCollect(driver: IoDriver[PosixHandle], fd: Int, want: Int)(using Frame): List[Byte] < (Abort[Closed] & Async) =
         import AllowUnsafe.embrace.danger
         val sockets                               = sock
-        val handle                                = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+        val handle                                = PosixHandle.socket(fd, ReadBufferSize, Absent, Frame.internal)
         def recvLoop(acc: List[Byte]): List[Byte] =
             val buf = Buffer.alloc[Byte](65536)
             try

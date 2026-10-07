@@ -45,7 +45,7 @@ class ProgressWatchdogDriverTest extends Test:
             val driver = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
             entered.safe.get.andThen {
-                val handle      = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle      = PosixHandle.socket(acceptedFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, readPromise)
                 assert(spy.sendNow(clientFd, Buffer.fromArray(Array[Byte](7)), 1, 0).value == 1)

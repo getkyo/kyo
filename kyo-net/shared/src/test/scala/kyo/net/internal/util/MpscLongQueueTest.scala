@@ -78,7 +78,7 @@ class MpscLongQueueTest extends Test:
         // ChunkCapacity commands go unconsumed, and this burst spans four. The boundary is where a link can go wrong, by dropping the
         // command that triggered it, by leaving the consumer on the drained chunk, or by resuming at the wrong slot in the new one.
         val q     = new MpscLongQueue()
-        val total = MpscLongQueue.ChunkCapacity * 3 + 7
+        val total = MpscLongQueueTest.ChunkCapacity * 3 + 7
         var i     = 0
         while i < total do
             q.offer(i.toLong)
@@ -133,5 +133,13 @@ class MpscLongQueueTest extends Test:
         assert(q.poll() == MpscLongQueue.Empty, "queue must be empty after balanced churn")
         succeed
     }
+
+end MpscLongQueueTest
+
+object MpscLongQueueTest:
+
+    // Commands one chunk holds in MpscLongQueue's private layout: 256 slots, one reserved for the link to the next chunk. A burst sized
+    // from it spans chunk links only while the production chunk is no larger, so growing the chunk means raising this with it.
+    val ChunkCapacity: Int = 255
 
 end MpscLongQueueTest

@@ -93,7 +93,7 @@ class PollerIoDriverConcurrentInterestTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val payload   = Array.tabulate[Byte](8)(i => (i + 1).toByte)
 
                     // Park a READ on the accepted fd: no data has arrived, so it stays pending. On epoll this arms EPOLLIN.

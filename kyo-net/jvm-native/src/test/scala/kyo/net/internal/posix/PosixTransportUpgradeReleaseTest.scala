@@ -160,7 +160,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
             withRecordingTransport { (transport, driver, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
-                        val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle    = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
                         // The ReadPump's first recv is now armed (or arming); wait for the SQE to be genuinely kernel-owned.
@@ -230,7 +230,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                 (transport, driver, recording) =>
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                         Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
-                            val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                            val handle    = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                             val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                             assert(plaintext.start(), "the plaintext connection must start")
                             awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
@@ -305,7 +305,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
             withRecordingTransport(cfg, spy) { (transport, driver, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
-                        val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle    = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         val plaintext = transport.openWith(handle, driver, cfg.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
                         awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
@@ -409,7 +409,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
-                        val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle    = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
                         // The post-detach body runs inside a completion callback, and completion callbacks are run under a catch-all that
@@ -461,7 +461,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
-                        val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle    = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
                         val payload = "staged-ciphertext".getBytes("UTF-8")
@@ -539,7 +539,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
-                        val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle    = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
                         // The engine completes its handshake immediately, and its serverEndPointHash (called by onFinished's wireUpgraded, after

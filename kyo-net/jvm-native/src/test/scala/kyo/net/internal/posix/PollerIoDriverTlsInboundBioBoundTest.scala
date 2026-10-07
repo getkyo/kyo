@@ -154,14 +154,14 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                 Sync.ensure(Sync.defer(driver.close())) {
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                         pair.set(Present((client, accepted)))
-                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         acceptedH.tls = Present(recordingServer)
                         val readBufferSize = acceptedH.readBufferSize
                         onFifo(driver, TlsEngineLoopback.handshake(clientEngine, serverEngine)).safe.get.flatMap { handshakeDone =>
                             assert(handshakeDone, "handshake must complete before the reads")
                             val n = 16
                             // N large distinct application records near the TLS max record size, so the ciphertext stream is ~256 KB: far larger
-                            // than the accepted side's 8192-byte recv buffer (PosixHandle.DefaultReadBufferSize) and the kernel socket buffer.
+                            // than the accepted side's 8192-byte recv buffer (PosixTestSockets.ReadBufferSize) and the kernel socket buffer.
                             // That forces MANY separate recvNow calls (and therefore many feedCiphertext feeds) into the one recvStaging buffer,
                             // which is exactly the coalesced-burst load this bound is about. The distinct per-record/per-index pattern makes any
                             // corruption or reorder a concrete byte mismatch.
@@ -175,7 +175,7 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                                     onFifo(driver, TlsEngineLoopback.encrypt(clientEngine, records(k))).safe.get
                                         .map(c => encryptAll(k + 1, acc ++ c))
                             encryptAll(0, Array.emptyByteArray).flatMap { allCipher =>
-                                val clientH  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                                val clientH  = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                                 val plainAcc = new java.io.ByteArrayOutputStream
                                 val done     = Promise.Unsafe.init[Unit, Abort[Closed]]()
                                 val reader   = new StandingReader(driver, acceptedH, expectedPlain.length, plainAcc, done)

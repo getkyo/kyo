@@ -138,7 +138,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         // the residual drains without waiting for a new kernel edge.
         // On kqueue, registerRead re-issues EV_ADD|EV_CLEAR which re-evaluates buffered data, so the bug is kqueue-invisible;
         // this leaf catches it on real epoll in the container.
-        val readBufSize = PosixHandle.DefaultReadBufferSize
+        val readBufSize = PosixTestSockets.ReadBufferSize
         val payloadSize = readBufSize * 3
         PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
             val real     = PollerBackend.default()
@@ -182,7 +182,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         // drain: the residual after the first recv is re-dispatched by the filled-buffer signal, and the eventual EAGAIN with
         // eofPending surfaces EOF cleanly. The half-close produces a FIN edge, but the bytes must arrive via the drain, not just
         // via the FIN edge. Payload at 4x readBufferSize forces at least 4 recv calls.
-        val readBufSize = PosixHandle.DefaultReadBufferSize
+        val readBufSize = PosixTestSockets.ReadBufferSize
         val payloadSize = readBufSize * 4
         PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
             val real     = PollerBackend.default()
@@ -239,7 +239,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
 
-            val handle = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val handle = PosixHandle.socket(acceptedFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
             val n      = 5
             val n2     = 10
 
@@ -313,7 +313,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             discard(driver.start())
 
             val payload = Array.tabulate[Byte](2048)(i => (i % 127).toByte)
-            val handle  = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val handle  = PosixHandle.socket(acceptedFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
 
             // Queue data then half-close before the first awaitRead: the kernel delivers data+EOF together.
             sendAll(clientFd, payload).map { _ =>
@@ -357,7 +357,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
 
-            val handle = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val handle = PosixHandle.socket(acceptedFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
 
             // Two sequential write arms on the same fd. Each must resolve (the fd is always writable on a loopback with no backpressure).
             val p1 = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
@@ -407,7 +407,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
 
-            val handle = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val handle = PosixHandle.socket(acceptedFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
             val p      = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(handle, p)
 
@@ -453,7 +453,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                         val driver2   = TestDrivers.forBackend(backend2, pollerFd2, spy2)
                         discard(driver2.start())
 
-                        val handle2 = PosixHandle.socket(accepted2Fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle2 = PosixHandle.socket(accepted2Fd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         val p2      = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver2.awaitRead(handle2, p2)
                         // Send exactly one byte of real data after the read is armed (no pre-existing data).
@@ -500,7 +500,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         //
         // On kqueue this is not observable: EV_ADD|EV_CLEAR re-evaluates buffered data on every registerRead, so a consumer
         // resuming with awaitRead gets the data even without a missed-edge record. The leaf catches it on real epoll in the container.
-        val readBufSize = PosixHandle.DefaultReadBufferSize
+        val readBufSize = PosixTestSockets.ReadBufferSize
         // First payload: smaller than readBufferSize so n < readBufferSize and readMightHaveMore stays false after the first recv.
         // This is the critical condition: readMightHaveMore=false means the existing consumer-paced drain does NOT re-dispatch.
         val firstPayload = Array.tabulate[Byte](256)(i => (i % 127).toByte)
@@ -586,7 +586,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
 
-            val handle  = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val handle  = PosixHandle.socket(acceptedFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
             val sendBuf = Buffer.fromArray[Byte](Array[Byte](42.toByte))
             sock.send(clientFd, sendBuf, 1L, PosixConstants.MSG_NOSIGNAL).safe.get.map { _ =>
                 sendBuf.close()

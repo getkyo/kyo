@@ -79,7 +79,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                         sockets = spy,
                         closedFlag = AtomicBoolean.Unsafe.init(true)
                     )
-                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle    = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)
                 val engine    = new RecordingTlsEngine(rawEngine)
                 val reaped    = AtomicBoolean.Unsafe.init(false)

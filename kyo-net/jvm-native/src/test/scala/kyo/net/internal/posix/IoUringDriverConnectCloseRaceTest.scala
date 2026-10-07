@@ -40,9 +40,9 @@ class IoUringDriverConnectCloseRaceTest extends Test:
             val closingAddr = Buffer.alloc[Byte](16)
             val healthyAddr = Buffer.alloc[Byte](16)
             val closing     =
-                PosixHandle.socket(ClosingFd, PosixHandle.DefaultReadBufferSize, Present((closingAddr, 16)), Frame.internal)
+                PosixHandle.socket(ClosingFd, PosixTestSockets.ReadBufferSize, Present((closingAddr, 16)), Frame.internal)
             val healthy =
-                PosixHandle.socket(HealthyFd, PosixHandle.DefaultReadBufferSize, Present((healthyAddr, 16)), Frame.internal)
+                PosixHandle.socket(HealthyFd, PosixTestSockets.ReadBufferSize, Present((healthyAddr, 16)), Frame.internal)
             // Reproduce the production shape exactly, which is what makes this leaf load-bearing. The connect-phase close in
             // `PosixTransport.closeUnwiredHandle` wins `claimFdClose()` and closes the fd on the CALLER's carrier; it never calls
             // `requestClose()`, because on a connection handle that would free buffers a kernel-owned recv may still reference. So the

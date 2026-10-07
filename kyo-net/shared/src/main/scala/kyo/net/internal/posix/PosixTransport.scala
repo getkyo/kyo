@@ -2586,7 +2586,7 @@ private[net] object PosixTransport:
       */
     def init(pool: IoDriverPool[PosixHandle])(using AllowUnsafe): PosixTransport =
         val representative = pool.next()
-        init(pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative))
+        init(pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative), realEngineFactory, () => ())
 
     /** Build a transport over a caller-supplied pool, representative driver, socket bindings, and epoll flag, allocating the transport's unsafe
       * fields under the caller's `AllowUnsafe`: the construction site propagates the capability rather than each field bridging it. Shared by
@@ -2597,8 +2597,8 @@ private[net] object PosixTransport:
         representative: IoDriver[PosixHandle],
         sockets: SocketBindings,
         backendIsEpoll: Boolean,
-        engineFactory: TlsEngineFactory = realEngineFactory,
-        onAcceptResourceBackoff: () => Unit = () => ()
+        engineFactory: TlsEngineFactory,
+        onAcceptResourceBackoff: () => Unit
     )(using AllowUnsafe): PosixTransport =
         new PosixTransport(
             pool = pool,

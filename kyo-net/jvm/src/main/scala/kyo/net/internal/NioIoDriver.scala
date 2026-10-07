@@ -2132,11 +2132,6 @@ private[kyo] object NioIoDriver:
       */
     private[net] val GraceProbeStagingCap: Int = 1 << 20
 
-    /** Retained for diagnostic and test use. The selector loop calls `selector.select()` with no timeout; `reassertPendingInterest()` +
-      * `selector.wakeup()` is the liveness mechanism rather than a bounded timeout floor.
-      */
-    private[net] val SelectTimeoutMs: Long = 100L
-
     /** Factory for `NioIoDriver`. Opens a fresh `Selector` for each driver instance. */
     def init()(using AllowUnsafe): NioIoDriver =
         new NioIoDriver(Selector.open())

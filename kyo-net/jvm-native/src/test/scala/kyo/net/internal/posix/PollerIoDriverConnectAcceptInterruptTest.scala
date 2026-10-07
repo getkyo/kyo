@@ -100,7 +100,7 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 discard(driver.start())
-                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle = PosixHandle.socket(targetFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
 
                 val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                 driver.awaitConnect(handle, promise)
@@ -142,7 +142,7 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 discard(driver.start())
-                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle = PosixHandle.socket(targetFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
 
                 val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                 driver.awaitConnect(handle, promise)
@@ -189,7 +189,7 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 discard(driver.start())
-                val handle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle = PosixHandle.socket(serverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
 
                 val promise = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
                 driver.awaitAccept(handle, promise)
@@ -227,7 +227,7 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 discard(driver.start())
-                val handle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle = PosixHandle.socket(serverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
 
                 val promise = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
                 driver.awaitAccept(handle, promise)

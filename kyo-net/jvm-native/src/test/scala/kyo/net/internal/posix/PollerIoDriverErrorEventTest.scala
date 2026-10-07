@@ -73,7 +73,7 @@ class PollerIoDriverErrorEventTest extends Test:
                 val pollerFd = real.create()
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle   = PosixHandle.socket(acceptedFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
 
                 discard(driver.start())
                 // Reset the peer so SO_ERROR is set on acceptedFd; the driver's real getsockopt reads the genuine non-zero errno.
@@ -147,7 +147,7 @@ class PollerIoDriverErrorEventTest extends Test:
                 val pollerFd = real.create()
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle   = PosixHandle.socket(acceptedFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
 
                 discard(driver.start())
                 // Do NOT reset the peer; the accepted fd is still connected, so SO_ERROR == 0.

@@ -97,9 +97,9 @@ class IoUringTlsWriteSqFullTest extends Test:
             withRealRingDriver(1) { drv =>
                 PosixTestSockets.loopbackPair().map { case (fillerClient, fillerAccepted) =>
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                        val fillerH = PosixHandle.socket(fillerAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        val writeH  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        val peerH   = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val fillerH = PosixHandle.socket(fillerAccepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
+                        val writeH  = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
+                        val peerH   = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         writeH.tls = Present(new PassThroughEngine)
                         writeH.engineFreeSink = _ => ()
                         val gate  = new java.util.concurrent.CountDownLatch(1)

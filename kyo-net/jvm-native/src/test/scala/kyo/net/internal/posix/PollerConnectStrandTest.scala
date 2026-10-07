@@ -88,7 +88,7 @@ class PollerConnectStrandTest extends Test:
                         discard(sockets.close(client).poll())
                         true // immediate-complete or immediate-error: a valid resolution, not a strand
                     else
-                        val handle  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val handle  = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
                         driver.awaitConnect(handle, promise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
                         Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](promise.safe.get))).map {

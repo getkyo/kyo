@@ -44,11 +44,6 @@ class NioHandleTest extends Test:
         end try
     }
 
-    "DefaultReadBufferSize is 8192" in {
-        assert(NioHandle.DefaultReadBufferSize == 8192)
-        succeed
-    }
-
     "initTls creates handle with Present tls state" in {
         val channel = SocketChannel.open()
         try

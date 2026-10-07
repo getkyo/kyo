@@ -189,7 +189,7 @@ class SocketBindingsTest extends Test:
                 // actually land without consuming them, so the readiness wait is deterministic on the calling fiber (the @Ffi.blocking ->
                 // < Async binding) instead of a busy-spin on recvNow/EAGAIN. The bytes stay queued for the recvNow below to observe.
                 peekBuf = Buffer.alloc[Byte](5)
-                _ <- Sync.ensure(Sync.defer(peekBuf.close()))(b.recv(acceptedFd, peekBuf, 5L, PosixConstants.MSG_PEEK).safe.get)
+                _ <- Sync.ensure(Sync.defer(peekBuf.close()))(b.recv(acceptedFd, peekBuf, 5L, PosixTestSockets.MSG_PEEK).safe.get)
                 // The bytes have landed; switch acceptedFd to non-blocking so recvNow exercises the synchronous non-blocking downcall.
                 _    = assert(shim.kyo_posix_set_nonblocking(clientFd) == 0, "set_nonblocking clientFd failed")
                 _    = assert(shim.kyo_posix_set_nonblocking(acceptedFd) == 0, "set_nonblocking acceptedFd failed")
@@ -243,7 +243,7 @@ class SocketBindingsTest extends Test:
                 // on the orderly EOF without consuming it (EOF is sticky), so the readiness wait is deterministic on the calling fiber (the
                 // @Ffi.blocking -> < Async binding) instead of a busy-spin on recvNow/EAGAIN. The EOF state stays for the recvNow below.
                 peekBuf = Buffer.alloc[Byte](8)
-                _ <- Sync.ensure(Sync.defer(peekBuf.close()))(b.recv(acceptedFd, peekBuf, 8L, PosixConstants.MSG_PEEK).safe.get)
+                _ <- Sync.ensure(Sync.defer(peekBuf.close()))(b.recv(acceptedFd, peekBuf, 8L, PosixTestSockets.MSG_PEEK).safe.get)
                 // The FIN has propagated; switch acceptedFd to non-blocking so recvNow exercises the synchronous non-blocking downcall.
                 _    = assert(shim.kyo_posix_set_nonblocking(acceptedFd) == 0, "set_nonblocking failed")
                 rbuf = Buffer.alloc[Byte](8)

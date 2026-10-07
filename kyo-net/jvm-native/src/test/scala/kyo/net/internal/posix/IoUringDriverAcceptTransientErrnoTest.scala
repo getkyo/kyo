@@ -140,7 +140,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
             PosixTestSockets.assumeUring()
             withInjectingDriver { (drv, recording, sockets) =>
                 val (serverFd, port) = listenSocket()
-                val listenH          = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val listenH          = PosixHandle.socket(serverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val promise          = Promise.Unsafe.init[Int, Abort[Closed]]()
                 // Arm the one-shot transient errno for the first accept CQE, then arm the accept and drive a connection.
                 recording.armAcceptErrno(PosixConstants.EMFILE)
@@ -177,7 +177,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
             PosixTestSockets.assumeUring()
             withInjectingDriver { (drv, recording, sockets) =>
                 val (serverFd, port) = listenSocket()
-                val listenH          = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val listenH          = PosixHandle.socket(serverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val promise          = Promise.Unsafe.init[Int, Abort[Closed]]()
                 // Arm the one-shot EMFILE for the first accept CQE, then drive one connection so that CQE is produced and injected.
                 recording.armAcceptErrno(PosixConstants.EMFILE)

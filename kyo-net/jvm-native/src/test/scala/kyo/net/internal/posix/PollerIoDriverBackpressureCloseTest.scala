@@ -48,7 +48,7 @@ class PollerIoDriverBackpressureCloseTest extends Test:
             val driver   = TestDrivers.forBackend(real, pollerFd)
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (writeFd, peerFd) =>
-                val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle = PosixHandle.socket(writeFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 // Put the write tail at the high-water mark so awaitWritable takes the backpressure PARK branch (tail >= low-water).
                 val tail = new GrowableByteBuffer()
                 tail.writeBytes(Array.fill[Byte](PosixHandle.WriteTailHighWater)(0.toByte), 0, PosixHandle.WriteTailHighWater)

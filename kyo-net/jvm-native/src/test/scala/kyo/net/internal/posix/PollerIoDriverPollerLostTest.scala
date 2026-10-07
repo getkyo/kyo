@@ -24,7 +24,7 @@ class PollerIoDriverPollerLostTest extends Test:
         val driver   = TestDrivers.forBackend(backend, pollerFd)
         val done     = driver.start()
         PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-            val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val handle = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
             val read   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(handle, read)
             backend.registeredRead(accepted).safe.get.andThen {
@@ -59,7 +59,7 @@ class PollerIoDriverPollerLostTest extends Test:
         driver.submitEngineOp(() => ())
         done.safe.get.andThen {
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val read   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, read)
                 Abort.run[Closed](read.safe.get).map { outcome =>

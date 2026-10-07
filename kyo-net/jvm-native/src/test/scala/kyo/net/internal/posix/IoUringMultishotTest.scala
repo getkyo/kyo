@@ -68,7 +68,7 @@ class IoUringMultishotTest extends Test:
             val C = 5
             withRealDriver { driver =>
                 listenOnly().flatMap { serverFd =>
-                    val serverH = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val serverH = PosixHandle.socket(serverFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     // Arm the first accept before any client connects.
                     val p0 = Promise.Unsafe.init[Int, Abort[Closed]]()
                     driver.awaitAccept(serverH, p0.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
@@ -116,7 +116,7 @@ class IoUringMultishotTest extends Test:
                     if i >= B then Loop.done(succeed)
                     else
                         PosixTestSockets.loopbackPair().flatMap { case (client, accepted) =>
-                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                            val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                             val payload   = Span.fromUnsafe(Array.tabulate[Byte](16)(j => ((i * 16 + j) & 0xff).toByte))
                             val w         = driver.write(acceptedH, payload, 0)
                             assert(w == WriteResult.Done, s"write result=$w for round-trip $i")

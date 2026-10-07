@@ -79,7 +79,7 @@ class FlushReArmPendingCoalesceTest extends Test:
                     val pollerFd = real.create()
                     val backend  = RecordingPollerBackend(real)
                     val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                    val handle   = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val handle   = PosixHandle.socket(writeFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     handle.tls = Present(clientEngine)
                     discard(driver.start())
 

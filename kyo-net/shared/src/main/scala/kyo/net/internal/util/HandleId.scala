@@ -51,7 +51,4 @@ object HandleId:
         /** The packed `Long`, for crossing a C boundary (an SQE user-data field or a kqueue udata tag). */
         def packed: Long = id
     end extension
-
-    /** Reconstruct a [[HandleId]] from a packed `Long` read back across a C boundary. */
-    def fromPacked(packed: Long): HandleId = packed
 end HandleId

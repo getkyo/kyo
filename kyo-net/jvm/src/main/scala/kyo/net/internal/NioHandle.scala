@@ -120,8 +120,6 @@ end NioHandle
 /** Factory and lifecycle operations for `NioHandle`. */
 private[kyo] object NioHandle:
 
-    val DefaultReadBufferSize: Int = 8192
-
     /** The STARTTLS upgrade-read handoff state (see [[NioHandle.upgradeHandoff]]). The selector carrier (the producer, [[NioIoDriver]]'s
       * `dispatchReadPlain`) and the handshake carrier (the consumer, [[NioTransport]]'s `driveHandshake`) run on different carriers; this one
       * state, swung by CAS, lets exactly one side win each transition so the bytes always meet the parked waiter:

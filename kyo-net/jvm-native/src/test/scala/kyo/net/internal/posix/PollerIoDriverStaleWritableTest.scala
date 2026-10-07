@@ -37,8 +37,8 @@ class PollerIoDriverStaleWritableTest extends Test:
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     // Two handles over the SAME accepted fd with distinct ids: the OLD writable owner and the NEW reader.
-                    val oldHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    val newHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val oldHandle = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
+                    val newHandle = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     assert(oldHandle.id.packed != newHandle.id.packed, "handles must have distinct ids")
 
                     // Submit Write registration for oldHandle: when the poll loop starts and drainChanges runs, it sets

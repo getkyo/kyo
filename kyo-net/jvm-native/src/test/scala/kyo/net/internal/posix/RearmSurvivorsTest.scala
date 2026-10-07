@@ -37,7 +37,7 @@ class RearmSurvivorsTest extends Test:
             val pollerFd = real.create()
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-            val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val handle   = PosixHandle.socket(acceptedFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
             discard(driver.start())
 
             fillSendBuffer(acceptedFd)
@@ -83,7 +83,7 @@ class RearmSurvivorsTest extends Test:
             val pollerFd = real.create()
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-            val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val handle   = PosixHandle.socket(acceptedFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
             discard(driver.start())
 
             // Register write-interest; the socket is already writable (connected), so the event fires quickly.

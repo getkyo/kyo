@@ -142,7 +142,7 @@ class PollerIoDriverTlsStagingAliasTest extends Test:
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                         acceptedH.tls = Present(recordingServer)
                         // Handshake both real engines on the FIFO worker (single-owner), then encrypt N distinct records on the FIFO too.
                         onFifo(driver, TlsEngineLoopback.handshake(clientEngine, serverEngine)).safe.get.flatMap { handshakeDone =>
@@ -150,7 +150,7 @@ class PollerIoDriverTlsStagingAliasTest extends Test:
                             val n = 12
                             // N large distinct application records. Each record is 16000 bytes (near the TLS max record size) with a
                             // per-record byte pattern (base k, stepped by index), so the ciphertext stream is ~192 KB: far larger than the
-                            // accepted side's 8192-byte recv buffer (PosixHandle.DefaultReadBufferSize) and the kernel socket buffer, which
+                            // accepted side's 8192-byte recv buffer (PosixTestSockets.ReadBufferSize) and the kernel socket buffer, which
                             // forces MANY separate recvNow calls (and therefore many feedCiphertext feeds) into the one reused recvStaging
                             // buffer. The distinct per-record / per-index pattern makes any aliasing corruption or reorder a concrete byte
                             // mismatch. Small records coalesce into one recv (a single feed) and would not exercise the staging-overwrite window.
@@ -166,7 +166,7 @@ class PollerIoDriverTlsStagingAliasTest extends Test:
                                     onFifo(driver, TlsEngineLoopback.encrypt(clientEngine, records(k))).safe.get
                                         .map(c => encryptAll(k + 1, acc ++ c))
                             encryptAll(0, Array.emptyByteArray).flatMap { allCipher =>
-                                val clientH  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                                val clientH  = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                                 val plainAcc = new java.io.ByteArrayOutputStream
                                 val done     = Promise.Unsafe.init[Unit, Abort[Closed]]()
                                 val reader   = new StandingReader(driver, acceptedH, expectedPlain.length, plainAcc, done)

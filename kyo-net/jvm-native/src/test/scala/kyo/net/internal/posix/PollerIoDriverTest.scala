@@ -97,8 +97,8 @@ class PollerIoDriverTest extends Test:
             assumePoller()
             withDriver { driver =>
                 loopbackPair().map { case (client, accepted) =>
-                    val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val clientH   = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val payload   = Span.fromUnsafe(Array.tabulate[Byte](16)(i => (i + 1).toByte))
                     val w         = driver.write(clientH, payload, 0)
                     assert(w == WriteResult.Done, s"write result=$w")
@@ -120,7 +120,7 @@ class PollerIoDriverTest extends Test:
             assumePoller()
             withDriver { driver =>
                 loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     // Peer (client) closes orderly; the accepted side should observe EOF.
                     sock.close(client).safe.get.map { _ =>
                         readVia(driver, acceptedH).map { outcome =>
@@ -141,7 +141,7 @@ class PollerIoDriverTest extends Test:
             assumePoller()
             withDriver { driver =>
                 loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     // Force an RST: set SO_LINGER {on=1, linger=0} on the client so its close sends a reset rather than a FIN.
                     val linger = Buffer.alloc[Byte](8)
                     linger.set(0, 1.toByte) // l_onoff = 1
@@ -189,7 +189,7 @@ class PollerIoDriverTest extends Test:
             // The change FIFO drains only on the poll-loop carrier, so start the poll loop; it bounded-waits on the idle poller fd and drains the
             // registrations each cycle. The registrations and the fifoBarrier below settle on the real change/engine drain, no sleep.
             discard(driver.start())
-            val stdioH = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize, Frame.internal)
+            val stdioH = PosixHandle.stdio(PosixTestSockets.ReadBufferSize, Frame.internal)
             assert(stdioH.readFd != stdioH.writeFd, "split handle must have distinct fds")
             // A per-fd promise for the write registration: completes when registerWrite(writeFd) has recorded the fd. Watch the spy's
             // registeredWriteFds via a fifoBarrier (the write registration is the second change; its execution latch is the read latch's twin).
@@ -230,7 +230,7 @@ class PollerIoDriverTest extends Test:
                         (flags & PosixConstants.O_NONBLOCK) != 0,
                         s"O_NONBLOCK not set: flags=0x${flags.toHexString} O_NONBLOCK=0x${PosixConstants.O_NONBLOCK.toHexString}"
                     )
-                    val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val clientH = PosixHandle.socket(client, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     // Flood the kernel send buffer with 64 KiB chunks until we observe a Partial or Done-after-EAGAIN. The kernel send
                     // buffer is typically 128 KiB - 4 MiB; cap at 512 iterations (32 MiB) to bound the loop even on large-buffer hosts.
                     val chunk      = Span.fromUnsafe(Array.fill[Byte](65536)(0x42))
@@ -255,7 +255,7 @@ class PollerIoDriverTest extends Test:
             assumePoller()
             withDriver { driver =>
                 loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     // Register a read with no data available, so the promise stays pending until closeHandle cancels it.
                     val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, promise)
@@ -276,8 +276,8 @@ class PollerIoDriverTest extends Test:
             withDriver { driver =>
                 loopbackPair().map { case (client, accepted) =>
                     // Two handles over the SAME fd with different ids: the old read registration, then a new owner of the fd id slot.
-                    val oldHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    val newHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val oldHandle = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
+                    val newHandle = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     assert(oldHandle.id.packed != newHandle.id.packed, "handles must have distinct ids")
                     // Register a read for the OLD handle: pendingReads[fd] = oldPromise, activeFds[fd] = oldId.
                     val oldPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
@@ -318,7 +318,7 @@ class PollerIoDriverTest extends Test:
             withDriver { driver =>
                 loopbackPair().map { case (client, accepted) =>
                     // Step 1: register an accept interest on `accepted` (simulating a listen fd being watched by awaitAccept).
-                    val listenHandle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val listenHandle  = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val acceptPromise = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
                     driver.awaitAccept(listenHandle, acceptPromise)
                     // Step 2: cancel the listen handle (PosixListener.close calls driver.cancel before closing the fd).
@@ -329,7 +329,7 @@ class PollerIoDriverTest extends Test:
                     // client connection after the listener released it). The new handle has a fresh id, so drainReady's id guard alone is
                     // not what we are testing here (activeFds was wiped by cancel); we are testing that pendingAccepts is also cleared,
                     // so drainReady picks pendingReads over the no-longer-present pendingAccepts entry.
-                    val readHandle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val readHandle  = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(readHandle, readPromise)
                     // Step 4: make the fd readable by sending a byte from the client side.
@@ -411,7 +411,7 @@ class PollerIoDriverTest extends Test:
             val driver   = TestDrivers.forBackend(spy, pollerFd)
             discard(driver.start())
             loopbackPair().map { case (client, accepted) =>
-                val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val N         = 6
                 // Drive N sequential reads, each completing on a real one-byte send. Each read registers (arm buffer) and the poll loop runs
                 // at least one cycle (events buffer + fds array).
@@ -477,7 +477,7 @@ class PollerIoDriverTest extends Test:
                 loopbackPair().map { case (client, peer) =>
                     val handle = PosixHandle.socket(
                         client,
-                        PosixHandle.DefaultReadBufferSize,
+                        PosixTestSockets.ReadBufferSize,
                         Absent,
                         Frame.internal
                     ) // plaintext handle (no TLS): writeRaw is called directly
@@ -490,7 +490,7 @@ class PollerIoDriverTest extends Test:
                         k += 1
                     end while
                     // Drain the peer to confirm bytes were delivered (and to free the kernel buffer), latching on real reads.
-                    val peerHandle = PosixHandle.socket(peer, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val peerHandle = PosixHandle.socket(peer, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     val total      = N * 32
                     PosixTestSockets.drainPeer(driver, peerHandle, peer, total).map { received =>
                         import scala.jdk.CollectionConverters.*
@@ -539,7 +539,7 @@ class PollerIoDriverTest extends Test:
                 val recordingServer = RecordingTlsEngine(serverEngine)
                 discard(driver.start())
                 loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     acceptedH.tls = Present(recordingServer)
                     handshakeOnDriver(driver, clientEngine, serverEngine).safe.get.flatMap { handshakeDone =>
                         assert(handshakeDone, "handshake must complete before the reads")
@@ -609,8 +609,8 @@ class PollerIoDriverTest extends Test:
                 val backend         = RecordingPollerBackend(real)
                 val driver          = TestDrivers.forBackend(backend, pollerFd, spy)
                 PosixTestSockets.smallBufferedPair(sndBuf = 128, rcvBuf = 128).map { case (writeFd, peerFd) =>
-                    val handle     = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val handle     = PosixHandle.socket(writeFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
+                    val peerHandle = PosixHandle.socket(peerFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     handle.tls = Present(recordingClient)
                     discard(driver.start())
                     handshakeOnDriver(driver, clientEngine, serverEngine).safe.get.flatMap { handshakeDone =>

@@ -654,17 +654,16 @@ end PosixHandle
 
 private[net] object PosixHandle:
 
-    val DefaultReadBufferSize = 8192
-
     /** Number of consecutive buffer-filling reads (n == readBufferSize) before the adaptive predictor grows a handle's read buffer. A
       * small threshold (4) reacts quickly to a genuinely high-throughput connection while ignoring a one-off full read that a transient burst can
       * produce, so a steady small-read connection never grows. See [[PosixHandle.growReadBufferForFullRead]].
       */
     final val GrowAfterFullReads = 4
 
-    /** Upper bound (bytes) on the adaptive read buffer. The predictor doubles from [[DefaultReadBufferSize]] toward this cap and never past it,
-      * so a saturating connection's per-connection read-buffer memory is bounded (CWE-400 class): 1 MiB is large enough to amortize the recv /
-      * copy count for any realistic stream while capping the worst-case pin at a fixed multiple of the seed.
+    /** Upper bound (bytes) on the adaptive read buffer. The predictor doubles from the handle's initial size, the configured
+      * `NetConfig.readChunkSize`, toward this cap and never past it, so a saturating connection's per-connection read-buffer memory is bounded
+      * (CWE-400 class): 1 MiB is large enough to amortize the recv / copy count for any realistic stream while capping the worst-case pin at a
+      * fixed multiple of the seed.
       */
     final val MaxReadBufferSize = 1 << 20
 

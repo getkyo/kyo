@@ -163,7 +163,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                 val real     = PollerBackend.default()
                 val pollerFd = real.create()
                 val driver   = TestDrivers.forBackend(real, pollerFd, sock)
-                val handle   = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle   = PosixHandle.socket(writeFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 handle.tls = Present(clientEngine)
                 // The driver is never started, so the handshake runs here: this carrier is the engines' only owner.
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "the in-memory handshake must complete before the writes")
@@ -190,7 +190,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                     throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
                 end if
                 val driver             = TestDrivers.forBindings(realUring, realRing)
-                val handle             = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle             = PosixHandle.socket(writeFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 val (accepted, result) = acceptedWhileQueued(driver, handle)
                 driver.closeHandle(handle)
                 driver.close()
@@ -218,7 +218,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                     throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
                 end if
                 val driver = TestDrivers.forBindings(realUring, realRing)
-                val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle = PosixHandle.socket(writeFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                 handle.tls = Present(clientEngine)
                 // The driver is never started, so the handshake runs here: this carrier is the engines' only owner.
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "the in-memory handshake must complete before the writes")
@@ -247,7 +247,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                     val pollerFd = real.create()
                     val backend  = RecordingPollerBackend(real)
                     val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                    val handle   = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val handle   = PosixHandle.socket(writeFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     handle.tls = Present(clientEngine)
                     discard(driver.start())
                     for
@@ -281,7 +281,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                         throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
                     end if
                     val driver = TestDrivers.forBindings(RecordingIoUringBindings(realUring, realRing), realRing)
-                    val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val handle = PosixHandle.socket(writeFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     discard(driver.start())
                     for
                         result <- issueUntilBoundedOrGrown(driver, handle)
@@ -315,7 +315,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                         throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
                     end if
                     val driver = TestDrivers.forBindings(RecordingIoUringBindings(realUring, realRing), realRing)
-                    val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val handle = PosixHandle.socket(writeFd, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                     handle.tls = Present(clientEngine)
                     discard(driver.start())
                     for

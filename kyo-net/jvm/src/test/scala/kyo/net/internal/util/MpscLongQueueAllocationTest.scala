@@ -32,7 +32,7 @@ class MpscLongQueueAllocationTest extends Test:
         // is per command offered: three chunks spread over the commands they carry measures about 6 bytes each, where the
         // node this queue allocated per command before cost around 40. The bound sits between the two, so a regression to
         // per-command allocation fails it while the headroom absorbs a different object header size.
-        val burst = MpscLongQueue.ChunkCapacity * 4
+        val burst = MpscLongQueueTest.ChunkCapacity * 4
         val q     = new MpscLongQueue()
         AllocationProbe.assertBoundedPerOp(warmupIters = 16, measuredIters = 16, maxBytesPerOp = burst * 12.0) {
             var i = 0

@@ -66,8 +66,6 @@ private[net] object PosixConstants:
     val MSG_NOSIGNAL: Int = if isLinux then 0x4000 else 0
     // Per-call non-blocking flag for recv/send: makes a single call non-blocking regardless of the fd's O_NONBLOCK mode.
     val MSG_DONTWAIT: Int = if isMacOrBsd then 0x80 else 0x40
-    // Per-call recv flag: returns the data without consuming it from the socket buffer (same value on Linux and macOS/BSD).
-    val MSG_PEEK: Int = 0x2
 
     // --- shutdown (same values on Linux and macOS/BSD) ---
     val SHUT_RD: Int   = 0

@@ -61,7 +61,7 @@ class PollerIoDriverCorruptRecordTest extends Test:
                         PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                             val handshakeDone = TlsEngineLoopback.handshake(clientEngine, serverEngine)
                             assert(handshakeDone, "TLS handshake must complete before the read")
-                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                            val acceptedH = PosixHandle.socket(accepted, PosixTestSockets.ReadBufferSize, Absent, Frame.internal)
                             acceptedH.tls = Present(serverEngine)
 
                             val good = "GOOD-application-record".getBytes("UTF-8")
