@@ -1895,42 +1895,108 @@ class NioIoDriverTest extends Test:
         }
     }
 
-    "awaitConnectIssuesUnconditionalWakeupEvenWhenCoalescingPending" in {
-        // Deterministic, LOAD-INDEPENDENT guard for the connect-arm lost-wakeup (CONN-B, the forceReadArmWakeup-class gap). The bug: a GUARDED
-        // wakeup (registerInterest's wakeupPending CAS) coalesces away under a burst, where wakeupPending is already true (an in-flight wakeup), so
-        // the freshly-armed OP_CONNECT is never observed if select() re-blocks before seeing it -> a 30s connect
-        // strand. The driver arms OP_CONNECT via armConnectInterest, which issues an UNCONDITIONAL selector.wakeup() so the arm ALWAYS forces a poll
-        // cycle. This test reproduces the exact coalescing condition (wakeupPending pre-set true) and asserts the arm STILL issues a wakeup -- a pure
-        // invariant check with NO real-time deadline, so it validates Fix B regardless of host load (a load-30 integration TIMEOUT cannot
-        // distinguish a residual gap from poll-carrier CPU starvation; this can).
-        //
-        // A guarded registerInterest wakeup would coalesce (wakeupPending already true) so no wakeup is issued -> connectWakeups
-        // stays 0; armConnectInterest's unconditional wakeup fires instead -> connectWakeups == before + 1.
+    private case class ConnectOutcome(handle: NioHandle, armed: Boolean, result: Result[Closed | NetException, Unit])
+
+    /** Starts a non-blocking connect to `target` and, while it is still in progress, registers it and arms it on `driver`. `armed` is false when
+      * the loopback connect finished inside `connect` itself, which leaves the driver's connect arm unexercised.
+      */
+    private def connectThroughDriver(driver: NioIoDriver, target: java.net.SocketAddress)(using Frame): ConnectOutcome < Async =
+        Sync.defer {
+            val ch = SocketChannel.open()
+            ch.configureBlocking(false)
+            val handle    = NioHandle.init(ch, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+            val immediate = ch.connect(target)
+            discard(driver.registerChannel(handle))
+            val pending: Maybe[IOPromise[Closed | NetException, Unit]] =
+                if immediate then Absent
+                else
+                    val pc = new IOPromise[Closed | NetException, Unit]
+                    driver.awaitConnect(handle, pc.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
+                    Present(pc)
+            (handle, pending)
+        }.map { (handle, pending) =>
+            pending.fold(ConnectOutcome(handle, armed = false, Result.succeed(())): ConnectOutcome < Async) { pc =>
+                Abort.run[Closed | NetException](pc.asInstanceOf[Fiber.Unsafe[Unit, Abort[Closed | NetException]]].safe.get)
+                    .map(result => ConnectOutcome(handle, armed = true, result))
+            }
+        }
+
+    private def acceptN(listener: ServerSocketChannel, n: Int)(using Frame): Chunk[SocketChannel] < Async =
+        Loop(n, Chunk.empty[SocketChannel]) { (remaining, acc) =>
+            if remaining == 0 then Loop.done(acc)
+            else
+                Sync.defer(listener.accept()).map { server =>
+                    if server ne null then Loop.continue(remaining - 1, acc.append(server))
+                    else Async.sleep(1.millis).andThen(Loop.continue(remaining, acc))
+                }
+        }
+
+    private def openListener(backlog: Int): ServerSocketChannel =
+        val listener = ServerSocketChannel.open()
+        listener.configureBlocking(false)
+        listener.bind(new InetSocketAddress("127.0.0.1", 0), backlog)
+        listener
+    end openListener
+
+    "connect arms from concurrent carriers on a started driver all complete" in {
+        given Frame  = Frame.internal
+        val n        = 128
+        val driver   = NioIoDriver.init()
+        val listener = openListener(n)
+        val target   = listener.getLocalAddress
+        discard(driver.start())
+        Sync.ensure(Sync.defer { listener.close(); driver.close() }) {
+            Latch.init(1).map { latch =>
+                Kyo.fill(n)(Fiber.initUnscoped(latch.await.andThen(connectThroughDriver(driver, target)))).map { fibers =>
+                    latch.release.andThen(Kyo.foreach(fibers)(_.get))
+                }
+            }.map { outcomes =>
+                assert(outcomes.map(_.result) == Chunk.fill(n)(Result.succeed(())))
+                assert(outcomes.exists(_.armed), "every connect finished inside connect(), so no connect arm was exercised")
+                acceptN(listener, n).map { accepted =>
+                    accepted.foreach(_.close())
+                    outcomes.foreach(o => driver.closeHandle(o.handle))
+                    succeed
+                }
+            }
+        }
+    }
+
+    "a connect armed after the poll carrier went idle completes" in {
         given Frame = Frame.internal
-        val driver  = NioIoDriver.init()
-        val ch      = SocketChannel.open()
-        ch.configureBlocking(false)
-        val handle = NioHandle.init(ch, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
-        try
-            driver.registerChannel(handle)
-            // Pre-set the coalescing condition: an in-flight wakeup is pending, so any GUARDED wakeup would coalesce away.
-            // The unconditional wakeup must fire regardless.
-            discard(driver.wakeupPending.compareAndSet(false, true))
-            val before = driver.connectWakeups.get()
-            val pc     = new IOPromise[Closed, Unit]
-            driver.awaitConnect(handle, pc.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
-            val after = driver.connectWakeups.get()
-            assert(
-                after == before + 1,
-                s"the connect arm must issue an UNCONDITIONAL wakeup even when wakeupPending is already set (coalescing condition); " +
-                    s"connectWakeups went $before -> $after (a guarded wakeup would coalesce and not fire)"
-            )
-            succeed
-        finally
-            driver.cancel(handle)
-            ch.close()
-            driver.close()
-        end try
+        val rounds  = 32
+        NioLoopbackPair.open().map { (client, sv) =>
+            val driver   = NioIoDriver.init()
+            val reader   = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+            val listener = openListener(rounds)
+            val target   = listener.getLocalAddress
+            driver.registerChannel(reader)
+            discard(driver.start())
+            Sync.ensure(Sync.defer { driver.closeHandle(reader); sv.close(); listener.close(); driver.close() }) {
+                Kyo.foreach(0 until rounds) { i =>
+                    // Barrier: a completed read proves the poll carrier ran a full cycle, after which it returns to select() with nothing armed.
+                    Sync.defer {
+                        val read = new IOPromise[Closed, ReadOutcome]
+                        driver.awaitRead(reader, read.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                        discard(sv.write(ByteBuffer.wrap(Array(i.toByte))))
+                        read
+                    }.map(read => read.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get).map { readOutcome =>
+                        val ReadOutcome.Bytes(span) = readOutcome.runtimeChecked
+                        connectThroughDriver(driver, target).map { outcome =>
+                            assert(outcome.result == Result.succeed(()), s"round $i: ${outcome.result}")
+                            acceptN(listener, 1).map { accepted =>
+                                accepted.foreach(_.close())
+                                driver.closeHandle(outcome.handle)
+                                (span.toArray.toList, outcome.armed)
+                            }
+                        }
+                    }
+                }.map { results =>
+                    assert(results.map(_._1) == (0 until rounds).map(i => List(i.toByte)))
+                    assert(results.exists(_._2), "every connect finished inside connect(), so no connect arm was exercised")
+                }
+            }
+        }
     }
 
     "registerChannelDeferredOnClosedSelectorDuringRebuild" in {
@@ -1956,7 +2022,7 @@ class NioIoDriverTest extends Test:
                 assert(driver.registerChannel(handle))
                 val pc = new IOPromise[Closed, Unit]
                 driver.awaitConnect(handle, pc.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
-                assert((driver.interestOpsFor(client) & SelectionKey.OP_CONNECT) != 0)
+                assert(!pc.done(), "the connect arm waits for the poll carrier; nothing has failed or completed it yet")
 
                 // Reproduce the rebuild window: close the current selector (driver still live, closedFlag false), then re-register the channel as a
                 // caller carrier would mid-rebuild. This DEFERS (true + enqueue); a non-deferring path would return false (connect dropped).

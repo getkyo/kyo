@@ -47,11 +47,6 @@ final private[kyo] class NioIoDriver private[internal] (@volatile private[net] v
     // private[net] so tests in kyo.net.internal can observe the flag state directly.
     private[net] val wakeupPending = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
-    // Count of UNCONDITIONAL connect-arm wakeups (armConnectInterest). private[net] test-observability: a deterministic test asserts a connect arm
-    // ALWAYS issues a wakeup even when wakeupPending is already set (the coalescing condition that a guarded wakeup would lose), proving the
-    // forceReadArmWakeup-class connect fix is load-independent. Not used by production logic.
-    private[net] val connectWakeups = new java.util.concurrent.atomic.AtomicInteger(0)
-
     // Count of consecutive selector.select() calls returning zero keys on the select-loop carrier.
     // Read and written only from pollOnce() on the single select-loop fiber (single-carrier-confined).
     private var zeroKeyReturns: Int = 0
@@ -98,6 +93,16 @@ final private[kyo] class NioIoDriver private[internal] (@volatile private[net] v
     // upgrade/scheduler fibers (offer), the single consumer is the poll carrier (drainUpgradeArms at the top of pollOnce); offer is the happens-before
     // barrier. Entries are NioHandles whose upgrade producer read must be armed on the poll carrier.
     private val pendingUpgradeArms =
+        new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
+
+    // Concurrent-collection audit: OP_CONNECT arms deferred to the poll carrier, so OP_CONNECT is only ever set by the carrier that calls
+    // select(). awaitConnect (any carrier) offers and then calls selector.wakeup() unconditionally, never through the wakeupPending CAS: a
+    // coalesced wakeup could leave select() parked with the arm unapplied. wakeup() either returns the select() in progress or makes the next one
+    // return at once, and the drainConnectArms that follows that return observes the offer, because the JDK selector serializes wakeup() and the
+    // select-side reset of its wakeup state on one monitor. Same raw-ConcurrentLinkedQueue no-equivalent exception as pendingUpgradeArms; the
+    // poll carrier consumes it (drainConnectArms) and close() clears it (failPendingOps). The promise lives in pendingConnects, never in this
+    // queue, so a dropped entry strands nothing.
+    private val pendingConnectArms =
         new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
 
     // Concurrent-collection audit: peer-close grace-probe arms deferred to the poll carrier so the probe's OP_READ interestOps write is
@@ -889,35 +894,17 @@ final private[kyo] class NioIoDriver private[internal] (@volatile private[net] v
         end if
     end awaitWritable
 
-    /** Arm (or re-arm) OP_CONNECT for `channel` and force a DEFINITE poll cycle with an UNCONDITIONAL `selector.wakeup()`, the connect-arm analog
-      * of the read path's `forceReadArmWakeup` (armRead). The JDK selector is level-triggered for OP_CONNECT, so the only way a pending connect's
-      * readiness is missed is `select()` blocking past it while the arm's wakeup was coalesced away (the guarded `wakeupPending` CAS loses to an
-      * in-flight wakeup, the selector returns for the other event, clears the flag, and re-blocks before this arm's interest is observed). A connect
-      * burst makes that window common. The unconditional wakeup guarantees one poll cycle in which `reassertPendingInterest` re-applies OP_CONNECT
-      * and `select()` observes the (level-triggered) connect readiness, so a connect arm can never be coalesced away. Returns registerInterest's
-      * result so the caller fails the promise on a hard register failure. Bounded: scoped to the OP_CONNECT arm/re-arm sites only (awaitConnect, the
-      * dispatchConnect partial re-arm), never the steady-state read/write paths, so it cannot become a self-sustaining wakeup storm.
+    /** Record the pending connect and hand its OP_CONNECT arm to the poll carrier through [[pendingConnectArms]]; see that queue for why the
+      * wakeup is unconditional. A driver closed before the arm could be applied fails the connect here: `close()` sets the closed flag before
+      * it sweeps `pendingConnects`, so either that sweep observes this entry or this read observes the flag.
       */
-    private def armConnectInterest(channel: SocketChannel)(using AllowUnsafe): Boolean =
-        val registered = registerInterest(channel, SelectionKey.OP_CONNECT)
-        if registered then
-            discard(connectWakeups.incrementAndGet()) // test-observability: count the unconditional connect-arm wakeups
-            discard(selector.wakeup())
-        registered
-    end armConnectInterest
-
     def awaitConnect(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         Maybe(pendingConnects.putIfAbsent(handle.channel, (promise, handle))) match
             case Absent =>
                 Log.live.unsafe.debug(s"$label awaitConnect registered ${handleLabel(handle)}")
-                if !armConnectInterest(handle.channel) then
-                    discard(pendingConnects.remove(handle.channel))
-                    promise.completeDiscard(Result.fail(Closed(
-                        s"connection ${handleLabel(handle)}",
-                        handle.createdAt,
-                        "registerConnect failed"
-                    )))
-                end if
+                discard(pendingConnectArms.offer(handle))
+                discard(selector.wakeup())
+                if closedFlag.get() then failConnectArm(handle.channel)
             case Present(_) =>
                 // NoStackTrace: constructed on the driver carrier, whose stack crosses C poller
                 // frames the Scala Native unwinder cannot step through on arm64; the trace would
@@ -927,6 +914,47 @@ final private[kyo] class NioIoDriver private[internal] (@volatile private[net] v
                 ) with scala.util.control.NoStackTrace))
         end match
     end awaitConnect
+
+    private def drainConnectArms()(using AllowUnsafe): Unit =
+        var handle = pendingConnectArms.poll()
+        while handle ne null do
+            applyConnectArm(handle.channel)
+            handle = pendingConnectArms.poll()
+        end while
+    end drainConnectArms
+
+    /** Set OP_CONNECT on `channel`'s key. Poll-carrier-only: the interest is then observed by this carrier's next `select()` with no wakeup. A
+      * connect whose entry is gone was already completed or failed by a cancel or close, so there is nothing to arm. A channel still awaiting
+      * deferred registration has no key yet; `drainPendingRegistrations` registers it with OP_CONNECT reconstructed from `pendingConnects`.
+      */
+    private def applyConnectArm(channel: SocketChannel)(using AllowUnsafe): Unit =
+        if pendingConnects.containsKey(channel) then
+            val armed =
+                try
+                    val key = channel.keyFor(selector)
+                    if (key ne null) && key.isValid then
+                        val current = key.interestOps()
+                        if (current & SelectionKey.OP_CONNECT) == 0 then discard(key.interestOps(current | SelectionKey.OP_CONNECT))
+                        true
+                    else isPendingRegistration(channel)
+                    end if
+                catch
+                    case _: CancelledKeyException                     => false
+                    case _: java.nio.channels.ClosedSelectorException => false
+            if !armed then failConnectArm(channel)
+        end if
+    end applyConnectArm
+
+    private def failConnectArm(channel: SocketChannel)(using AllowUnsafe): Unit =
+        given Frame = Frame.internal
+        Maybe(pendingConnects.remove(channel)).foreach { case (promise, handle) =>
+            promise.completeDiscard(Result.fail(Closed(
+                s"connection ${handleLabel(handle)}",
+                handle.createdAt,
+                "registerConnect failed"
+            )))
+        }
+    end failConnectArm
 
     /** IoDriver contract stub for the NIO driver. The NIO driver uses its own private accept seam (ServerSocketChannel-based); callers must
       * use the ServerSocketChannel overload below, not this one. Fails loudly so an accidental caller gets an immediate error rather than
@@ -1216,10 +1244,12 @@ final private[kyo] class NioIoDriver private[internal] (@volatile private[net] v
             promise.completeDiscard(Result.fail(closed))
         }
         pendingWritables.clear()
-        pendingConnects.forEach { (_, entry) =>
-            entry._1.completeDiscard(Result.fail(closed))
+        // Each entry is claimed with remove(key, value), not swept with clear(): a connect armed after closedFlag was set can land past this
+        // iteration, and awaitConnect fails it only if its own remove still finds the entry.
+        pendingConnects.forEach { (channel, entry) =>
+            if pendingConnects.remove(channel, entry) then entry._1.completeDiscard(Result.fail(closed))
         }
-        pendingConnects.clear()
+        pendingConnectArms.clear()
         pendingAccepts.forEach { (_, promise) =>
             promise.completeDiscard(Result.fail(closed))
         }
@@ -1446,6 +1476,7 @@ final private[kyo] class NioIoDriver private[internal] (@volatile private[net] v
             // never a cross-carrier interestOps read-modify-write. Done after drainPendingRegistrations (the channel's key already
             // exists, kept live by detachForUpgrade) and before reassert so the freshly armed read is reasserted on this same cycle if needed.
             drainUpgradeArms()
+            drainConnectArms()
             // selector-confined like drainUpgradeArms above
             drainGraceProbeArms()
             // deferred staged-bytes deliveries for armed pump reads (armRead's post-arm re-check enqueues; selector-confined like the probe arms)
@@ -2018,11 +2049,8 @@ final private[kyo] class NioIoDriver private[internal] (@volatile private[net] v
                         Log.live.unsafe.debug(s"$label dispatchConnect channel=${channel.hashCode()} connected")
                         promise.completeDiscard(Result.succeed(()))
                     else
-                        // Not ready (a real partial: finishConnect returned false): re-arm OP_CONNECT with a definite poll cycle (armConnectInterest's
-                        // unconditional wakeup), so the re-arm's readiness can never be coalesced away. This branch fires only on an actual
-                        // finishConnect=false, so the re-arm is bounded (one per genuine partial), not a self-sustaining spin.
                         pendingConnects.put(channel, (promise, handle))
-                        discard(armConnectInterest(channel))
+                        applyConnectArm(channel)
                 catch
                     case e: IOException =>
                         // A driver-side connect I/O failure (e.g. ECONNREFUSED surfaced by finishConnect): a receive/connect failure on THIS
