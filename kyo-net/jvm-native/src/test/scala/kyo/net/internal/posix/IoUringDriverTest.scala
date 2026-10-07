@@ -102,6 +102,50 @@ class IoUringDriverTest extends Test:
             }.map(_ => succeed)
         }
 
+        // The close_notify decrypts in the same recv as the record before it, so the data is delivered first and the FIN reaches a later
+        // recv, which must not record the orderly close as a truncation.
+        "real: a close_notify decrypted with the last data record stays an orderly close when the FIN follows" in {
+            PosixTestSockets.assumeUring()
+            TlsRealEngines.assumeTlsReady()
+            TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
+                withRealDriver { driver =>
+                    PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                        assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "TLS handshake must complete first")
+                        val plain       = Array.tabulate[Byte](100)(i => (i % 251).toByte)
+                        val record      = TlsEngineLoopback.encrypt(clientEngine, plain)
+                        val shutdown    = clientEngine.shutdownStep()
+                        val closeNotify = TlsEngineLoopback.drainAll(clientEngine)
+                        assert(shutdown != -2 && closeNotify.nonEmpty, s"the client engine emitted no close_notify ($shutdown)")
+                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        acceptedH.tls = Present(serverEngine)
+                        val wire      = record ++ closeNotify
+                        val cipherBuf = Buffer.fromArray[Byte](wire)
+                        val sendR     =
+                            try sock.sendNow(client, cipherBuf, wire.length.toLong, PosixConstants.MSG_NOSIGNAL)
+                            finally cipherBuf.close()
+                        assert(sendR.value.toInt == wire.length, s"send failed: errno=${sendR.errorCode}")
+                        PosixTestSockets.halfClose(sock, client)
+                        Loop(Array.emptyByteArray) { acc =>
+                            readVia(driver, acceptedH).map {
+                                case ReadOutcome.Bytes(span) => Loop.continue(acc ++ span.toArray)
+                                case end                     => Loop.done((acc, end))
+                            }
+                        }.map { (received, end) =>
+                            val atEnd = acceptedH.halfClose
+                            driver.closeHandle(acceptedH)
+                            discard(sock.close(client))
+                            awaitCondition(5.seconds)(!acceptedH.tls.isDefined).map { settled =>
+                                assert(settled, "the driver's own TLS teardown never settled")
+                                assert(received.toList == plain.toList, s"got ${received.length} of ${plain.length} bytes")
+                                assert(end == ReadOutcome.CleanClose, s"the stream ended with $end")
+                                assert(atEnd == HalfCloseState.PeerCleanClose, s"the orderly close was recorded as $atEnd")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         "real: close-during-in-flight-read does not UAF and the read fails Closed" in {
             PosixTestSockets.assumeUring()
             // Submit a read with no data available so it stays in flight, then close while it is pending. Looped to make the race reliable.

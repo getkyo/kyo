@@ -88,6 +88,8 @@ final class RecordingConnection(underlying: Connection) extends Connection:
         closed.set(true)
         underlying.close()
 
+    def closeOutbound()(using AllowUnsafe, Frame): Unit = underlying.closeOutbound()
+
     private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = underlying.onClosing
 
     def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] = underlying.detachForUpgrade()
@@ -109,6 +111,7 @@ final class TlsCloseConnection(underlying: Connection, reported: Connection.Stat
     def outbound: Channel.Unsafe[Span[Byte]]                                                      = underlying.outbound
     def isOpen(using AllowUnsafe): Boolean                                                        = underlying.isOpen
     def close()(using AllowUnsafe, Frame): Unit                                                   = underlying.close()
+    def closeOutbound()(using AllowUnsafe, Frame): Unit                                           = underlying.closeOutbound()
     private[kyo] def onClosing: Fiber.Unsafe[Unit, Any]                                           = underlying.onClosing
     def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] = underlying.detachForUpgrade()
     private[net] def start()(using AllowUnsafe, Frame): Boolean                                   = underlying.start()

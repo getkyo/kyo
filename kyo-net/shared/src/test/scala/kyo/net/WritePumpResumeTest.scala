@@ -63,6 +63,7 @@ class WritePumpResumeTest extends Test:
                         WriteResult.Done
                     end if
                 end write
+                def shutdownOutput(handle: Unit)(using AllowUnsafe, Frame): Unit                     = ()
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
                 def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = ()
                 def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
@@ -160,6 +161,7 @@ class WritePumpResumeTest extends Test:
                         WriteResult.Done
                     end if
                 end write
+                def shutdownOutput(handle: Unit)(using AllowUnsafe, Frame): Unit                     = ()
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
                 def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = ()
                 def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()

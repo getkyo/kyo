@@ -43,6 +43,7 @@ class ReadPumpBackpressureTest extends Test:
             if !captured then WriteResult.Partial(data, math.max(1, data.size / 2))
             else WriteResult.Done
         end write
+        def shutdownOutput(handle: Unit)(using AllowUnsafe, Frame): Unit                     = ()
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
         def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = ()
         def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
@@ -124,6 +125,7 @@ class ReadPumpBackpressureTest extends Test:
                 def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
                     ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
+                def shutdownOutput(handle: Unit)(using AllowUnsafe, Frame): Unit                       = ()
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
                 def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
                 def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
@@ -196,6 +198,7 @@ class ReadPumpBackpressureTest extends Test:
                 def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
                     ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
+                def shutdownOutput(handle: Unit)(using AllowUnsafe, Frame): Unit                       = ()
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
                 def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCalls.incrementAndGet())
                 def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
@@ -249,6 +252,7 @@ class ReadPumpBackpressureTest extends Test:
             def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit = ()
             def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit   = ()
             def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
+            def shutdownOutput(handle: Unit)(using AllowUnsafe, Frame): Unit                       = ()
             def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
             def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                    = discard(closeHandleCalls.incrementAndGet())
             def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()

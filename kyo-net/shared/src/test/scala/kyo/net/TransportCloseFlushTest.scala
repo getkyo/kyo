@@ -89,4 +89,39 @@ class TransportCloseFlushTest extends Test:
         end for
     }
 
+    // A TLS write is done once it is queued for the driver, so the close finds the payload's ciphertext still queued behind the socket:
+    // the client reads nothing until the server has closed.
+    "a closing TLS connection whose peer reads everything delivers every queued byte" - eachBackendTls {
+        (transport, serverTls, clientTls) =>
+            val accepted = Promise.Unsafe.init[Connection, Any]()
+            val spans    = 16
+            val payload  = Array.tabulate[Byte](spans * 64 * 1024)(i => (i % 251).toByte)
+            val config   = NetConfig(closeFlushGrace = 10.seconds.grace, channelCapacity = spans * 2)
+            for
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls, config)(conn =>
+                    accepted.completeDiscard(Result.succeed(conn))
+                ).safe.get
+                _      <- Scope.ensure(Sync.defer(listener.close()))
+                client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                _      <- Scope.ensure(Sync.defer(client.close()))
+                server <- accepted.safe.get
+                _      <- Kyo.foreachDiscard(0 until spans) { i =>
+                    server.outbound.safe.put(Span.from(payload.slice(i * 64 * 1024, (i + 1) * 64 * 1024)))
+                }
+                _        <- Sync.defer(server.close())
+                received <- Loop(Array.emptyByteArray) { acc =>
+                    Abort.run[Closed](client.inbound.safe.take).map {
+                        case Result.Success(span) => Loop.continue(acc ++ span.toArray)
+                        case _                    => Loop.done(acc)
+                    }
+                }
+                clientEnd = client.status
+            yield
+                assert(received.length == payload.length, s"the client read ${received.length} of ${payload.length} bytes before the close")
+                assert(received.sameElements(payload), "every byte queued before the close reaches the peer in order")
+                if transport.reportsTlsCloseReason then
+                    assert(clientEnd == Connection.Status.CleanClose, s"the close_notify follows the payload; got $clientEnd")
+            end for
+    }
+
 end TransportCloseFlushTest

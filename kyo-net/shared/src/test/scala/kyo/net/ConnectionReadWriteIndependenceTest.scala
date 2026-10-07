@@ -36,6 +36,7 @@ class ConnectionReadWriteIndependenceTest extends Test:
         def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit = ()
         def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit  = ()
         def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit    = ()
+        def shutdownOutput(handle: Unit)(using AllowUnsafe, Frame): Unit                                                             = ()
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                                                                     = ()
         def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                                                                = ()
         def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()

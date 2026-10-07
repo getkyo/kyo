@@ -27,6 +27,7 @@ object StubConnection:
                 discard(_outbound.close())
                 closing.completeDiscard(Result.succeed(()))
             end close
+            def closeOutbound()(using AllowUnsafe, Frame): Unit = discard(_outbound.closeAwaitEmpty())
             private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] =
                 closing
             def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] =

@@ -66,6 +66,9 @@ class IoDriverPoolTest extends Test:
         def write(handle: JsHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
             real.write(handle, data, offset)
 
+        def shutdownOutput(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
+            real.shutdownOutput(handle)
+
         def cancel(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
             real.cancel(handle)
 

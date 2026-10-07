@@ -71,6 +71,7 @@ private[net] object PosixConstants:
 
     // --- shutdown (same values on Linux and macOS/BSD) ---
     val SHUT_RD: Int   = 0
+    val SHUT_WR: Int   = 1
     val SHUT_RDWR: Int = 2
 
     // --- errno values the drivers branch on ---

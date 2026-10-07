@@ -4301,6 +4301,17 @@ class HttpServerTest extends BaseHttpTest:
             }
         }
 
+        // The server drains what the peer still sends after a refusal (RFC 9112 section 9.6), so its write side must end first: a peer
+        // that reads until the server's EOF before closing its own side would otherwise wait for the drain's bound. With no bound,
+        // only a half-close lets this peer finish.
+        "a refused head's EOF reaches the peer while the server still drains its input" in {
+            HttpServer.init(smallHead.lingeringTimeout(Duration.Infinity))(hello).map { server =>
+                rawExchange(server.port, "GET /hello HTTP/1.1\r\nHost: h\r\nX-Big: " + "x" * 300 + "\r\n\r\n", Absent).map { answer =>
+                    assert(withoutDate(answer) == refusal(HttpStatus.RequestHeaderFieldsTooLarge), s"observed: $answer")
+                }
+            }
+        }
+
         "a request line alone longer than the limit is answered 414 with Connection: close, then the connection is closed" in {
             HttpServer.init(smallHead)(hello).map { server =>
                 rawExchange(server.port, "GET /" + "a" * 300 + " HTTP/1.1\r\nHost: h\r\n\r\n", Absent).map { answer =>

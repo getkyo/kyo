@@ -84,9 +84,10 @@ private[kyo] object UnsafeServerDispatch:
         onClosing: Maybe[Fiber.Unsafe[Unit, Any]] = Absent,
         closeConnection: Maybe[() => Unit] = Absent,
         clock: Clock = Clock.live,
-        drain: Maybe[Drain] = Absent
+        drain: Maybe[Drain] = Absent,
+        closeOutbound: Maybe[() => Unit] = Absent
     )(using AllowUnsafe, Frame): Unit =
-        serveH1(router, inbound, outbound, config, Array.emptyByteArray, 0, onClosing, closeConnection, clock, drain)
+        serveH1(router, inbound, outbound, config, Array.emptyByteArray, 0, onClosing, closeConnection, clock, drain, closeOutbound)
 
     /** One served connection's part in a graceful close. The server raises the shared flag and then asks every connection it tracks to
       * end if idle; the connection reads the flag itself as its parser becomes idle, with nothing received left to serve. Both sides
@@ -114,7 +115,8 @@ private[kyo] object UnsafeServerDispatch:
         onClosing: Maybe[Fiber.Unsafe[Unit, Any]],
         closeConnection: Maybe[() => Unit],
         clock: Clock,
-        drain: Maybe[Drain]
+        drain: Maybe[Drain],
+        closeOutbound: Maybe[() => Unit]
     )(using AllowUnsafe, Frame): Unit =
         val builder   = new ParsedRequestBuilder
         val headerBuf = new GrowableByteBuffer
@@ -150,12 +152,15 @@ private[kyo] object UnsafeServerDispatch:
             }
         }
 
-        /** Tears the connection down now: flushes whatever is queued, completes onClosing so an in-flight handler is interrupted, and
-          * reclaims the fd. Used by every path that answers a request and then ends the connection, since none of them can rely on the
-          * idle timer, which is either cancelled by then or was never armed.
+        /** Tears the connection down once the last write is in the outbound channel, within `lingeringTimeout`: flushes whatever is queued,
+          * completes onClosing so an in-flight handler is interrupted, and reclaims the fd. Used by every path that answers a request and
+          * then ends the connection, since none of them can rely on the idle timer, which is either cancelled by then or was never armed.
           */
         def closeConnectionNow(): Unit =
             cancelIdleTimer()
+            streamCtx.whenWritableWithin(config.lingeringTimeout, clock)(() => closeConnectionWritten())
+
+        def closeConnectionWritten(): Unit =
             closeConnection match
                 case Present(closeFn) => closeFn()
                 case Absent           =>
@@ -166,11 +171,17 @@ private[kyo] object UnsafeServerDispatch:
                     // the queued tail through closeAwaitEmpty before reclaiming the fd.
                     discard(inbound.close())
             end match
-        end closeConnectionNow
+        end closeConnectionWritten
 
         /** Ends the connection after its last answer: a request body still owed is read and discarded first, within `lingeringTimeout`. */
         def endConnection(): Unit =
-            closeAfterDrain(streamCtx, () => closeConnectionNow(), onClosing, clock, config.lingeringTimeout)
+            closeAfterDrain(streamCtx, () => closeConnectionNow(), () => closeOutboundNow(), onClosing, clock, config.lingeringTimeout)
+
+        /** Ends only the outbound direction, after what is queued. Without a connection the outbound channel is that direction. */
+        def closeOutboundNow(): Unit =
+            closeOutbound match
+                case Present(f) => f()
+                case Absent     => discard(outbound.closeAwaitEmpty())
 
         def cancelIdleTimer(): Unit =
             idleTimerFiber.getAndSet(Absent) match
@@ -1032,10 +1043,14 @@ private[kyo] object UnsafeServerDispatch:
     /** Ends the connection after a handler's final response. A request body the handler left on the wire is read and discarded until the
       * peer's EOF first: a socket closed with unread bytes is reset by the kernel, and a reset discards what the peer has not yet read,
       * the response among it (the lingering close of RFC 9112 section 9.6). The idle timer bounds the drain, since the body is still owed.
+      *
+      * The outbound direction ends before the drain, once the response's last write is in the channel: a peer that reads until EOF before
+      * closing its own side learns the response is complete from that FIN, where it would otherwise wait out the drain's bound.
       */
     private def closeAfterDrain(
         streamCtx: Http1StreamContext,
         closeNow: () => Unit,
+        closeOutbound: () => Unit,
         onClosing: Maybe[Fiber.Unsafe[Unit, Any]],
         clock: Clock,
         lingering: Duration
@@ -1045,6 +1060,7 @@ private[kyo] object UnsafeServerDispatch:
             case _                                                                                => false
         if bodyOwed && !onClosing.exists(_.done()) then
             streamCtx.startDraining()
+            streamCtx.whenWritableWithin(lingering, clock)(closeOutbound)
             // Bytes already in hand are discarded without announcing a wait, as the body readers take them.
             val drain: Unit < (Async & Abort[Closed]) = Loop.foreach {
                 streamCtx.inbound.safe.poll.map {

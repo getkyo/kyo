@@ -289,6 +289,26 @@ final private[net] class PosixHandle private (
       */
     @volatile var inboundSink: Span[Byte] => Unit = _ => ()
 
+    /** Set when the connection ends its outbound direction: the driver shuts the write side down once the last queued byte is sent, since a
+      * FIN sent earlier would cut the rest off. Mutated only on the engine FIFO worker.
+      */
+    @volatile var writeShutdownPending: Boolean = false
+
+    /** A closing connection waiting for the send tails to empty (see `IoDriver.awaitFlushed`). Set on the engine FIFO worker and completed
+      * there as the tails drain, or by the handle's close or the driver's teardown, so the wait never outlives the handle.
+      */
+    @volatile var flushWaiter: Maybe[Promise.Unsafe[Unit, Any]] = Absent
+
+    /** Complete [[flushWaiter]] once nothing is left to send, or at once when `force`. True when no waiter is left. */
+    private[posix] def settleFlushWaiter(force: Boolean)(using AllowUnsafe): Boolean =
+        flushWaiter match
+            case Present(waiter) if force || (unsentTailBytes == 0 && !sendInFlight && !rawSendInFlight) =>
+                flushWaiter = Absent
+                waiter.completeUnitDiscard()
+                true
+            case Present(_) => false
+            case Absent     => true
+
     /** Ciphertext the TLS write path has produced but not yet sent to the peer (the backpressure tail). When the socket send buffer fills, the
       * driver appends the un-sent ciphertext here instead of busy-spinning the engine FIFO worker on EAGAIN; a later writable readiness event
       * re-submits a flush that drains it. Lazily allocated on the FIRST backpressure event so the common one-pass write allocates nothing
@@ -925,6 +945,7 @@ private[posix] object NoDriver extends IoDriver[PosixHandle]:
     def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         unbound
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = unbound
+    def shutdownOutput(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                       = unbound
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                               = unbound
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                          = unbound
     def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = unbound

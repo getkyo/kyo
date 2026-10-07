@@ -309,6 +309,36 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
+        // The hook closes outbound the way a connection's close does, with closeAwaitEmpty, which fails a put still waiting for room. Once the
+        // response's last write is such a put, the reader gives the dispatch thousands of turns to close before it starts: a close that does
+        // not wait for the write takes it within one.
+        "a Connection: close response whose last write waits for room reaches the peer in full" in {
+            val body                    = "x" * (64 * 1024)
+            val handler                 = HttpHandler.getText("big")(_ => body)
+            val router                  = routerOf(Seq(handler), Absent)
+            val inbound                 = Channel.Unsafe.init[Span[Byte]](16)
+            val outbound                = Channel.Unsafe.init[Span[Byte]](1)
+            val closed                  = Promise.Unsafe.init[Unit, Any]()
+            val hook: Maybe[() => Unit] = Present { () =>
+                discard(inbound.close())
+                discard(outbound.closeAwaitEmpty())
+                closed.completeUnitDiscard()
+            }
+            sendRequest(inbound, "GET /big HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, closeConnection = hook)
+            pollUntil(closed.done() || outbound.pendingPuts().contains(1)).andThen(pollUntil(closed.done(), maxPolls = 10000)).andThen {
+                Loop("") { acc =>
+                    Abort.run[Closed](outbound.safe.take).map {
+                        case Result.Success(span) => Loop.continue(acc + new String(span.toArray, StandardCharsets.US_ASCII))
+                        case _                    => Loop.done(acc)
+                    }
+                }
+            }.map { answer =>
+                assert(answer.startsWith("HTTP/1.1 200 OK"), s"observed: ${answer.take(200)}")
+                assert(answer.endsWith(body), s"the response body was cut short: ${answer.length} bytes in all")
+            }
+        }
+
         "dispatch error in handler returns 500" in {
             val handler = HttpHandler.getRaw[Nothing]("fail") { _ =>
                 throw new RuntimeException("handler exploded")

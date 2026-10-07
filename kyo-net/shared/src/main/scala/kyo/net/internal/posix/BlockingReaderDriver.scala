@@ -111,6 +111,14 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
         real.write(handle, data, offset)
 
+    def shutdownOutput(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        real.shutdownOutput(handle)
+
+    override def unflushedBytes(handle: PosixHandle)(using AllowUnsafe): Long = real.unflushedBytes(handle)
+
+    override def awaitFlushed(handle: PosixHandle, promise: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        real.awaitFlushed(handle, promise)
+
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         real.cancel(handle)
 

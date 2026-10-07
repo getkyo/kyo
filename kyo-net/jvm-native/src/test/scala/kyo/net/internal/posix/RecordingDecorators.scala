@@ -1098,6 +1098,14 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         real.write(handle, data, offset)
     end write
 
+    def shutdownOutput(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        real.shutdownOutput(handle)
+
+    override def unflushedBytes(handle: PosixHandle)(using AllowUnsafe): Long = real.unflushedBytes(handle)
+
+    override def awaitFlushed(handle: PosixHandle, promise: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        real.awaitFlushed(handle, promise)
+
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         discard(cancelCalls.getAndIncrement())
         val hook = onCancel

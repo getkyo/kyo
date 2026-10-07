@@ -197,6 +197,13 @@ final private[kyo] class JsIoDriver private (
         end if
     end write
 
+    /** `end()` flushes what the writable side holds and then sends the FIN, the close_notify first on a `TLSSocket`; the readable side keeps
+      * emitting until the peer ends it. The destroy that a close attaches to `finish` is not attached here.
+      */
+    def shutdownOutput(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
+        // Node's net.Socket#destroyed is a documented boolean property that js.Dynamic erases; the narrowing cast recovers it.
+        if !handle.socket.destroyed.asInstanceOf[Boolean] then discard(handle.socket.end())
+
     // Node's sockets are objects, never fd numbers this driver keys anything by, so a recycled number cannot reach a closed handle's state.
     def releaseFd(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
 

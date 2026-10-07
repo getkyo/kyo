@@ -35,8 +35,9 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
             discard(writeCount.incrementAndGet())
             WriteResult.Done
         end write
-        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit      = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit =
+        def shutdownOutput(handle: Unit)(using AllowUnsafe, Frame): Unit = ()
+        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit         = ()
+        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit    =
             closeHandleSeen.set(true)
             discard(closeHandleDone.complete(Result.succeed(())))
         def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
@@ -92,7 +93,8 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
             def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                                      =
                 discard(written.incrementAndGet())
                 if offset + 1 < data.size then WriteResult.Partial(data, offset + 1) else WriteResult.Done
-            def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit =
+            def shutdownOutput(handle: Unit)(using AllowUnsafe, Frame): Unit = ()
+            def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit         =
                 parked.foreach { p =>
                     parked = Absent
                     p.completeDiscard(Result.fail(Closed("stalled peer", summon[Frame], "canceled")))

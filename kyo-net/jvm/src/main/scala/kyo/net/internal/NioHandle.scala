@@ -161,6 +161,19 @@ private[kyo] object NioHandle:
 
     /** Close the handle: send TLS close_notify if TLS (best-effort, non-blocking), then close channel. */
     def close(handle: NioHandle)(using AllowUnsafe): Unit =
+        sendCloseNotify(handle)
+        try handle.channel.close()
+        catch case _: java.io.IOException => ()
+    end close
+
+    /** End the handle's write side, keeping its read side: TLS close_notify if TLS, then the FIN. The caller has flushed every queued byte. */
+    def shutdownOutput(handle: NioHandle)(using AllowUnsafe): Unit =
+        sendCloseNotify(handle)
+        try discard(handle.channel.shutdownOutput())
+        catch case _: java.io.IOException => ()
+    end shutdownOutput
+
+    private def sendCloseNotify(handle: NioHandle)(using AllowUnsafe): Unit =
         handle.tls.foreach { tls =>
             // Unsafe: spinAcquire spins on engineGate (AtomicBoolean.Unsafe). The spin is bounded because
             // the gate is held only for the duration of one engine wrap cycle (brief), so progress is
@@ -186,8 +199,6 @@ private[kyo] object NioHandle:
             finally handle.engineGate.set(false)
             end try
         }
-        try handle.channel.close()
-        catch case _: java.io.IOException => ()
-    end close
+    end sendCloseNotify
 
 end NioHandle

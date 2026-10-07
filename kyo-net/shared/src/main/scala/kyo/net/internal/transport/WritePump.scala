@@ -42,7 +42,8 @@ final private[kyo] class WritePump[Handle](
     channel: Channel.Unsafe[Span[Byte]],
     closeFn: () => Unit,
     private val state: AtomicRef.Unsafe[WriteState],
-    private val log: Log.Unsafe = Log.live.unsafe
+    private val log: Log.Unsafe = Log.live.unsafe,
+    endsOutput: () => Boolean = () => false
 ):
     // The pump is not its own channel taker and does not reuse one IOPromise. Each take and each
     // writable await uses a FRESH promise whose completion callback CASes the named WriteState; a
@@ -72,7 +73,12 @@ final private[kyo] class WritePump[Handle](
                     doWrite(flushing)
                 // else: state is TornDown (a concurrent close won); drop the span, teardown already ran.
             case Result.Failure(_: Closed) =>
-                teardown()
+                // The channel closed with nothing left in it, so every span the pump took is written. A closed outbound direction ends only
+                // the write side; the connection stays open for reads, and its full close finds this pump done.
+                if endsOutput() then
+                    state.set(WriteState.TornDown)
+                    driver.shutdownOutput(handle)
+                else teardown()
             case Result.Panic(t) =>
                 log.error(s"WritePump take panic on ${driver.handleLabel(handle)}", t)
                 teardown()

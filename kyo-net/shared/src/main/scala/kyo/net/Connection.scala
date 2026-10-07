@@ -25,6 +25,16 @@ abstract class Connection:
     /** Close the connection. Closes channels and the underlying socket. Synchronous, idempotent. */
     def close()(using AllowUnsafe, Frame): Unit
 
+    /** End the outbound direction and keep the inbound one (a TCP half-close). The bytes already put to [[outbound]] are sent, then a TLS
+      * close_notify on a TLS connection, then the FIN; later puts fail with `Closed`. [[inbound]] keeps delivering until the peer closes,
+      * which, like [[close]], closes the connection. Synchronous, idempotent, and a no-op on a closed connection. A stdio connection flushes
+      * and keeps fd 1 open, as its [[close]] does, since the process owns it.
+      *
+      * A server that answers and then drains what its peer still sends (the lingering close of RFC 9112 section 9.6) calls this first, so
+      * a peer that reads until EOF learns the answer is complete.
+      */
+    def closeOutbound()(using AllowUnsafe, Frame): Unit
+
     /** Fiber that completes when this connection begins closing: `close()` wins the close, or a peer FIN / read-error / write-error teardown
       * reaches the connection's internal close. Never consumes inbound/outbound bytes, so an observer built on it steals no buffered data, and
       * completes immediately if the connection is already closing. Does NOT fire on [[detachForUpgrade]] (a STARTTLS detach leaves the fd open

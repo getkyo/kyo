@@ -294,7 +294,8 @@ object HttpServer:
                         Present(conn.onClosing),
                         Present(() => conn.close()),
                         clock,
-                        Present(served.drain)
+                        Present(served.drain),
+                        Present(() => conn.closeOutbound())
                     )
                 else
                     (

@@ -5,6 +5,7 @@ import kyo.internal.codec.*
 import kyo.internal.server.*
 import kyo.internal.util.*
 import kyo.net.internal.util.GrowableByteBuffer
+import kyo.scheduler.IOTask
 import scala.annotation.tailrec
 
 /** HTTP/1.1 implementation of StreamContext — one instance per connection, reused across requests.
@@ -119,6 +120,19 @@ final private[kyo] class Http1StreamContext(
         pendingWrite match
             case Present(fiber) if !fiber.done() => fiber.onComplete(_ => f())
             case _                               =>
+                pendingWrite = Absent
+                f()
+
+    /** [[whenWritable]] bounded by `bound` on `clock`. A connection ends through this: closing the outbound channel fails a write still
+      * waiting for room, the end of the last response among it, while a peer that stopped reading must not hold the connection open.
+      */
+    def whenWritableWithin(bound: Duration, clock: Clock)(f: () => Unit)(using AllowUnsafe, Frame): Unit =
+        pendingWrite match
+            case Present(fiber) if !fiber.done() =>
+                val written: Unit < (Async & Abort[Closed | Timeout]) =
+                    if bound.isFinite then Clock.let(clock)(Async.timeout(bound)(fiber.safe.get)) else fiber.safe.get
+                discard(IOTask.detached(Sync.ensure(Sync.Unsafe.defer(f()))(Abort.run[Closed | Timeout](written))))
+            case _ =>
                 pendingWrite = Absent
                 f()
 

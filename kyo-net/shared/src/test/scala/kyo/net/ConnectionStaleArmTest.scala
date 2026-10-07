@@ -93,6 +93,7 @@ class ConnectionStaleArmTest extends Test:
                         Frame
                     ): Unit                                                                                = ()
                     def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
+                    def shutdownOutput(handle: Unit)(using AllowUnsafe, Frame): Unit                       = ()
                     def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
                     def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
                     def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()

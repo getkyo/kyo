@@ -89,6 +89,22 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def write(handle: Handle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult
 
+    /** End `handle`'s write side and keep its read side: a TLS close_notify on a TLS handle, then the FIN. The WritePump calls it once, after
+      * its last [[write]] reported Done; a driver whose Done means "queued" sends the FIN only once those bytes are on the wire.
+      */
+    def shutdownOutput(handle: Handle)(using AllowUnsafe, Frame): Unit
+
+    /** Bytes of `handle` that [[write]] reported Done but the driver has not yet handed to the socket. Zero on a driver whose Done means the
+      * bytes are in the socket's send buffer.
+      */
+    def unflushedBytes(handle: Handle)(using AllowUnsafe): Long = 0L
+
+    /** Completes `promise` once [[unflushedBytes]] reaches zero, or once the handle is cancelled or closed. A closing connection waits on it
+      * before releasing the handle, since the release discards what is still queued.
+      */
+    def awaitFlushed(handle: Handle, promise: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        promise.completeUnitDiscard()
+
     /** Cancel pending read/write requests for handle. Completes pending promises with Closed. */
     def cancel(handle: Handle)(using AllowUnsafe, Frame): Unit
 

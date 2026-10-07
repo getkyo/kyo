@@ -964,6 +964,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             case Present(tls) => writeTls(handle, data, offset, tls)
             case Absent       => if data.isEmpty || offset >= data.size then WriteResult.Done else writePlain(handle, data, offset)
 
+    // A write reports Done only once its bytes, ciphertext included, are in the socket buffer, so nothing is queued here by the time it runs.
+    def shutdownOutput(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
+        NioHandle.shutdownOutput(handle)
+
     private def writePlain(handle: NioHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
         try
             val arr = data.toArrayUnsafe

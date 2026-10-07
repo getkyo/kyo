@@ -242,6 +242,9 @@ final private[net] class IoUringDriver private[posix] (
             handle.pendingReadPromise.set(Present(promise))
             if handle.isUpgraded then
                 promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "detached for upgrade")))
+        // A close_notify decrypted together with the data before it ends the stream once that data is delivered: nothing after it belongs
+        // to the stream, and the recv of the FIN that follows would record the orderly close as a truncation.
+        else if handle.halfClose == HalfCloseState.PeerCleanClose then promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
         else submitDeferredRecv(handle, promise, handshakeOwned = false)
     end awaitRead
 
@@ -598,6 +601,54 @@ final private[net] class IoUringDriver private[posix] (
         end if
     end write
 
+    /** Both send paths only queue on the engine FIFO and reap their sends later, so this runs as a FIFO op behind every queued write: a TLS
+      * close_notify joins the ciphertext tail, and the FIN waits until both tails are sent with no send in flight ([[shutdownWriteWhenSent]],
+      * re-checked by each send completion). A stdio handle (`readFd != writeFd`) has no socket write side, and its fds belong to the process.
+      */
+    def shutdownOutput(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        if handle.readFd == handle.writeFd then
+            submitEngineOp { () =>
+                if handle.beginWrite() then
+                    try
+                        handle.writeShutdownPending = true
+                        handle.tls.foreach(engine => shutdownTls(handle, engine))
+                        shutdownWriteWhenSent(handle)
+                    finally discard(handle.endWrite())
+                    end try
+            }
+    end shutdownOutput
+
+    // Both tails count a sent byte only once its completion reaps, so an in-flight send is still unflushed.
+    override def unflushedBytes(handle: PosixHandle)(using AllowUnsafe): Long = handle.unsentTailBytes.toLong
+
+    // Registered on the engine FIFO, behind every queued write, so the check sees each of their appends. A closing driver sends nothing more.
+    override def awaitFlushed(handle: PosixHandle, promise: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        if closedFlag.get() then promise.completeUnitDiscard()
+        else
+            submitEngineOp { () =>
+                handle.flushWaiter = Present(promise)
+                discard(flushWaiting.add(handle))
+                settleFlush(handle, force = closedFlag.get())
+            }
+
+    private val flushWaiting = java.util.concurrent.ConcurrentHashMap.newKeySet[PosixHandle]()
+
+    private def settleFlush(handle: PosixHandle, force: Boolean)(using AllowUnsafe): Unit =
+        if handle.settleFlushWaiter(force) then discard(flushWaiting.remove(handle))
+
+    /** Shut the write side down once a pending shutdown finds both send tails empty and no send in flight. Engine-FIFO-worker-only. The write
+      * hold keeps a concurrent close from releasing the fd number under the `shutdown`.
+      */
+    private def shutdownWriteWhenSent(handle: PosixHandle)(using AllowUnsafe): Unit =
+        if handle.writeShutdownPending && handle.unsentTailBytes == 0 && !handle.sendInFlight && !handle.rawSendInFlight then
+            if handle.beginWrite() then
+                try
+                    handle.writeShutdownPending = false
+                    discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_WR))
+                finally discard(handle.endWrite())
+                end try
+    end shutdownWriteWhenSent
+
     /** Plaintext send on io_uring, held SINGLE-IN-FLIGHT per handle with reflush-on-partial: the raw twin of [[writeTls]], with identity
       * "encryption" (the plaintext IS the wire bytes). Submits the append-then-flush on the serial engine worker and returns Done immediately,
       * so the write pump always proceeds to the next take.
@@ -913,6 +964,8 @@ final private[net] class IoUringDriver private[posix] (
                     end if
                 end if
         end match
+        shutdownWriteWhenSent(handle)
+        settleFlush(handle, force = false)
         // The tail just advanced (or fully drained / discarded): if a WritePump parked at the high-water bound and the tail has fallen below the
         // low-water mark, release it so the pump retries the deferred write. A no-op when no waiter is parked or the tail is still over the mark.
         handle.releaseBackpressureWaiter()
@@ -968,6 +1021,8 @@ final private[net] class IoUringDriver private[posix] (
                     end if
                 end if
         end match
+        shutdownWriteWhenSent(handle)
+        settleFlush(handle, force = false)
         // The tail just advanced (or fully drained / discarded): if a WritePump parked at the high-water bound and the tail has fallen below the
         // low-water mark, release it so the pump retries the deferred write. A no-op when no waiter is parked or the tail is still over the mark.
         handle.releaseBackpressureWaiter()
@@ -1069,6 +1124,8 @@ final private[net] class IoUringDriver private[posix] (
         // Mark the close as requested NOW (synchronously, before the deferred engine-FIFO close machinery), so a teardown that races the deferred
         // close can force-complete it and reclaim the fd. Removed in closeNow when the fd actually closes.
         discard(pendingCloses.put(handle.id.packed, handle))
+        // A close that did not wait for the flush (its grace passed) leaves the waiter registered; the handle is gone, so it settles here.
+        if flushWaiting.remove(handle) then discard(handle.settleFlushWaiter(force = true))
         // Route the engine free through the engine queue so it is serialized behind any read/write engine ops for this connection (no two
         // carriers touch one ssl). Installed before the close path can fire so freeResources sees the sink whether the close runs now or is
         // deferred until the in-flight count drains. Terminal-aware (mirrors the poller's own fix): once the ring has actually exited, the
@@ -1453,6 +1510,9 @@ final private[net] class IoUringDriver private[posix] (
             // drainReady and here): io_uring_queue_exit below would abandon that kernel-created fd, leaking an established handler-less
             // connection. Runs while `pending` still resolves the CQE's key to its Accept op; see closeOrphanedAcceptCqes.
             closeOrphanedAcceptCqes()
+            // No send completes after the ring is gone, so a closing connection still waiting on one releases now.
+            flushWaiting.forEach(h => discard(h.settleFlushWaiter(force = true)))
+            flushWaiting.clear()
             pending.clear()
             inFlight.clear()
             stalledSends.clear()

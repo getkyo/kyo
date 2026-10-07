@@ -1017,6 +1017,58 @@ final private[net] class PollerIoDriver private[posix] (
         end if
     end write
 
+    /** A stdio handle (`readFd != writeFd`) has no socket write side to end, and its fds belong to the process, so only a socket is shut down.
+      * A plaintext write is a synchronous send, so its bytes are in the kernel once the pump saw Done. A TLS write is only queued on the engine
+      * FIFO, so the close_notify is appended behind the ciphertext tail on the FIFO and the FIN waits for the flush that drains it.
+      */
+    def shutdownOutput(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        if handle.readFd == handle.writeFd then
+            handle.tls match
+                case Present(engine) =>
+                    submitEngineOp { () =>
+                        if handle.beginWrite() then
+                            try
+                                handle.writeShutdownPending = true
+                                if engine.shutdownStep() != -2 then
+                                    val drain = encryptDrainFor(handle)
+                                    var more  = true
+                                    while more do
+                                        val n = engine.drainCiphertext(drain, handle.readBufferSize)
+                                        if n <= 0 then more = false
+                                        else appendPending(handle, drain, n)
+                                    end while
+                                end if
+                                flushPending(handle)
+                            finally discard(handle.endWrite())
+                            end try
+                    }
+                case Absent =>
+                    if handle.beginWrite() then
+                        try discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_WR))
+                        finally discard(handle.endWrite())
+                        end try
+            end match
+    end shutdownOutput
+
+    // A plaintext write is a synchronous send, so only the TLS ciphertext tail can hold bytes the pump already saw Done.
+    override def unflushedBytes(handle: PosixHandle)(using AllowUnsafe): Long = handle.unsentTailBytes.toLong
+
+    // Registered on the engine FIFO, behind every queued write, so the check sees each of their appends. A driver past its terminal exit
+    // flushes nothing more.
+    override def awaitFlushed(handle: PosixHandle, promise: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        if terminal.get() then promise.completeUnitDiscard()
+        else
+            submitEngineOp { () =>
+                handle.flushWaiter = Present(promise)
+                discard(flushWaiting.add(handle))
+                settleFlush(handle, force = terminal.get())
+            }
+
+    private val flushWaiting = java.util.concurrent.ConcurrentHashMap.newKeySet[PosixHandle]()
+
+    private def settleFlush(handle: PosixHandle, force: Boolean)(using AllowUnsafe): Unit =
+        if handle.settleFlushWaiter(force) then discard(flushWaiting.remove(handle))
+
     /** Plaintext send: one `send` syscall on `writeFd`, returning Done / Partial / Error from the byte count and errno.
       *
       * `write` is a synchronous `IoDriver` method, so the byte count must be in hand without suspending. The two backends reach it through
@@ -1228,6 +1280,11 @@ final private[net] class PollerIoDriver private[posix] (
                     armWritableForFlush(handle)
                 end if
         end match
+        if handle.writeShutdownPending && handle.unsentTailBytes == 0 then
+            handle.writeShutdownPending = false
+            discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_WR))
+        end if
+        settleFlush(handle, force = false)
         // The tail just advanced (or fully drained): if a WritePump parked at the high-water bound and the tail has fallen below the low-water mark,
         // release it so the pump retries the deferred write. A no-op when no waiter is parked or the tail is still over the mark.
         handle.releaseBackpressureWaiter()
@@ -1440,6 +1497,8 @@ final private[net] class PollerIoDriver private[posix] (
         // Close path: the fd will be closed below. The OS auto-removes kqueue filters on close, so EV_DELETE is unnecessary and dangerous
         // (a recycled fd number would receive EV_DELETE intended for the old fd). Pass fdClosing=true to skip EV_DELETE on kqueue.
         deregisterFds(handle, fdClosing = true)
+        // A close that did not wait for the flush (its grace passed) leaves the waiter registered; the handle is gone, so it settles here.
+        if flushWaiting.remove(handle) then discard(handle.settleFlushWaiter(force = true))
         // Route the engine free through the engine FIFO so it is serialized behind any read/write engine ops for this connection (no two
         // carriers touch one ssl). Installed before the engine op runs so freeResources sees the sink. Terminal-aware: once the poll loop's
         // terminal exit has started, submitting here would strand the free the same way an unguarded closeHandle op would (the loop's own
@@ -1522,6 +1581,9 @@ final private[net] class PollerIoDriver private[posix] (
             h.pendingAcceptPromise = Absent
         }
         pendingAccepts.clear()
+        // No flush runs after the driver closes, so a closing connection still waiting on one releases now.
+        flushWaiting.forEach(h => discard(h.settleFlushWaiter(force = true)))
+        flushWaiting.clear()
         activeFds.clear()
         activeHandles.clear()
         missedReads.clear()
@@ -2133,8 +2195,25 @@ final private[net] class PollerIoDriver private[posix] (
         // The recv writes directly into staging, eliminating the per-read copy-out (no Buffer.copyToArray here).
         // EINTR is retried in place by recvNowWithRetry (bounded), so a signal mid-recv does not surface as Closed (POSIX recv(2)).
         val staging = stagingFor(handle)
-        val result  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
-        val n       = result.value.toInt
+        // A close_notify decrypted together with the data before it ends the stream once that data is delivered. Nothing after it belongs to
+        // the stream, and the FIN that follows must not be read as a truncation.
+        if handle.halfClose == HalfCloseState.PeerCleanClose then
+            handle.readMightHaveMore = false
+            finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.CleanClose))
+        else dispatchReadTlsRecv(fd, promise, handle, engine, staging, eofPending)
+        end if
+    end dispatchReadTls
+
+    private def dispatchReadTlsRecv(
+        fd: Int,
+        promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
+        handle: PosixHandle,
+        engine: TlsEngine,
+        staging: Buffer[Byte],
+        eofPending: Boolean
+    )(using AllowUnsafe, Frame): Unit =
+        val result = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
+        val n      = result.value.toInt
         if n > 0 then
             // Feed staging directly to feedCiphertext on the FIFO worker: no per-read re-fromArray.
             // The happens-before between the recvNow write (poll carrier) and the feedCiphertext read (FIFO worker) is the
@@ -2191,8 +2270,9 @@ final private[net] class PollerIoDriver private[posix] (
                     // decrypted and delivered, the consumer-paced drain must call recv again to observe the FIN (recv returns 0) and surface
                     // PeerFin. Without this, a connection that half-closes with partial ciphertext in the same edge strands the consumer
                     // waiting for an EPOLLRDHUP edge that epoll ET will not re-fire.
-                    handle.readMightHaveMore = (!drained && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose) ||
-                        (handle.halfClose == HalfCloseState.PeerHalfClosePending)
+                    // A consumed close_notify also re-dispatches: the read after this data delivers CleanClose, whether or not a FIN follows.
+                    handle.readMightHaveMore = (!drained && !eof && errno == 0) ||
+                        handle.halfClose == HalfCloseState.PeerHalfClosePending || handle.halfClose == HalfCloseState.PeerCleanClose
                     if fatalRecord then
                         // A fatal record (RFC 5246 7.2.2) tears the connection down as the typed decrypt failure, identical to io_uring. Completed
                         // with a bare completeDiscard BEFORE endDispatch: onFatal's requestClose set the close bit, so finishDispatch / rearmOwned's
@@ -2331,7 +2411,7 @@ final private[net] class PollerIoDriver private[posix] (
                 )(using handle.createdAt)))
             )
         end if
-    end dispatchReadTls
+    end dispatchReadTlsRecv
 
     private def dispatchWritable(fd: Int)(using AllowUnsafe, Frame): Unit =
         Maybe(pendingWritables.remove(fd)) match

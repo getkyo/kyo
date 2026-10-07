@@ -61,6 +61,20 @@ def echo(conn: Connection): Maybe[Span[Byte]] < (Async & Abort[Closed]) =
 
 `close()` releases the connection; `isOpen` reports whether it is still live. The caller closes every connection it opens.
 
+`closeOutbound()` ends only the sending direction, a TCP half-close: what is already on `outbound` is sent, then a `close_notify` on a TLS connection, then the FIN, while `inbound` keeps delivering until the peer closes. A server that answers and then reads whatever the peer still sends calls it first, so a peer that reads until end of stream knows the answer is complete.
+
+```scala
+import AllowUnsafe.embrace.danger
+import kyo.*
+import kyo.net.*
+
+def answerThenDrain(conn: Connection, answer: Span[Byte]): Unit < (Async & Abort[Closed]) =
+    conn.outbound.safe.put(answer).andThen {
+        conn.closeOutbound()
+        Abort.run[Closed](Loop.foreach(conn.inbound.safe.take.andThen(Loop.continue))).andThen(conn.close())
+    }
+```
+
 When the peer closes, `inbound` completes. At that point `status` reports how the stream ended. For a TLS connection this separates an orderly close, where the peer sent its authenticated `close_notify` before the TCP FIN (`Status.CleanClose`), from a `Status.Truncated` end, where the connection dropped with a bare FIN and no `close_notify`. A plaintext connection has no `close_notify` exchange, so its status stays `Status.Active` through every close, its own and its peer's. The posix and NIO transports drive the TLS record layer themselves and report the reason; the Node transport delegates TLS to Node, which surfaces a clean close and a truncation identically, so there every close reads `Status.Active`. A caller that frames a stream by its close reads the transport's `reportsTlsCloseReason` to know whether `Active` at the close means "nothing observed" or "no `close_notify`".
 
 > **Caution:** A `Truncated` close is the truncation-attack condition (RFC 8446 6.1). kyo-net does not reject it, because a large population of real HTTP/1.1 servers close this way after a complete length-framed message, but a length-aware caller that has not yet reached its expected message boundary must treat a `Truncated` end as a truncation, not a normal EOF.

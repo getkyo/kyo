@@ -86,10 +86,13 @@ private[kyo] object NioStdioConnection:
         })
 
         new NetConnection:
-            def inbound: Channel.Unsafe[Span[Byte]]             = inboundCh
-            def outbound: Channel.Unsafe[Span[Byte]]            = outboundCh
-            def isOpen(using AllowUnsafe): Boolean              = !closedFlag.get()
-            def close()(using AllowUnsafe, Frame): Unit         = closeConnection()
+            def inbound: Channel.Unsafe[Span[Byte]]     = inboundCh
+            def outbound: Channel.Unsafe[Span[Byte]]    = outboundCh
+            def isOpen(using AllowUnsafe): Boolean      = !closedFlag.get()
+            def close()(using AllowUnsafe, Frame): Unit = closeConnection()
+            // The write pump flushes what is queued and exits; fd 1 stays open, as on close, since the process owns it.
+            def closeOutbound()(using AllowUnsafe, Frame): Unit =
+                if !closedFlag.get() then discard(outboundCh.closeAwaitEmpty())
             private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
             // not upgradable: no driver or socket, so the answer is known immediately
             def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] =

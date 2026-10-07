@@ -186,6 +186,52 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                 }
         }
 
+        // The close_notify decrypts in the same read as the record before it, so the data is delivered first and the FIN reaches a later
+        // read, which must not record the orderly close as a truncation.
+        "a close_notify decrypted with the last data record stays an orderly close when the FIN follows" in {
+            if kyo.internal.Platform.isJS then Sync.defer(succeed)
+            else
+                TlsRealEngines.assumeTlsReady()
+                PosixTestSockets.assumePoller()
+                TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
+                    val driver = PollerIoDriver.init()
+                    discard(driver.start())
+                    Sync.ensure(Sync.defer(driver.close())) {
+                        PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                            assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "TLS handshake must complete first")
+                            val plain       = Array.tabulate[Byte](100)(i => (i % 251).toByte)
+                            val record      = TlsEngineLoopback.encrypt(clientEngine, plain)
+                            val shutdown    = clientEngine.shutdownStep()
+                            val closeNotify = TlsEngineLoopback.drainAll(clientEngine)
+                            assert(shutdown != -2 && closeNotify.nonEmpty, s"the client engine emitted no close_notify ($shutdown)")
+                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                            acceptedH.tls = Present(serverEngine)
+                            val wire      = record ++ closeNotify
+                            val cipherBuf = Buffer.fromArray[Byte](wire)
+                            val sendR     =
+                                try sock.sendNow(client, cipherBuf, wire.length.toLong, PosixConstants.MSG_NOSIGNAL)
+                                finally cipherBuf.close()
+                            assert(sendR.value.toInt == wire.length, s"send failed: errno=${sendR.errorCode}")
+                            PosixTestSockets.halfClose(sock, client)
+                            val acc  = new java.io.ByteArrayOutputStream
+                            val done = Promise.Unsafe.init[String, Any]()
+                            new TlsHalfCloseReader(driver, acceptedH, acc, done).start()
+                            Abort.run[Timeout](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
+                                val atEnd = acceptedH.halfClose
+                                driver.closeHandle(acceptedH)
+                                discard(sock.close(client))
+                                awaitCondition(5.seconds)(!acceptedH.tls.isDefined).map { settled =>
+                                    assert(settled, "the driver's own TLS teardown never settled")
+                                    assert(outcome == Result.Success(TlsHalfCloseReader.EofSeen), s"unexpected outcome: $outcome")
+                                    assert(acc.toByteArray.toList == plain.toList, s"got ${acc.size()} of ${plain.length} bytes")
+                                    assert(atEnd == HalfCloseState.PeerCleanClose, s"the orderly close was recorded as $atEnd")
+                                }
+                            }
+                        }
+                    }
+                }
+        }
+
         /** EAGAIN variant: the reader is started BEFORE the data arrives, so the first recv returns EAGAIN with eofPending=true.
           * This exercises the EAGAIN branch of dispatchReadTls. Without the advance: `halfClose` is not advanced to `PeerHalfClosePending` in the
           * EAGAIN branch, so the handle would re-arm and wait for an EPOLLRDHUP edge that ET will not re-fire after the data was delivered.
