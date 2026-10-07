@@ -9,8 +9,8 @@ import kyo.internal.Platform
   *   - `SLACK_BOT_TOKEN`: the bot token (`xoxb-`, scopes `chat:write`, `channels:history` and `commands`);
   *   - `SLACK_CHANNEL_ID`: a public channel the bot is a member of.
   *
-  * With only some of them set, every leaf is cancelled naming the ones missing. With none, CI's case, every leaf starts a container of
-  * its own, on every platform but Windows, whose container daemon cannot serve the Linux image. What the workspace and the app need is
+  * With only some of them set, every leaf is cancelled naming the ones missing. With none, CI's case, the leaves share one container,
+  * on every platform but Windows, whose container daemon cannot serve the Linux image. What the workspace and the app need is
   * in the module's CONTRIBUTING. The suite causes the events it receives, and it deletes every message it posts.
   *
   * The leaves after the `Interactive` separator need a person: one who runs the `/kyo-live` slash command, presses a button or submits
@@ -47,7 +47,7 @@ class SlackLiveTest extends kyo.test.Test[Any]:
     private type Setup = ContainerException | FileSystemException | HttpException
 
     /** The Slack a leaf runs against. `realOnly` is why the emulator cannot stand in for this leaf, which is then cancelled before a
-      * container starts. A leaf that ends in error prints the container's log before it is removed.
+      * container starts. A leaf that ends in error prints the container's log.
       */
     private def target(realOnly: Maybe[String])(using Frame): Target < (Async & Scope & Abort[Setup]) =
         for

@@ -10,7 +10,8 @@ class EmailTlsLiveTest extends EmailLiveSuite:
 
     private val modes = Chunk(Security.Implicit, Security.StartTls)
 
-    private val probe = Email.Message(from = Chunk(User.Test.address), to = Chunk(User.Test.address), subject = "tls", text = "Probe.")
+    private def probe(mail: EmailLiveServer)(using Frame): Email.Message =
+        Email.Message(from = Chunk(mail.address(User.Test)), to = Chunk(mail.address(User.Test)), subject = "tls", text = "Probe.")
 
     private def submitted(id: Email.MessageId): Boolean = id.value.nonEmpty
 
@@ -19,7 +20,7 @@ class EmailTlsLiveTest extends EmailLiveSuite:
             val tls = mail.tls(security, Present(mail.clientCertificate))
             for
                 status <- EmailReceive.run(mail.imap(User.Test, tls))(EmailReceive.status(inbox))
-                id     <- EmailSend.run(mail.smtp(User.Test, tls))(EmailSend.send(probe))
+                id     <- EmailSend.run(mail.smtp(User.Test, tls))(EmailSend.send(probe(mail)))
             yield (status.mailbox, submitted(id))
             end for
         }.map(opened => assert(opened == Chunk((inbox, true), (inbox, true))))
@@ -41,7 +42,7 @@ class EmailTlsLiveTest extends EmailLiveSuite:
 
     "without a client certificate, SMTP closes the session with a 421 whose text the failure carries" in server(Kind.Strict) { mail =>
         Kyo.foreach(modes) { security =>
-            Abort.run[EmailSendFailure](EmailSend.run(mail.smtp(User.Test, mail.tls(security)))(EmailSend.send(probe)))
+            Abort.run[EmailSendFailure](EmailSend.run(mail.smtp(User.Test, mail.tls(security)))(EmailSend.send(probe(mail))))
         }.map { results =>
             results.foreach {
                 case Result.Failure(closed: EmailTransportException) =>
@@ -59,7 +60,7 @@ class EmailTlsLiveTest extends EmailLiveSuite:
             val tls = mail.tls(security, Present(mail.clientCertificate), maxVersion = Email.Tls.Version.TLS12)
             for
                 imap <- Abort.run[EmailStatusFailure](EmailReceive.run(mail.imap(User.Test, tls))(EmailReceive.status(inbox)))
-                smtp <- Abort.run[EmailSendFailure](EmailSend.run(mail.smtp(User.Test, tls))(EmailSend.send(probe)))
+                smtp <- Abort.run[EmailSendFailure](EmailSend.run(mail.smtp(User.Test, tls))(EmailSend.send(probe(mail))))
             yield Chunk[Result[EmailException, Any]](imap, smtp)
             end for
         }.map { results =>
@@ -74,7 +75,7 @@ class EmailTlsLiveTest extends EmailLiveSuite:
         val tls = mail.tls(Security.Implicit, Present(mail.clientCertificate), minVersion = Email.Tls.Version.TLS13)
         for
             status <- EmailReceive.run(mail.imap(User.Test, tls))(EmailReceive.status(inbox))
-            id     <- EmailSend.run(mail.smtp(User.Test, tls))(EmailSend.send(probe))
+            id     <- EmailSend.run(mail.smtp(User.Test, tls))(EmailSend.send(probe(mail)))
         yield
             assert(status.mailbox == inbox)
             assert(submitted(id))
@@ -88,7 +89,7 @@ class EmailTlsLiveTest extends EmailLiveSuite:
                 case Security.StartTls => Email.Tls.StartTls
             for
                 imap <- Abort.run[EmailStatusFailure](EmailReceive.run(mail.imap(User.Test, tls))(EmailReceive.status(inbox)))
-                smtp <- Abort.run[EmailSendFailure](EmailSend.run(mail.smtp(User.Test, tls))(EmailSend.send(probe)))
+                smtp <- Abort.run[EmailSendFailure](EmailSend.run(mail.smtp(User.Test, tls))(EmailSend.send(probe(mail))))
             yield Chunk[Result[EmailException, Any]](imap, smtp)
             end for
         }.map { results =>

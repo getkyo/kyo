@@ -21,6 +21,11 @@ class ScramIntegrationTest extends SqlContainerTest:
     // (the suite runs sequentially via SqlContainerTest).
     override def timeout: Duration = 5.minutes
 
+    // Every leaf on the default config shares the process's default server: each one only logs in, or creates roles of its own
+    // and drops them.
+    private def shared(using Frame): ContainerPredef.Postgres < (Async & Abort[ContainerException]) =
+        TestContainers.initSharedPostgres(ContainerPredef.Postgres.Config.default, "postgres-default")
+
     // Helper: init a SqlClient via SCRAM and return it.
     private def initScramClient(
         pg: ContainerPredef.Postgres
@@ -39,6 +44,17 @@ class ScramIntegrationTest extends SqlContainerTest:
         out.toString
     end text
 
+    // Helper: create a login role on the shared server and drop it when the leaf's scope closes. Roles are cluster-wide, so a role
+    // left behind would make the next leaf that creates the same name fail; the drop before the create clears one a failed drop left.
+    private def createRole(admin: PostgresClient, role: String, password: String)(using
+        Frame
+    ): Unit < (Async & Scope & Abort[SqlException]) =
+        val quoted = "\"" + role + "\""
+        admin.executeRaw(s"DROP ROLE IF EXISTS $quoted")
+            .andThen(admin.executeRaw(s"CREATE ROLE $quoted LOGIN PASSWORD '$password'"))
+            .andThen(Scope.ensure(admin.executeRaw(s"DROP ROLE IF EXISTS $quoted")))
+    end createRole
+
     // Helper: open one SCRAM connection as `role` with `password`, its own scope closing it, and return `current_user`.
     private def loginAs(pg: ContainerPredef.Postgres, role: String, password: String)(using
         Frame
@@ -54,13 +70,10 @@ class ScramIntegrationTest extends SqlContainerTest:
             }
         }
 
-    "StartupExchange succeeds with SCRAM-SHA-256 server, connect completes without error".tagged(OwnContainer.name) in {
+    "StartupExchange succeeds with SCRAM-SHA-256 server, connect completes without error" in {
         Scope.run {
             // Default postgres:16 uses scram-sha-256; no authMethod override needed.
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
+            shared.map { pg =>
                 initScramClient(pg).flatMap { client =>
                     client.isAlive.map(alive => assert(alive))
                 }
@@ -68,15 +81,9 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM wrong password raises SqlConnectionAuthenticationFailedException".tagged(OwnContainer.name) in {
+    "StartupExchange SCRAM wrong password raises SqlConnectionAuthenticationFailedException" in {
         Scope.run {
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(
-                ContainerPredef.Postgres.Config.default.password("correctpassword"),
-                "postgres-scram"
-            ).map { pg =>
+            shared.map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     Abort.run[SqlException] {
                         Scope.run {
@@ -98,12 +105,9 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM server signature verified, no error after successful SCRAM".tagged(OwnContainer.name) in {
+    "StartupExchange SCRAM server signature verified, no error after successful SCRAM" in {
         Scope.run {
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
+            shared.map { pg =>
                 // If server signature verification fails, connect raises SqlConnectionException.
                 // Success here proves the server signature was accepted.
                 initScramClient(pg).flatMap { client =>
@@ -113,12 +117,9 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM populates ParameterStatus, server_version present after SCRAM connect".tagged(OwnContainer.name) in {
+    "StartupExchange SCRAM populates ParameterStatus, server_version present after SCRAM connect" in {
         Scope.run {
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
+            shared.map { pg =>
                 initScramClient(pg).flatMap { client =>
                     client.parameters.map { params =>
                         assert(
@@ -131,12 +132,9 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM SELECT 1 returns correct result after authentication".tagged(OwnContainer.name) in {
+    "StartupExchange SCRAM SELECT 1 returns correct result after authentication" in {
         Scope.run {
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
+            shared.map { pg =>
                 initScramClient(pg).flatMap { client =>
                     // Use text literal '1' so the server returns text OID bytes (UTF-8 compatible in binary format).
                     client.query("SELECT '1'").map { rows =>
@@ -171,13 +169,13 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM authenticates a role whose name holds a comma and an equals sign".tagged(OwnContainer.name) in {
+    "StartupExchange SCRAM authenticates a role whose name holds a comma and an equals sign" in {
         // RFC 5802 section 5.1 reserves both characters in the client-first message's name attribute. The exchange sends an empty
         // name, as libpq does, and the server takes the role from the startup packet, so the name never reaches the SCRAM grammar.
         Scope.run {
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
+            shared.map { pg =>
                 initScramClient(pg).flatMap { admin =>
-                    admin.executeRaw("""CREATE ROLE "odd,role=name" LOGIN PASSWORD 'commapw'""").flatMap { _ =>
+                    createRole(admin, "odd,role=name", "commapw").flatMap { _ =>
                         pg.container.mappedPort(pg.config.port).flatMap { port =>
                             PostgresClient.init(
                                 s"postgres://odd,role=name:commapw@${pg.container.host}:$port/${pg.database}",
@@ -194,14 +192,14 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM authenticates a role whose password the server stored in its SASLprep form".tagged(OwnContainer.name) in {
+    "StartupExchange SCRAM authenticates a role whose password the server stored in its SASLprep form" in {
         // The server prepares the password when it stores the secret, so the secret of "pass", a no-break space and three fullwidth
         // digits is the secret of "pass 123": the client must salt the prepared form, and both spellings log in.
         Scope.run {
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
+            shared.map { pg =>
                 initScramClient(pg).flatMap { admin =>
                     val password = "pass" + text(0x00a0, 0xff11, 0xff12, 0xff13)
-                    admin.executeRaw(s"CREATE ROLE prepared LOGIN PASSWORD '$password'").flatMap { _ =>
+                    createRole(admin, "prepared", password).flatMap { _ =>
                         loginAs(pg, "prepared", password).flatMap { first =>
                             assert(first == "prepared")
                             loginAs(pg, "prepared", "pass 123").map(second => assert(second == "prepared"))
@@ -212,19 +210,17 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM authenticates roles whose passwords NFKC composes and B.1 maps to nothing, under either spelling".tagged(
-        OwnContainer.name
-    ) in {
+    "StartupExchange SCRAM authenticates roles whose passwords NFKC composes and B.1 maps to nothing, under either spelling" in {
         // "e" and a combining acute compose to U+00E9 under NFKC; a soft hyphen (RFC 3454 table B.1) maps to nothing. The server stores the
         // prepared form's secret, so the raw and the prepared spellings both log in.
         Scope.run {
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
+            shared.map { pg =>
                 initScramClient(pg).flatMap { admin =>
                     val combining  = "caf" + text(0x0065, 0x0301)
                     val softHyphen = "soft" + text(0x00ad) + "hyphen"
                     for
-                        _        <- admin.executeRaw(s"CREATE ROLE composed LOGIN PASSWORD '$combining'")
-                        _        <- admin.executeRaw(s"CREATE ROLE hyphenated LOGIN PASSWORD '$softHyphen'")
+                        _        <- createRole(admin, "composed", combining)
+                        _        <- createRole(admin, "hyphenated", softHyphen)
                         raw1     <- loginAs(pg, "composed", combining)
                         prepared <- loginAs(pg, "composed", "caf" + text(0x00e9))
                         raw2     <- loginAs(pg, "hyphenated", softHyphen)
@@ -236,19 +232,17 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM authenticates roles whose passwords the profile prohibits: U+2028 (table C.2.2) and a bidi violation".tagged(
-        OwnContainer.name
-    ) in {
+    "StartupExchange SCRAM authenticates roles whose passwords the profile prohibits: U+2028 (table C.2.2) and a bidi violation" in {
         // A line separator is a prohibited control character, and an Arabic letter after a Latin one breaks RFC 3454 section 6; SASLprep
         // fails, the server stores the raw password's secret, and the client salts the raw password, the fallback libpq applies.
         Scope.run {
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
+            shared.map { pg =>
                 initScramClient(pg).flatMap { admin =>
                     val separator = "line" + text(0x2028) + "separator"
                     val bidi      = "latin" + text(0x0627, 0x0644)
                     for
-                        _     <- admin.executeRaw(s"CREATE ROLE separated LOGIN PASSWORD '$separator'")
-                        _     <- admin.executeRaw(s"CREATE ROLE mixed LOGIN PASSWORD '$bidi'")
+                        _     <- createRole(admin, "separated", separator)
+                        _     <- createRole(admin, "mixed", bidi)
                         first <- loginAs(pg, "separated", separator)
                         other <- loginAs(pg, "mixed", bidi)
                     yield assert(first == "separated" && other == "mixed")
@@ -258,14 +252,14 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM authenticates a role whose password the profile refuses, stored and sent raw".tagged(OwnContainer.name) in {
+    "StartupExchange SCRAM authenticates a role whose password the profile refuses, stored and sent raw" in {
         // An emoji is unassigned in Unicode 3.2, so SASLprep refuses the password; the server stores the raw password's secret and the
         // client salts the raw password, the fallback libpq applies.
         Scope.run {
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
+            shared.map { pg =>
                 initScramClient(pg).flatMap { admin =>
                     val password = "pencil" + text(0x1f600)
-                    admin.executeRaw(s"CREATE ROLE emoji LOGIN PASSWORD '$password'").flatMap { _ =>
+                    createRole(admin, "emoji", password).flatMap { _ =>
                         loginAs(pg, "emoji", password).map(name => assert(name == "emoji"))
                     }
                 }
@@ -273,12 +267,9 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM stores BackendKeyData, processId > 0 after SCRAM connect".tagged(OwnContainer.name) in {
+    "StartupExchange SCRAM stores BackendKeyData, processId > 0 after SCRAM connect" in {
         Scope.run {
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram").map { pg =>
+            shared.map { pg =>
                 initScramClient(pg).flatMap { client =>
                     client.query("SELECT pg_backend_pid()").flatMap { rows =>
                         assert(rows.nonEmpty, "pg_backend_pid() returned no rows")
