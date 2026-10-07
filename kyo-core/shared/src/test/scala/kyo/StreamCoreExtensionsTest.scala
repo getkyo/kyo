@@ -1370,14 +1370,16 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
         // A scope cannot tell a remainder nobody will resume from one someone
         // still intends to resume, so it releases at its own exit: one release, and the late consumer refused.
+        // The refusal happens where a parked remainder resumes, and a join on a gate already open continues without
+        // parking, so the gate opens only once the consumer is parked on it (one waiter) or has already ended.
         "a rest from splitAt carried to another fiber is released at the peeling scope's exit, and consuming it there is refused" in {
             AtomicInt.init(0).map { released =>
                 Latch.init(1).map { entered =>
-                    Latch.init(1).map { gate =>
+                    Promise.init[Unit, Any].map { gate =>
                         Promise.init[Stream[Int, Async], Any].map { handoff =>
                             val stream: Stream[Int, Async] = Stream:
                                 Sync.ensure(released.incrementAndGet.unit):
-                                    Emit.valueWith(Chunk(1))(entered.release.andThen(gate.await).andThen(Emit.value(Chunk(2))))
+                                    Emit.valueWith(Chunk(1))(entered.release.andThen(gate.get).andThen(Emit.value(Chunk(2))))
                             for
                                 peeler <- Fiber.initUnscoped {
                                     Env.run(0) {
@@ -1390,7 +1392,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                                 _        <- entered.await
                                 head     <- peeler.get
                                 atExit   <- released.get
-                                _        <- gate.release
+                                _        <- assertEventually(Kyo.zip(gate.waiters, consumer.done).map((w, d) => w == 1 || d))
+                                _        <- gate.completeUnitDiscard
                                 res      <- consumer.getResult
                                 total    <- released.get
                             yield
