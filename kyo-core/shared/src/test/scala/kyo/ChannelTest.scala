@@ -431,36 +431,28 @@ class ChannelTest extends kyo.test.Test[Any]:
                             case Result.Success(_) => Loop.continue
                             case _                 => Loop.done(Present(i))
                 }
-            "is still read by poll on a bounded channel".pendingUntilFixed(
-                "the abandoned taker's value is lost"
-            ) in {
+            "is still read by poll on a bounded channel" in {
                 for
                     c <- Channel.init[Int](2)
                     v <- strand(c, 300)
                     p <- c.poll
                 yield assert(v.isDefined && p == v, s"stranded $v, poll read $p")
             }
-            "is still read by poll on a zero-capacity channel".pendingUntilFixed(
-                "the abandoned taker's value is lost"
-            ) in {
+            "is still read by poll on a zero-capacity channel" in {
                 for
                     c <- Channel.init[Int](0)
                     v <- strand(c, 300)
                     p <- c.poll
                 yield assert(v.isDefined && p == v, s"stranded $v, poll read $p")
             }
-            "is returned by close on a bounded channel".pendingUntilFixed(
-                "the abandoned taker's value is lost"
-            ) in {
+            "is returned by close on a bounded channel" in {
                 for
                     c       <- Channel.init[Int](2)
                     v       <- strand(c, 300)
                     backlog <- c.close
                 yield assert(v.isDefined && backlog == v.map(Seq(_)), s"stranded $v, close returned $backlog")
             }
-            "is returned by close on a zero-capacity channel".pendingUntilFixed(
-                "the abandoned taker's value is lost"
-            ) in {
+            "is returned by close on a zero-capacity channel" in {
                 for
                     c       <- Channel.init[Int](0)
                     v       <- strand(c, 300)
@@ -470,9 +462,7 @@ class ChannelTest extends kyo.test.Test[Any]:
             // closeAwaitEmpty reports that everything the channel accepted was consumed, so a stranded value keeps it
             // waiting like any other element. The close is started on the unsafe tier because that returns its fiber at
             // once, which fixes the order of the close and the read.
-            "keeps closeAwaitEmpty waiting on a zero-capacity channel until it is read".pendingUntilFixed(
-                "the abandoned taker's value is lost and a zero-capacity closeAwaitEmpty closes at once"
-            ) in {
+            "keeps closeAwaitEmpty waiting on a zero-capacity channel until it is read" in {
                 for
                     c       <- Channel.init[Int](0)
                     v       <- strand(c, 300)
@@ -483,9 +473,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     closed  <- closing.get
                 yield assert(p == v && closed, s"stranded $v, poll read $p, closed=$closed")
             }
-            "stranded before closeAwaitEmpty is still drained by it on a bounded channel".pendingUntilFixed(
-                "the abandoned taker's value is lost"
-            ) in {
+            "stranded before closeAwaitEmpty is still drained by it on a bounded channel" in {
                 for
                     c       <- Channel.init[Int](2)
                     v       <- strand(c, 300)
@@ -499,9 +487,7 @@ class ChannelTest extends kyo.test.Test[Any]:
             // The last element of a closing ring goes to a parked taker, which empties the ring. A taker interrupted before
             // it resumes strands the element, and the close has to still be waiting for it. The offer, the close and the
             // interrupt share one step so the interrupt can land before the taker resumes.
-            "stranded after it emptied a bounded channel's closing ring keeps closeAwaitEmpty waiting".pendingUntilFixed(
-                "the abandoned taker's value is lost and the queue reaches FullyClosed at the poll that feeds the parked taker"
-            ) in {
+            "stranded after it emptied a bounded channel's closing ring keeps closeAwaitEmpty waiting" in {
                 Loop.indexed { i =>
                     if i >= 300 then Loop.done
                     else
@@ -533,9 +519,7 @@ class ChannelTest extends kyo.test.Test[Any]:
         // in order. Each leaf waits for the batch to park before reading, so the reads are sequential and deterministic,
         // and asserts on what it read before awaiting the producer, which never completes while the batch is not consumed.
         "a parked batch on a zero-capacity channel" - {
-            "drain returns every element and completes the producer".pendingUntilFixed(
-                "the readers re-offer the batch to the priority queue and return without consuming it"
-            ) in {
+            "drain returns every element and completes the producer" in {
                 for
                     c <- Channel.init[Int](0)
                     f <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2, 3)))
@@ -546,9 +530,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     p <- c.pendingPuts
                 yield assert(p == 0)
             }
-            "drain returns the remainder a take left behind".pendingUntilFixed(
-                "the readers re-offer the batch to the priority queue and return without consuming it"
-            ) in {
+            "drain returns the remainder a take left behind" in {
                 for
                     c <- Channel.init[Int](0)
                     f <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2, 3)))
@@ -559,9 +541,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     _ <- f.get
                 yield succeed
             }
-            "drain returns the values parked behind the batch".pendingUntilFixed(
-                "the readers re-offer the batch to the priority queue and return without consuming it"
-            ) in {
+            "drain returns the values parked behind the batch" in {
                 for
                     c  <- Channel.init[Int](0)
                     f1 <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2)))
@@ -574,9 +554,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     _  <- f2.get
                 yield succeed
             }
-            "drainUpTo stops inside the batch and the next read continues it".pendingUntilFixed(
-                "the readers re-offer the batch to the priority queue and return without consuming it"
-            ) in {
+            "drainUpTo stops inside the batch and the next read continues it" in {
                 for
                     c  <- Channel.init[Int](0)
                     f  <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2, 3)))
@@ -588,9 +566,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     _  <- f.get
                 yield succeed
             }
-            "poll returns the elements one at a time".pendingUntilFixed(
-                "the readers re-offer the batch to the priority queue and return without consuming it"
-            ) in {
+            "poll returns the elements one at a time" in {
                 for
                     c  <- Channel.init[Int](0)
                     f  <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2)))
@@ -603,9 +579,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     v3 <- c.poll
                 yield assert(v3 == Absent)
             }
-            "a batch a read left partly consumed stays ahead of a later producer".pendingUntilFixed(
-                "the readers re-offer the batch to the priority queue and return without consuming it"
-            ) in {
+            "a batch a read left partly consumed stays ahead of a later producer" in {
                 for
                     c  <- Channel.init[Int](0)
                     f1 <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2, 3)))
@@ -621,12 +595,10 @@ class ChannelTest extends kyo.test.Test[Any]:
             }
         }
         // A zero-capacity channel pairs a parked producer with a parked taker only under its transfer claim, and a flush that
-        // loses the claim returns at once. A close landing while a transfer holds the claim therefore finds both parked, and
-        // its closing drain fails the producer without first handing its value to the taker that is waiting for it. The
-        // leaf holds the claim itself, which is the only deterministic way to have both parked when the close runs.
-        "a close that finds a producer and a taker both parked on a zero-capacity channel".pendingUntilFixed(
-            "the closing drain fails the parked put and the parked take without pairing them"
-        ) in {
+        // loses the claim returns at once. A close landing while a transfer holds the claim finds both parked; the taker must
+        // still receive the producer's value rather than both failing. The leaf holds the claim itself, which is the only
+        // deterministic way to have both parked when the close runs, and releases it the way every holder does.
+        "a close that finds a producer and a taker both parked on a zero-capacity channel" in {
             Sync.Unsafe.defer {
                 val c = Channel.Unsafe.init[Int](0)
                 c match
@@ -635,7 +607,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                         val put  = z.putFiber(1)
                         val take = z.takeFiber()
                         discard(z.close())
-                        z.batchInProgress.set(false)
+                        z.releaseTransfer()
                         for
                             delivered <- take.safe.getResult
                             accepted  <- put.safe.getResult
@@ -2364,7 +2336,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     assert(r.isSuccess, s"the count did not reach $n")
                 }
             Seq(0, 2).foreach { capacity =>
-                s"a taker, capacity $capacity".pendingUntilFixed("pendingTakes counts queue entries") in {
+                s"a taker, capacity $capacity" in {
                     for
                         c <- Channel.init[Int](capacity)
                         f <- Fiber.initUnscoped(c.take)
@@ -2374,9 +2346,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                         _ <- settlesTo(c.pendingTakes, 0)
                     yield succeed
                 }
-                s"one of two takers, and the other still receives, capacity $capacity".pendingUntilFixed(
-                    "pendingTakes counts queue entries"
-                ) in {
+                s"one of two takers, and the other still receives, capacity $capacity" in {
                     for
                         c  <- Channel.init[Int](capacity)
                         f1 <- Fiber.initUnscoped(c.take)
@@ -2393,7 +2363,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     yield assert(v == 7 && n == 0)
                 }
             }
-            "a producer behind a full ring".pendingUntilFixed("pendingPuts counts queue entries") in {
+            "a producer behind a full ring" in {
                 for
                     c <- Channel.init[Int](1)
                     _ <- c.put(1)
@@ -2404,7 +2374,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     _ <- settlesTo(c.pendingPuts, 0)
                 yield succeed
             }
-            "a producer on a zero-capacity channel".pendingUntilFixed("pendingPuts counts queue entries") in {
+            "a producer on a zero-capacity channel" in {
                 for
                     c <- Channel.init[Int](0)
                     f <- Fiber.initUnscoped(c.put(2))
@@ -2414,7 +2384,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     _ <- settlesTo(c.pendingPuts, 0)
                 yield succeed
             }
-            "one of two producers, and the other is still delivered".pendingUntilFixed("pendingPuts counts queue entries") in {
+            "one of two producers, and the other is still delivered" in {
                 for
                     c  <- Channel.init[Int](0)
                     f1 <- Fiber.initUnscoped(c.put(1))
@@ -2513,9 +2483,7 @@ class ChannelTest extends kyo.test.Test[Any]:
         // requested right after the put that wakes the parked taker, so it lands around the resumed slice. Two
         // outcomes are correct: the element was delivered and its release ran, or the abandoned take handed it back
         // to the channel.
-        "takeWith registers a release for the element it delivers under a pending interrupt".pendingUntilFixed(
-            "a value delivered to a taker abandoned before it resumed is lost"
-        ) in {
+        "takeWith registers a release for the element it delivers under a pending interrupt" in {
             val rounds = 100
             Loop.indexed { i =>
                 if i >= rounds then Loop.done

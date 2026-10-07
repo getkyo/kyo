@@ -164,13 +164,16 @@ class HubTest extends kyo.test.Test[Any]:
         "close returns buffered messages" in {
             for
                 h <- Hub.init[Int](4)
-                _ <- h.listen(0)
+                l <- h.listen(0)
                 // The buffer-0 listener makes the distributor block after taking exactly one message,
                 // so putBatch(1 to 5) can only complete once that first take frees a hub slot for the
-                // 5th element. When it returns the hub holds exactly [2, 3, 4, 5], with 1 held in transit.
+                // 5th element. It can complete before the distributor resumes with 1, and a close then
+                // returns 1 with the rest, so the leaf waits for the distributor to park on the listener:
+                // the hub then holds exactly [2, 3, 4, 5], with 1 held in transit.
                 _ <- h.putBatch(1 to 5)
+                _ <- assertEventually(l.child.pendingPuts.map(_ == 1))
                 r <- h.close
-            yield assert(r == Maybe(Seq(2, 3, 4, 5)))
+            yield assert(r == Maybe(Seq(2, 3, 4, 5)), s"close returned $r")
         }
 
         "operations fail after close" in {
