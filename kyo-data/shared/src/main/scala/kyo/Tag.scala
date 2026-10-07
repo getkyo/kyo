@@ -3,6 +3,7 @@ package kyo
 import java.util.concurrent.ConcurrentHashMap
 import kyo.Tag.internal.Type.Entry.*
 import kyo.internal.Platform
+import kyo.internal.SafePublish
 import kyo.internal.TagHash
 import kyo.internal.TagMacro
 import kyo.internal.XXHash
@@ -329,10 +330,22 @@ object Tag extends kyo.internal.TagPlatformSpecific:
             else Runtime.getRuntime().availableProcessors() * 8
 
         private val cacheEntries = 128
-        final private case class Comparison(a: Tag[Any], b: Tag[Any], mode: Mode, result: Boolean)
+        @SafePublish final private case class Comparison @noinline() (a: Tag[Any], b: Tag[Any], mode: Mode, result: Boolean)
         private val cacheSlots: Array[Array[Maybe[Comparison]]] = Array.fill(threadSlots) {
             Array.fill[Maybe[Comparison]](cacheEntries)(Absent)
         }
+
+        private[kyo] def cacheSlot(thread: Thread): Int = thread.hashCode & (threadSlots - 1)
+
+        private[kyo] def cacheIndex[A, B](a: Tag[A], b: Tag[B], mode: Mode): Int =
+            var hash = (TagHash.of(a).toLong << 32) | (TagHash.of(b) & 0xffffffffL)
+            hash += mode.factor
+            hash ^= (hash >>> 30)
+            hash *= 0xbf58476d1ce4e5b9L
+            hash ^= (hash >>> 27)
+            hash &= Long.MaxValue
+            (hash & (cacheEntries - 1)).toInt
+        end cacheIndex
 
         private def dynamicHashCode(tag: String, map: Map[Entry.Id, Any]): Int =
             val builder = new java.lang.StringBuilder(tag)
@@ -359,19 +372,19 @@ object Tag extends kyo.internal.TagPlatformSpecific:
           *
           * Hashes choose the slot; they never authorize reuse. A slot holds one immutable comparison, so a racing
           * replacement can cost a reader its hit but cannot hand it one pair's result under another pair's identity.
-          * The entry's fields are final, which is what lets an unsynchronized slot carry it: a reader that observes
-          * the reference at all observes it fully constructed, and a reader that observes a stale one simply misses.
+          *
+          * Threads whose hashes pick the same array of slots share it, and the slots are plain, so an entry is safe to
+          * publish only because its fields are final and the JVM orders a final field's construction before any read of
+          * it. Scala Native orders only fields marked `@safePublish`, so `Comparison` carries that annotation: without it,
+          * an arm64 reader could follow the new reference into memory still holding the object that occupied it before,
+          * and fail its type test or read another comparison's result. Scala Native emits the annotation's release fence
+          * at the constructor's return and drops it when the optimizer inlines the constructor, so the constructor is
+          * `@noinline`.
           */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
             // Use memoized hashes to select a slot, then verify the actual compared tags before reusing a result.
-            var hash = (TagHash.of(a).toLong << 32) | (TagHash.of(b) & 0xffffffffL)
-            hash += mode.factor
-            hash ^= (hash >>> 30)
-            hash *= 0xbf58476d1ce4e5b9L
-            hash ^= (hash >>> 27)
-            hash &= Long.MaxValue
-            val idx   = (hash & (cacheEntries - 1)).toInt
-            val cache = cacheSlots(Thread.currentThread().hashCode & (threadSlots - 1))
+            val idx   = cacheIndex(a, b, mode)
+            val cache = cacheSlots(cacheSlot(Thread.currentThread()))
             cache(idx) match
                 case Present(cached) if (a eq cached.a) && (b eq cached.b) && mode == cached.mode =>
                     cached.result
