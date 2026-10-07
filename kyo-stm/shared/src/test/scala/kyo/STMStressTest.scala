@@ -415,8 +415,15 @@ class STMStressTest extends kyo.test.Test[Any]:
                     STM.run(tmap.entries.map(_.toMap))
                         .handle(Abort.run)
                         .map {
-                            case Result.Panic(_) => thrown.incrementAndGet.unit
-                            case _               => ()
+                            case Result.Panic(e) =>
+                                Sync.defer {
+                                    val trace = e.getStackTrace.take(40).mkString("\n    at ")
+                                    java.lang.System.err.println(s"STMSTRESS-PANIC ${e.getClass.getName}: ${e.getMessage}\n    at $trace")
+                                    Option(e.getCause).foreach(c =>
+                                        java.lang.System.err.println(s"STMSTRESS-CAUSE ${c.getClass.getName}: ${c.getMessage}")
+                                    )
+                                }.andThen(thrown.incrementAndGet.unit)
+                            case _ => ()
                         }
                 }
             }
