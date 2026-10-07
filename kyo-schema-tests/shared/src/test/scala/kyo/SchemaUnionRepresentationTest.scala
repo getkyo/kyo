@@ -56,6 +56,9 @@ sealed trait SSRFSharedB                extends SSRFShared
 final case class SSRFSharedBoth(x: Int) extends SSRFSharedA with SSRFSharedB derives CanEqual
 final case class SSRFSharedOnly(y: Int) extends SSRFSharedB derives CanEqual
 
+// The leaf extends the top sub-trait, not the bottom one. A class below the whole chain has 2^23 ancestor paths, and the Scala.js
+// linker's heap grows with them: a leaf there takes the test module's JS link to 5.2GB of live heap, against 2.4GB here. The
+// derivation walks the sub-traits from the sum downward, so their 2^23 paths reach it all the same.
 sealed trait SSRFChain derives CanEqual, Schema
 sealed trait SSRFChain1                extends SSRFChain
 sealed trait SSRFChain2                extends SSRFChain with SSRFChain1
@@ -81,7 +84,7 @@ sealed trait SSRFChain21               extends SSRFChain with SSRFChain20
 sealed trait SSRFChain22               extends SSRFChain with SSRFChain21
 sealed trait SSRFChain23               extends SSRFChain with SSRFChain22
 sealed trait SSRFChain24               extends SSRFChain with SSRFChain23
-final case class SSRFChainLeaf(x: Int) extends SSRFChain24 derives CanEqual
+final case class SSRFChainLeaf(x: Int) extends SSRFChain1 derives CanEqual
 
 @kyo.schema.tagOnly
 sealed trait SSRFColor derives CanEqual, Schema
