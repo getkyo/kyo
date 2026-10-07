@@ -417,7 +417,17 @@ class PathWatchTest extends kyo.test.Test[Any]:
                 Scope.run {
                     fileSystem.mkDir(root).andThen {
                         fileSystem.openWatcher(root, WatchOptions(capacity = 1)).map { watcher =>
-                            fileSystem.move(ancestor, dir / "moved-ancestor-target", Path.MoveOptions()).andThen {
+                            // SCRATCH (repro branch only): on a denied move, list who holds handles under the ancestor.
+                            Abort.recover[FileSystemException] { (e: FileSystemException) =>
+                                Abort.run[CommandException](
+                                    Command("repro/handle64.exe", "-accepteula", "-nobanner", "-u", ancestor.toString).redirectErrorStream(
+                                        true
+                                    ).text
+                                ).map { holders =>
+                                    java.lang.System.out.println(s"SCRATCH-HANDLES for $ancestor after $e:\n$holders")
+                                    Abort.fail(e)
+                                }
+                            }(fileSystem.move(ancestor, dir / "moved-ancestor-target", Path.MoveOptions())).andThen {
                                 clock.advance(10.millis).andThen {
                                     watcher.events.take(1).run.map(events => assert(events == Chunk(PathChange.Invalidated(root))))
                                 }
