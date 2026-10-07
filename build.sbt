@@ -2427,8 +2427,8 @@ lazy val `kyo-whatsapp` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-whatsapp"))
-        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-crypto`, `kyo-charset`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-http`, `kyo-schema-json`, `kyo-crypto`, `kyo-charset`)
+        .dependsOn(`kyo-net` % "test->test", `kyo-pod` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -3881,8 +3881,8 @@ lazy val `kyo-slack` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-slack"))
-        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-charset`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-http`, `kyo-schema-json`, `kyo-charset`)
+        .dependsOn(`kyo-net` % "test->test", `kyo-pod` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -3954,8 +3954,8 @@ lazy val `kyo-telegram` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-telegram"))
-        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-charset`, `kyo-crypto`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-http`, `kyo-schema-json`, `kyo-charset`, `kyo-crypto`)
+        .dependsOn(`kyo-net` % "test->test", `kyo-pod` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -3977,8 +3977,8 @@ lazy val `kyo-discord` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-discord"))
-        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-crypto`, `kyo-mime`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-http`, `kyo-schema-json`, `kyo-crypto`, `kyo-mime`)
+        .dependsOn(`kyo-net` % "test->test", `kyo-pod` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -4013,8 +4013,8 @@ lazy val `kyo-teams` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-teams"))
-        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-crypto`, `kyo-charset`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-http`, `kyo-schema-json`, `kyo-crypto`, `kyo-charset`)
+        .dependsOn(`kyo-net` % "test->test", `kyo-pod` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,

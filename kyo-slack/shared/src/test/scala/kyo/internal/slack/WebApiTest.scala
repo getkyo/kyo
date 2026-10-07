@@ -642,8 +642,9 @@ class WebApiTest extends kyo.test.Test[Any]:
             HttpResponse(HttpStatus.OK).addField("body", """{"ok":true,"ts":"1.0"}""")
         }
         for
+            pems   <- kyo.net.TlsTestCertShared.writePems
             server <- HttpServer.init(HttpServerConfig.default.port(0).host("localhost").tls(
-                kyo.internal.HttpTestPlatformBackend.serverTlsConfig
+                HttpTlsConfig(certChainPath = Present(pems._1), privateKeyPath = Present(pems._2))
             ))(route)
             base = s"https://localhost:${server.port}"
             callers <- HttpClient.init(defaultTlsConfig = trustAll)

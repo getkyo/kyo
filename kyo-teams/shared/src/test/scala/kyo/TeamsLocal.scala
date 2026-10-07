@@ -195,7 +195,10 @@ object TeamsLocal:
 
     /** [[withLocal]] over TLS with a self-signed certificate, which the default `tls` does not trust. */
     def withLocalTls[A](test: Local => A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
-        Clock.withTimeControl(_ => serve(controlled.tls(kyo.internal.TlsTestHelper.serverTlsConfig), "https")(test))
+        kyo.net.TlsTestCertShared.writePems.map { (cert, key) =>
+            val tls = HttpTlsConfig(certChainPath = Present(cert), privateKeyPath = Present(key))
+            Clock.withTimeControl(_ => serve(controlled.tls(tls), "https")(test))
+        }
 
     // The server's idle wait runs on the leaf's controlled clock, so a leaf advancing past it would have the server close a kept-alive
     // connection while the client takes it from its pool for the next request, which then fails at the transport.

@@ -604,7 +604,7 @@ object DiscordGatewayTest:
                 Token.init(tokenSecret).getOrThrow,
                 intents,
                 baseUrl = HttpUrl(Present("https"), "127.0.0.1", port, "/api/v10", Absent),
-                tls = kyo.internal.TlsTestHelper.clientTlsConfig
+                tls = HttpTlsConfig(trustAll = true)
             ).getOrThrow
 
         def nextConnection(using Frame): Conn < (Async & Abort[Closed]) = conns.take
@@ -672,8 +672,11 @@ object DiscordGatewayTest:
                         postedCount.incrementAndGet.andThen(posted.put((path, new String(req.fields.body.toArray, UTF_8))))
                             .andThen(HttpResponse(HttpStatus(204)).addField("body", ""))
                     }
+                pems   <- kyo.net.TlsTestCertShared.writePems
                 server <-
-                    HttpServer.init(HttpServerConfig.default.port(0).host("127.0.0.1").tls(kyo.internal.TlsTestHelper.serverTlsConfig))(
+                    HttpServer.init(HttpServerConfig.default.port(0).host("127.0.0.1").tls(
+                        HttpTlsConfig(certChainPath = Present(pems._1), privateKeyPath = Present(pems._2))
+                    ))(
                         gatewayBotRoute,
                         channel,
                         callback,

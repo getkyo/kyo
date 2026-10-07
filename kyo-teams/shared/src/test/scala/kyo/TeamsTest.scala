@@ -583,10 +583,10 @@ class TeamsTest extends kyo.test.Test[Any]:
     "tls comes from the config: the default refuses a self-signed server, the config's trust reaches it, and the caller's does not" in {
         withLocalTls { local =>
             local.reply("send", resource("1:a")).andThen {
-                val trusting = local.config.copy(tls = kyo.internal.TlsTestHelper.clientTlsConfig)
+                val trusting = local.config.copy(tls = HttpTlsConfig(trustAll = true))
                 for
                     refused <- Teams.run(local.config)(Abort.run[TeamsSendFailure](Teams.send(local.reference, hello)))
-                    ambient <- HttpClient.withConfig(_.tls(kyo.internal.TlsTestHelper.clientTlsConfig))(
+                    ambient <- HttpClient.withConfig(_.tls(HttpTlsConfig(trustAll = true)))(
                         Teams.run(local.config)(Abort.run[TeamsSendFailure](Teams.send(local.reference, hello)))
                     )
                     trusted <- Teams.run(trusting)(Abort.run[TeamsSendFailure](Teams.send(local.reference, hello)))

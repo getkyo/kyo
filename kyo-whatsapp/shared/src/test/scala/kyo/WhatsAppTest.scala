@@ -156,8 +156,11 @@ class WhatsAppTest extends BaseWhatsAppTest:
         val trustAll = HttpTlsConfig(trustAll = true)
         val route = HttpRoute.postRaw("v25.0" / phoneId.value / "messages").response(_.bodyText).handler(_ => HttpResponse.ok(sendOkBody))
         for
+            pems   <- kyo.net.TlsTestCertShared.writePems
             server <- HttpServer.init(
-                HttpServerConfig.default.port(0).host("localhost").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
+                HttpServerConfig.default.port(0).host("localhost").tls(
+                    HttpTlsConfig(certChainPath = Present(pems._1), privateKeyPath = Present(pems._2))
+                )
             )(route)
             callers <- HttpClient.init(defaultTlsConfig = trustAll)
             config = configOf(token, phoneId, baseUrl = url(s"https://localhost:${server.port}"))

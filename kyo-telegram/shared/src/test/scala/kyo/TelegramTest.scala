@@ -902,10 +902,10 @@ class TelegramTest extends kyo.test.Test[Any]:
     "tls comes from the config: the default refuses a self-signed server, the config's trust reaches it, and the caller's does not" in {
         withLocalTls { local =>
             local.reply("getMe", ok(me)).andThen {
-                val trusting = local.config.copy(tls = kyo.internal.TlsTestHelper.clientTlsConfig)
+                val trusting = local.config.copy(tls = HttpTlsConfig(trustAll = true))
                 for
                     refused <- Telegram.run(local.config)(Abort.run[TelegramMeFailure](Telegram.me))
-                    ambient <- HttpClient.withConfig(_.tls(kyo.internal.TlsTestHelper.clientTlsConfig))(
+                    ambient <- HttpClient.withConfig(_.tls(HttpTlsConfig(trustAll = true)))(
                         Telegram.run(local.config)(Abort.run[TelegramMeFailure](Telegram.me))
                     )
                     trusted <- Telegram.run(trusting)(Abort.run[TelegramMeFailure](Telegram.me))
@@ -1480,7 +1480,10 @@ object TelegramTest:
 
     /** [[withLocal]] served over TLS with a self-signed certificate, which the default `tls` does not trust. */
     def withLocalTls[A](test: Local => A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
-        serveLocal(HttpServerConfig.default.port(0).host("127.0.0.1").tls(kyo.internal.TlsTestHelper.serverTlsConfig), "https")(test)
+        kyo.net.TlsTestCertShared.writePems.map { (cert, key) =>
+            val tls = HttpTlsConfig(certChainPath = Present(cert), privateKeyPath = Present(key))
+            serveLocal(HttpServerConfig.default.port(0).host("127.0.0.1").tls(tls), "https")(test)
+        }
 
     private def serveLocal[A](serverConfig: HttpServerConfig, scheme: String)(test: Local => A < (Async & Abort[Any] & Scope))(using
         Frame
