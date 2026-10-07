@@ -1816,8 +1816,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                         Log.live.unsafe.debug(s"$label dispatchRead ${handleLabel(handle)} readArm already cleared (cancelled)")
                 end match
             case Absent =>
+                // A key selected before `closeHandle`, `handOver` or `stopUpgradeProducer` removed its read: that read was already failed,
+                // completed or re-armed, so the dispatch has nothing to deliver. Logged on the poll carrier, which must not stall on output.
                 given Frame = Frame.internal
-                Log.live.unsafe.warn(s"$label dispatchRead for channel=${channel.hashCode()} with no pending promise")
+                Log.live.unsafe.debug(s"$label dispatchRead for channel=${channel.hashCode()} with no pending promise")
         end match
     end dispatchRead
 
