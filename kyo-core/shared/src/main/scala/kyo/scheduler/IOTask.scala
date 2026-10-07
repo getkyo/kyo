@@ -207,8 +207,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         val s = status
         !(s.isInterrupted || s.isDone)
 
+    // Not the promise's completion: a fiber completes its own promise inside its slice, and the callbacks the
+    // completion runs inline on this worker belong to whoever registered them.
     final override def needsInterrupt(): Boolean =
-        interrupted || !isPending()
+        interrupted
 
     /** A cross-thread
       * diagnostic read: it touches only fields already in hand, never anything the evaluator would have run.
@@ -369,6 +371,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         val remainder = curr
         curr = cleared
         status = Status.Done
+        // After `Done`, which ends needsInterrupt: the thread interrupt sent for the body must not reach the releases below.
+        if interruption.isDefined then Scheduler.get.notifyInterruptReleased(this)
         if !isNull(remainder) then
             Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
                 // Invoking the input registers the link, and returns the promise this task's wakeup was registered on.

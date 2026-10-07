@@ -102,37 +102,92 @@ class HttpContainerBackendTest extends BasePodTest:
             }
         }
 
-        "the printed CLI equivalent actually reaches the daemon kyo-pod is managing" - runRuntimes { runtime =>
-            // The point of printing the command is that a user can run it and see the containers their code
-            // started. Asserting the string alone would not establish that, so this runs it: the ids the
-            // command lists must contain every id Container.list(all = true) reports through the same socket.
+        // The CLI pointed at the socket kyo-pod uses, as the printed equivalent tells a user to run it.
+        def cli(runtime: String, path: String, args: String*): Command =
+            Command((runtime +: args)*).envAppend(Map((if runtime == "podman" then "CONTAINER_HOST" else "DOCKER_HOST") -> s"unix://$path"))
+
+        def psIds(runtime: String, path: String): Command = cli(runtime, path, "ps", "--all", "--format", "{{.ID}}")
+
+        /** The ids `Container.list(all = true)` reports both before and after `ps --all` through the same socket that the CLI did not
+          * list, and what it listed. `between` runs after the first API listing and before the CLI.
+          *
+          * The daemon is shared with every other process on the host, so a container can be removed while the CLI runs. Only an id the
+          * API reports on both sides of the CLI call existed throughout it, so only those are evidence that the CLI sees a different daemon.
+          */
+        def unlistedByCli(
+            runtime: String,
+            path: String,
+            between: Unit < (Async & Abort[Any]),
+            listing: Command
+        )(using Frame): (Set[String], Set[String]) < (Async & Abort[Any]) =
+            Container.withBackendConfig(_.UnixSocket(Path(path))) {
+                for
+                    before <- Container.list(all = true)
+                    _      <- between
+                    out    <- listing.text
+                    after  <- Container.list(all = true)
+                yield
+                    val listed     = out.linesIterator.map(_.trim).filter(_.nonEmpty).toSet
+                    val throughout = before.map(_.id.value).toSet.intersect(after.map(_.id.value).toSet)
+                    // Container.Id renders the full id; the CLI prints the short form.
+                    (throughout.filterNot(id => listed.exists(short => id.startsWith(short))), listed)
+                end for
+            }
+
+        def withRuntimeSocket(runtime: String)(f: String => Unit < (Async & Abort[Any]))(using
+            Frame,
+            kyo.test.AssertScope
+        )
+            : Unit < (Async & Abort[Any]) =
             import AllowUnsafe.embrace.danger
             ContainerRuntime.findSocket(runtime) match
                 case Some(path) =>
-                    val envVar = if runtime == "podman" then "CONTAINER_HOST" else "DOCKER_HOST"
-                    Abort.run[Any] {
-                        Container.withBackendConfig(_.UnixSocket(Path(path))) {
-                            for
-                                seen <- Container.list(all = true)
-                                out  <- Command(runtime, "ps", "--all", "--format", "{{.ID}}")
-                                    .envAppend(Map(envVar -> s"unix://$path"))
-                                    .text
-                            yield
-                                val listed = out.linesIterator.map(_.trim).filter(_.nonEmpty).toSet
-                                // Container.Id renders the full id; the CLI prints the short form.
-                                val missing = seen.map(_.id.value).filterNot(id => listed.exists(short => id.startsWith(short)))
-                                assert(
-                                    missing.isEmpty,
-                                    s"$envVar=unix://$path $runtime ps did not list ${missing.mkString(", ")}; it listed $listed"
-                                )
-                            end for
-                        }
-                    }.map {
+                    Abort.run[Any](f(path)).map {
                         case Result.Success(_) => ()
                         case _                 => succeed(s"the $runtime CLI or its socket is unavailable on this host")
                     }
                 case None => succeed(s"no $runtime socket on this host")
             end match
+        end withRuntimeSocket
+
+        "the printed CLI equivalent actually reaches the daemon kyo-pod is managing" - runRuntimes { runtime =>
+            // The point of printing the command is that a user can run it and see the containers their code
+            // started. Asserting the string alone would not establish that, so this runs it: the ids the
+            // command lists must contain every id Container.list(all = true) reports through the same socket.
+            withRuntimeSocket(runtime) { path =>
+                unlistedByCli(runtime, path, Kyo.unit, psIds(runtime, path)).map { (missing, listed) =>
+                    assert(missing.isEmpty, s"$runtime ps through $path did not list ${missing.mkString(", ")}; it listed $listed")
+                }
+            }
+        }
+
+        // The daemon is shared: another process can remove a container between the API listing and the CLI's, and that container
+        // is no evidence that the CLI reaches a different daemon.
+        "a container another process removes during the check is not reported as unlisted" - runRuntimes { runtime =>
+            withRuntimeSocket(runtime) { path =>
+                for
+                    id     <- cli(runtime, path, "create", "docker.io/library/alpine:3", "true").text.map(_.trim)
+                    result <- unlistedByCli(runtime, path, cli(runtime, path, "rm", "-f", id).waitFor.unit, psIds(runtime, path))
+                yield
+                    val (missing, listed) = result
+                    assert(missing.isEmpty, s"$runtime ps through $path did not list ${missing.mkString(", ")}; it listed $listed")
+                end for
+            }
+        }
+
+        "a container present throughout that the CLI does not list is still reported" - runRuntimes { runtime =>
+            withRuntimeSocket(runtime) { path =>
+                cli(runtime, path, "create", "docker.io/library/alpine:3", "true").text.map(_.trim).map { id =>
+                    Scope.run {
+                        Scope.ensure(cli(runtime, path, "rm", "-f", id).waitFor.unit).andThen {
+                            // A listing that reaches no daemon prints nothing.
+                            unlistedByCli(runtime, path, Kyo.unit, Command("true")).map { (missing, _) =>
+                                assert(missing.exists(_.startsWith(id.take(12))), s"expected $id among the unlisted, got $missing")
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         "a probed runtime overrides the socket-path guess" in {
@@ -281,6 +336,49 @@ class HttpContainerBackendTest extends BasePodTest:
         }
     }
 
+    "stat" - {
+
+        /** `stat` of container `c1` against a fake daemon on a unix socket that answers with `header` as the path stat. The backend only
+          * speaks `http+unix`, so a host that cannot bind a Unix socket cancels the leaf.
+          */
+        def statWith(header: String)(using
+            Frame
+        ): Result[ContainerException, Container.FileStat] < (Async & Scope & Abort[FileSystemException | HttpBindException]) =
+            Sync.defer {
+                if !TestUnixSockets.supported then throw kyo.test.TestCancelled("this host cannot bind a Unix socket for the fake daemon")
+            }.andThen(Path.run(Path.tempDir("kyo-pod-stat-").map { dir =>
+                val socket = (dir / "d.sock").toString
+                val route  = HttpRoute.headRaw("v1.43" / "containers" / "c1" / "archive")
+                    .response(_.header[String]("X-Docker-Container-Path-Stat"))
+                val daemon = route.handler(_ => HttpResponse.ok.addField("X-Docker-Container-Path-Stat", header))
+                HttpServer.init(HttpServerConfig.default.unixSocket(socket))(daemon).andThen {
+                    Abort.run[ContainerException](new HttpContainerBackend(socket).stat(Container.Id("c1"), Path("/tmp/x")))
+                }
+            }))
+
+        "a path-stat header that is not base64 fails as a decode error" in {
+            statWith("not*base64").map {
+                case Result.Failure(error: ContainerDecodeException) =>
+                    assert(error.getMessage.contains("c1"), s"expected the container id in: ${error.getMessage}")
+                case other =>
+                    fail(s"expected a ContainerDecodeException, got $other")
+            }
+        }
+
+        // Podman encodes the header with the URL-safe alphabet: the stat of `/tmp/~~~` carries `-` where the standard alphabet has `+`.
+        "a path-stat header in the URL-safe alphabet, as podman sends it, decodes" in {
+            val podmanHeader =
+                "eyJuYW1lIjoifn5-Iiwic2l6ZSI6MCwibW9kZSI6NDIwLCJtdGltZSI6IjIwMjYtMTAtMDNUMjI6NDg6NDAuMzM2ODQ4MDQyLTA3OjAwIiwiaXNEaXIiOmZhbHNlLCJsaW5rVGFyZ2V0IjoiL3RtcC9-fn4ifQ=="
+            statWith(podmanHeader).map {
+                case Result.Success(stat) =>
+                    assert(stat.name == "~~~")
+                    assert(stat.linkTarget == Present("/tmp/~~~"))
+                case other =>
+                    fail(s"expected the stat of /tmp/~~~, got $other")
+            }
+        }
+    }
+
     /** A failing registry must not be reported as a missing image.
       *
       * The pull path deliberately collapses every no-credentials failure into
@@ -408,6 +506,24 @@ class HttpContainerBackendTest extends BasePodTest:
             classify(500, """{"message":"unauthorized: authentication required"}""", Present(ContainerImage.RegistryAuth(Dict.empty))).map {
                 result =>
                     assert(result.failure.exists(_.isInstanceOf[ContainerAuthException]), s"expected an auth failure, got $result")
+            }
+        }
+
+        // Docker's classic image store keeps one copy per digest reference, so a platform's pull of an index already cached for
+        // another platform is refused mid-stream. Read as an unclassified failure, nothing tells the caller the store is the cause.
+        "a refused overwrite of another platform's copy is a platform conflict" in {
+            val digest  = "sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092"
+            val image   = ContainerImage(s"docker.io/library/busybox@$digest")
+            val arm64   = Container.Platform("linux", "arm64")
+            val line    = s"""{"errorDetail":{"message":"cannot overwrite digest $digest"},"error":"cannot overwrite digest $digest"}"""
+            val backend = new HttpContainerBackend("/unused.sock")
+            Abort.run[ContainerException](Emit.run(backend.processPullLine(line, image, Present(arm64)))).map { result =>
+                result.failure match
+                    case Present(e: ContainerImagePlatformConflictException) =>
+                        assert(e.image == image)
+                        assert(e.platform == Present(arm64))
+                        assert(e.detail.contains(digest))
+                    case other => fail(s"expected a platform conflict, got $result")
             }
         }
     }

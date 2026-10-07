@@ -43,7 +43,7 @@ private[net] trait OpenSslBindings extends SslLibBindings, Ffi:
     def writePlain(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int
     def pending(ssl: Long)(using AllowUnsafe): Int
     def shutdownStep(ssl: Long)(using AllowUnsafe): Int
-    def peerCertSha256(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int
+    def peerCertEndPointHash(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int
     def probeAvailable()(using AllowUnsafe): Boolean
 
 end OpenSslBindings
@@ -74,7 +74,7 @@ private[net] object OpenSslBindings extends Ffi.Config(
             "writePlain"                    -> "kyo_ossl_write_plain",
             "pending"                       -> "kyo_ossl_pending",
             "shutdownStep"                  -> "kyo_ossl_shutdown_step",
-            "peerCertSha256"                -> "kyo_ossl_peer_cert_sha256",
+            "peerCertEndPointHash"          -> "kyo_ossl_peer_cert_end_point_hash",
             "probeAvailable"                -> "kyo_ossl_probe_available"
         ),
         // On Native the shim's C (kyo_net_openssl.c) is compiled INTO the binary (copied under

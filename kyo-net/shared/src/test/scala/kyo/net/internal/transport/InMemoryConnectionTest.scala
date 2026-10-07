@@ -64,6 +64,15 @@ class InMemoryConnectionTest extends Test:
             }
         }
 
+        "a waiter that gives up on onClosing does not complete it" in {
+            val (a, _) = Connection.inMemoryPair()
+            Async.race(a.onClosing.safe.get.map(_ => "closing"), Kyo.lift("gave up")).map { winner =>
+                assert(winner == "gave up")
+                assert(!a.onClosing.done(), "a waiter giving up on onClosing must leave it pending while the connection is open")
+                assert(a.isOpen)
+            }
+        }
+
         "is not upgradable: doUpgradeToTls returns a Closed failure fiber" in {
             val (a, _) = Connection.inMemoryPair()
             val tls    = NetTlsConfig.default

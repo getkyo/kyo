@@ -450,8 +450,7 @@ final class PostgresConnection(
 
     // --- Cancel ---
 
-    /** Returns the SHA-256 hash of the server's TLS leaf certificate (RFC 5929 tls-server-end-point), or Absent if the connection is not
-      * TLS.
+    /** Returns the RFC 5929 tls-server-end-point hash of the server's TLS leaf certificate, or Absent if the connection is not TLS.
       *
       * Used by SCRAM-SHA-256-PLUS tests to verify that channel binding was used. Exposed via `private[kyo]` so integration tests in
       * `kyo.internal.postgres` or `kyo.sql` packages can read it without going through `channel.conn` directly.

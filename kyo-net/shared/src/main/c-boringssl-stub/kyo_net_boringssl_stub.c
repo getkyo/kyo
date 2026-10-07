@@ -140,7 +140,7 @@ int kyo_bssl_shutdown_step(long ssl_ptr) {
 
 /* ---- peer certificate hash ------------------------------------------------------------------ */
 
-int kyo_bssl_peer_cert_sha256(long ssl_ptr, unsigned char *out_buf, int out_len) {
+int kyo_bssl_peer_cert_end_point_hash(long ssl_ptr, unsigned char *out_buf, int out_len) {
     (void)ssl_ptr;
     (void)out_buf;
     (void)out_len;

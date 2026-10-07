@@ -470,16 +470,33 @@ class WhatsAppTest extends BaseWhatsAppTest:
         }
     }
 
-    /** Sends against a raw listener that reads the request, writes `reply` (possibly nothing), and closes the connection. */
+    /** Whether `received` holds a whole request: its head and the `Content-Length` bytes of body after it. */
+    def requestComplete(received: String): Boolean =
+        val headEnd = received.indexOf("\r\n\r\n")
+        headEnd >= 0 && {
+            val bodyLength = received.substring(0, headEnd).split("\r\n").collectFirst {
+                case line if line.toLowerCase.startsWith("content-length:") => line.drop("content-length:".length).trim.toInt
+            }.getOrElse(0)
+            received.length >= headEnd + 4 + bodyLength
+        }
+    end requestComplete
+
+    /** Sends against a raw listener that reads the whole request, writes `reply` (possibly nothing), and closes the connection. */
     def sendAgainstClosingServer(reply: String)(using Frame) =
         // Unsafe: kyo-http's HttpServer always completes a response, so a raw transport listener is the only way to close the socket
         // before the response or while the declared body is still owed.
         Sync.Unsafe.defer {
             val accepted  = Promise.Unsafe.init[kyo.net.Connection, Any]()
             val listening = kyo.net.NetPlatform.transport.listen("localhost", 0, 16)(conn => accepted.completeDiscard(Result.succeed(conn)))
-            val peer      = accepted.safe.get.map { conn =>
+            // The whole request is read before the close: a close with request bytes still unread sends a reset rather than a FIN, and
+            // Windows discards whatever of the reply the client has not read yet when the reset arrives, so a large reply would surface
+            // as a closed connection instead of the outcome the leaf asserts.
+            val peer = accepted.safe.get.map { conn =>
                 Abort.run[Closed](
-                    conn.inbound.safe.take.andThen(
+                    Loop("") { received =>
+                        if requestComplete(received) then Loop.done(())
+                        else conn.inbound.safe.take.map(chunk => Loop.continue(received + new String(chunk.toArray, "ISO-8859-1")))
+                    }.andThen(
                         if reply.isEmpty then Kyo.unit else conn.outbound.safe.put(utf8(reply))
                     )
                 ).andThen(Sync.Unsafe.defer(conn.close()))
@@ -537,9 +554,12 @@ class WhatsAppTest extends BaseWhatsAppTest:
             s"HTTP/1.1 200 OK\r\nX-Pad: ${"a" * (HttpTransportConfig.default.maxHeaderSize.toBytes.toInt + 1)}\r\n\r\n"
         ).map {
             (port, result) =>
-                assert(result == Result.fail(
-                    WhatsAppTransportException("send", WhatsAppTransportException.Kind.Protocol, "localhost", port, Absent)()
-                ))
+                assert(
+                    result == Result.fail(
+                        WhatsAppTransportException("send", WhatsAppTransportException.Kind.Protocol, "localhost", port, Absent)()
+                    ),
+                    s"got: $result"
+                )
         }
     }
 

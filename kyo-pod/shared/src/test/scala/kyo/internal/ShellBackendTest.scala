@@ -333,6 +333,26 @@ class ShellBackendTest extends kyo.BasePodTest:
                 s"expected every failed connection to read as a registry fault, got $classes"
             )
         }
+
+        "a refused overwrite of another platform's copy is a platform conflict naming the requested platform" in {
+            val ref    = "docker.io/library/busybox@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092"
+            val output =
+                "Error response from daemon: cannot overwrite digest sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092"
+            backend.mapError(output, ResourceContext.Image(ref), Seq("pull", "--platform", "linux/arm64", ref)) match
+                case e: kyo.ContainerImagePlatformConflictException =>
+                    assert(e.image.reference == ref)
+                    assert(e.platform == Present(Container.Platform("linux", "arm64")))
+                    assert(e.detail == output)
+                case other => fail(s"expected a platform conflict, got $other")
+            end match
+        }
+
+        "a refused overwrite with no platform requested names none" in {
+            val ref = "docker.io/library/busybox@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092"
+            backend.mapError("cannot overwrite digest sha256:5cec3fc1", ResourceContext.Image(ref), Seq("pull", ref)) match
+                case e: kyo.ContainerImagePlatformConflictException => assert(e.platform == Absent)
+                case other                                          => fail(s"expected a platform conflict, got $other")
+        }
     }
 
     /** The docker CLI prints a failed pull as the daemon's own message, with no status of its own; the HTTP backend types the same
@@ -357,6 +377,39 @@ class ShellBackendTest extends kyo.BasePodTest:
         "an image the registry answered for is still a missing image" in {
             val ex = classify("Error response from daemon: manifest for alpine:nope not found: manifest unknown: manifest unknown")
             assert(ex.isInstanceOf[kyo.ContainerImageMissingException], s"expected a missing image, got $ex")
+        }
+    }
+
+    "registry credentials" - {
+        "a credential that is not base64 fails as an auth error before any command runs" in {
+            val image = ContainerImage("team/app", "1").withRegistry(ContainerImage.Registry("registry.example"))
+            val auth  = ContainerImage.RegistryAuth(Dict(ContainerImage.Registry("registry.example") -> "not*base64"))
+            // A command that cannot exist: reaching it would fail as a command error, not an auth error.
+            val backend = new ShellBackend("/nonexistent/kyo-pod/podman")
+            Abort.run[kyo.ContainerException](backend.imagePull(image, Absent, Present(auth))).map {
+                case Result.Failure(error: kyo.ContainerAuthException) =>
+                    assert(error.registry == "registry.example")
+                    assert(!error.getMessage.contains("not*base64"), s"the credential must not be echoed: ${error.getMessage}")
+                case other =>
+                    fail(s"expected a ContainerAuthException, got $other")
+            }
+        }
+
+        // RFC 4648 section 3.2: padding may be omitted when the length is known. `RegistryAuth` is public and `fromConfig` copies a config
+        // file's `auth` verbatim, so a hand-written credential can arrive unpadded.
+        "an unpadded credential is decoded and reaches the command" in {
+            val image = ContainerImage("team/app", "1").withRegistry(ContainerImage.Registry("registry.example"))
+            // "alice:pw" is "YWxpY2U6cHc=" padded.
+            val auth    = ContainerImage.RegistryAuth(Dict(ContainerImage.Registry("registry.example") -> "YWxpY2U6cHc"))
+            val backend = new ShellBackend("/nonexistent/kyo-pod/podman")
+            Abort.run[kyo.ContainerException](backend.imagePull(image, Absent, Present(auth))).map {
+                case Result.Failure(error: kyo.ContainerAuthException) =>
+                    fail(s"an unpadded credential must decode, got $error")
+                case Result.Failure(_) =>
+                    succeed("decoded, then failed at the command that does not exist")
+                case other =>
+                    fail(s"expected the missing command to fail the pull, got $other")
+            }
         }
     }
 

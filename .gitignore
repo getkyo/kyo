@@ -28,7 +28,9 @@ node_modules
 # target/ (resourceManaged) and stay ignored via the target rule.
 !**/src/main/resources/META-INF/native-image/**/*.json
 
-# Vendored third-party test vectors (Wycheproof and others) are JSON checked in byte for byte; each set's MANIFEST pins them.
+# Third-party data and test vectors (Wycheproof and others) checked in byte for byte and pinned by SHA-256 in a
+# MANIFEST beside them; some of it is JSON.
+!kyo-email/data/**/*.json
 !**/src/test/vectors/**/*.json
 
 # Local analysis notes, never committed

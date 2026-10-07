@@ -86,6 +86,8 @@ class Scheduler(statusFile: String, statusFileMs: Int, nowMs: () => Long, sliceM
 
     def notifyInterrupt(): Unit = {}
 
+    def notifyInterruptReleased(task: Task): Unit = {}
+
     def shutdown(): Unit =
         statusTimer.foreach(js.timers.clearInterval)
 

@@ -1,0 +1,33 @@
+# Differences between kyo-email's MIME tree and the goldens of Apache James mime4j at commit
+# c2198afe29a738af7b10ead64f2357998eed7d8b (kyo-email/shared/src/test/vectors/mime4j). Kept by hand: MimeParserTest
+# prints, in this format, each row missing here and each row here that no longer occurs.
+# Columns, tab-separated: message, part path, aspect (structure: the node's kind; content: the leaf's decoded octets), the
+# module's value, mime4j's value, reason.
+# Backslash, tab, CR and LF in a value are written as \\, \t, \r and \n, and any other control character as \uXXXX.
+# Reasons, each the first rule of MimeParserMime4j.classify that holds:
+#   EncapsulatedMessage: mime4j descends into a message/rfc822 part; the module keeps it as one leaf, which a caller parses when it wants the message inside
+#   BoundaryTrailingWhiteSpace: the boundary parameter ends in white space, which RFC 2046 5.1.1 does not allow in a boundary; the module removes it, so a line with less of that white space after the boundary is a delimiter (the rest is transport padding), and the closing line, whose white space comes before its --, is an ordinary delimiter that starts one more part; mime4j matches the boundary as written
+#   MultipartWithoutDelimiter: the multipart has no delimiter line at all; mime4j keeps it as a multipart holding only a preamble, the module as one leaf of its declared type holding the body, so the text is not lost
+#   NonHeaderLineEndsSection: the message's header section holds a line with no field name before its empty line; the module ends the section at that line, which starts the body with every line after it (RFC 5322 3.6.8), where mime4j, in either of its two modes for such a line, still reads later lines as fields or drops lines, so its body is shorter
+bad-newlines-multiple-parts-base64.msg	message	structure	leaf	message	EncapsulatedMessage
+base64encoded-rfc822message-nested.msg	message	structure	leaf	message	EncapsulatedMessage
+base64encoded-rfc822message.msg	message	structure	leaf	message	EncapsulatedMessage
+basic-plain-with-bad-header-separator.msg	message	content	177 octets: This is a very simple message with a simple body but the sep	33 octets: This results in a bogus header.\r\n	NonHeaderLineEndsSection
+malformedHeader-nocrlfcrlf.msg	message	content	105 octets: This is an invalid header\r\nAnotherHeader: is this an header 	11 octets: Body text\r\n	NonHeaderLineEndsSection
+malformedHeader-noheader.msg	message	content	92 octets: This is a simple message not having headers.\r\nThe whole text	0 octets: 	NonHeaderLineEndsSection
+malformedHeaderStartsBody-nocrlfcrlf.msg	message	content	105 octets: This is an invalid header\r\nAnotherHeader: is this an header 	40 octets: This is an invalid header\r\n\r\nBody text\r\n	NonHeaderLineEndsSection
+malformedHeaderStartsBody-noheader.msg	message	content	92 octets: This is a simple message not having headers.\r\nThe whole text	46 octets: This is a simple message not having headers.\r\n	NonHeaderLineEndsSection
+missing-boundary.msg	message	structure	leaf	multipart	MultipartWithoutDelimiter
+missing-inner-boundary.msg	2	structure	leaf	multipart	MultipartWithoutDelimiter
+multipartdigestnestedemptyparts.msg	1	structure	leaf	message	EncapsulatedMessage
+multipartnestedemptyparts.msg	1	structure	leaf	message	EncapsulatedMessage
+obsolete.msg	message	content	73 octets: Invalìd-Header: this is not valid.\r\nHeaderWithWSP \t  \t:\t\tval	6 octets: body\r\n	NonHeaderLineEndsSection
+very-long-boundary.msg	1	content	9 octets: Text body	816 octets: Text body\r\n--0123456789abcdefghijklmnopqrstuvwxyzABCDEFLMNOP	BoundaryTrailingWhiteSpace
+very-long-boundary.msg	2	structure	leaf	absent	BoundaryTrailingWhiteSpace
+very-long-boundary.msg	3	structure	leaf	absent	BoundaryTrailingWhiteSpace
+very-very-long-boundary.msg	1	content	9 octets: Text body	7116 octets: Text body\r\n--0123456789abcdefghijklmnopqrstuvwxyzABCDEFLMNOP	BoundaryTrailingWhiteSpace
+very-very-long-boundary.msg	2	structure	leaf	absent	BoundaryTrailingWhiteSpace
+very-very-long-boundary.msg	3	structure	leaf	absent	BoundaryTrailingWhiteSpace
+weird-boundary.msg	1	content	9 octets: Text body	186 octets: Text body\r\n--0123456789abcdefghijklmnopqrstuvwxyzABCDEFLMNOP	BoundaryTrailingWhiteSpace
+weird-boundary.msg	2	structure	leaf	absent	BoundaryTrailingWhiteSpace
+weird-boundary.msg	3	structure	leaf	absent	BoundaryTrailingWhiteSpace

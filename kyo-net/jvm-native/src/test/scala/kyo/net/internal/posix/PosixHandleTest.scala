@@ -138,7 +138,7 @@ class PosixHandleTest extends Test:
             def writePlain(buf: kyo.ffi.Buffer[Byte], len: Int)(using AllowUnsafe): Int      = len
             def hasBufferedPlaintext(using AllowUnsafe): Boolean                             = false
             def readBuffered()(using AllowUnsafe): Span[Byte]                                = Span.empty[Byte]
-            def certSha256()(using AllowUnsafe): Maybe[Span[Byte]]                           = Absent
+            def serverEndPointHash()(using AllowUnsafe): Maybe[Span[Byte]]                   = Absent
             def shutdownStep()(using AllowUnsafe): Int                                       = 0
             def free()(using AllowUnsafe): Unit                                              = onFree()
 end PosixHandleTest

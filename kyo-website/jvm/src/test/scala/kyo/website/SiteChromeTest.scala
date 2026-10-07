@@ -1,6 +1,7 @@
 package kyo.website
 
 import kyo.*
+import kyo.internal.SharedChrome
 
 /** Base for suites that drive the generated site, served by [[ServedSite]], in a real Chrome.
   *
@@ -35,7 +36,7 @@ abstract class SiteChromeTest extends WebsiteTest:
                 if msg != null && msg.contains(unsupportedPlatformMarker) then Sync.defer(cancel(msg))
                 else Abort.fail[BrowserSetupException](ex)
             } {
-                Browser.chromeForTestingLaunchConfig().map { launch =>
+                SharedChrome.chromeConfig().map { launch =>
                     Browser.run(launch.extraArgs(launch.extraArgs.toSeq :+ "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost")) {
                         Browser.withConfig(_.loadSchedule(Schedule.fixed(100.millis).maxDuration(pageLoadBudget))) {
                             Browser.goto(s"${site.url}$route").andThen(f(site))

@@ -108,7 +108,7 @@ final private[kyo] class Connection[Handle] private (
       */
     @volatile private[kyo] var certHashFn: Maybe[() => Maybe[Span[Byte]]] = Absent
 
-    /** Returns the SHA-256 hash of the server's leaf certificate DER bytes (RFC 5929 tls-server-end-point). Delegates to the
+    /** Returns the RFC 5929 tls-server-end-point hash of the server's leaf certificate. Delegates to the
       * transport-installed certHashFn (a cache read gated on [[isOpen]]; see [[certHashFn]]), or returns Absent if not supported.
       */
     override def serverCertificateHash: Maybe[Span[Byte]] =
@@ -372,7 +372,9 @@ private[kyo] object Connection:
         // channel drains and the handle teardown below), so an observer sees close-start not fd-release. completeDiscard is idempotent, so the
         // re-entrant Closing branch and any repeat close are no-ops. Created before closeFn so the closure captures it. It never fires from
         // detachForUpgrade (state=Upgrading bars this branch), which is correct: the upgraded connection is a fresh init with its own signal.
-        val closingPromise = Promise.Unsafe.init[Unit, Any]()
+        // Uninterruptible because awaiting a fiber links the awaiter's interrupt to it: a waiter that gives up (a timeout, a lost race) would
+        // otherwise complete the signal for every observer while the connection is still open.
+        val closingPromise = Promise.Unsafe.initUninterruptible[Unit, Any]()
 
         // Forward reference to the Connection instance closeFn calls releaseHandle on. Set once, synchronously, right after the
         // instance is constructed below, before closeFn can ever run (closeFn only fires once a pump starts or close() is called, both of
@@ -468,10 +470,11 @@ private[kyo] object Connection:
         inbound: Channel.Unsafe[Span[Byte]],
         outbound: Channel.Unsafe[Span[Byte]]
     )(using AllowUnsafe, Frame): kyo.net.Connection =
-        val in             = inbound
-        val out            = outbound
-        val closedFlag     = AtomicBoolean.Unsafe.init(false)
-        val closingPromise = Promise.Unsafe.init[Unit, Any]()
+        val in         = inbound
+        val out        = outbound
+        val closedFlag = AtomicBoolean.Unsafe.init(false)
+        // Uninterruptible for the same reason as the socket connection's signal: a waiter that gives up must not complete it.
+        val closingPromise = Promise.Unsafe.initUninterruptible[Unit, Any]()
         new kyo.net.Connection:
             def inbound: Channel.Unsafe[Span[Byte]]     = in
             def outbound: Channel.Unsafe[Span[Byte]]    = out
