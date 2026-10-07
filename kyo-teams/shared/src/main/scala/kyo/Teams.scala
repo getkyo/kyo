@@ -1508,8 +1508,9 @@ object Teams:
         // The reply's status line and body, not JSON: the root's `Schema` reports this answer's shape only.
         given Schema[InvokeResponse] =
             summon[Schema[(Int, Maybe[RawJson])]].transformVia((s, b) =>
-                if HttpStatus.isValid(s) then Result.succeed(InvokeResponse(HttpStatus(s), b))
-                else Result.fail(s"status $s is outside 100 to 599")
+                HttpStatus.init(s) match
+                    case Result.Success(status) => Result.succeed(InvokeResponse(status, b))
+                    case _                      => Result.fail(s"status $s is outside 100 to 599")
             )(r => (r.status.code, r.body))
     end InvokeResponse
 

@@ -169,6 +169,14 @@ object HttpClient:
       * It is a construction-time setting because the connection pool is built once and shared across all requests; a per-request override could not
       * rebuild a pooled transport. The transport itself is process-shared across every client and server using the same settings, so closing a
       * client closes its pool and connections but never the transport.
+      *
+      * @param maxConnectionsPerHost
+      *   How many connections to one host the client may hold at once, in use or idle. A request that finds none idle and the limit reached fails with
+      *   [[HttpPoolExhaustedException]]. Zero or less means no connection may be opened, so every request fails with
+      *   [[HttpPoolExhaustedException]].
+      * @param idleConnectionTimeout
+      *   How long a released connection stays idle for reuse before it is closed. Zero closes a connection as soon as it is released, so
+      *   nothing is reused; `Duration.Infinity` never closes one for idleness.
       */
     def init(
         maxConnectionsPerHost: Int = 100,
@@ -184,7 +192,8 @@ object HttpClient:
         ))(HttpClient.closeNow(_))
 
     /** Creates a client with its own connection pool that must be closed explicitly via `close()`. Prefer `init` with Scope-based lifecycle
-      * unless you need manual control. See [[init]] for the meaning of `transportConfig`.
+      * unless you need manual control. See [[init]] for the meaning of `maxConnectionsPerHost`, `idleConnectionTimeout` and
+      * `transportConfig`.
       */
     def initUnscoped(
         maxConnectionsPerHost: Int = 100,
@@ -192,8 +201,6 @@ object HttpClient:
         defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using frame: Frame): HttpClient < Sync =
-        require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
-        require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
         Sync.Unsafe.defer {
             val transport = kyo.net.NetPlatform.transport
             initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)

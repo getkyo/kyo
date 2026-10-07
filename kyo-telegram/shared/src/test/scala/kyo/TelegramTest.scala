@@ -926,7 +926,7 @@ class TelegramTest extends kyo.test.Test[Any]:
 
     "transport comes from the config: a response head over the default limit fails, the config's larger limit reads it, and the caller's does not" in {
         val padded = Reply(HttpStatus.OK, s"""{"ok":true,"result":$me}""", Seq("X-Pad" -> "a" * (70 * 1024)))
-        val wider  = HttpTransportConfig.default.maxHeaderSize(256 * 1024)
+        val wider  = HttpTransportConfig.default.maxHeaderSize(256.kib)
         withLocal { local =>
             local.reply("getMe", padded).andThen {
                 for
@@ -951,7 +951,7 @@ class TelegramTest extends kyo.test.Test[Any]:
     }
 
     "receive's poll client takes transport from the config" in {
-        val wider = HttpTransportConfig.default.maxHeaderSize(256 * 1024)
+        val wider = HttpTransportConfig.default.maxHeaderSize(256.kib)
         withLocal { local =>
             local.reply(
                 "getUpdates",

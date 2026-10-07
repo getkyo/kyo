@@ -115,19 +115,21 @@ object TestCompletionServer:
       * on an ephemeral port within the enclosing `Scope` and runs `f` with the handle. Used by the
       * non-streaming completion/eval/thought tests.
       */
-    def run[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+    def run[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         bind(streaming = false)(f)
 
     /** Binds a STREAMING server (SSE completion responses on both `/v1/chat/completions` and `/v1/messages`,
       * read by the client's `sendWith` SSE path) on an ephemeral port within the enclosing `Scope`. Used by
       * the streaming test.
       */
-    def runStreaming[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+    def runStreaming[A, S](f: TestCompletionServer => A < S)(using
+        Frame
+    ): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         bind(streaming = true)(f)
 
     private def bind[A, S](streaming: Boolean)(f: TestCompletionServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope & Abort[HttpBindException]) =
+    ): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         for
             scripts  <- AtomicRef.init(Chunk.empty[Scripted])
             received <- AtomicRef.init(Chunk.empty[Captured])
@@ -160,7 +162,10 @@ object TestCompletionServer:
             received.getAndUpdate(_.append(Captured(path, req.fields.body))).andThen {
                 popNext(scripts).map {
                     case Present(Scripted.Status(code, body, headers)) =>
-                        headers.foldLeft(HttpResponse(HttpStatus(code)))((r, h) => r.addHeader(h._1, h._2)).addField("body", body)
+                        headers.foldLeft(HttpResponse(HttpStatus.init(code).getOrThrow))((r, h) => r.addHeader(h._1, h._2)).addField(
+                            "body",
+                            body
+                        )
                     // A stall script reaching the non-streaming route means the test bound the wrong server;
                     // holding the connection surfaces that as the caller's timeout rather than a handler panic.
                     case Present(Scripted.Never) | Present(Scripted.SseStall(_)) | Present(Scripted.SseCut(_)) =>
@@ -186,7 +191,7 @@ object TestCompletionServer:
             received.getAndUpdate(_.append(Captured(path, req.fields.body))).andThen {
                 popNext(scripts).map {
                     case Present(Scripted.Status(code, body, headers)) =>
-                        headers.foldLeft(HttpResponse(HttpStatus(code)))((r, h) => r.addHeader(h._1, h._2))
+                        headers.foldLeft(HttpResponse(HttpStatus.init(code).getOrThrow))((r, h) => r.addHeader(h._1, h._2))
                             .addField("body", Stream.init(Chunk(body)).map(HttpSseEvent(_)))
                     case Present(Scripted.Never) =>
                         Latch.init(1).map(_.await).andThen(HttpResponse.ok.addField("body", Stream.empty[HttpSseEvent[String]]))

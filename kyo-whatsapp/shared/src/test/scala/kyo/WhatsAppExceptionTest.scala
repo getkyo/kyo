@@ -132,7 +132,7 @@ class WhatsAppExceptionTest extends BaseWhatsAppTest:
             (Kind.ConnectionClosed, Absent, Absent))
         assert(Graph.describe(HttpProtocolException("bad head")) == (Kind.Protocol, Absent, Absent))
         assert(Graph.describe(HttpMalformedBodyException("bad chunk size")) == (Kind.Protocol, Absent, Absent))
-        assert(Graph.describe(HttpPayloadTooLargeException(200, 100)) ==
+        assert(Graph.describe(HttpPayloadTooLargeException(200.bytes, 100.bytes)) ==
             (Kind.PayloadTooLarge(ByteSize.fromBytes(200), ByteSize.fromBytes(100)), Absent, Absent))
     }
 

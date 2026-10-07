@@ -607,7 +607,7 @@ class TeamsTest extends kyo.test.Test[Any]:
 
     "transport comes from the config: a response head over the default limit fails, the config's larger limit reads it, and the caller's does not" in {
         val padded = Reply(HttpStatus.OK, """{"id":"1:a"}""", Chunk("X-Pad" -> "a" * (70 * 1024)))
-        val wider  = HttpTransportConfig.default.maxHeaderSize(256 * 1024)
+        val wider  = HttpTransportConfig.default.maxHeaderSize(256.kib)
         withLocal { local =>
             local.reply("send", padded).andThen {
                 for

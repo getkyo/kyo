@@ -343,7 +343,8 @@ class HttpContainerBackendTest extends BasePodTest:
           */
         def statWith(header: String)(using
             Frame
-        ): Result[ContainerException, Container.FileStat] < (Async & Scope & Abort[FileSystemException | HttpBindException]) =
+        ): Result[ContainerException, Container.FileStat] <
+            (Async & Scope & Abort[FileSystemException | HttpBindException | HttpRouteException]) =
             Sync.defer {
                 if !TestUnixSockets.supported then throw kyo.test.TestCancelled("this host cannot bind a Unix socket for the fake daemon")
             }.andThen(Path.run(Path.tempDir("kyo-pod-stat-").map { dir =>
@@ -400,7 +401,7 @@ class HttpContainerBackendTest extends BasePodTest:
             val backend = new HttpContainerBackend("/unused.sock")
             Abort.run[ContainerException](
                 backend.normalizePullError(
-                    HttpStatusException(HttpStatus(status), "POST", "http+unix://unused/images/create", body),
+                    HttpStatusException(HttpStatus.init(status).getOrThrow, "POST", "http+unix://unused/images/create", body),
                     pullImage,
                     auth
                 )

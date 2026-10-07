@@ -20,8 +20,8 @@ class HttpTransportConfigTest extends BaseHttpTest:
     "default config values match design doc" in {
         val config = HttpTransportConfig.default
         assert(config.channelCapacity == 4)
-        assert(config.readChunkSize == 8192)
-        assert(config.maxHeaderSize == 65536)
+        assert(config.readChunkSize == 8.kib)
+        assert(config.maxHeaderSize == 64.kib)
         assert(config.handshakeTimeout == Duration.Infinity)
     }
 
@@ -56,12 +56,12 @@ class HttpTransportConfigTest extends BaseHttpTest:
     "builder methods produce correct values" in {
         val config = HttpTransportConfig.default
             .channelCapacity(8)
-            .readChunkSize(4096)
-            .maxHeaderSize(32768)
+            .readChunkSize(4.kib)
+            .maxHeaderSize(32.kib)
             .handshakeTimeout(250.millis)
         assert(config.channelCapacity == 8)
-        assert(config.readChunkSize == 4096)
-        assert(config.maxHeaderSize == 32768)
+        assert(config.readChunkSize == 4.kib)
+        assert(config.maxHeaderSize == 32.kib)
         assert(config.handshakeTimeout == 250.millis)
     }
 
@@ -83,7 +83,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
     }
 
     "custom readChunkSize respected" in {
-        val tc     = HttpTransportConfig.default.readChunkSize(512)
+        val tc     = HttpTransportConfig.default.readChunkSize(512.bytes)
         val config = HttpServerConfig.default.port(0).host("127.0.0.1").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
         val ep     = route.handler(_ => HttpResponse.ok("world"))
@@ -101,7 +101,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
 
     // The leaf timeout bounds only the failing state, in which the server answers nothing; the pass condition is the status alone.
     "custom maxHeaderSize answers an oversized request head with 431".timeout(30.seconds) in {
-        val tc     = HttpTransportConfig.default.maxHeaderSize(128)
+        val tc     = HttpTransportConfig.default.maxHeaderSize(128.bytes)
         val config = HttpServerConfig.default.port(0).host("127.0.0.1").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
         val ep     = route.handler(_ => HttpResponse.ok("world"))
@@ -121,10 +121,10 @@ class HttpTransportConfigTest extends BaseHttpTest:
     "config propagated through HttpServerConfig" in {
         val tc = HttpTransportConfig.default
             .channelCapacity(2)
-            .readChunkSize(1024)
+            .readChunkSize(1.kib)
         val config = HttpServerConfig.default.port(0).host("127.0.0.1").transportConfig(tc)
         assert(config.transportConfig.channelCapacity == 2)
-        assert(config.transportConfig.readChunkSize == 1024)
+        assert(config.transportConfig.readChunkSize == 1.kib)
         val route = HttpRoute.getText("hello").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("world"))
         HttpClient.init().map { httpClient =>
@@ -143,7 +143,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         // A custom byte-transport field makes HttpClient.init build a per-config owned transport (closed when the client closes). A normal
         // request routed through this client (not the shared test backend) must succeed, proving the owned transport works end to end. The
         // high-level HttpClient.getText API is used so the request flows through the fiber-local client set by HttpClient.let.
-        val tc    = HttpTransportConfig.default.channelCapacity(2).readChunkSize(1024)
+        val tc    = HttpTransportConfig.default.channelCapacity(2).readChunkSize(1.kib)
         val route = HttpRoute.getText("hello").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("world"))
         HttpClient.init(transportConfig = tc).map { httpClient =>
@@ -157,13 +157,53 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
+    "a zero handshakeTimeout fails a client's TLS handshake at once with HttpConnectTimeoutException" in {
+        val route = HttpRoute.getText("hello").response(_.bodyText)
+        val ep    = route.handler(_ => HttpResponse.ok("world"))
+        val tls   = HttpServerConfig.default.port(0).host("127.0.0.1").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
+        HttpServer.init(tls)(ep).map { server =>
+            HttpClient.init(
+                defaultTlsConfig = HttpTlsConfig(trustAll = true),
+                transportConfig = HttpTransportConfig.default.handshakeTimeout(Duration.Zero)
+            ).map { httpClient =>
+                HttpClient.let(httpClient) {
+                    Abort.run[HttpException](HttpClient.getText(s"https://127.0.0.1:${server.port}/hello")).map {
+                        case Result.Failure(e: HttpConnectTimeoutException) => assert(e.timeout == Duration.Zero)
+                        case other                                          => fail(s"expected HttpConnectTimeoutException, got $other")
+                    }
+                }
+            }
+        }
+    }
+
+    "a zero handshakeTimeout on a server drops each TLS connection before it is served" in {
+        val hits  = new java.util.concurrent.atomic.AtomicInteger(0)
+        val route = HttpRoute.getText("hello").response(_.bodyText)
+        val ep    = route.handler { _ => discard(hits.incrementAndGet()); HttpResponse.ok("world") }
+        val tls   = HttpServerConfig.default.port(0).host("127.0.0.1")
+            .tls(internal.HttpTestPlatformBackend.serverTlsConfig)
+            .transportConfig(HttpTransportConfig.default.handshakeTimeout(Duration.Zero))
+        HttpServer.init(tls)(ep).map { server =>
+            HttpClient.init(defaultTlsConfig = HttpTlsConfig(trustAll = true)).map { httpClient =>
+                HttpClient.let(httpClient) {
+                    Abort.run[HttpException](HttpClient.getText(s"https://127.0.0.1:${server.port}/hello")).map {
+                        // The cause is the client transport's reading of a peer that drops mid-handshake: a TLS failure on JVM and Native,
+                        // a socket disconnect on Node. Only the failed connect and the unserved route are the server's meaning.
+                        case Result.Failure(e: HttpConnectException) => assert(hits.get() == 0, s"observed: $e")
+                        case other => fail(s"expected the handshake to fail with HttpConnectException, got $other")
+                    }
+                }
+            }
+        }
+    }
+
     "client maxHeaderSize is reachable via HttpClient.init and rejects an oversized response (CWE-400)" in {
         // The client parser's header limit is settable via HttpClient.init. A 512-byte limit against a ~2 KiB response header must fail
         // (a malicious/buggy server cannot force unbounded client header buffering); if the limit were ignored the request would succeed.
         val bigHeaderValue = "x" * 2048
         val route          = HttpRoute.getText("big").response(_.bodyText)
         val ep             = route.handler(_ => HttpResponse.ok("ok").addHeader("X-Big", bigHeaderValue))
-        HttpClient.init(transportConfig = HttpTransportConfig.default.maxHeaderSize(512)).map { httpClient =>
+        HttpClient.init(transportConfig = HttpTransportConfig.default.maxHeaderSize(512.bytes)).map { httpClient =>
             HttpServer.init(0, "127.0.0.1")(ep).map { server =>
                 HttpClient.let(httpClient) {
                     Abort.run[HttpException](HttpClient.getText(s"http://127.0.0.1:${server.port}/big")).map { result =>

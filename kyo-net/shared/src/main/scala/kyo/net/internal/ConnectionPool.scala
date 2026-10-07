@@ -11,10 +11,15 @@ import scala.util.control.NonFatal
 /** Per-host idle connection pool with bounded capacity, health checks, and idle eviction.
   *
   * Uses a lock-free Vyukov MPMC ring buffer (HostPool) per host for zero-allocation on the hot path. The ring is sized to
-  * maxConnectionsPerHost and uses AtomicLong sequence numbers to distinguish empty from populated slots without locks.
+  * maxConnectionsPerHost and uses AtomicLong sequence numbers to distinguish empty from populated slots without locks. It has at least two
+  * slots, since a one-slot ring reads a published slot as free on the next lap and overwrites it; the limit itself is enforced by
+  * tryReserve and release, never by the ring size, so a limit of one keeps one connection and a limit of zero or less admits none.
   *
   * Capacity is enforced via an in-flight counter (tryReserve/unreserve): a slot is reserved before connecting and released regardless of
   * success, preventing connection storms when all idle slots are occupied.
+  *
+  * An idle timeout of zero keeps nothing idle: a released connection is discarded at once, so none is reused. `Duration.Infinity` never
+  * discards one for idleness.
   *
   * All public methods are direct (no Kyo `< S` wrappers) and require AllowUnsafe. Health checks (isAlive) and eviction (discardConn) are
   * supplied as constructor parameters so the pool remains generic over connection type C.
@@ -52,7 +57,7 @@ final private[kyo] class ConnectionPool[K, C](
 
     /** Return a connection to the idle pool. If the ring is full, discard it. */
     def release(key: K, conn: C)(using AllowUnsafe): Unit =
-        if closed then discardConn(conn)
+        if closed || idleConnectionTimeoutNanos == 0L then discardConn(conn)
         else
             raceProbe()
             val hostPool = getPool(key)
@@ -147,7 +152,6 @@ private[kyo] object ConnectionPool:
         // idle-start instants and runs its reaper against it, so eviction is exercisable under virtual time.
         Clock.use { clock =>
             Sync.Unsafe.defer {
-                require(maxConnectionsPerHost >= 2, s"maxConnectionsPerHost must be >= 2: $maxConnectionsPerHost")
                 val pool: ConnectionPool[K, C] = new ConnectionPool(
                     maxConnectionsPerHost,
                     idleConnectionTimeout.toNanos,
@@ -157,9 +161,10 @@ private[kyo] object ConnectionPool:
                     clock,
                     frame
                 )
-                // Finite timeout only (an infinite-timeout pool needs no reaper). Sweep cadence is half the idle timeout,
-                // floored at 50ms, so an idle connection closes within about 1.5x the idle timeout.
-                if idleConnectionTimeout != Duration.Infinity then
+                // Finite positive timeout only: an infinite-timeout pool expires nothing, and a zero-timeout pool keeps nothing idle.
+                // Sweep cadence is half the idle timeout, floored at 50ms, so an idle connection closes within about 1.5x the idle
+                // timeout.
+                if idleConnectionTimeout != Duration.Infinity && idleConnectionTimeout != Duration.Zero then
                     val intervalNanos = math.max(idleConnectionTimeout.toNanos / 2, 50L * 1000000L)
                     pool.startReaper(intervalNanos.nanos)
                 pool
@@ -173,10 +178,13 @@ private[kyo] object ConnectionPool:
       * when seq == tail. CAS on head/tail claims the slot; lazySet on seq publishes it to other threads after mutation completes.
       *
       * The inFlight counter tracks connections currently being established (not yet idle). tryReserve() only succeeds when idle + inFlight
-      * < capacity, preventing thundering-herd reconnects when all connections are busy.
+      * < limit, preventing thundering-herd reconnects when all connections are busy.
+      *
+      * The ring has `limit` slots but never fewer than two: one slot reads its own published sequence as writable on the next lap, so a
+      * second release would overwrite the first. Below two slots, `release` therefore enforces `limit` itself rather than through the ring.
       */
-    final private[internal] class HostPool(capacity: Int):
-        require(capacity >= 2, s"maxConnectionsPerHost must be >= 2: $capacity")
+    final private[internal] class HostPool(limit: Int):
+        private val capacity = math.max(limit, 2)
 
         private val connections = Array.fill[Maybe[AnyRef]](capacity)(Absent)
         private val timestamps  = new Array[Long](capacity)
@@ -259,26 +267,30 @@ private[kyo] object ConnectionPool:
           * connection, read once from the pool's clock.
           */
         final def release[C](now: Long, conn: C, discardConn: C => Unit): Unit =
+            if limit < capacity && tail.get() - head.get() >= limit then discardConn(conn)
+            else releaseToRing(now, conn, discardConn)
+
+        @tailrec private def releaseToRing[C](now: Long, conn: C, discardConn: C => Unit): Unit =
             val currentTail = tail.get()
             val idx         = (currentTail % capacity).toInt
             val seq         = sequences.get(idx)
             if seq < currentTail then
                 discardConn(conn)
             else if !tail.compareAndSet(currentTail, currentTail + 1) then
-                release(now, conn, discardConn)
+                releaseToRing(now, conn, discardConn)
             else
                 connections(idx) = Present(conn.asInstanceOf[AnyRef])
                 timestamps(idx) = now
                 sequences.lazySet(idx, currentTail + 1)
             end if
-        end release
+        end releaseToRing
 
         /** Reserve an in-flight slot to prevent connection storms. */
         def tryReserve(): Boolean =
             @tailrec def loop(): Boolean =
                 val current  = inFlight.get()
                 val idleSize = (tail.get() - head.get()).toInt.max(0)
-                if current + idleSize >= capacity then false
+                if current + idleSize >= limit then false
                 else if inFlight.compareAndSet(current, current + 1) then true
                 else loop()
             end loop

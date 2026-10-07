@@ -33,7 +33,7 @@ class WhatsAppRetryTest extends BaseWhatsAppTest:
     /** A Graph that answers the n-th send with the n-th reply, the last one repeated, and reports each attempt's number. */
     def withGraph[A, S](replies: Reply*)(test: (Int, Channel[Int]) => A < S)(using
         Frame
-    ): A < (S & Async & Scope & Abort[HttpBindException | Closed]) =
+    ): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException | Closed]) =
         AtomicInt.init.map { served =>
             Channel.init[Int](64).map { attempts =>
                 val handler = HttpRoute.postRaw("v25.0" / phoneId.value / "messages")

@@ -73,7 +73,7 @@ val tuned: Result[DiscordInvalidConfigException, DiscordConfig] =
 
 Three intents are privileged: `GuildMembers`, `GuildPresences` and `MessageContent` must be enabled for the application in the developer portal, and the Gateway refuses a connection that asks for one that is not, with `DiscordDisallowedIntentsException`.
 
-`requestTimeout` (10 seconds) bounds every REST call; `transferTimeout` (120 seconds) bounds instead a send with files, which may upload the 25 MiB a message allows. `connectTimeout` bounds opening a connection, and `maxResponseLength` (8 MiB) an answer's body. `maxResponseLength` is never refused: kyo-http holds the bound as an `Int`, so a zero bound becomes one byte and one past `Int.MaxValue` becomes `Int.MaxValue`. `tls` and `transport` are the settings of the module's own HTTP client and of the Gateway connection.
+`requestTimeout` (10 seconds) bounds every REST call; `transferTimeout` (120 seconds) bounds instead a send with files, which may upload the 25 MiB a message allows. `connectTimeout` bounds opening a connection, and `maxResponseLength` (8 MiB) an answer's body. `maxResponseLength` is never refused: kyo-http narrows it where it reads a body, so a zero bound becomes one byte and one past `Int.MaxValue` becomes `Int.MaxValue`. `tls` and `transport` are the settings of the module's own HTTP client and of the Gateway connection.
 
 `Discord.run(config)` builds a client for a region and closes it when the region ends; it holds no Gateway connection. A verb's row names the client, so a call outside `run` does not compile where it is run:
 
@@ -220,7 +220,7 @@ val endpoint: Result[DiscordException, DiscordWebhookConfig] =
     Discord.PublicKey.init("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
         .flatMap(key => DiscordWebhookConfig.init(key, "interactions"))
 
-def serve(webhook: DiscordWebhookConfig): Unit < (Async & Abort[HttpBindException]) =
+def serve(webhook: DiscordWebhookConfig): Unit < (Async & Abort[HttpBindException | HttpRouteException]) =
     Discord.run(config) {
         Discord.Webhook.handler[DiscordInvalidMessageException | DiscordInvalidComponentException](webhook)([A] =>
             (event: Event[A]) =>

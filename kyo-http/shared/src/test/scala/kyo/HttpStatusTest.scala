@@ -101,11 +101,11 @@ class HttpStatusTest extends BaseHttpTest:
         }
 
         "Custom status predicates based on code range" in {
-            assert(HttpStatus.Custom(150).isInformational)
-            assert(HttpStatus.Custom(250).isSuccess)
-            assert(HttpStatus.Custom(350).isRedirect)
-            assert(HttpStatus.Custom(450).isClientError)
-            assert(HttpStatus.Custom(550).isServerError)
+            assert(HttpStatus(150).isInformational)
+            assert(HttpStatus(250).isSuccess)
+            assert(HttpStatus(350).isRedirect)
+            assert(HttpStatus(450).isClientError)
+            assert(HttpStatus(550).isServerError)
         }
     }
 
@@ -146,10 +146,10 @@ class HttpStatusTest extends BaseHttpTest:
         }
 
         "a Custom status follows the rules of its code" in {
-            assert(HttpStatus.Custom(150).forbidsContent)
-            assert(HttpStatus.Custom(150).isInterim)
-            assert(HttpStatus.Custom(250).acceptsUpgrade)
-            assert(!HttpStatus.Custom(250).forbidsContent)
+            assert(HttpStatus(150).forbidsContent)
+            assert(HttpStatus(150).isInterim)
+            assert(HttpStatus(250).acceptsUpgrade)
+            assert(!HttpStatus(250).forbidsContent)
         }
 
         "isValid holds from 100 to 599" in {
@@ -178,16 +178,10 @@ class HttpStatusTest extends BaseHttpTest:
             end match
         }
 
-        "rejects code below 100" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpStatus(99)
-            }
-        }
-
-        "rejects code above 599" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpStatus(600)
-            }
+        "a literal outside 100 to 599 does not compile" in {
+            assert(compiletime.testing.typeChecks("kyo.HttpStatus(200)"))
+            assert(!compiletime.testing.typeChecks("kyo.HttpStatus(99)"))
+            assert(!compiletime.testing.typeChecks("kyo.HttpStatus(600)"))
         }
 
         "accepts boundary codes" in {
@@ -197,6 +191,23 @@ class HttpStatusTest extends BaseHttpTest:
                 case HttpStatus.Custom(code) => assert(code == 599)
                 case _                       => fail("Expected Custom for 599")
             end match
+        }
+    }
+
+    "init" - {
+        "refuses 99 and 600 with HttpInvalidStatusException" in {
+            assert(HttpStatus.init(99).failure.map(_.code) == Present(99))
+            assert(HttpStatus.init(600).failure.map(_.code) == Present(600))
+        }
+
+        "accepts 100 and 599" in {
+            assert(HttpStatus.init(100) == Result.succeed(HttpStatus.Continue))
+            assert(HttpStatus.init(599).map(_.code) == Result.succeed(599))
+        }
+
+        "resolves a runtime code like a literal one" in {
+            val codes = Seq(200, 299, 404)
+            assert(codes.map(HttpStatus.init(_).getOrThrow) == Seq(HttpStatus(200), HttpStatus(299), HttpStatus(404)))
         }
     }
 
@@ -219,20 +230,18 @@ class HttpStatusTest extends BaseHttpTest:
 
     "Custom" - {
         "stores arbitrary code" in {
-            val c = HttpStatus.Custom(299)
+            val c = HttpStatus(299)
             assert(c.code == 299)
         }
 
         "equality" in {
-            assert(HttpStatus.Custom(299) == HttpStatus.Custom(299))
-            assert(HttpStatus.Custom(299) != HttpStatus.Custom(300))
+            assert(HttpStatus(299) == HttpStatus(299))
+            assert(HttpStatus(299) != HttpStatus(300))
         }
 
-        "not equal to standard status with same code" in {
-            // Custom(200) is a different instance than Success.OK
-            val custom200 = HttpStatus.Custom(200)
-            // apply returns the standard enum, not Custom
-            assert(HttpStatus(200) != custom200)
+        "never holds a code a standard case covers" in {
+            assert(!HttpStatus(200).isInstanceOf[HttpStatus.Custom])
+            assert(!HttpStatus.init(200).getOrThrow.isInstanceOf[HttpStatus.Custom])
         }
     }
 
@@ -265,7 +274,7 @@ class HttpStatusTest extends BaseHttpTest:
                 500, 502, 503
             )
             standardCodes.foreach { code =>
-                val status = HttpStatus(code)
+                val status = HttpStatus.init(code).getOrThrow
                 assert(status.code == code, s"HttpStatus($code) should resolve to code $code")
                 assert(
                     !status.isInstanceOf[HttpStatus.Custom],

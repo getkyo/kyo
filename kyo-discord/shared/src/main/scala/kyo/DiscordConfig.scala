@@ -23,8 +23,7 @@ package kyo
   * the 25 MiB a message allows. `connectTimeout` bounds opening a connection; the default, 10 seconds, leaves room for three
   * retransmitted SYNs. `maxResponseLength` bounds an answer's body; its default, 8 MiB, holds the largest page `messages` returns,
   * 100 messages of 2000 characters and 10 embeds within their 6000-character total, at 4 bytes per character of UTF-8. It is never
-  * refused: kyo-http holds the bound as an `Int`, so the request config narrows it by kyo-core's buffer rule, zero to one byte and past
-  * `Int.MaxValue` to `Int.MaxValue`.
+  * refused: kyo-http narrows it where it reads a body, zero to one byte and past `Int.MaxValue` to `Int.MaxValue`.
   *
   * `tls` and `transport` are the settings of the module's own HTTP client and of the Gateway's connection. Nothing of the caller's
   * kyo-http configuration reaches a request that carries the token.

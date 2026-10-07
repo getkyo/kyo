@@ -10,7 +10,7 @@ class TelegramConfigTest extends kyo.test.Test[Any]:
 
     "the request config the module runs every call under states each field, takes TLS and transport from the config, and keeps nothing of the caller's" in {
         val tls       = HttpTlsConfig(sniHostname = Present("bot.example.com"))
-        val transport = HttpTransportConfig.default.maxHeaderSize(128 * 1024)
+        val transport = HttpTransportConfig.default.maxHeaderSize(128.kib)
         val config    =
             TelegramConfig.init(token, connectTimeout = 3.seconds, maxResponseLength = 4.mib, tls = tls, transport = transport).getOrThrow
         val request = kyo.internal.telegram.BotApi.requestConfig(config, 7.seconds)
@@ -35,19 +35,20 @@ class TelegramConfigTest extends kyo.test.Test[Any]:
             Absent,
             transport,
             tls,
-            4 * 1024 * 1024,
+            4.mib,
             false,
             true
         ))
         assert(Chunk(HttpStatus(500), HttpStatus(404)).map(request.retryOn) == Chunk(true, false))
     }
 
-    "a response length is narrowed where the client hands it to kyo-http: zero to one byte, beyond Int.MaxValue bytes to Int.MaxValue" in {
-        val lengths = Chunk(0.bytes, 1.bytes, 20.mib, (Int.MaxValue.toLong + 1).bytes).map { length =>
+    "a response length reaches kyo-http as given, for kyo-http to narrow where it reads a body" in {
+        val sizes   = Chunk(0.bytes, 1.bytes, 20.mib, (Int.MaxValue.toLong + 1).bytes)
+        val lengths = sizes.map { length =>
             val config = TelegramConfig.init(token, maxResponseLength = length).getOrThrow
             kyo.internal.telegram.BotApi.requestConfig(config, 7.seconds).maxResponseLength
         }
-        assert(lengths == Chunk(1, 1, 20 * 1024 * 1024, Int.MaxValue))
+        assert(lengths == sizes)
     }
 
     "a rendered config shows the token redacted and not its value" in {
