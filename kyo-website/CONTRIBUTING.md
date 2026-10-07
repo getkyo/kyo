@@ -61,6 +61,16 @@ Node-only `require` calls and loads in Chrome as `<script type="module">`
 (`build.sbt:1375-1391`); `fullLinkJS` runs in deploy. The bundle re-links as
 ESModule for Chrome (`build.sbt:1387-1391`).
 
+The bundle's `fullLinkJS` is overridden (`website-bundle-minify` in `build.sbt`):
+Scala.js' `minify` only shortens property names, so the linker writes to
+`kyo-website-bundle-linked/` and terser (`--module`, pinned by
+`kyo-website-bundle/js/minify/package-lock.json`) writes the served
+`kyo-website-bundle-opt/`. The bundle also links the `locales-minimal-en_us-db`
+locale database instead of the full CLDR one from `js-settings`: any use of
+`java.util.Locale` links the whole database, and the full one was 25 MB of the
+35 MB bundle. `DeployWorkflowTest` fails if the bundle the deploy ships is not
+minified or exceeds 4 MB.
+
 ### Build-time vs client-time data flow
 
 ```

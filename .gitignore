@@ -33,6 +33,9 @@ node_modules
 !kyo-email/data/**/*.json
 !**/src/test/vectors/**/*.json
 
+# The npm manifest and lockfile that pin the website bundle's minifier.
+!kyo-website-bundle/js/minify/*.json
+
 # Local analysis notes, never committed
 analysis-*.md
 
