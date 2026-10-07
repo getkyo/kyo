@@ -97,6 +97,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     private val pendingRegistrations =
         new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
 
+    // Concurrent-collection audit: listener channels awaiting registration on the poll carrier. Same raw-ConcurrentLinkedQueue no-equivalent
+    // exception as pendingRegistrations: producers are caller carriers (registerServerChannel), the single consumer is the poll carrier
+    // (drainServerRegistrations), and offer is the happens-before barrier. See registerServerChannel for why the poll carrier registers them.
+    private val pendingServerRegistrations =
+        new java.util.concurrent.ConcurrentLinkedQueue[ServerSocketChannel]()
+
     // Concurrent-collection audit: STARTTLS demand-driven upgrade-producer arms deferred to the poll carrier. armUpgradeProducerRead runs on the
     // upgrade/scheduler fiber (once per handshake read) and enqueues here; drainPendingRegistrations' sibling drainUpgradeArms (poll carrier) applies
     // the actual read-arm (interestOps OP_READ) so EVERY upgrade arm is selector-confined and no interestOps read-modify-write ever races the selector
@@ -1240,6 +1246,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         // awaitX promises (if any were armed during the deferred window) are already failed by the pending-op-map cleanup above; the channels
         // are owned and closed by the caller (the upgrade teardown).
         pendingRegistrations.clear()
+        pendingServerRegistrations.clear()
         // Fail any STARTTLS upgrade whose bootstrap arm was enqueued but not yet applied: the driver is gone, so drainUpgradeArms will never run.
         // Such a handle is not yet in pendingReads (applyUpgradeArm puts it), so the loop above did not fail its handshake waiter; the waiter
         // parked on the upgrade handoff slot by driveHandshake right after the bootstrap enqueue is failed here so the handshake tears down.
@@ -1298,17 +1305,18 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             case _: java.nio.channels.ClosedChannelException       => false
             case _: java.nio.channels.IllegalBlockingModeException => false
 
-    /** Register a server channel for accept operations. */
+    /** Register a server channel for accept operations. The `register` call is handed to the poll carrier, the only carrier that rebuilds the
+      * selector: made here, it could land on the old selector after the rebuild snapshotted its keys and before it closed, leaving the listener
+      * on a dead selector with nothing to re-register it, so it would never accept again. Listen is rare, so the one wakeup it costs is free.
+      */
     def registerServerChannel(serverChannel: ServerSocketChannel)(using AllowUnsafe): Boolean =
-        try
+        if closedFlag.get() || !serverChannel.isOpen || serverChannel.isBlocking then false
+        else
+            discard(pendingServerRegistrations.offer(serverChannel))
             if wakeupPending.compareAndSet(false, true) then
                 discard(selector.wakeup())
-            discard(serverChannel.register(selector, 0))
             true
-        catch
-            case _: java.nio.channels.ClosedChannelException       => false
-            case _: java.nio.channels.ClosedSelectorException      => false
-            case _: java.nio.channels.IllegalBlockingModeException => false
+    end registerServerChannel
 
     /** Wait for server channel to have pending connections. Promise completes when accept() will not block. */
     def awaitAccept(serverChannel: ServerSocketChannel, promise: Promise.Unsafe[Unit, Abort[Closed]], createdAt: Frame)(using
@@ -1343,11 +1351,23 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     s"$label registerServerInterest channel=${channel.hashCode()} ops=${opsToString(ops)} newOps=${opsToString(newOps)}"
                 )
                 true
-            else
-                false
+            else deferServerInterest(channel)
             end if
         catch
-            case _: CancelledKeyException => false
+            case _: CancelledKeyException => deferServerInterest(channel)
+
+    /** No live key on the current selector: the registration is still queued for the poll carrier, or a rebuild closed the old selector and has
+      * not re-registered this channel yet. Both register with interest read from `pendingAccepts`, which `awaitAccept` filled before this call,
+      * and `reassertPendingInterest` restores the bit when a registration read the map before that put. Failing here instead would end the
+      * accept loop of a listener that is still open.
+      */
+    private def deferServerInterest(channel: ServerSocketChannel)(using AllowUnsafe): Boolean =
+        if closedFlag.get() || !channel.isOpen then false
+        else
+            if wakeupPending.compareAndSet(false, true) then
+                discard(selector.wakeup())
+            true
+    end deferServerInterest
 
     /** True while `channel` is still in the deferred-registration queue: its `registerChannel` hit the cancelled-key race and the poll carrier
       * has not yet completed the registration. In this window the channel has no `SelectionKey`, so an `awaitX` arming interest cannot touch a
@@ -1411,9 +1431,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         reassertOp(pendingReads.keySet().iterator(), SelectionKey.OP_READ)
         reassertOp(pendingWritables.keySet().iterator(), SelectionKey.OP_WRITE)
         reassertOp(pendingConnects.keySet().iterator(), SelectionKey.OP_CONNECT)
+        reassertOp(pendingAccepts.keySet().iterator(), SelectionKey.OP_ACCEPT)
     end reassertPendingInterest
 
-    private def reassertOp(it: java.util.Iterator[SocketChannel], op: Int)(using AllowUnsafe): Unit =
+    private def reassertOp(it: java.util.Iterator[? <: java.nio.channels.SelectableChannel], op: Int)(using AllowUnsafe): Unit =
         while it.hasNext do
             val ch  = it.next()
             val key = ch.keyFor(selector)
@@ -1451,6 +1472,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             // now be registered cleanly. Done before key dispatch so a freshly registered channel can have its
             // interest armed (awaitX) and reported on the next cycle.
             drainPendingRegistrations()
+            drainServerRegistrations()
             // Complete the releases of listeners closed since the previous pass: the select() that just returned ran the deregistration that
             // kills a cancelled listener channel. Before dispatch, so a continuation awaiting a release runs among this cycle's completions.
             drainListenerReleases()
@@ -1553,6 +1575,24 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             end if
         end while
     end drainPendingRegistrations
+
+    /** Register the listener channels `registerServerChannel` queued, with accept interest when `awaitAccept` already armed it. A listener
+      * closed before its turn is dropped: `NioListener.close` fails its accept, and a channel that was never registered closes its descriptor at
+      * once, so its release completes on this same pass. Called only from the poll carrier.
+      */
+    private def drainServerRegistrations()(using AllowUnsafe): Unit =
+        var channel = pendingServerRegistrations.poll()
+        while channel ne null do
+            try
+                val ops = if pendingAccepts.containsKey(channel) then SelectionKey.OP_ACCEPT else 0
+                discard(channel.register(selector, ops))
+            catch
+                case _: java.nio.channels.ClosedChannelException       => ()
+                case _: java.nio.channels.IllegalBlockingModeException => ()
+            end try
+            channel = pendingServerRegistrations.poll()
+        end while
+    end drainServerRegistrations
 
     private def dispatchReadyKeys()(using AllowUnsafe): Unit =
         installedKeySet match
@@ -1666,10 +1706,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       * `private[net]` so the rebuild path is directly exercisable by tests in `kyo.net.internal`. Concurrency contract: rebuildSelector itself runs
       * ONLY on the select-loop carrier (or before that loop starts), so its own snapshot/close/swap/re-register sequence is single-carrier. It is NOT,
       * however, isolated from caller carriers: `selector` is `@volatile` and is READ by caller-carrier paths (registerChannel, registerInterest,
-      * registerServerChannel) that call `channel.register(selector, ...)` / `selector.wakeup()` concurrently with this swap. A caller that read the old
-      * selector just before this `selector.close()` runs gets a `ClosedSelectorException`; those paths handle it by deferring the registration to
-      * `pendingRegistrations` (re-registered on the live selector with interest reconstructed from the pending-op maps) rather than failing the op, so
-      * the swap is correct under that race. The `@volatile` makes the new selector visible to subsequent caller-carrier reads.
+      * registerServerInterest) that call `channel.register(selector, ...)`, set interest, or `selector.wakeup()` concurrently with this swap. A caller
+      * that read the old selector just before this `selector.close()` runs gets a `ClosedSelectorException` or a cancelled key; those paths defer
+      * (to `pendingRegistrations`, or to the interest reconstructed from the pending-op maps) rather than failing the op, so the swap is correct under
+      * that race. Listener channels are registered only on this carrier (`drainServerRegistrations`), since a caller-carrier register that lands
+      * between the key snapshot and the close is on neither selector afterwards. The `@volatile` makes the new selector visible to subsequent
+      * caller-carrier reads.
       */
     private[net] def rebuildSelector()(using AllowUnsafe, Frame): Unit =
         // Snapshot channel references BEFORE closing the old selector (closing cancels all keys,

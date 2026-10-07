@@ -1391,6 +1391,58 @@ class NioIoDriverTest extends Test:
         }
     }
 
+    "a listener registered and armed while the selector rebuilds still accepts" in {
+        given Frame = Frame.internal
+        val driver  = NioIoDriver.init()
+        val count   = 300
+        val done    = new java.util.concurrent.atomic.AtomicBoolean(false)
+        val armed   = new java.util.concurrent.ConcurrentLinkedQueue[(ServerSocketChannel, Boolean, IOPromise[Closed, Unit])]()
+        // Before start() the test fiber owns the poll carrier's role, so rebuilding here is the spin rebuild a running loop performs, racing
+        // listen calls on other carriers exactly as a real one does. A registration or an accept arm that lands mid-rebuild must survive it.
+        val rebuild = Sync.defer {
+            while !done.get() do driver.rebuildSelector()
+        }
+        val register = Sync.defer {
+            var i = 0
+            while i < count do
+                val ssc        = openServer()
+                val registered = driver.registerServerChannel(ssc)
+                val p          = new IOPromise[Closed, Unit]
+                driver.awaitAccept(ssc, p.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
+                discard(armed.add((ssc, registered, p)))
+                i += 1
+            end while
+            done.set(true)
+        }
+        Async.zip(rebuild, register).andThen {
+            discard(driver.start())
+            import scala.jdk.CollectionConverters.*
+            val listeners = Chunk.from(armed.asScala)
+            val clients   = listeners.map { (ssc, _, _) =>
+                val client = SocketChannel.open()
+                client.configureBlocking(false)
+                discard(client.connect(ssc.getLocalAddress))
+                client
+            }
+            Sync.ensure(Sync.defer {
+                clients.foreach(_.close())
+                listeners.foreach((ssc, _, _) => ssc.close())
+                driver.close()
+            }) {
+                awaitCondition(10.seconds)(listeners.forall((_, _, p) => p.done())).map { _ =>
+                    val refused  = listeners.count((_, registered, _) => !registered)
+                    val failed   = listeners.count((_, _, p) => p.poll().exists(!_.isSuccess))
+                    val stranded = listeners.count((_, _, p) => !p.done())
+                    assert(
+                        refused == 0 && failed == 0 && stranded == 0,
+                        s"of $count listeners raced against selector rebuilds: $refused refused registration, $failed failed their accept, " +
+                            s"$stranded never saw their connection"
+                    )
+                }
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // cleanupAccept: removes pending accept entry
     // -----------------------------------------------------------------------
