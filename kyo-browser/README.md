@@ -399,7 +399,6 @@ Browser.withViewport(width = 1440, height = 900) {
 | `mutationFirstMutationGrace` | Grace period before the first DOM mutation is required after an interaction |
 | `assertionStabilityWindow` | Extra quiet window after an assertion matches before it is accepted (set to `Duration.Zero` for first-match behaviour) |
 | `mutationPollInterval` | Polling interval for the quiet-DOM window |
-| `navigationPostSettleWindow` | Extra grace window after navigation settle |
 | `navigationPollInterval` | Polling interval during navigation settle |
 | `navigationGraceWindow` | Pre-navigation grace before the watcher arms |
 | `stabilitySampleInterval` | Sample period for the actionability stability check |
