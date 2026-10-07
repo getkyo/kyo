@@ -160,6 +160,16 @@ private[kyo] object BrowserEval:
 
     // ---- Mouse-event dispatch ----
 
+    /** Runs `body` as the tab's only pointer sequence. Chrome folds the press and release pairs of two sequences that overlap in time
+      * into one click event, whichever release comes first, so two concurrent interactions on a tab would deliver one click and share
+      * one [[armClickProbe]] baseline. The gate is the tab's mutex, held from the probe's arming through the delivery read; it is never
+      * closed, so a `Closed` from it is a defect and surfaces as a panic.
+      */
+    private[kyo] def withInputGate[A, S](body: A < (Browser & S))(using Frame): A < (Browser & S) =
+        Browser.use { tab =>
+            Abort.recover[Closed](closed => Abort.panic(closed))(tab.inputGate.run(body))
+        }
+
     /** Records the page's current click tally as the baseline a following [[clickDelivery]] compares against.
       *
       * The listener goes on `window` in the CAPTURE phase, which is the first node an event visits and the only placement that survives a

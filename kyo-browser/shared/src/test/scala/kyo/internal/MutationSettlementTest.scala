@@ -497,13 +497,9 @@ class MutationSettlementTest extends kyo.BrowserTest:
         // is stable across DOM mutations (i.e. `Runtime.evaluate(returnByValue=false)` → `objectId` →
         // `DOM.describeNode({objectId})` rather than a document-keyed `rootNodeId`-based chain), so that one
         // arm's actionability check and post-click mutation cannot invalidate the other arm's resolution.
-        // Both clicks complete cleanly and the click pipeline runs end-to-end (observable as the JS click
-        // handler firing at least once on the shared target).
-        //
-        // Both clicks target the SAME button so Chrome's input subsystem cannot fail to deliver at least one
-        // click: at identical coordinates the mouse-event streams collapse to a single observable click event.
-        // (Two DIFFERENT buttons would expose Chrome's input-subsystem ordering of interleaved mouse-event
-        // streams at different coordinates, which is unrelated to the Resolver invariant under test.)
+        // Both clicks complete cleanly and both are delivered: the tab's input gate keeps the two press/release
+        // pairs apart in time, and Chrome folds two pairs that overlap into one click event, so the delivered
+        // count is exactly two only when the gate holds.
         withBrowserOnLocalhost {
             Browser.eval(
                 """document.body.innerHTML = '<button id="btn">click me</button>';
@@ -523,13 +519,10 @@ class MutationSettlementTest extends kyo.BrowserTest:
                         for
                             counter <- Browser.eval("String(window.__clickCount)")
                         yield
-                            // Both `Browser.click` calls completed past the Resolver pipeline, dispatched
-                            // their CDP mouse events, and at least one click event fired on the page,
-                            // proving the click pipeline ran end-to-end.
                             val n = counter.toIntOption.getOrElse(0)
                             assert(
-                                n >= 1,
-                                s"expected window.__clickCount>=1 (parallel Browser.click pipeline ran end-to-end past the handle-stable Resolver), got '$counter'"
+                                n == 2,
+                                s"expected both parallel Browser.click calls to deliver a click event, got '$counter'"
                             )
                             ()
                         end for

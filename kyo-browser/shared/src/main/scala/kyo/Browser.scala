@@ -448,6 +448,9 @@ object Browser:
     def click(selector: Selector)(using
         Frame
     ): Unit < (Browser & Abort[BrowserReadException]) =
+        BrowserEval.withInputGate(clickExclusively(selector))
+
+    private def clickExclusively(selector: Selector)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
         Actionability.withRetry {
             Actionability.withActionable(selector, requireFillable = false, requireEnabled = true) { ref =>
                 if ref.navigatesOnClick then
@@ -492,9 +495,11 @@ object Browser:
 
     /** Double-clicks the element matched by the selector. */
     def doubleClick(selector: Selector)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
-        Actionability.withRetry {
-            Actionability.withActionable(selector, requireFillable = false, requireEnabled = true) { ref =>
-                BrowserEval.clickAtActionable(ref, 2)
+        BrowserEval.withInputGate {
+            Actionability.withRetry {
+                Actionability.withActionable(selector, requireFillable = false, requireEnabled = true) { ref =>
+                    BrowserEval.clickAtActionable(ref, 2)
+                }
             }
         }
 
@@ -504,9 +509,11 @@ object Browser:
       * (disabled tooltips and `:hover` styles must work), so the actionability gate skips the disabled probe for `hover`.
       */
     def hover(selector: Selector)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
-        Actionability.withRetry {
-            Actionability.withActionable(selector, requireFillable = false, requireEnabled = false) { ref =>
-                Env.use[BrowserTab](tab => BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Moved, ref.x, ref.y, 0))
+        BrowserEval.withInputGate {
+            Actionability.withRetry {
+                Actionability.withActionable(selector, requireFillable = false, requireEnabled = false) { ref =>
+                    Env.use[BrowserTab](tab => BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Moved, ref.x, ref.y, 0))
+                }
             }
         }
 
@@ -767,16 +774,18 @@ object Browser:
 
     /** Drags the source element and drops it onto the target element. Both source and target are gated on actionability. */
     def dragAndDrop(source: Selector, target: Selector)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
-        Actionability.withRetry {
-            Actionability.withActionable(source, requireFillable = false, requireEnabled = true) { srcRef =>
-                Actionability.withActionable(target, requireFillable = false, requireEnabled = true) { tgtRef =>
-                    Env.use[BrowserTab] { tab =>
-                        for
-                            _ <- BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Moved, srcRef.x, srcRef.y, 0)
-                            _ <- BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Pressed, srcRef.x, srcRef.y, 1)
-                            _ <- BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Moved, tgtRef.x, tgtRef.y, 0)
-                            _ <- BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Released, tgtRef.x, tgtRef.y, 1)
-                        yield ()
+        BrowserEval.withInputGate {
+            Actionability.withRetry {
+                Actionability.withActionable(source, requireFillable = false, requireEnabled = true) { srcRef =>
+                    Actionability.withActionable(target, requireFillable = false, requireEnabled = true) { tgtRef =>
+                        Env.use[BrowserTab] { tab =>
+                            for
+                                _ <- BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Moved, srcRef.x, srcRef.y, 0)
+                                _ <- BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Pressed, srcRef.x, srcRef.y, 1)
+                                _ <- BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Moved, tgtRef.x, tgtRef.y, 0)
+                                _ <- BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Released, tgtRef.x, tgtRef.y, 1)
+                            yield ()
+                        }
                     }
                 }
             }

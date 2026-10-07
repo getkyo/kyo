@@ -27,7 +27,8 @@ final private[kyo] class BrowserTab(
     val responseTrackerRegistered: AtomicBoolean,
     val viewportOverride: AtomicRef[Maybe[BrowserTab.ViewportOverride]],
     val emulationOverride: AtomicRef[Maybe[BrowserTab.EmulatedMediaState]],
-    val downloadPolicy: AtomicRef[Maybe[(Browser.DownloadBehavior, Maybe[String])]]
+    val downloadPolicy: AtomicRef[Maybe[(Browser.DownloadBehavior, Maybe[String])]],
+    val inputGate: Meter
 ):
     /** Session-scoped CDP backend. Every interaction path issues CDP commands against this tab's specific session; capturing the
       * `backend.withSession(sessionId)` pair once eliminates the `tab.backend.withSession(tab.sessionId)` boilerplate that otherwise repeats
@@ -89,6 +90,8 @@ private[kyo] object BrowserTabSetup:
             viewportRef      <- AtomicRef.init[Maybe[BrowserTab.ViewportOverride]](Absent)
             emulationRef     <- AtomicRef.init[Maybe[BrowserTab.EmulatedMediaState]](Absent)
             downloadRef      <- AtomicRef.init[Maybe[(Browser.DownloadBehavior, Maybe[String])]](Absent)
+            // Unscoped: the gate lives exactly as long as the tab object and is never closed, so nothing has to release it.
+            inputGate <- Meter.initMutexUnscoped
         yield new BrowserTab(
             targetId,
             sessionId,
@@ -100,7 +103,8 @@ private[kyo] object BrowserTabSetup:
             responseRegister,
             viewportRef,
             emulationRef,
-            downloadRef
+            downloadRef,
+            inputGate
         )
 
     /** Subscribes this tab's session to `Runtime.executionContext{Created,Destroyed}` events.

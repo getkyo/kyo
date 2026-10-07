@@ -1060,4 +1060,119 @@ class BrowserActionabilityTest extends BrowserTest:
         }
     }
 
+    "a click started while another holds the tab's input gate presses only after that one has released, and both are delivered" in {
+        // Chrome folds two press/release pairs that overlap in time into one click event, so the second click of a pair of
+        // concurrent clicks is lost unless it waits for the first's release. One arm holds the gate between its press and its
+        // release; the Browser.click started meanwhile must be queued on the gate, with no press of its own on the page.
+        withBrowser {
+            onPage("""<body>
+            <button id="target" style="width:80px;height:30px">Go</button>
+            <script>
+              window.__events = []; window.__clicks = 0;
+              var t = document.getElementById('target');
+              t.addEventListener('mousedown', function(){ window.__events.push('down'); });
+              t.addEventListener('mouseup', function(){ window.__events.push('up'); });
+              t.addEventListener('click', function(){ window.__clicks++; });
+            </script>
+        </body>""") {
+                Browser.use { tab =>
+                    val center =
+                        "(function(){var r=document.getElementById('target').getBoundingClientRect();" +
+                            "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()"
+                    // The second click has either queued on the gate or, without one, already pressed; both end the wait.
+                    def secondHasActed: Boolean < (Browser & Abort[BrowserReadException]) =
+                        for
+                            queued <- Abort.run[Closed](tab.inputGate.pendingWaiters).map(_.getOrElse(0))
+                            events <- Browser.eval("String(window.__events.length)")
+                        yield queued >= 1 || events.toIntOption.exists(_ >= 2)
+                    for
+                        pressed <- Latch.init(1)
+                        release <- Latch.init(1)
+                        point   <- Browser.evalJson[ClickPoint](center)
+                        holder  <- Fiber.init(Browser.runOn(tab)(BrowserEval.withInputGate {
+                            for
+                                _ <- BrowserEval.dispatchMouse(tab, kyo.internal.CdpTypes.MouseEventType.Moved, point.x, point.y, 0)
+                                _ <- BrowserEval.dispatchMouse(tab, kyo.internal.CdpTypes.MouseEventType.Pressed, point.x, point.y, 1)
+                                _ <- pressed.release
+                                _ <- release.await
+                                _ <- BrowserEval.dispatchMouse(tab, kyo.internal.CdpTypes.MouseEventType.Released, point.x, point.y, 1)
+                            yield ()
+                        }))
+                        _      <- pressed.await
+                        second <- Fiber.init(Browser.runOn(tab)(Browser.click(Browser.Selector.id("target"))))
+                        // deviation: a polling barrier on the second click's progress; the outcome does not depend on the delay.
+                        _ <- Loop(())(_ =>
+                            secondHasActed.map(done => if done then Loop.done(()) else Async.sleep(1.milli).andThen(Loop.continue(())))
+                        )
+                        eventsWhileHeld <- Browser.eval("window.__events.join(',')")
+                        _               <- release.release
+                        _               <- holder.get
+                        _               <- second.get
+                        events          <- Browser.eval("window.__events.join(',')")
+                        clicks          <- Browser.eval("String(window.__clicks)")
+                    yield
+                        assert(eventsWhileHeld == "down", s"the second click pressed while the first was held: '$eventsWhileHeld'")
+                        assert(events == "down,up,down,up", s"the press/release pairs interleaved: '$events'")
+                        assert(clicks == "2", s"both clicks must be delivered, got '$clicks'")
+                    end for
+                }
+            }
+        }
+    }
+
+    "a click interrupted while queued on the tab's input gate leaves the gate usable: the next click is delivered" in {
+        // The gate must not remember a waiter that was cancelled: one sequence holds the gate, a Browser.click queues behind it
+        // and is interrupted there, and once the holder releases, a third click must go through and be delivered.
+        withBrowser {
+            onPage("""<body>
+            <button id="target" style="width:80px;height:30px">Go</button>
+            <script>
+              window.__events = []; window.__clicks = 0;
+              var t = document.getElementById('target');
+              t.addEventListener('mousedown', function(){ window.__events.push('down'); });
+              t.addEventListener('mouseup', function(){ window.__events.push('up'); });
+              t.addEventListener('click', function(){ window.__clicks++; });
+            </script>
+        </body>""") {
+                Browser.use { tab =>
+                    val center =
+                        "(function(){var r=document.getElementById('target').getBoundingClientRect();" +
+                            "return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()"
+                    def queued: Boolean < (Browser & Abort[BrowserReadException]) =
+                        Abort.run[Closed](tab.inputGate.pendingWaiters).map(_.getOrElse(0) >= 1)
+                    for
+                        pressed <- Latch.init(1)
+                        release <- Latch.init(1)
+                        point   <- Browser.evalJson[ClickPoint](center)
+                        holder  <- Fiber.init(Browser.runOn(tab)(BrowserEval.withInputGate {
+                            for
+                                _ <- BrowserEval.dispatchMouse(tab, kyo.internal.CdpTypes.MouseEventType.Moved, point.x, point.y, 0)
+                                _ <- BrowserEval.dispatchMouse(tab, kyo.internal.CdpTypes.MouseEventType.Pressed, point.x, point.y, 1)
+                                _ <- pressed.release
+                                _ <- release.await
+                                _ <- BrowserEval.dispatchMouse(tab, kyo.internal.CdpTypes.MouseEventType.Released, point.x, point.y, 1)
+                            yield ()
+                        }))
+                        _         <- pressed.await
+                        cancelled <- Fiber.init(Browser.runOn(tab)(Browser.click(Browser.Selector.id("target"))))
+                        // deviation: a polling barrier on the second click reaching the gate; the outcome does not depend on the delay.
+                        _ <- Loop(())(_ => queued.map(q => if q then Loop.done(()) else Async.sleep(1.milli).andThen(Loop.continue(()))))
+                        interrupted <- cancelled.interrupt
+                        _           <- release.release
+                        _           <- holder.get
+                        _           <- Browser.click(Browser.Selector.id("target"))
+                        events      <- Browser.eval("window.__events.join(',')")
+                        clicks      <- Browser.eval("String(window.__clicks)")
+                    yield
+                        assert(interrupted, "the queued click must be interruptible while it waits")
+                        assert(events == "down,up,down,up", s"the cancelled click must leave no event behind: '$events'")
+                        assert(clicks == "2", s"the holder's click and the third click must both be delivered, got '$clicks'")
+                    end for
+                }
+            }
+        }
+    }
+
 end BrowserActionabilityTest
+
+case class ClickPoint(x: Int, y: Int) derives Schema

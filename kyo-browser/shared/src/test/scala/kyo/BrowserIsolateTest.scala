@@ -695,6 +695,7 @@ class BrowserIsolateTest extends BrowserTest:
                     viewport  <- AtomicRef.init[Maybe[BrowserTab.ViewportOverride]](Absent)
                     emulation <- AtomicRef.init[Maybe[BrowserTab.EmulatedMediaState]](Absent)
                     download  <- AtomicRef.init[Maybe[(Browser.DownloadBehavior, Maybe[String])]](Absent)
+                    inputGate <- Meter.initMutexUnscoped
                     tab = new BrowserTab(
                         TargetId("t-test"),
                         SessionId("s-test"),
@@ -706,7 +707,8 @@ class BrowserIsolateTest extends BrowserTest:
                         response,
                         viewport,
                         emulation,
-                        download
+                        download,
+                        inputGate
                     )
                 yield tab.browserContextId match
                     case Present(id) => fail(s"Expected Absent but got Present($id)")
