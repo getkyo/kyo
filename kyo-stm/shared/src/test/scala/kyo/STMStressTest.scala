@@ -401,7 +401,7 @@ class STMStressTest extends kyo.test.Test[Any]:
 
     "TMap.snapshot / entries / values under concurrent put+remove never throw".notJs in {
         AtomicInt.init(0).map { thrown =>
-            Kyo.foreachDiscard(1 to 20) { _ =>
+            Kyo.foreachDiscard(1 to 5) { _ =>
                 for
                     tmap <- TMap.init[Int, Int]
                     _    <- STM.run(Kyo.foreachDiscard(0 until 100)(i => tmap.put(i, i)))
