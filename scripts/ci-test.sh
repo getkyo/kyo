@@ -731,7 +731,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     # 54. Every sbt the runner starts tolerates a failed boot socket and starts no server.
     run_runner JVM test "$PASS_BODY"
     if [ "$(wc -l < "$CALLS" | tr -d ' ')" -gt 0 ] \
-       && [ "$(grep -cF -- '-Dsbt.server.forcestart=true -Dsbt.server.autostart=false' "$HEAP")" -eq "$(wc -l < "$CALLS" | tr -d ' ')" ] \
+       && [ "$(grep -cF -- '-Dsbt.ipcsocket.jni=true -Dsbt.server.forcestart=true -Dsbt.server.autostart=false' "$HEAP")" -eq "$(wc -l < "$CALLS" | tr -d ' ')" ] \
        && exit_is 0
     then record ok "every sbt gets the boot socket and server switches"
     else record no "every sbt gets the boot socket and server switches"; fi
@@ -825,11 +825,16 @@ POLL_INTERVAL=${POLL_INTERVAL:-10}
 RESOLVE_BACKOFF=${RESOLVE_BACKOFF:-20}
 
 # sbt's boot socket and server exist for clients attaching to a running sbt (`sbt --client`, BSP), which
-# this runner never has. On Windows each is a named pipe whose ACL ipcsocket 1.8.0 builds from a SID held
-# in memory the GC may already have freed (Win32SecurityLibrary.getOwnerSID and getLogonSID), so creating
-# one fails intermittently with ERROR_INVALID_ACL (1336), and sbt exits 2 when the boot socket fails.
-# forcestart lets sbt continue without the boot socket; autostart=false never creates the server.
-export JAVA_OPTS="${JAVA_OPTS:-} -Dsbt.server.forcestart=true -Dsbt.server.autostart=false"
+# this runner never has. On Windows each is a named pipe whose ACL ipcsocket 1.8.0's JNA path builds from a
+# SID held in memory the GC may already have freed (Win32SecurityLibrary.getOwnerSID and getLogonSID). The
+# freed SID either makes the ACL invalid, so CreateNamedPipe fails with ERROR_INVALID_ACL (1336), or corrupts
+# the native heap, which on windows-arm64 killed the sbt driver with EXCEPTION_HEAP_CORRUPTION (0xc0000374)
+# about 5s into its start. sbt 1.13.0 creates the boot socket on every start and has no switch to skip it.
+# ipcsocket.jni selects ipcsocket's JNI provider, which builds the pipe in native code: on windows-x64 its
+# library ships and the ACL never touches the freed SID; on windows-arm64 none ships, the load fails with
+# UnsatisfiedLinkError and sbt starts without the boot socket. forcestart lets sbt continue past any other
+# boot socket failure; autostart=false never creates the server.
+export JAVA_OPTS="${JAVA_OPTS:-} -Dsbt.ipcsocket.jni=true -Dsbt.server.forcestart=true -Dsbt.server.autostart=false"
 
 # Space-separated module names (e.g. "kyo-schema-tests", which links every serialization format
 # into one binary) whose SOLO native-link optimize peak needs an isolated, fresh-heap sbt driver.
