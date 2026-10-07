@@ -4140,9 +4140,20 @@ class HttpServerTest extends BaseHttpTest:
                         }
                     case _ => Map.empty
                 }
-            readTables.map { initial =>
-                val procNetTcp = initial.nonEmpty
-                // How many client ends are still ESTABLISHED to `port`, with the socket table rows that show it.
+            Abort.run[FileSystemException](Path.runReadOnly(Kyo.filter(tables)(_.exists))).map(_.exists(_.nonEmpty)).map { procNetTcp =>
+                // How many client ends are still ESTABLISHED to `port`. Polled until zero, so it does no more than count:
+                // the socket rows and the descriptor holding each one are gathered only for a failure.
+                def count(port: Int): Int < Async =
+                    if procNetTcp then
+                        Abort.run[FileSystemException](Path.runReadOnly(Kyo.filter(tables)(_.exists).map(Kyo.foreach(_)(_.read))))
+                            .map(_.getOrElse(Chunk.empty).map(establishedToText(port)).sum)
+                    else lsof(port).map(_._1)
+                def lsof(port: Int): (Int, String) < Async =
+                    Abort.run[CommandException](Command("lsof", "-nP", s"-iTCP:$port", "-sTCP:ESTABLISHED").textWithExitCode).map {
+                        case Result.Success((out, _)) => (out.linesIterator.count(_.contains(s"->127.0.0.1:$port")), out)
+                        case other                    => (-1, s"lsof did not run: $other")
+                    }
+                // The count with the socket table rows that show it, for the failure message.
                 def snapshot(port: Int): (Int, String) < Async =
                     if procNetTcp then
                         readTables.map { tables =>
@@ -4159,20 +4170,17 @@ class HttpServerTest extends BaseHttpTest:
                                 }
                             end if
                         }
-                    else
-                        Abort.run[CommandException](Command("lsof", "-nP", s"-iTCP:$port", "-sTCP:ESTABLISHED").textWithExitCode).map {
-                            case Result.Success((out, _)) => (out.linesIterator.count(_.contains(s"->127.0.0.1:$port")), out)
-                            case other                    => (-1, s"lsof did not run: $other")
-                        }
+                    else lsof(port)
                 // A declared exception to the no-real-clock rule: this bounds the kernel's socket teardown, which no kyo event
-                // observes. 20 s is far above that teardown (all 300 repetitions take 43 s under the CI caps) and below the leaf
-                // timeout, so a leak fails here with the rows, the descriptor on each socket and the I/O drivers' state. The
-                // bound is on elapsed time, not a poll count: one lsof poll takes about a second.
+                // observes. 20 s is far above that teardown (all 300 repetitions take 3.1 s in a CI-capped Linux container and
+                // 46 s on macOS, where each poll runs lsof) and below the leaf timeout, so a leak fails here with the rows, the
+                // descriptor on each socket and the I/O drivers' state. The bound is on elapsed time, not a poll count, since a
+                // poll's cost depends on which of the two it reads.
                 def awaitClosed(port: Int): Unit < Async =
                     def poll: Unit < Async =
-                        snapshot(port).map {
-                            case (0, _) => Kyo.unit
-                            case _      => Async.sleep(10.millis).andThen(poll)
+                        count(port).map {
+                            case 0 => Kyo.unit
+                            case _ => Async.sleep(1.millis).andThen(poll)
                         }
                     Abort.run[Timeout](Async.timeout(20.seconds)(poll)).map {
                         case Result.Success(_) => Kyo.unit
@@ -4218,16 +4226,19 @@ class HttpServerTest extends BaseHttpTest:
         }
 
         "the socket-table check counts only the loopback client ends connected to the server's port" in {
-            val port = 0x9cd9
-            val rows = Chunk(
+            val port  = 0x9cd9
+            val lines = Chunk(
                 "0: 0100007F:9CD9 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 101",
                 "1: 0100007F:C26A 0100007F:9CD9 01 00000000:00000000 00:00000000 00000000 0 0 102",
                 "2: 0100007F:9CD9 0100007F:C26A 01 00000000:00000000 00:00000000 00000000 0 0 103",
                 "3: 027FA8C0:0016 017FA8C0:9CD9 01 00000000:00000000 00:00000000 00000000 0 0 104",
                 "4: 0000000000000000FFFF00000100007F:C26B 0000000000000000FFFF00000100007F:9CD9 01 " +
-                    "00000000:00000000 00:00000000 00000000 0 0 105"
-            ).map(_.trim.split("\\s+"))
-            assert(establishedTo(port)(rows) == 2)
+                    "00000000:00000000 00:00000000 00000000 0 0 105",
+                "5: 0100007F:C26C 0100007F:9CD9 06 00000000:00000000 00:00000000 00000000 0 0 106"
+            )
+            assert(establishedTo(port)(lines.map(_.trim.split("\\s+"))) == 2)
+            assert(establishedToText(port)(lines.mkString("\n")) == 2)
+            assert(establishedToText(0x0016)(lines.mkString("\n")) == 0)
         }
     }
 
@@ -4238,6 +4249,20 @@ class HttpServerTest extends BaseHttpTest:
     // The client connects to 127.0.0.1, written 0100007F in tcp and as the tail of the v4-mapped address in tcp6.
     private def establishedTo(port: Int)(rows: Chunk[Array[String]]): Int =
         rows.count(cols => cols(3) == "01" && cols(2).split(":").head.endsWith("0100007F") && socketPort(cols(2)) == port)
+
+    // The rows establishedTo counts, found in the table's text: a remote address ending in the loopback address and the port, then the
+    // state. With the table the rest of the suite fills, splitting every row on every poll took the leaf 73 to 75 s on Native linux-x64;
+    // one scan per poll takes it to 9.6 s.
+    private def establishedToText(port: Int)(table: String): Int =
+        val hex    = Integer.toHexString(port).toUpperCase
+        val needle = s"0100007F:${"0" * (4 - hex.length)}$hex 01 "
+        @scala.annotation.tailrec
+        def loop(from: Int, found: Int): Int =
+            val at = table.indexOf(needle, from)
+            if at < 0 then found else loop(at + needle.length, found + 1)
+        end loop
+        loop(0, 0)
+    end establishedToText
 
     /** How many complete responses `bytes` holds, each framed by the Content-Length the server declares on every answer here. */
     private def completeResponses(bytes: String): Int =

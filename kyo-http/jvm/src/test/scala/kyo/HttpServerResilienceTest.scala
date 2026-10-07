@@ -28,11 +28,13 @@ class HttpServerResilienceTest extends BaseHttpTest:
     private val ping =
         HttpRoute.getRaw("ping").response(_.bodyText).handler(_ => HttpResponse.ok("pong"))
 
-    /** A handler that never responds in time: it sleeps far longer than any client timeout, so a request to it is only
-      * ever resolved by the client's cancellation (or the connection closing).
+    /** A handler that never responds: it reports that the request reached it, then parks, so a request to it is only ever
+      * resolved by the client's cancellation or the connection closing, and the client cancels only once it is in flight.
       */
-    private val slow =
-        HttpRoute.getRaw("slow").response(_.bodyText).handler(_ => Async.sleep(30.seconds).andThen(HttpResponse.ok("late")))
+    private def slow(entered: Channel[Unit]) =
+        HttpRoute.getRaw("slow").response(_.bodyText).handler(_ =>
+            Abort.run[Closed](entered.put(())).andThen(Async.never[Unit]).andThen(HttpResponse.ok("late"))
+        )
 
     /** A handler that fails (panics) so the server dispatch has to contain the failure without wedging the connection
       * handling for other requests.
@@ -143,58 +145,114 @@ class HttpServerResilienceTest extends BaseHttpTest:
             end if
     end recordIfDriverClosed
 
-    "shared pooled client survives request cancellation under server churn" - eachBackend { (transport, _) =>
-        // Concurrent load through the process-shared POOLED client: each invocation fires two concurrent GETs bounded by
-        // a short Async.timeout that EXPIRES on requests hung by the churn, while the server is repeatedly restarted
-        // (listener replaced), RST-ing in-flight responses and orphaning pooled connections. A wedge would surface as a
-        // "<Driver> is closed" that then fails every later call. Asserts zero driver-closed hits during the load and that
-        // the shared client still round-trips after.
-        val durationMs = sys.props.get("kyo.churnDurationMs").map(_.toLong).getOrElse(3000L)
-        val current    = new java.util.concurrent.atomic.AtomicReference[HttpServer]()
-        val stop       = new java.util.concurrent.atomic.AtomicBoolean(false)
-        val bug        = new java.util.concurrent.atomic.AtomicInteger(0)
+    /** One server of a churn run: a latch every worker releases once a request to it has ended, and the requests still
+      * running against it, which the restart that replaces it cancels.
+      */
+    final private case class Generation(
+        server: HttpServer,
+        reached: Latch,
+        requests: java.util.Set[Fiber[Any, Any]],
+        closed: java.util.concurrent.atomic.AtomicBoolean
+    )
+
+    /** What a churn run observed: requests issued, requests that failed or were cancelled, and driver-closed hits. */
+    final private case class ChurnCounts(total: Int, notOk: Int, hits: Int)
+
+    /** Drives `workers` fibers, each firing two concurrent GETs through the ambient pooled client, while the server is
+      * replaced `restarts` times. A restart waits until a request from every worker has ended against the current server,
+      * so each server serves and reuses pooled connections, then starts the next server, closes the current one and
+      * interrupts the requests still running against it in the same step: each restart lands cancellations on connections
+      * the server is closing, the race between a cancelled request's `closeHandle` and the poll carrier's dispatch on the
+      * same descriptor. Counted rather than timed, so a slow runner does the same restarts and cancellations as a fast one.
+      *
+      * Each worker waits only on its own request fiber: interrupting a fiber that waits on a promise interrupts the
+      * promise, so a cancellation signal shared by the workers would be failed for all of them by the first one cancelled.
+      */
+    private def churn(transport: Transport, restarts: Int, workers: Int)(using Frame): ChurnCounts < (Async & Abort[Any]) =
+        val total                                         = new java.util.concurrent.atomic.AtomicInteger(0)
+        val notOk                                         = new java.util.concurrent.atomic.AtomicInteger(0)
+        val bug                                           = new java.util.concurrent.atomic.AtomicInteger(0)
+        val stop                                          = new java.util.concurrent.atomic.AtomicBoolean(false)
+        def generation: Generation < (Async & Abort[Any]) =
+            for
+                server  <- startServer(transport, ping)
+                reached <- Latch.init(workers)
+            yield Generation(
+                server,
+                reached,
+                ConcurrentHashMap.newKeySet[Fiber[Any, Any]](),
+                new java.util.concurrent.atomic.AtomicBoolean(false)
+            )
+        def failed(ex: Any): Unit =
+            discard(notOk.incrementAndGet())
+            recordIfDriverClosed(bug, ex)
+        // A request registered after the restart swept its generation cancels itself, so none outlives its server.
+        def cancel(gen: Generation): Unit < Sync =
+            Sync.defer(gen.closed.set(true)).andThen(Kyo.foreachDiscard(gen.requests.toArray.toSeq)(f =>
+                f.asInstanceOf[Fiber[Any, Any]].interrupt.unit
+            ))
+        def worker(current: java.util.concurrent.atomic.AtomicReference[Generation]): Unit < Async =
+            Loop(Maybe.empty[Generation]) { released =>
+                if stop.get() then Loop.done(())
+                else
+                    val gen = current.get()
+                    val url = s"http://localhost:${gen.server.port}/ping"
+                    discard(total.incrementAndGet())
+                    Fiber.initUnscoped(Abort.run[Any](Async.zip(
+                        HttpClient.getTextResponse(url, failOnError = false),
+                        HttpClient.getTextResponse(url, failOnError = false)
+                    ))).map { request =>
+                        discard(gen.requests.add(request))
+                        val late = if gen.closed.get() then request.interrupt.unit else Kyo.unit
+                        late.andThen(request.getResult).map { outcome =>
+                            discard(gen.requests.remove(request))
+                            outcome match
+                                case Result.Success(inner) =>
+                                    inner match
+                                        case Result.Failure(ex) => failed(ex)
+                                        case Result.Panic(ex)   => failed(ex)
+                                        case _                  => ()
+                                case Result.Panic(ex) => failed(ex)
+                                case _                => ()
+                            end match
+                        }
+                    }.andThen(if released.exists(_ eq gen) then Kyo.unit else gen.reached.release)
+                        .andThen(Loop.continue(Present(gen)))
+            }
         for
-            server0 <- startServer(transport, ping)
-            _ = current.set(server0)
-            churn <- Fiber.initUnscoped {
-                Abort.run[Any] {
-                    Loop.foreach {
-                        if stop.get() then Loop.done(())
-                        else
-                            Async.sleep(25.millis)
-                                .andThen(startServer(transport, ping).map(s => current.getAndSet(s).closeNow))
-                                .andThen(Loop.continue)
-                    }
-                }.unit
+            first <- generation
+            current = new java.util.concurrent.atomic.AtomicReference(first)
+            fibers <- Kyo.fill(workers)(Fiber.initUnscoped(worker(current)))
+            _      <- Loop(0) { i =>
+                if i == restarts then Loop.done(())
+                else
+                    val old = current.get()
+                    old.reached.await.andThen(generation).map { next =>
+                        current.set(next)
+                        Async.zip(old.server.closeNow, cancel(old))
+                    }.andThen(Loop.continue(i + 1))
             }
-            deadline = java.lang.System.currentTimeMillis() + durationMs
-            _ <- Async.foreach(0 until 16, 16) { _ =>
-                Loop.foreach {
-                    if java.lang.System.currentTimeMillis() >= deadline then Loop.done(())
-                    else
-                        val url = s"http://localhost:${current.get().port}/ping"
-                        Abort.run[Any] {
-                            Async.timeout(50.millis) {
-                                Async.zip(
-                                    HttpClient.getTextResponse(url, failOnError = false),
-                                    HttpClient.getTextResponse(url, failOnError = false)
-                                )
-                            }
-                        }.map {
-                            case Result.Failure(ex) => recordIfDriverClosed(bug, ex)
-                            case Result.Panic(ex)   => recordIfDriverClosed(bug, ex)
-                            case _                  => ()
-                        }.andThen(Loop.continue)
-                }
-            }
-            _ = stop.set(true)
-            _          <- churn.get
-            _          <- current.get().closeNow
+            _    = stop.set(true)
+            last = current.get()
+            _ <- cancel(last)
+            _ <- Kyo.foreachDiscard(fibers)(_.get)
+            _ <- last.server.closeNow
+        yield ChurnCounts(total.get(), notOk.get(), bug.get())
+        end for
+    end churn
+
+    "shared pooled client survives request cancellation under server churn" - eachBackend { (transport, _) =>
+        // Concurrent load through the process-shared POOLED client while the server is restarted (listener replaced),
+        // RST-ing in-flight responses and orphaning pooled connections. A wedge would surface as a "<Driver> is closed"
+        // that then fails every later call. Asserts zero driver-closed hits during the load and that the shared client
+        // still round-trips after.
+        for
+            counts     <- churn(transport, restarts = 120, workers = 16)
             liveServer <- startServer(transport, ping)
             liveResult <- Abort.run[Any](HttpClient.getText(s"http://localhost:${liveServer.port}/ping"))
             _          <- liveServer.closeNow
         yield
-            assert(bug.get() == 0, s"shared driver wedged: ${bug.get()} driver-closed hits during churn")
+            assert(counts.hits == 0, s"shared driver wedged: ${counts.hits} driver-closed hits during churn")
             assert(liveResult == Result.Success("pong"), s"shared pooled client wedged after churn: got $liveResult")
         end for
     }
@@ -207,69 +265,27 @@ class HttpServerResilienceTest extends BaseHttpTest:
       * The failure mode is a cross-carrier race (a cancelled request's caller-carrier `closeHandle` vs the poll carrier's
       * `dispatchReadyKeys` on the same fd) that only `NioIoDriver` is exposed to (its dispatch catch is
       * `CancelledKeyException`-only; `PollerIoDriver`'s dispatch is total), so it manifests on nio but not on
-      * kqueue/epoll and this leaf targets nio directly. The race is probabilistic, so the leaf drives an aggressive load
-      * (tight server restarts plus a request timeout that fires on the hung requests) and asserts zero driver-closed hits
-      * over the run: a hit means a per-connection failure escaped and closed the whole driver.
+      * kqueue/epoll and this leaf targets nio directly. The race is probabilistic, so the leaf drives an aggressive load,
+      * restarting the server far more often than the all-backends leaf, and asserts zero driver-closed hits over the run:
+      * a hit means a per-connection failure escaped and closed the whole driver.
       */
     "pooled client on the nio backend survives request cancellation and server churn" in {
-        val durationMs = sys.props.get("kyo.churnDurationMs").map(_.toLong).getOrElse(20000L)
         TestBackends.all.find(e => e.name == "nio" && e.isAvailable) match
             case None        => cancel("nio backend not available on this host")
             case Some(entry) =>
                 val transport = entry.transport
-                val client    = clientFor(entry)
-                HttpClient.let(client) {
-                    val current = new java.util.concurrent.atomic.AtomicReference[HttpServer]()
-                    val stop    = new java.util.concurrent.atomic.AtomicBoolean(false)
-                    val bug     = new java.util.concurrent.atomic.AtomicInteger(0)
-                    val total   = new java.util.concurrent.atomic.AtomicInteger(0)
-                    val notOk   = new java.util.concurrent.atomic.AtomicInteger(0)
+                HttpClient.let(clientFor(entry)) {
                     for
-                        server0 <- startServer(transport, ping)
-                        _ = current.set(server0)
-                        churn <- Fiber.initUnscoped {
-                            Abort.run[Any] {
-                                Loop.foreach {
-                                    if stop.get() then Loop.done(())
-                                    else
-                                        Async.sleep(10.millis)
-                                            .andThen(startServer(transport, ping).map(s => current.getAndSet(s).closeNow))
-                                            .andThen(Loop.continue)
-                                }
-                            }.unit
-                        }
-                        deadline = java.lang.System.currentTimeMillis() + durationMs
-                        _ <- Async.foreach(0 until 16, 16) { _ =>
-                            Loop.foreach {
-                                if java.lang.System.currentTimeMillis() >= deadline then Loop.done(())
-                                else
-                                    discard(total.incrementAndGet())
-                                    val url = s"http://localhost:${current.get().port}/ping"
-                                    Abort.run[Any] {
-                                        Async.timeout(30.millis) {
-                                            Async.zip(
-                                                HttpClient.getTextResponse(url, failOnError = false),
-                                                HttpClient.getTextResponse(url, failOnError = false)
-                                            )
-                                        }
-                                    }.map {
-                                        case Result.Failure(ex) => discard(notOk.incrementAndGet()); recordIfDriverClosed(bug, ex)
-                                        case Result.Panic(ex)   => discard(notOk.incrementAndGet()); recordIfDriverClosed(bug, ex)
-                                        case _                  => ()
-                                    }.andThen(Loop.continue)
-                            }
-                        }
-                        _ = stop.set(true)
-                        _ <- churn.get
-                        _ <- current.get().closeNow
+                        counts     <- churn(transport, restarts = 1500, workers = 16)
+                        liveServer <- startServer(transport, ping)
+                        liveResult <- Abort.run[Any](HttpClient.getText(s"http://localhost:${liveServer.port}/ping"))
+                        _          <- liveServer.closeNow
                     yield
                         java.lang.System.out.println(
-                            s"[nio churn] dur=${durationMs}ms total=${total.get()} notOk=${notOk.get()} hits=${bug.get()}"
+                            s"[nio churn] restarts=1500 total=${counts.total} notOk=${counts.notOk} hits=${counts.hits}"
                         )
-                        assert(
-                            bug.get() == 0,
-                            s"shared driver wedged on nio: ${bug.get()} driver-closed hits (total=${total.get()} notOk=${notOk.get()})"
-                        )
+                        assert(counts.hits == 0, s"shared driver wedged on nio: ${counts.hits} driver-closed hits ($counts)")
+                        assert(liveResult == Result.Success("pong"), s"shared pooled client wedged after churn: got $liveResult")
                     end for
                 }
         end match
@@ -278,16 +294,17 @@ class HttpServerResilienceTest extends BaseHttpTest:
     // ---- HTTP request cancellation / pool integrity / handler failure (fibers) -------------------------------------
 
     "in-flight request cancellation stays contained; the shared client survives" - eachBackend { (transport, _) =>
-        // Many concurrent requests to a never-responding endpoint, each cancelled by a short firing timeout. The
+        // Many concurrent requests to a never-responding endpoint, each cancelled once the handler holds it. The
         // cancellations must not break the shared pooled client: a healthy request afterward still round-trips.
         for
-            server <- startServer(transport, ping, slow)
+            entered <- Channel.init[Unit](32)
+            server  <- startServer(transport, ping, slow(entered))
             base = s"http://localhost:${server.port}"
-            _ <- Async.foreach(0 until 32, 16) { _ =>
-                Abort.run[Any](Async.timeout(30.millis)(HttpClient.getText(s"$base/slow"))).unit
-            }
-            body <- HttpClient.getText(s"$base/ping")
-            _    <- server.closeNow
+            requests <- Kyo.fill(32)(Fiber.initUnscoped(Abort.run[Any](HttpClient.getText(s"$base/slow"))))
+            _        <- Kyo.foreachDiscard(1 to 32)(_ => entered.take)
+            _        <- Kyo.foreachDiscard(requests)(_.interrupt.unit)
+            body     <- HttpClient.getText(s"$base/ping")
+            _        <- server.closeNow
         yield assert(body == "pong")
     }
 
@@ -295,12 +312,14 @@ class HttpServerResilienceTest extends BaseHttpTest:
         // Interleave a cancelled slow request with a healthy ping on the SAME pooled client. If a cancelled request left
         // undrained bytes on a pooled connection, the next reuse would read them as the ping's status line and fail.
         for
-            server <- startServer(transport, ping, slow)
+            entered <- Channel.init[Unit](1)
+            server  <- startServer(transport, ping, slow(entered))
             base = s"http://localhost:${server.port}"
             _ <- Loop(0) { i =>
                 if i >= 20 then Loop.done(())
                 else
-                    Abort.run[Any](Async.timeout(30.millis)(HttpClient.getText(s"$base/slow")))
+                    Fiber.initUnscoped(Abort.run[Any](HttpClient.getText(s"$base/slow")))
+                        .map(request => entered.take.andThen(request.interrupt))
                         .andThen(HttpClient.getText(s"$base/ping"))
                         .map(b => assert(b == "pong", s"pooled reuse after a cancelled request returned '$b', not 'pong'"))
                         .andThen(Loop.continue(i + 1))
