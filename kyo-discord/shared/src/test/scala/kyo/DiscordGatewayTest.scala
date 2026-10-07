@@ -64,9 +64,11 @@ class DiscordGatewayTest extends kyo.test.Test[Any]:
     // --- Heartbeats ---
 
     "the first heartbeat goes out within one interval with the last sequence, and an acknowledged one keeps the connection" in {
+        // The jitter is pinned inside the interval: one advance of a whole interval must fire the first beat but not the next, which a
+        // jitter under a millisecond would also fire, before the ack.
         withGateway { gw =>
             Clock.withTimeControl { control =>
-                connected(gw) { (conn, discord) =>
+                Random.let(fixedJitter(0.5))(connected(gw) { (conn, discord) =>
                     for
                         _     <- control.advance(1000.millis)
                         first <- conn.next
@@ -79,7 +81,32 @@ class DiscordGatewayTest extends kyo.test.Test[Any]:
                         second    <- conn.next
                         _         <- Discord.close(discord)
                     yield assert((first, requested, second) == (heartbeat(1), heartbeat(2), heartbeat(2)))
-                }
+                })
+            }
+        }
+    }
+
+    "a first heartbeat due at once goes out before any time passes, and an acknowledged one keeps the connection" in {
+        withGateway { gw =>
+            Clock.withTimeControl { control =>
+                Random.let(fixedJitter(0.0))(connected(gw) { (conn, discord) =>
+                    for
+                        // Due at once, the beat goes out before Ready, so it carries no sequence yet.
+                        first <- conn.next
+                        _     <- conn.send(ack)
+                        // The answer to op 1 is read after the ack, so the ack has landed before the interval elapses.
+                        _         <- conn.send("""{"op":1,"d":null}""")
+                        requested <- conn.next
+                        _         <- control.advance(1000.millis)
+                        second    <- conn.next
+                        _         <- Discord.close(discord)
+                    yield
+                        val noSequence = Json.decode[Structure.Value]("""{"op":1,"d":null}""").getOrThrow
+                        assert(
+                            (first, requested, second) == (noSequence, heartbeat(1), heartbeat(1)),
+                            s"got: ${Json.encode(first)}, ${Json.encode(requested)}, ${Json.encode(second)}"
+                        )
+                })
             }
         }
     }
@@ -115,6 +142,29 @@ class DiscordGatewayTest extends kyo.test.Test[Any]:
                 conn.send("""{"op":1,"d":null}""").andThen(conn.next).map { beat =>
                     Discord.close(discord).andThen(assert(beat == heartbeat(1)))
                 }
+            }
+        }
+    }
+
+    "a first heartbeat due at once still follows the Identify" in {
+        // A jitter of 0 makes the first heartbeat due the moment Hello arrives, so the second frame is that heartbeat. When the two raced,
+        // the heartbeat went first in 11 to 14 of 200 handshakes, so 200 fresh clients make a reordering all but certain to show.
+        withGateway { gw =>
+            Kyo.foreach(Chunk.range(0, 200)) { _ =>
+                Fiber.initUnscoped(Random.let(fixedJitter(0.0))(Discord.initUnscoped(gw.config))).map { initFiber =>
+                    for
+                        conn    <- gw.nextConnection
+                        _       <- conn.send(hello(1000))
+                        first   <- conn.next
+                        second  <- conn.next
+                        _       <- conn.send(ready(1, "S1", gw.resumeUrl))
+                        discord <- initFiber.get
+                        _       <- Discord.close(discord)
+                    yield (field(first, "op"), field(second, "op"))
+                }
+            }.map { ops =>
+                val inOrder = (Present(Structure.Value.Integer(2)), Present(Structure.Value.Integer(1)))
+                assert(ops == Chunk.fill(200)(inOrder), s"out of order: ${ops.filterNot(_ == inOrder).size} of 200, ops: $ops")
             }
         }
     }
@@ -456,6 +506,11 @@ object DiscordGatewayTest:
         )
 
     def heartbeat(seq: Long)(using Frame): Structure.Value = Json.decode[Structure.Value](s"""{"op":1,"d":$seq}""").getOrThrow
+
+    /** A `Random` whose every double is `value`: the first heartbeat's jitter, pinned. */
+    def fixedJitter(value: Double): Random =
+        Random(Random.Unsafe(new java.util.Random:
+            override def nextDouble(): Double = value))
 
     def gatewayBot(url: String, remaining: Int = 999): String =
         s"""{"url":"$url","shards":1,"session_start_limit":{"total":1000,"remaining":$remaining,"reset_after":3600000,"max_concurrency":1}}"""

@@ -68,7 +68,7 @@ class MysqlTlsIntegrationTest extends SqlContainerTest:
             )
         )
 
-    "MySQL TLS, InitTlsExchange, caching_sha2, and sequential queries".tagged("kyo.OwnContainer") in {
+    "MySQL TLS, InitTlsExchange, caching_sha2, and sequential queries".tagged(OwnContainer.name) in {
         Scope.run {
             withTlsContainer { details =>
                 // ── Assertion 1: InitTlsExchange + handshake, isAlive=true after TLS upgrade ──

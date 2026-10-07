@@ -44,9 +44,15 @@ set -uo pipefail
 # Between Native test batches the runner sweeps leftover containers and pins the
 # per-module test-worker count; both are hygiene, neither can change a verdict.
 #
+# Before the tests run, fixture-images.sh provides the container images the selected modules start,
+# from the selection the run already computed: the primary compile-main pass writes it on JVM, JS
+# and Wasm, and the plan is it on Native. A job whose selection holds none of those modules builds
+# and pulls nothing; a full run selects every module and so provides every image.
+#
 # Reads CI, GITHUB_ACTIONS, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
 # NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX,
-# JS_TEST_BATCH, WASM_TEST_BATCH, and CONTAINER_SWEEP from the environment; mutates none of them except
+# JS_TEST_BATCH, WASM_TEST_BATCH, CONTAINER_SWEEP, CONTAINER_FIXTURES, and FIXTURE_IMAGES_SCRIPT
+# from the environment; mutates none of them except
 # JAVA_OPTS, which gains the sbt server switches below (the nativeLink invocations also append
 # -XX:ActiveProcessorCount when NATIVE_LINK_CPUS is set). The
 # caller (a CI workflow, or build.sh --env podman-ci) owns the environment, so
@@ -155,7 +161,7 @@ if [ "${1:-}" = "--self-test" ]; then
     # Run the real runner under the fake sbt. Sets CT_EXIT (the runner exit
     # code) and leaves the recorded calls in CALLS and the runner's own output in
     # OUT for the assertion. Trailing VAR=value pairs enter the runner's
-    # environment. CONTAINER_SWEEP=0 by default so a case that does not opt in
+    # environment. CONTAINER_SWEEP=0 and CONTAINER_FIXTURES=0 by default so a case that does not opt in
     # can never touch a real runtime on a developer machine, and GITHUB_ACTIONS
     # empty so the session a case runs in does not depend on where the self-test
     # itself runs.
@@ -164,7 +170,7 @@ if [ "${1:-}" = "--self-test" ]; then
         : > "$CALLS"; : > "$HEAP"; : > "$OUT"; : > "$PODCALLS"
         make_fake_sbt "$body"
         env PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 RESOLVE_BACKOFF=0 \
-            CONTAINER_SWEEP=0 SBT_HEAP_MEMORY_MB=16384 GITHUB_ACTIONS= "$@" \
+            CONTAINER_SWEEP=0 CONTAINER_FIXTURES=0 SBT_HEAP_MEMORY_MB=16384 GITHUB_ACTIONS= "$@" \
             "$SELF" "$platform" "$action" > "$OUT" 2>&1
         CT_EXIT=$?
     }
@@ -297,6 +303,50 @@ if [ "${1:-}" = "--self-test" ]; then
     if calls_count 6 && call_nth_is 6 "$H_RUN testKyo --scala 3 --modules m1Wasm Wasm" && exit_is 1
     then record ok "a failed JS/Wasm batch stops the run before the next batch and the cross pass"
     else record no "a failed JS/Wasm batch stops the run before the next batch and the cross pass"; fi
+
+    # 5d. Container images: the primary compile-main pass writes the selection, and fixture-images.sh
+    # receives it after compile-test and before the run. A recorder stands in for the script, writing
+    # into the call log so the order is asserted with the sbt calls; its exit code is $1.
+    make_fake_fixtures() {
+        printf '#!/usr/bin/env bash\nprintf "fixtures %%s\\n" "$(tr "\\n" " " < "$1")" >> "%s"\nexit %s\n' "$CALLS" "$1" \
+            > "$SELFDIR/fixtures"
+    }
+    make_fake_fixtures 0
+    FAKE_PLAN="kyo-dataJVM kyo-teamsJVM"
+    run_runner_env 'exit 0' JVM testDiff CONTAINER_FIXTURES=1 FIXTURE_IMAGES_SCRIPT="$SELFDIR/fixtures"
+    if calls_count 6 \
+       && call_nth_has 1 "testKyo --phase compile-main --scala 3 --plan-file " \
+       && call_nth_is 2 "$H_COMPILE testKyo --phase compile-main --cross JVM" \
+       && call_nth_is 3 "$H_COMPILE testKyo --phase compile-test --scala 3 JVM" \
+       && call_nth_is 5 "fixtures kyo-dataJVM kyo-teamsJVM " \
+       && call_nth_is 6 "$H_TESTJVM testKyo  JVM" && exit_is 0
+    then record ok "the compile-main selection reaches fixture-images.sh before the run"
+    else record no "the compile-main selection reaches fixture-images.sh before the run"; fi
+
+    # 5e. A failed fixture step does not fail the run; the leaves whose image is missing do, by name.
+    make_fake_fixtures 1
+    run_runner_env 'exit 0' JVM test CONTAINER_FIXTURES=1 FIXTURE_IMAGES_SCRIPT="$SELFDIR/fixtures"
+    if calls_count 6 && call_nth_is 6 "$H_TESTJVM testKyo --all JVM" && out_has "fixture-images.sh exited 1" && exit_is 0
+    then record ok "a failed fixture step does not fail the run"
+    else record no "a failed fixture step does not fail the run"; fi
+
+    # 5f. compile asks for no selection and provides no images.
+    make_fake_fixtures 0
+    run_runner_env 'exit 0' JVM compile CONTAINER_FIXTURES=1 FIXTURE_IMAGES_SCRIPT="$SELFDIR/fixtures"
+    if calls_count 4 && calls_lack "--plan-file" && calls_lack "fixtures" && exit_is 0
+    then record ok "compile asks for no selection and provides no images"
+    else record no "compile asks for no selection and provides no images"; fi
+
+    # 5g. Native provides from its plan, after the link pool and before the first test batch.
+    FAKE_PLAN="kyo-dataNative kyo-slackNative"
+    run_runner_env "$PASS_BODY" Native test CONTAINER_FIXTURES=1 FIXTURE_IMAGES_SCRIPT="$SELFDIR/fixtures"
+    if call_nth_has 1 "testKyo --dry-run --plan-file " \
+       && call_nth_is 2 "$H_LINK testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-slackNative Native" \
+       && call_nth_is 3 "fixtures kyo-dataNative kyo-slackNative " \
+       && call_nth_is 4 "$H_RUN testKyo --scala 3 --modules kyo-dataNative,kyo-slackNative Native" && exit_is 0
+    then record ok "Native provides from its plan between the link pool and the tests"
+    else record no "Native provides from its plan between the link pool and the tests"; fi
+    rm -f "$SELFDIR/fixtures"
     FAKE_PLAN="kyo-dataNative kyo-preludeNative"
 
     # 6. Native plans first, then links the plan in batches, before any test process, and never links
@@ -681,7 +731,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     # 54. Every sbt the runner starts tolerates a failed boot socket and starts no server.
     run_runner JVM test "$PASS_BODY"
     if [ "$(wc -l < "$CALLS" | tr -d ' ')" -gt 0 ] \
-       && [ "$(grep -cF -- '-Dsbt.server.forcestart=true -Dsbt.server.autostart=false' "$HEAP")" -eq "$(wc -l < "$CALLS" | tr -d ' ')" ] \
+       && [ "$(grep -cF -- '-Dsbt.ipcsocket.jni=true -Dsbt.server.forcestart=true -Dsbt.server.autostart=false' "$HEAP")" -eq "$(wc -l < "$CALLS" | tr -d ' ')" ] \
        && exit_is 0
     then record ok "every sbt gets the boot socket and server switches"
     else record no "every sbt gets the boot socket and server switches"; fi
@@ -717,6 +767,36 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     then record ok "outside Actions the build stays in the caller's session"
     else record no "outside Actions the build stays in the caller's session"; fi
 
+    # 57-59: a JVM that prints HotSpot's fatal-error header and then neither exits nor goes quiet is killed once
+    # FATAL_GRACE has passed, so the run fails instead of waiting out the job limit. The stand-ins are real JVMs, so the
+    # pid in the header is one the OS knows (a shell's $$ under Git Bash is not a Windows pid). Stuck keeps printing,
+    # so the stale-output watchdog never fires and only the fatal guard can end it; Gone exits like a forked test JVM
+    # that crashed.
+    printf '%s\n' 'public class Stuck { public static void main(String[] a) throws Exception {' \
+        '  System.out.println("#  EXCEPTION_HEAP_CORRUPTION (0xc0000374) at pc=0x00007ffb33102c78, pid=" + ProcessHandle.current().pid() + ", tid=1");' \
+        '  while (true) { System.out.println("handler"); Thread.sleep(200); } } }' > "$SELFDIR/Stuck.java"
+    printf '%s\n' 'public class Gone { public static void main(String[] a) {' \
+        '  System.out.println("#  SIGSEGV (0xb) at pc=0x0000000000000000, pid=" + ProcessHandle.current().pid() + ", tid=1"); } }' \
+        > "$SELFDIR/Gone.java"
+    STUCK_JVM="exec java \"$SELFDIR/Stuck.java\""
+    started=$SECONDS
+    run_runner_env "$STUCK_JVM" JVM test FATAL_GRACE=1
+    if ! exit_is 0 && calls_count 1 && out_has "hit a fatal error" && out_has "killing it" && [ $((SECONDS - started)) -lt 60 ]
+    then record ok "a JVM stuck after its fatal error is killed and fails the run"
+    else record no "a JVM stuck after its fatal error is killed and fails the run"; fi
+
+    FAKE_PLAN="kyo-dataNative"
+    started=$SECONDS
+    run_runner_env 'if [[ "$*" == *"--phase link"* ]]; then exit 0; fi; '"$STUCK_JVM" Native test FATAL_GRACE=1 STALE_TIMEOUT=600
+    if exit_is 1 && out_has "killing it" && out_has "FAILED: test batch kyo-dataNative" && [ $((SECONDS - started)) -lt 120 ]
+    then record ok "a Native test batch stuck after its fatal error is killed and fails the run"
+    else record no "a Native test batch stuck after its fatal error is killed and fails the run"; fi
+
+    run_runner_env "java \"$SELFDIR/Gone.java\"; sleep 3; exit 0" JVM compile FATAL_GRACE=1
+    if exit_is 0 && calls_count 4 && out_has "hit a fatal error" && out_lacks "killing it"
+    then record ok "a JVM that exited after its fatal error is left alone"
+    else record no "a JVM that exited after its fatal error is left alone"; fi
+
     # Negative control: a deliberately wrong expectation MUST flip FAIL,
     # proving the harness is not vacuous. Not counted in the scenario total.
     run_runner JVM test 'exit 0'
@@ -724,7 +804,12 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 63 ]
+    # The pinned count catches a case that stops running without failing; a new case raises it.
+    EXPECTED_TOTAL=70
+    if [ "$TOTAL" -ne "$EXPECTED_TOTAL" ]; then
+        echo "ran $TOTAL cases, expected $EXPECTED_TOTAL: a case stopped running, or a new one needs EXPECTED_TOTAL raised"
+    fi
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq "$EXPECTED_TOTAL" ]
     exit $?
 fi
 
@@ -770,11 +855,16 @@ POLL_INTERVAL=${POLL_INTERVAL:-10}
 RESOLVE_BACKOFF=${RESOLVE_BACKOFF:-20}
 
 # sbt's boot socket and server exist for clients attaching to a running sbt (`sbt --client`, BSP), which
-# this runner never has. On Windows each is a named pipe whose ACL ipcsocket 1.8.0 builds from a SID held
-# in memory the GC may already have freed (Win32SecurityLibrary.getOwnerSID and getLogonSID), so creating
-# one fails intermittently with ERROR_INVALID_ACL (1336), and sbt exits 2 when the boot socket fails.
-# forcestart lets sbt continue without the boot socket; autostart=false never creates the server.
-export JAVA_OPTS="${JAVA_OPTS:-} -Dsbt.server.forcestart=true -Dsbt.server.autostart=false"
+# this runner never has. On Windows each is a named pipe whose ACL ipcsocket 1.8.0's JNA path builds from a
+# SID held in memory the GC may already have freed (Win32SecurityLibrary.getOwnerSID and getLogonSID). The
+# freed SID either makes the ACL invalid, so CreateNamedPipe fails with ERROR_INVALID_ACL (1336), or corrupts
+# the native heap, which on windows-arm64 killed the sbt driver with EXCEPTION_HEAP_CORRUPTION (0xc0000374)
+# about 5s into its start. sbt 1.13.0 creates the boot socket on every start and has no switch to skip it.
+# ipcsocket.jni selects ipcsocket's JNI provider, which builds the pipe in native code: on windows-x64 its
+# library ships and the ACL never touches the freed SID; on windows-arm64 none ships, the load fails with
+# UnsatisfiedLinkError and sbt starts without the boot socket. forcestart lets sbt continue past any other
+# boot socket failure; autostart=false never creates the server.
+export JAVA_OPTS="${JAVA_OPTS:-} -Dsbt.ipcsocket.jni=true -Dsbt.server.forcestart=true -Dsbt.server.autostart=false"
 
 # Space-separated module names (e.g. "kyo-schema-tests", which links every serialization format
 # into one binary) whose SOLO native-link optimize peak needs an isolated, fresh-heap sbt driver.
@@ -825,6 +915,69 @@ WASM_TEST_BATCH="${WASM_TEST_BATCH:-}"
 
 log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 
+# A JVM that dies on a native fault prints HotSpot's fatal-error header, writes hs_err_pid<pid>.log and is meant to
+# exit. On windows-arm64 a heap corruption (0xc0000374) leaves it in its error handler instead: a native double free
+# there was still alive 400s later, with -XX:-CreateCoredumpOnCrash and -XX:ErrorLogTimeout=15 as well, and a CI job
+# whose sbt driver crashed this way idled until the 4h job limit. So the runner kills the JVM the header names once
+# FATAL_GRACE has passed. The grace outlasts the default 120s ErrorLogTimeout, so the report is as complete as it
+# will get; the workflow's failure-only step prints it.
+FATAL_GRACE=${FATAL_GRACE:-150}
+
+# jvm_running <pid>: whether <pid> is still a java process, so a pid another program reused after the JVM exited on its
+# own is left alone.
+jvm_running() {
+    case "$(uname -s)" in
+        MINGW* | MSYS* | CYGWIN*)
+            tasklist //FI "PID eq $1" //FI "IMAGENAME eq java.exe" 2> /dev/null | grep -q "java.exe"
+            ;;
+        *)
+            local name
+            name=$(ps -p "$1" -o comm= 2> /dev/null)
+            [ "${name##*/}" = java ]
+            ;;
+    esac
+}
+
+kill_jvm() {
+    case "$(uname -s)" in
+        MINGW* | MSYS* | CYGWIN*) taskkill //F //T //PID "$1" //FI "IMAGENAME eq java.exe" > /dev/null 2>&1 ;;
+        *) kill -KILL "$1" 2> /dev/null ;;
+    esac
+}
+
+# fatal_guard <log>: for each JVM a fatal-error header in <log> names, waits FATAL_GRACE and kills it if still running.
+fatal_guard() {
+    local file="$1" handled=" " pid
+    while :; do
+        sleep "$POLL_INTERVAL"
+        for pid in $(grep -a -oE '^#  [A-Z_]+ \(0x[0-9a-fA-F]+\) at pc=0x[0-9a-fA-F]+, pid=[0-9]+' "$file" 2> /dev/null | sed -E 's/.*pid=//'); do
+            case "$handled" in *" $pid "*) continue ;; esac
+            handled="$handled$pid "
+            log "JVM $pid hit a fatal error; its hs_err_pid$pid.log is in its working directory"
+            sleep "$FATAL_GRACE"
+            # Logged before the kill: once the JVM dies the run's pipeline ends and this guard is stopped with it.
+            if jvm_running "$pid"; then
+                log "JVM $pid is still running ${FATAL_GRACE}s after its fatal error: killing it"
+                kill_jvm "$pid"
+            fi
+        done
+    done
+}
+
+# sbt_tee <log> <sbt args...>: one sbt run, streamed and copied into <log> under fatal_guard; returns sbt's exit code.
+sbt_tee() {
+    local file="$1" guard rc
+    shift
+    : > "$file"
+    fatal_guard "$file" &
+    guard=$!
+    sbt "$@" 2>&1 | tee "$file"
+    rc=${PIPESTATUS[0]}
+    kill "$guard" 2> /dev/null
+    wait "$guard" 2> /dev/null
+    return "$rc"
+}
+
 # A transient Maven Central error (403/429/5xx) during resolution fails an sbt phase before any build
 # output. Retry with backoff on that signature; a real compile error or unresolvable version carries no
 # such marker (or reproduces every attempt) and still fails. tee keeps output streaming for the console
@@ -836,8 +989,8 @@ sbt_resolve_retry() {
     heap=$(sbt_heap "$1") || return 2; shift
     tmp="$(mktemp)"
     while :; do
-        sbt "$heap" "$@" 2>&1 | tee "$tmp"
-        rc=${PIPESTATUS[0]}
+        sbt_tee "$tmp" "$heap" "$@"
+        rc=$?
         if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
         if [ "$attempt" -lt "$MAX_RETRIES" ] &&
             grep -qE 'Error downloading|[Ff]orbidden: https?://|Server returned HTTP response code: (403|429|50[0-9])|download error' "$tmp"; then
@@ -864,8 +1017,8 @@ sbt_run_resolve_retry() {
     heap=$(sbt_heap "$1") || return 2; shift
     tmp="$(mktemp)"
     while :; do
-        sbt "$heap" "$@" 2>&1 | tee "$tmp"
-        rc=${PIPESTATUS[0]}
+        sbt_tee "$tmp" "$heap" "$@"
+        rc=$?
         if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
         if [ "$attempt" -lt "$MAX_RETRIES" ] &&
             grep -q 'sbt\.librarymanagement\.ResolveException' "$tmp" &&
@@ -913,8 +1066,36 @@ run_role() {
 # at ++2.13), so the cross passes start from a fresh process. compile_phase <phase> [flags...]
 compile_phase() {
     local phase="$1"; shift
-    sbt_resolve_retry compile "$(native_cmd "testKyo --phase $phase --scala 3" "$@" "$PLATFORM")" || return $?
+    local plan=""; [ "$phase" = compile-main ] && plan=$(fixture_plan_flag)
+    sbt_resolve_retry compile "$(native_cmd "testKyo --phase $phase --scala 3" "$@" "$plan" "$PLATFORM")" || return $?
     sbt_resolve_retry compile "$(native_cmd "testKyo --phase $phase --cross" "$@" "$PLATFORM")" || return $?
+}
+
+# The images the selected modules' tests start, written by the primary compile-main pass. Only that
+# pass writes it: the cross pass selects the Scala 2.x modules, whose tests start no container.
+FIXTURE_PLAN="${RUNNER_TEMP:-/tmp}/kyo-fixture-plan.$$"
+
+# The --plan-file flag for the primary compile-main pass of a run that tests; empty when the
+# action only compiles or links, or when CONTAINER_FIXTURES=0 (the self-test, or a local run that
+# provides its images itself).
+fixture_plan_flag() {
+    [ "${CONTAINER_FIXTURES:-1}" = "0" ] && return 0
+    case "$ACTION" in
+        test | testDiff) printf '%s' "--plan-file $FIXTURE_PLAN" ;;
+    esac
+}
+
+# Provides the container images the selection in $1 needs. Never fails the run: a missing image
+# fails the leaves that start it, with the command that provides it, and every other suite still runs.
+provide_fixtures() {
+    [ "${CONTAINER_FIXTURES:-1}" = "0" ] && return 0
+    local script="${FIXTURE_IMAGES_SCRIPT:-$(cd "$(dirname "$0")" && pwd)/fixture-images.sh}"
+    if [ ! -f "$1" ]; then
+        log "no selection at $1; providing no container images"
+        return 0
+    fi
+    log "providing container images for the selected modules"
+    bash "$script" "$1" || log "fixture-images.sh exited $?; the leaves whose image is missing will say so"
 }
 
 # -- JVM / JS / Wasm: three-process phase-split, fail-fast --
@@ -933,6 +1114,8 @@ run_phase_split() {
         *)
             compile_phase compile-main "$arg" || return $?
             compile_phase compile-test "$arg" || return $?
+            provide_fixtures "$FIXTURE_PLAN"
+            rm -f "$FIXTURE_PLAN"
             local size; size=$(run_test_batch_size)
             if [ -z "$size" ] || [ "$size" = 0 ]; then
                 sbt_run_resolve_retry "$(run_role)" "testKyo $arg $PLATFORM" || return $?
@@ -1125,6 +1308,7 @@ run_watched() {
             sbt "${cmd[@]}" >> "$LOG" 2>&1 &
         fi
         sbt_pid=$!
+        fatal_guard "$LOG" & guard_pid=$!
         tail -f "$LOG" 2>/dev/null & tail_pid=$!
         last_size=$(file_size "$LOG"); stale_seconds=0
         while kill -0 "$sbt_pid" 2>/dev/null; do
@@ -1144,6 +1328,7 @@ run_watched() {
             fi
         done
         wait "$sbt_pid" 2>/dev/null; exit_code=$?
+        kill "$guard_pid" 2>/dev/null; wait "$guard_pid" 2>/dev/null
         kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null; tail_pid=""
         if [ "$exit_code" -eq 0 ]; then log "$label passed"; return 0; fi
         check_log; rc=$?
@@ -1258,6 +1443,8 @@ run_native() {
     if [ "$ACTION" = "link" ]; then
         log "link complete"; return 0
     fi
+
+    provide_fixtures "$PLAN"
 
     LOG=$(mktemp)
     for batch in $(plan_batches "$NATIVE_TEST_BATCH"); do

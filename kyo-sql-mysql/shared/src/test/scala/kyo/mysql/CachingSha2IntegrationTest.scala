@@ -65,7 +65,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── caching_sha2 fast-path (warm cache) ───────────────────────────────────
 
-    "HandshakeExchange caching_sha2 fast-path (cache hit), second connection uses fast path".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange caching_sha2 fast-path (cache hit), second connection uses fast path".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
                 Scope.run {
@@ -88,7 +88,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── caching_sha2 full-auth via RSA (no TLS, fresh container) ─────────────
 
-    "HandshakeExchange caching_sha2 full-auth via RSA (no TLS), fresh container triggers full-auth path".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange caching_sha2 full-auth via RSA (no TLS), fresh container triggers full-auth path".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
                 Scope.run {
@@ -106,7 +106,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── wrong password raises SqlConnectionException ─────────────────────────
 
-    "HandshakeExchange caching_sha2 wrong password raises SqlConnectionException".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange caching_sha2 wrong password raises SqlConnectionException".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
                 Abort.run[SqlException](
@@ -126,7 +126,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── caching_sha2 full-auth populates cache for next connection ────────────
 
-    "HandshakeExchange caching_sha2 full-auth updates cache, second connect uses fast-path".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange caching_sha2 full-auth updates cache, second connect uses fast-path".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
                 Scope.run {
@@ -146,7 +146,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── Test: sequential queries succeed over caching_sha2 connection ─────────
 
-    "caching_sha2 connection supports sequential queries after auth".tagged("kyo.OwnContainer") in {
+    "caching_sha2 connection supports sequential queries after auth".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
                 Scope.run {
@@ -177,7 +177,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── fallback to native_password via AuthSwitchRequest ─────────────────────
 
-    "HandshakeExchange fallback to native_password via AuthSwitchRequest, native_password container".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange fallback to native_password via AuthSwitchRequest, native_password container".tagged(OwnContainer.name) in {
         Scope.run {
             // This test uses a native_password container and verifies AuthSwitchRequest handling still works.
             val nativePredef = ContainerPredef.MySQL.Config.default
@@ -205,7 +205,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── Test: isAlive returns true after caching_sha2 handshake ───────────────
 
-    "caching_sha2 connection isOpen returns true after successful handshake".tagged("kyo.OwnContainer") in {
+    "caching_sha2 connection isOpen returns true after successful handshake".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
                 Scope.run {
@@ -219,7 +219,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── Test: ping works over caching_sha2 connection ────────────────────────
 
-    "caching_sha2 connection supports COM_PING after auth".tagged("kyo.OwnContainer") in {
+    "caching_sha2 connection supports COM_PING after auth".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
                 Scope.run {
@@ -233,7 +233,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── Test: CREATE + INSERT + SELECT works over caching_sha2 ───────────────
 
-    "caching_sha2 connection supports DDL and DML end-to-end".tagged("kyo.OwnContainer") in {
+    "caching_sha2 connection supports DDL and DML end-to-end".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
                 Scope.run {
@@ -265,7 +265,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── AuthSwitchRequest to caching_sha2 from initial plugin ────────────────
 
-    "HandshakeExchange AuthSwitchRequest to caching_sha2_password, handled by switch handler".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange AuthSwitchRequest to caching_sha2_password, handled by switch handler".tagged(OwnContainer.name) in {
         // When server is configured with caching_sha2_password and client sends an initial native_password response,
         // the server issues AuthSwitchRequest to caching_sha2_password. Our handler re-runs fast-path with the new scramble.
         // This scenario is tested with the caching_sha2_password container.

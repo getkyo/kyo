@@ -1,0 +1,6 @@
+# Microsoft publishes the 365 Agents Playground as an npm package, not an image. A CI run that selects kyo-teams builds this before
+# its tests, so a leaf starting the Playground does not reach the npm registry. The package version is also the tag's version in
+# scripts/fixture-images.sh.
+# node:22, the multi-architecture index, so linux/amd64 and linux/arm64 runners resolve the same pinned image.
+FROM docker.io/library/node@sha256:363e1587494626837fa7f9a23bdb453d13b0ff3c67c705c2805cfc69c2d2fad7
+RUN npm install --global --no-audit --no-fund @microsoft/m365agentsplayground@0.2.28

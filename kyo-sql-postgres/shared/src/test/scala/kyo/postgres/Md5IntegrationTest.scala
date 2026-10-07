@@ -44,7 +44,7 @@ class Md5IntegrationTest extends SqlContainerTest:
         }
     end initWithMd5
 
-    "StartupExchange succeeds with MD5 server, connect completes without error".tagged("kyo.OwnContainer") in {
+    "StartupExchange succeeds with MD5 server, connect completes without error".tagged(OwnContainer.name) in {
         Scope.run {
             initWithMd5() { pg =>
                 initMd5Client(pg).flatMap { client =>
@@ -54,7 +54,7 @@ class Md5IntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange MD5 wrong password raises SqlConnectionAuthenticationFailedException".tagged("kyo.OwnContainer") in {
+    "StartupExchange MD5 wrong password raises SqlConnectionAuthenticationFailedException".tagged(OwnContainer.name) in {
         Scope.run {
             initWithMd5(ContainerPredef.Postgres.Config.default.password("correctmd5pw")) { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
@@ -78,7 +78,7 @@ class Md5IntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange MD5 SELECT 1 returns correct result after MD5 authentication".tagged("kyo.OwnContainer") in {
+    "StartupExchange MD5 SELECT 1 returns correct result after MD5 authentication".tagged(OwnContainer.name) in {
         Scope.run {
             initWithMd5() { pg =>
                 initMd5Client(pg).flatMap { client =>

@@ -120,7 +120,7 @@ private[kyo] object Graph:
                     case _                                              => (Kind.ConnectionClosed, Absent, Absent)
             case _: HttpProtocolException             => (Kind.Protocol, Absent, Absent)
             case _: HttpMalformedBodyException        => (Kind.Protocol, Absent, Absent)
-            case e: HttpPayloadTooLargeException      => (Kind.PayloadTooLarge(e.bodySize.bytes, e.maxSize.bytes), Absent, Absent)
+            case e: HttpPayloadTooLargeException      => (Kind.PayloadTooLarge(e.bodySize, e.maxSize), Absent, Absent)
             case _: HttpUrlParseException             => unreachable("HttpUrlParseException")
             case _: HttpNonAsciiException             => unreachable("HttpNonAsciiException")
             case _: HttpInvalidFieldException         => unreachable("HttpInvalidFieldException")
@@ -138,6 +138,9 @@ private[kyo] object Graph:
             case _: HttpUnsupportedMediaTypeException => unreachable("HttpUnsupportedMediaTypeException")
             case _: HttpStreamingDecodeException      => unreachable("HttpStreamingDecodeException")
             case _: HttpMissingBoundaryException      => unreachable("HttpMissingBoundaryException")
+            case _: HttpCookieException               => unreachable("HttpCookieException")
+            case _: HttpRouteException                => unreachable("HttpRouteException")
+            case _: HttpInvalidStatusException        => unreachable("HttpInvalidStatusException")
         end match
     end describe
 

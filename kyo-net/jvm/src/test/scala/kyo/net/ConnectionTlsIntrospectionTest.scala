@@ -7,9 +7,10 @@ import java.security.cert.CertificateFactory
 import kyo.*
 
 /** JVM-provider-specific Connection.serverCertificateHash introspection (RFC 5929 tls-server-end-point). The cross-backend contract (Present
-  * with the 32-byte golden leaf-cert SHA-256, idempotent, Absent after close, none for a plaintext connection) lives in the shared
-  * TransportTlsIntrospectionTest; this suite keeps the JVM-specific coverage the shared self-signed fixture cannot give: the live SHA-256 of a
-  * keytool-generated cert's DER, and a multi-cert chain proving the leaf (not the CA) is hashed.
+  * with the golden leaf-cert hash, idempotent, Absent after close, none for a plaintext connection) lives in the shared
+  * TransportTlsIntrospectionTest; this suite keeps the JVM-specific coverage the shared fixtures cannot give: the live hash of a
+  * keytool-generated cert's DER, and a multi-cert chain proving the leaf (not the CA) is hashed. keytool picks the signature algorithm
+  * (SHA384withRSA for a 2048-bit RSA key on JDK 25), so the expected hash is derived from the certificate's own `getSigAlgName`.
   *
   * Each test spins up a TLS echo server using Transport.listen-with-TLS and connects via Transport.connect-with-TLS, then
   * inspects the hash returned by serverCertificateHash on the client side.
@@ -297,8 +298,20 @@ ${enc.encodeToString(caDer)}
         f
     end writePem
 
-    private def sha256(bytes: Array[Byte]): Array[Byte] =
-        MessageDigest.getInstance("SHA-256").digest(bytes)
+    /** RFC 5929 section 4.1, read through the JDK rather than kyo-net: the certificate DER hashed with its signature algorithm's hash, or
+      * SHA-256 when that is MD5 or SHA-1.
+      */
+    private def endPointHash(der: Array[Byte]): Array[Byte] =
+        val cert = CertificateFactory.getInstance("X.509").generateCertificate(new java.io.ByteArrayInputStream(der))
+            .asInstanceOf[java.security.cert.X509Certificate]
+        val sigAlg = cert.getSigAlgName.toUpperCase(java.util.Locale.ROOT)
+        val digest =
+            if sigAlg.startsWith("SHA224") then "SHA-224"
+            else if sigAlg.startsWith("SHA384") then "SHA-384"
+            else if sigAlg.startsWith("SHA512") then "SHA-512"
+            else "SHA-256"
+        MessageDigest.getInstance(digest).digest(der)
+    end endPointHash
 
     /** Spin up a TLS echo server, connect with TLS, run body with the client connection. */
     private def withTlsConnection[A](serverTls: NetTlsConfig, clientTls: NetTlsConfig)(
@@ -326,11 +339,11 @@ ${enc.encodeToString(caDer)}
         end for
     end withTlsConnection
 
-    // hash equals SHA-256 of the test cert DER bytes
+    // hash equals the RFC 5929 hash of the test cert DER bytes
 
-    "hash equals SHA-256 of the test cert DER bytes" in {
+    "hash equals the RFC 5929 hash of the test cert DER bytes" in {
         val (serverTls, clientTls, leafDer) = selfSignedFixture
-        val expectedHash                    = sha256(leafDer)
+        val expectedHash                    = endPointHash(leafDer)
         withTlsConnection(serverTls, clientTls) { conn =>
             conn.serverCertificateHash match
                 case Absent =>
@@ -349,7 +362,7 @@ ${enc.encodeToString(caDer)}
     "client cert not relevant, only server's cert is hashed" in {
         val (serverTls, _, leafDer) = selfSignedFixture
         val clientTlsNoAuth         = NetTlsConfig(trustAll = true)
-        val expectedHash            = sha256(leafDer)
+        val expectedHash            = endPointHash(leafDer)
         withTlsConnection(serverTls, clientTlsNoAuth) { conn =>
             conn.serverCertificateHash match
                 case Absent =>
@@ -367,8 +380,8 @@ ${enc.encodeToString(caDer)}
 
     "hash returns leaf cert (not intermediate or root) when server presents a chain" in {
         val (serverTls, clientTls, leafDer, caDer) = chainFixture
-        val expectedLeafHash                       = sha256(leafDer)
-        val caHash                                 = sha256(caDer)
+        val expectedLeafHash                       = endPointHash(leafDer)
+        val caHash                                 = endPointHash(caDer)
         withTlsConnection(serverTls, clientTls) { conn =>
             conn.serverCertificateHash match
                 case Absent =>

@@ -261,7 +261,7 @@ class WhatsAppLiveTest extends BaseWhatsAppTest:
       */
     private def interactive[R](v: Live => R < (Async & Abort[WhatsAppException | Closed | Setup] & Env[WhatsApp] & Scope))(using
         Frame
-    ): R < (Async & Abort[WhatsAppException | Closed | Setup | HttpBindException] & Scope) =
+    ): R < (Async & Abort[WhatsAppException | Closed | Setup | HttpBindException | HttpRouteException] & Scope) =
         real.map {
             case Present(t) =>
                 System.env[String]("KYO_WHATSAPP_INTERACTIVE").map {
@@ -308,7 +308,7 @@ class WhatsAppLiveTest extends BaseWhatsAppTest:
         start: HttpServer => Target < (Async & Scope & Abort[Setup])
     )(v: Live => R < (Async & Abort[WhatsAppException | Closed | Setup] & Env[WhatsApp] & Scope))(using
         Frame
-    ): R < (Async & Abort[WhatsAppException | Closed | Setup | HttpBindException] & Scope) =
+    ): R < (Async & Abort[WhatsAppException | Closed | Setup | HttpBindException | HttpRouteException] & Scope) =
         Channel.init[WhatsAppNotification](1024).map { notifications =>
             WhatsApp.run(handlerClient) {
                 WhatsApp.Webhook.handler[Closed](webhook)(notifications.put(_)).map { handler =>

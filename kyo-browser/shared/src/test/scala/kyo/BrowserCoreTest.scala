@@ -889,7 +889,7 @@ class BrowserCoreTest extends BrowserTest:
 
     "run launches browser and returns URL" in {
         Scope.run {
-            SharedChrome.chromeConfig.map { cfg =>
+            SharedChrome.chromeConfig().map { cfg =>
                 Browser.run(cfg) {
                     Browser.url.map { u =>
                         assert(u == "about:blank")
@@ -899,13 +899,13 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    // End-to-end: the Chrome build's downloader actually fetches a different artifact (`chrome-{platform}.zip`,
-    // ~190 MB, full UI-capable binary) and points the LaunchConfig at the correct executable, including the
-    // macOS `.app` bundle's nested binary path. Boots Chrome via CDP to prove the resolved binary actually runs.
-    // First call downloads (~tens of seconds on cold CI); subsequent calls reuse the per-platform cache.
-    "chromeForTestingLaunchConfig(Chrome) downloads + launches the full chrome binary" in {
+    // End-to-end: the Chrome build resolves a different artifact (`chrome-{platform}.zip`, ~190 MB, full UI-capable
+    // binary) and points the LaunchConfig at the correct executable, including the macOS `.app` bundle's nested binary
+    // path. Boots Chrome via CDP to prove the resolved binary actually runs. CI installs this artifact before tests run;
+    // elsewhere the first call downloads it.
+    "chromeForTestingLaunchConfig(Chrome) resolves + launches the full chrome binary" in {
         Scope.run {
-            Browser.chromeForTestingLaunchConfig(Browser.ChromeForTestingBuild.Chrome).map { cfg =>
+            SharedChrome.chromeConfig(Browser.ChromeForTestingBuild.Chrome).map { cfg =>
                 assert(
                     !cfg.executable.contains("chrome-headless-shell"),
                     s"expected full chrome path but got headless-shell-derived: ${cfg.executable}"
@@ -977,7 +977,7 @@ class BrowserCoreTest extends BrowserTest:
       */
     private def withHtmlServer[A, S](routes: Map[String, String])(f: (String, Int) => A < (Browser & S))(using
         Frame
-    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException] & Async & S) =
+    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException | HttpRouteException] & Async & S) =
         val handlers = routes.toSeq.map { case (path, body) =>
             val bytes = Span.fromUnsafe(body.getBytes("UTF-8"))
             // Register both GET and POST so any browser-initiated request method is served.
@@ -994,7 +994,7 @@ class BrowserCoreTest extends BrowserTest:
     /** Server with a `/404` handler that always returns 404 for the nav-failure tests. */
     private def withStatusServer[A, S](f: (String, Int) => A < (Browser & S))(using
         Frame
-    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException] & Async & S) =
+    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException | HttpRouteException] & Async & S) =
         val body404 = Span.fromUnsafe("<html><body>not found</body></html>".getBytes("UTF-8"))
         val handler = HttpRoute.getRaw("/404").response(_.bodyBinary).handler { _ =>
             HttpResponse(HttpStatus.NotFound)
@@ -1852,7 +1852,7 @@ class BrowserCoreTest extends BrowserTest:
 
     "Browser.run composes a setup hook with a body that consumes its result via setup.map(body)" in {
         Scope.run {
-            kyo.internal.SharedChrome.chromeConfig.map { cfg =>
+            kyo.internal.SharedChrome.chromeConfig().map { cfg =>
                 val setup =
                     Browser.goto(page("<div id='marker'>setup-saw-tab</div>")).andThen {
                         Browser.text(Browser.Selector.id("marker"))

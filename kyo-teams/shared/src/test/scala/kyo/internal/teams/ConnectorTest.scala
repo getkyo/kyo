@@ -101,14 +101,13 @@ class ConnectorTest extends kyo.test.Test[Any]:
         assert(Connector.redact(Chunk(secret, ""), s"x $secret y ${ServiceUrls.encode(secret)} z") == "x <redacted> y <redacted> z")
     }
 
-    "a response bound is held as given and narrowed only at the request config: zero to 1 byte, past Int.MaxValue to Int.MaxValue" in {
+    "a response bound is held as given and reaches the request config unchanged, for kyo-http to narrow" in {
         val appId  = Teams.AppId.init("00001111-aaaa-2222-bbbb-3333cccc4444").getOrThrow
         val secret = TeamsConfig.Credential.Secret(Teams.ClientSecret.init(Chunk("conTEST", "~secret.", "Part_9").mkString).getOrThrow)
         val sizes  = Chunk(0.bytes, 1.bytes, 4.mib, Int.MaxValue.bytes, (Int.MaxValue.toLong + 1).bytes)
         val held   = sizes.map(size => TeamsConfig.init(appId, secret, maxResponseLength = size, keysMaxResponseLength = size).getOrThrow)
         assert(held.map(c => (c.maxResponseLength, c.keysMaxResponseLength)) == sizes.map(size => (size, size)))
-        assert(held.map(c => Connector.requestConfig(c, c.requestTimeout).maxResponseLength) ==
-            Chunk(1, 1, 4 * 1024 * 1024, Int.MaxValue, Int.MaxValue))
+        assert(held.map(c => Connector.requestConfig(c, c.requestTimeout).maxResponseLength) == sizes)
     }
 
 end ConnectorTest

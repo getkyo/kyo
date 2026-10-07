@@ -3,6 +3,7 @@ package kyo
 import java.util.concurrent.ConcurrentHashMap
 import kyo.Tag.internal.Type.Entry.*
 import kyo.internal.Platform
+import kyo.internal.SafePublish
 import kyo.internal.TagHash
 import kyo.internal.TagMacro
 import kyo.internal.XXHash
@@ -328,15 +329,21 @@ object Tag extends kyo.internal.TagPlatformSpecific:
             if Platform.isJS then 1
             else Runtime.getRuntime().availableProcessors() * 8
 
-        final private case class Comparison(a: Tag[Any], b: Tag[Any], mode: Mode, result: Boolean):
+        @SafePublish final private case class Comparison @noinline() (a: Tag[Any], b: Tag[Any], mode: Mode, result: Boolean):
             def matches(a: Tag[Any], b: Tag[Any], mode: Mode): Boolean = (a eq this.a) && (b eq this.b) && mode == this.mode
 
         /** Recent `checkTypes` results for one thread slot, keyed by the compared tags' identity and the mode.
           *
           * Hashes choose the set; they never authorize reuse. Each entry holds one immutable comparison, so a racing
           * replacement can cost a reader its hit but cannot hand it one pair's result under another pair's identity.
-          * The entry's fields are final, which is what lets unsynchronized entries carry it: a reader that observes
-          * the reference at all observes it fully constructed, and a reader that observes a stale one simply misses.
+          *
+          * Threads whose hashes pick the same cache share it, and the entries are plain, so an entry is safe to publish only
+          * because its fields are final and the JVM orders a final field's construction before any read of it. Scala Native
+          * orders only fields marked `@safePublish`, so `Comparison` carries that annotation: without it, an arm64 reader
+          * could follow the new reference into memory still holding the object that occupied it before, and fail its type
+          * test or read another comparison's result. Scala Native emits the annotation's release fence at the
+          * constructor's return and drops it when the optimizer inlines the constructor, so the constructor is
+          * `@noinline`.
           */
         final private[kyo] class ComparisonCache(sets: Int):
             // Two entries per set: a set keeps its two most recently used comparisons. With one, two hot comparisons whose hashes
@@ -376,7 +383,9 @@ object Tag extends kyo.internal.TagPlatformSpecific:
             end put
         end ComparisonCache
 
-        private val comparisonCaches: Array[ComparisonCache] = Array.fill(threadSlots)(ComparisonCache(64))
+        private[kyo] val comparisonCaches: Array[ComparisonCache] = Array.fill(threadSlots)(ComparisonCache(64))
+
+        private[kyo] def cacheSlot(thread: Thread): Int = thread.hashCode & (threadSlots - 1)
 
         private def dynamicHashCode(tag: String, map: Map[Entry.Id, Any]): Int =
             val builder = new java.lang.StringBuilder(tag)
@@ -400,7 +409,7 @@ object Tag extends kyo.internal.TagPlatformSpecific:
             case Subtype  extends Mode(37)
 
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
-            val cache = comparisonCaches(Thread.currentThread().hashCode & (threadSlots - 1))
+            val cache = comparisonCaches(cacheSlot(Thread.currentThread()))
             val set   = cache.set(a.erased, b.erased, mode)
             cache.get(set, a.erased, b.erased, mode) match
                 case Present(cached) => cached

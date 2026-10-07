@@ -61,7 +61,7 @@ class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
       * `ProcessHandle.info().arguments()` reads them back.
       */
     private def configWithTag(tag: String)(using Frame): Browser.LaunchConfig < (Async & Abort[BrowserSetupException]) =
-        Browser.chromeForTestingLaunchConfig().map { base =>
+        SharedChrome.chromeConfig().map { base =>
             base.copy(extraArgs = Chunk(s"--user-agent=$tag"))
         }
 

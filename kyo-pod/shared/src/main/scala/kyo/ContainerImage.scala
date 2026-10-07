@@ -206,7 +206,9 @@ object ContainerImage:
             currentBackend.map(_.imagePullWithProgress(image, platform, auth).emit)
         }
 
-    /** Pull an image only if it is not already present locally. */
+    /** Pull an image only if it is not already present locally. With a `platform`, a local copy for another OS or architecture counts
+      * as absent, and that platform's copy is pulled.
+      */
     def ensure(
         image: ContainerImage,
         platform: Maybe[Container.Platform] = Absent,

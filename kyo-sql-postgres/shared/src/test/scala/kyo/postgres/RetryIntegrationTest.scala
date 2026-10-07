@@ -54,7 +54,7 @@ class RetryIntegrationTest extends SqlContainerTest:
       * postgres process, new connections succeed at the kernel TCP level but the server never responds to startup, which is the
       * `acquireTimeout`-bounded `pgConnect` path the retry chain has to bridge.
       */
-    "Container.pause then unpause mid-query: Retry bridges the downtime and produces >= 1 retry".tagged("kyo.OwnContainer") in {
+    "Container.pause then unpause mid-query: Retry bridges the downtime and produces >= 1 retry".tagged(OwnContainer.name) in {
         Scope.run {
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
             // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test

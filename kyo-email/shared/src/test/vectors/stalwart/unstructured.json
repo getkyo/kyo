@@ -1,0 +1,122 @@
+[
+  {
+    "header": "Saying Hello\n",
+    "expected": "Saying Hello"
+  },
+  {
+    "header": "Re: Saying Hello\r\n",
+    "expected": "Re: Saying Hello"
+  },
+  {
+    "header": " Fwd: \n\tSaying \n Hello\r\n",
+    "expected": "Fwd: Saying Hello"
+  },
+  {
+    "header": " FWD: \n Saying Hello \nX-Mailer: 123\r\n",
+    "expected": "FWD: Saying Hello"
+  },
+  {
+    "header": " from x.y.test\n      by example.net\n      via TCP\n      with ESMTP\n      id ABC12345\n      for <mary@example.net>;  21 Nov 1997 10:05:43 -0600\n",
+    "expected": "from x.y.test by example.net via TCP with ESMTP id ABC12345 for <mary@example.net>;  21 Nov 1997 10:05:43 -0600"
+  },
+  {
+    "header": "=?iso-8859-1?q?this is some text?=\n",
+    "expected": "this is some text"
+  },
+  {
+    "header": "=?iso-8859-1?q?this=20is=20some=20text?=\r\n",
+    "expected": "this is some text"
+  },
+  {
+    "header": " =?ISO-8859-1?B?SWYgeW91IGNhbiByZWFkIHRoaXMgeW8=?=\n     =?ISO-8859-2?B?dSB1bmRlcnN0YW5kIHRoZSBleGFtcGxlLg==?=\n",
+    "expected": "If you can read this you understand the example."
+  },
+  {
+    "header": " =?ISO-8859-1?Q?a?=\n",
+    "expected": "a"
+  },
+  {
+    "header": "=?ISO-8859-1?Q?a?= =?ISO-8859-1?Q?b?=\n",
+    "expected": "ab"
+  },
+  {
+    "header": "=?ISO-8859-1?Q?a?=  =?ISO-8859-1?Q?b?=\n",
+    "expected": "ab"
+  },
+  {
+    "header": "=?ISO-8859-1?Q?a?=\r\n    =?ISO-8859-1?Q?b?=\nFrom: unknown@domain.com\n",
+    "expected": "ab"
+  },
+  {
+    "header": "=?ISO-8859-1?Q?a_b?=\n",
+    "expected": "a b"
+  },
+  {
+    "header": "=?ISO-8859-1?Q?a?= =?ISO-8859-2?Q?_b?=\r\n",
+    "expected": "a b"
+  },
+  {
+    "header": " this =?iso-8859-1?q?is?= some =?iso-8859-1?q?t?=\n =?iso-8859-1?q?e?= \n =?iso-8859-1?q?x?=\n =?iso-8859-1?q?t?=\n",
+    "expected": "this is some text"
+  },
+  {
+    "header": " =\n",
+    "expected": "="
+  },
+  {
+    "header": " =? \n",
+    "expected": "=?"
+  },
+  {
+    "header": "=?utf-8 \n",
+    "expected": "=?utf-8"
+  },
+  {
+    "header": "=?utf-8? \n",
+    "expected": "=?utf-8?"
+  },
+  {
+    "header": " let's = try =?iso-8859-1? to break\n =? the \n parser\n",
+    "expected": "let's = try =?iso-8859-1? to break =? the parser"
+  },
+  {
+    "header": "ハロー・ワールド \n",
+    "expected": "ハロー・ワールド"
+  },
+  {
+    "header": "[SUSPECTED SPAM]=?utf-8?B?VGhpcyBpcyB0aGUgb3JpZ2luYWwgc3ViamVjdA==?=\n",
+    "expected": "[SUSPECTED SPAM] This is the original subject"
+  },
+  {
+    "header": "Some text =?utf-8?Q??=here\n",
+    "expected": "Some text  here"
+  },
+  {
+    "header": "=?ISO-8859-1?Q?a?==?ISO-8859-1?Q?b?==?ISO-8859-1?Q?c?= =?ISO-8859-1?Q?d?=\n",
+    "expected": "abcd"
+  },
+  {
+    "header": "=?utf-8?Q?Hello\n _there!?=\n",
+    "expected": "Hello there!"
+  },
+  {
+    "header": "=?utf-8?Q?Hello\r\n _there!?=\r\n",
+    "expected": "Hello there!"
+  },
+  {
+    "header": "=?utf-8?Q?Hello\r\n   \t  _there!?=\r\n",
+    "expected": "Hello there!"
+  },
+  {
+    "header": "[SUSPECTED SPAM]=?utf-8?B?VGhpcyBpcyB0aGUgb\n 3JpZ2luYWwgc3ViamVjdA==?=\n",
+    "expected": "[SUSPECTED SPAM] This is the original subject"
+  },
+  {
+    "header": "[SUSPECTED SPAM]=?utf-8?B?VGhpcyBpcyB0aGUgb\r\n 3JpZ2luYWwgc3ViamVjdA==?=\r\n",
+    "expected": "[SUSPECTED SPAM] This is the original subject"
+  },
+  {
+    "header": "Les Communs - =?utf-8?Q?R=C3=A9capitulatif?= de la\r\n =?utf-8?Q?r=C3=A9servation?= 13510164434879\r\n",
+    "expected": "Les Communs - Récapitulatif de la réservation 13510164434879"
+  }
+]

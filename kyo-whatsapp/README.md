@@ -76,7 +76,7 @@ val tuned: WhatsAppConfig < Abort[WhatsAppInvalidTokenException | WhatsAppInvali
     yield config
 ```
 
-`WhatsAppConfig.init` fails with `WhatsAppInvalidConfigException` naming the setting the module cannot use: a base URL that is not an absolute `http` or `https` URL on a host in printable ASCII, or that has userinfo, a query or a trailing slash; an `apiVersion` other than `v`, digits, a dot and digits; a `phoneNumberId` other than ASCII digits; a zero or infinite timeout or `retryMaxDelay`. `maxResponseLength` is never refused: kyo-http holds the bound as an `Int`, so a zero bound becomes one byte and one past `Int.MaxValue` becomes `Int.MaxValue`. A config has no `copy`, so a changed one goes through `init` and is checked again.
+`WhatsAppConfig.init` fails with `WhatsAppInvalidConfigException` naming the setting the module cannot use: a base URL that is not an absolute `http` or `https` URL on a host in printable ASCII, or that has userinfo, a query or a trailing slash; an `apiVersion` other than `v`, digits, a dot and digits; a `phoneNumberId` other than ASCII digits; a zero or infinite timeout or `retryMaxDelay`. `maxResponseLength` is never refused: kyo-http narrows it where it reads a body, so a zero bound becomes one byte and one past `Int.MaxValue` becomes `Int.MaxValue`. A config has no `copy`, so a changed one goes through `init` and is checked again.
 
 ```scala
 assert(

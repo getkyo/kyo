@@ -195,9 +195,7 @@ private[kyo] object BotApi:
     // --- Transport ---
 
     /** The whole kyo-http configuration of a request that carries the token; nothing is inherited from the caller. TLS and
-      * transport come from `TelegramConfig`, never from the caller's kyo-http configuration. Every value meets kyo-http's own
-      * requirements, so building it never throws: `TelegramConfig.init` admits only positive, finite timeouts, and the response
-      * length is narrowed by kyo-core's buffer rule.
+      * transport come from `TelegramConfig`, never from the caller's kyo-http configuration.
       */
     private[kyo] def requestConfig(config: TelegramConfig, timeout: Duration): HttpClientConfig =
         HttpClientConfig(
@@ -211,7 +209,7 @@ private[kyo] object BotApi:
             retryOn = _.isServerError,
             transportConfig = config.transport,
             tls = config.tls,
-            maxResponseLength = readBufferCapacity(config.maxResponseLength),
+            maxResponseLength = config.maxResponseLength,
             autoFilters = false,
             clientFilter = HttpFilter.noop
         )
@@ -261,12 +259,12 @@ private[kyo] object BotApi:
                         Present((Kind.ConnectionClosed, Absent, Absent))
             case _: HttpProtocolException        => Present((Kind.Protocol, Absent, Absent))
             case _: HttpMalformedBodyException   => Present((Kind.Protocol, Absent, Absent))
-            case e: HttpPayloadTooLargeException => Present((Kind.PayloadTooLarge(e.bodySize.bytes, e.maxSize.bytes), Absent, Absent))
+            case e: HttpPayloadTooLargeException => Present((Kind.PayloadTooLarge(e.bodySize, e.maxSize), Absent, Absent))
             case _: (HttpUrlParseException | HttpNonAsciiException | HttpInvalidFieldException | HttpWebSocketHandshakeException |
                     HttpUnixConnectException | HttpRedirectLoopException | HttpStatusException | HttpBindException | HttpHandlerException |
                     HttpFieldDecodeException | HttpPathDecodeException | HttpMissingFieldException |
                     HttpJsonDecodeException | HttpFormDecodeException | HttpUnsupportedMediaTypeException | HttpStreamingDecodeException |
-                    HttpMissingBoundaryException) => Absent
+                    HttpMissingBoundaryException | HttpCookieException | HttpRouteException | HttpInvalidStatusException) => Absent
         end match
     end describe
 

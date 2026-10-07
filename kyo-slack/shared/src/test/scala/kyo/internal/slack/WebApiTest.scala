@@ -867,7 +867,7 @@ class WebApiTest extends kyo.test.Test[Any]:
                     HttpTimeoutException(5.seconds, "POST", url)                         -> (Kind.Timeout, Present(5.seconds), Absent),
                     HttpMalformedBodyException("bad chunk")                              -> (Kind.Protocol, Absent, Absent),
                     HttpProtocolException("bad status line")                             -> (Kind.Protocol, Absent, Absent),
-                    HttpPayloadTooLargeException(10, 5) -> (Kind.PayloadTooLarge(10.bytes, 5.bytes), Absent, Absent),
+                    HttpPayloadTooLargeException(10.bytes, 5.bytes) -> (Kind.PayloadTooLarge(10.bytes, 5.bytes), Absent, Absent),
                     HttpConnectionClosedException(HttpConnectionClosedException.Phase.BeforeHead) ->
                         (Kind.ConnectionClosed, Absent, Absent),
                     HttpConnectionClosedException(HttpConnectionClosedException.Phase.BodyTruncated) ->
@@ -940,7 +940,22 @@ class WebApiTest extends kyo.test.Test[Any]:
         }
     }
 
-    /** Runs `call` against a raw listener that reads the request, writes `reply` (possibly nothing) and closes, and returns the
+    /** Reads `conn` until it holds a whole request: its head and the `Content-Length` bytes of body after it. */
+    private def readRequest(conn: kyo.net.Connection)(using Frame): Unit < (Async & Abort[Closed]) =
+        Loop("") { received =>
+            val headEnd  = received.indexOf("\r\n\r\n")
+            val complete = headEnd >= 0 && {
+                val bodyLength = received.substring(0, headEnd).split("\r\n").collectFirst {
+                    case line if line.toLowerCase.startsWith("content-length:") => line.drop("content-length:".length).trim.toInt
+                }.getOrElse(0)
+                received.length >= headEnd + 4 + bodyLength
+            }
+            if complete then Loop.done(())
+            else conn.inbound.safe.take.map(chunk => Loop.continue(received + new String(chunk.toArray, "ISO-8859-1")))
+        }
+    end readRequest
+
+    /** Runs `call` against a raw listener that reads the whole request, writes `reply` (possibly nothing) and closes, and returns the
       * listener's port with the call's result. kyo-http's `HttpServer` always completes a response, so only a raw listener closes
       * before the head or while the declared body is still owed.
       */
@@ -952,8 +967,10 @@ class WebApiTest extends kyo.test.Test[Any]:
         val accepted  = Promise.Unsafe.init[kyo.net.Connection, Any]()
         val listening = kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16)(conn => accepted.completeDiscard(Result.succeed(conn)))
         listening.safe.get.map { listener =>
+            // The whole request is read before the close: a close with request bytes still unread sends a reset rather than a FIN,
+            // and Windows discards whatever of the reply the client has not read yet.
             val peer = accepted.safe.get.map { conn =>
-                Abort.run[Closed](conn.inbound.safe.take.andThen(
+                Abort.run[Closed](readRequest(conn).andThen(
                     if reply.isEmpty then Kyo.unit else conn.outbound.safe.put(Utf8.encode(reply))
                 )).andThen(Sync.Unsafe.defer(conn.close()))
             }

@@ -23,8 +23,8 @@ trait Task {
 
     /** Whether the BlockingMonitor should dispatch Thread.interrupt() for this task.
       *
-      * Defaults to false — plain tasks are never interrupted. IOTask overrides this to derive interruption from its own promise state, the
-      * single source of truth for fiber interruption.
+      * Defaults to false: plain tasks are never interrupted. IOTask overrides this to answer whether its fiber holds an interrupt it has
+      * not yet released.
       */
     def needsInterrupt(): Boolean = false
 

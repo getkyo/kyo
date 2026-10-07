@@ -38,7 +38,7 @@ class WhatsAppTest extends BaseWhatsAppTest:
 
     def withSendServer[A, S](responseBody: String, statusOk: Boolean = true)(
         test: (Int, Channel[Tuple3[String, String, String]]) => A < S
-    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         Channel.init[Tuple3[String, String, String]](1).map { captured =>
             val route = HttpRoute.postRaw("v25.0" / phoneId.value / "messages")
                 .request(_.bodyBinary)
@@ -58,7 +58,7 @@ class WhatsAppTest extends BaseWhatsAppTest:
     /** A Graph server answering every send with `sendOkBody`, and the number of sends it received. */
     def withCountingServer[A, S](test: (Int, AtomicInt) => A < S)(using
         Frame
-    ): A < (S & Async & Scope & Abort[HttpBindException]) =
+    ): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         AtomicInt.init(0).map { hits =>
             val route = HttpRoute.postRaw("v25.0" / phoneId.value / "messages").response(_.bodyText)
                 .handler(_ => hits.incrementAndGet.andThen(HttpResponse.ok(sendOkBody)))
@@ -470,16 +470,33 @@ class WhatsAppTest extends BaseWhatsAppTest:
         }
     }
 
-    /** Sends against a raw listener that reads the request, writes `reply` (possibly nothing), and closes the connection. */
+    /** Whether `received` holds a whole request: its head and the `Content-Length` bytes of body after it. */
+    def requestComplete(received: String): Boolean =
+        val headEnd = received.indexOf("\r\n\r\n")
+        headEnd >= 0 && {
+            val bodyLength = received.substring(0, headEnd).split("\r\n").collectFirst {
+                case line if line.toLowerCase.startsWith("content-length:") => line.drop("content-length:".length).trim.toInt
+            }.getOrElse(0)
+            received.length >= headEnd + 4 + bodyLength
+        }
+    end requestComplete
+
+    /** Sends against a raw listener that reads the whole request, writes `reply` (possibly nothing), and closes the connection. */
     def sendAgainstClosingServer(reply: String)(using Frame) =
         // Unsafe: kyo-http's HttpServer always completes a response, so a raw transport listener is the only way to close the socket
         // before the response or while the declared body is still owed.
         Sync.Unsafe.defer {
             val accepted  = Promise.Unsafe.init[kyo.net.Connection, Any]()
             val listening = kyo.net.NetPlatform.transport.listen("localhost", 0, 16)(conn => accepted.completeDiscard(Result.succeed(conn)))
-            val peer      = accepted.safe.get.map { conn =>
+            // The whole request is read before the close: a close with request bytes still unread sends a reset rather than a FIN, and
+            // Windows discards whatever of the reply the client has not read yet when the reset arrives, so a large reply would surface
+            // as a closed connection instead of the outcome the leaf asserts.
+            val peer = accepted.safe.get.map { conn =>
                 Abort.run[Closed](
-                    conn.inbound.safe.take.andThen(
+                    Loop("") { received =>
+                        if requestComplete(received) then Loop.done(())
+                        else conn.inbound.safe.take.map(chunk => Loop.continue(received + new String(chunk.toArray, "ISO-8859-1")))
+                    }.andThen(
                         if reply.isEmpty then Kyo.unit else conn.outbound.safe.put(utf8(reply))
                     )
                 ).andThen(Sync.Unsafe.defer(conn.close()))
@@ -533,11 +550,16 @@ class WhatsAppTest extends BaseWhatsAppTest:
     }
 
     "a response head larger than kyo-http's header limit is WhatsAppTransportException of kind Protocol" in {
-        sendAgainstClosingServer(s"HTTP/1.1 200 OK\r\nX-Pad: ${"a" * (HttpTransportConfig.default.maxHeaderSize + 1)}\r\n\r\n").map {
+        sendAgainstClosingServer(
+            s"HTTP/1.1 200 OK\r\nX-Pad: ${"a" * (HttpTransportConfig.default.maxHeaderSize.toBytes.toInt + 1)}\r\n\r\n"
+        ).map {
             (port, result) =>
-                assert(result == Result.fail(
-                    WhatsAppTransportException("send", WhatsAppTransportException.Kind.Protocol, "localhost", port, Absent)()
-                ))
+                assert(
+                    result == Result.fail(
+                        WhatsAppTransportException("send", WhatsAppTransportException.Kind.Protocol, "localhost", port, Absent)()
+                    ),
+                    s"got: $result"
+                )
         }
     }
 

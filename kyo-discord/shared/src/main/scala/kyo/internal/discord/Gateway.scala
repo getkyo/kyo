@@ -76,7 +76,7 @@ private[kyo] object Gateway:
     end run
 
     // Discord sends no frame near this size: a `GUILD_CREATE` for a guild at the member limit is the largest, a few MiB.
-    private inline val MaxFrameSize = 16 * 1024 * 1024
+    private val MaxFrameSize: ByteSize = 16.mib
 
     private def connection[A](
         discord: Discord,
@@ -102,6 +102,9 @@ private[kyo] object Gateway:
                     case Absent            => closedOutcome(ws, zombie, shared, config, secrets)
                     case Present(interval) =>
                         for
+                            // The start frame goes out before the heartbeat fiber exists: a jitter under a millisecond makes the first
+                            // beat due at once, and Identify or Resume must still be the first frame after Hello.
+                            _          <- send(startFrame(config, start))
                             jitter     <- Random.nextDouble
                             first      <- timer((interval.toMillis * jitter).toLong.millis)
                             heartbeats <- Fiber.initUnscoped(first.get.andThen(Loop.foreach {
@@ -113,7 +116,6 @@ private[kyo] object Gateway:
                                 }
                             }))
                             _       <- Scope.ensure(heartbeats.interrupt.unit)
-                            _       <- send(startFrame(config, start))
                             outcome <- read(ws, shared, deliver, healthy, beat, acked, zombie, config, secrets)
                         yield outcome
                 }
