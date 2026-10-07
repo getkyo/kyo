@@ -16,6 +16,9 @@ import kyo.*
   */
 final private[kyo] class Session private (
     val events: Channel[Gateway.Delivery],
+    // The take of `events` a receive has in flight. It outlives the receive that started it, so the event it is handed goes to the
+    // next receive rather than being dropped with an interrupted take.
+    val pendingTake: AtomicRef[Maybe[Fiber[Gateway.Delivery, Abort[Closed]]]],
     val ended: Fiber.Promise[Unit, Abort[Gateway.Failure]],
     shared: Gateway.Shared,
     fiber: Fiber[Any, Sync]
@@ -90,7 +93,8 @@ private[kyo] object Session:
                     case Result.Panic(t)   => Result.panic(t)
                 ready.completeDiscard(outcome).andThen(ended.completeDiscard(outcome)).andThen(events.close.unit)
             })
-            session = new Session(events, ended, shared, fiber)
+            pendingTake <- AtomicRef.init(Maybe.empty[Fiber[Gateway.Delivery, Abort[Closed]]])
+            session = new Session(events, pendingTake, ended, shared, fiber)
             opened <- Abort.run[Gateway.Failure](ready.get)
             _      <- if opened.isSuccess then Kyo.unit else session.close
         yield Abort.get(opened).andThen(session)

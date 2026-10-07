@@ -8,8 +8,9 @@ import kyo.*
   * The reader never waits on the handler: control frames are handled in place and dispatches go to the session's queue, so a slow
   * consumer cannot hold back the heartbeat acknowledgements behind them and make a live connection look dead.
   *
-  * Every timer is armed before the frame that makes it observable is sent: the first heartbeat's before Identify, each next one's
-  * before the heartbeat. A test that saw the frame can then advance the clock past the timer.
+  * Every timer is armed before the frame that makes it observable: the first heartbeat's before the reader takes any frame after
+  * Hello, so before Ready, and each next one's before the heartbeat. A test that saw the frame can then advance the clock past the
+  * timer.
   */
 private[kyo] object Gateway:
 
@@ -101,23 +102,31 @@ private[kyo] object Gateway:
                 outcome <- helloInterval(ws).map {
                     case Absent            => closedOutcome(ws, zombie, shared, config, secrets)
                     case Present(interval) =>
+                        // A heartbeat round: the next timer is armed before the beat goes out, and `Absent` once the connection is closed.
+                        val round: Maybe[Fiber[Unit, Any]] < Async =
+                            acked.getAndSet(false).map { wasAcked =>
+                                // "If a client does not receive a heartbeat ACK between its attempts at sending heartbeats", the
+                                // connection is zombied; 4900 keeps the session resumable, where 1000 and 1001 would end it.
+                                if !wasAcked then zombie.set(true).andThen(ws.close(4900, "")).andThen(Maybe.empty[Fiber[Unit, Any]])
+                                else timer(interval).map(next => beat.andThen(Maybe(next)))
+                            }
                         for
-                            // The start frame goes out before the heartbeat fiber exists: a jitter under a millisecond makes the first
-                            // beat due at once, and Identify or Resume must still be the first frame after Hello.
-                            _          <- send(startFrame(config, start))
-                            jitter     <- Random.nextDouble
-                            first      <- timer((interval.toMillis * jitter).toLong.millis)
-                            heartbeats <- Fiber.initUnscoped(first.get.andThen(Loop.foreach {
-                                acked.getAndSet(false).map { wasAcked =>
-                                    // "If a client does not receive a heartbeat ACK between its attempts at sending heartbeats", the
-                                    // connection is zombied; 4900 keeps the session resumable, where 1000 and 1001 would end it.
-                                    if !wasAcked then zombie.set(true).andThen(ws.close(4900, "")).andThen(Loop.done(()))
-                                    else timer(interval).map(next => beat.andThen(next.get)).andThen(Loop.continue)
-                                }
-                            }))
+                            // The start frame goes out before any heartbeat: a jitter under a millisecond makes the first beat due at
+                            // once, and Identify or Resume must still be the first frame after Hello.
+                            _      <- send(startFrame(config, start))
+                            jitter <- Random.nextDouble
+                            delay = (interval.toMillis * jitter).toLong.millis
+                            // A beat due at once goes out on this fiber, before the reader starts: sent from the heartbeat fiber, it
+                            // would carry whatever sequence the reader had taken by the time that fiber ran.
+                            pending    <- if delay <= Duration.Zero then round else timer(delay).map(Maybe(_))
+                            heartbeats <- Fiber.initUnscoped(Loop(pending) {
+                                case Present(due) => due.get.andThen(round).map(Loop.continue(_))
+                                case Absent       => Loop.done(())
+                            })
                             _       <- Scope.ensure(heartbeats.interrupt.unit)
                             outcome <- read(ws, shared, deliver, healthy, beat, acked, zombie, config, secrets)
                         yield outcome
+                        end for
                 }
                 close <- ws.closeReason
                 next  <- ended(outcome, close)

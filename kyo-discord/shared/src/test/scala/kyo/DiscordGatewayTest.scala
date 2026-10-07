@@ -147,8 +147,8 @@ class DiscordGatewayTest extends kyo.test.Test[Any]:
     }
 
     "a first heartbeat due at once still follows the Identify" in {
-        // A jitter of 0 makes the first heartbeat due the moment Hello arrives, so the second frame is that heartbeat. When the two raced,
-        // the heartbeat went first in 11 to 14 of 200 handshakes, so 200 fresh clients make a reordering all but certain to show.
+        // A jitter of 0 makes the first heartbeat due the moment Hello arrives, so the second frame is that heartbeat. A client that races
+        // the two sends the heartbeat first in 11 to 14 of 200 handshakes, so 200 fresh clients make a reordering all but certain to show.
         withGateway { gw =>
             Kyo.foreach(Chunk.range(0, 200)) { _ =>
                 Fiber.initUnscoped(Random.let(fixedJitter(0.0))(Discord.initUnscoped(gw.config))).map { initFiber =>
@@ -165,6 +165,29 @@ class DiscordGatewayTest extends kyo.test.Test[Any]:
             }.map { ops =>
                 val inOrder = (Present(Structure.Value.Integer(2)), Present(Structure.Value.Integer(1)))
                 assert(ops == Chunk.fill(200)(inOrder), s"out of order: ${ops.filterNot(_ == inOrder).size} of 200, ops: $ops")
+            }
+        }
+    }
+
+    "a first heartbeat due at once carries no sequence, even when Ready is already waiting to be read" in {
+        // Ready is queued behind Hello, so the reader can take its sequence without waiting; a beat due at once that is sent only once
+        // another fiber gets to run reads that sequence. The 200 fresh clients are there for the same reason as the leaf above.
+        withGateway { gw =>
+            Kyo.foreach(Chunk.range(0, 200)) { _ =>
+                Fiber.initUnscoped(Random.let(fixedJitter(0.0))(Discord.initUnscoped(gw.config))).map { initFiber =>
+                    for
+                        conn    <- gw.nextConnection
+                        _       <- conn.send(hello(1000))
+                        _       <- conn.send(ready(1, "S1", gw.resumeUrl))
+                        _       <- conn.next
+                        beat    <- conn.next
+                        discord <- initFiber.get
+                        _       <- Discord.close(discord)
+                    yield beat
+                }
+            }.map { beats =>
+                val noSequence = Json.decode[Structure.Value]("""{"op":1,"d":null}""").getOrThrow
+                assert(beats == Chunk.fill(200)(noSequence), s"with a sequence: ${beats.filterNot(_ == noSequence).size} of 200")
             }
         }
     }
@@ -441,6 +464,62 @@ class DiscordGatewayTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a handler's typed failure ends receive while further dispatches keep arriving" in {
+        // The failure lands while the loop waits on the next of the dispatches behind it. A loop that interrupts that wait can drop the
+        // failure, and receive then never ends: a race of the two takes lost it in about 1 of 5 rounds on JVM.
+        Kyo.foreach(Chunk.range(0, 30)) { _ =>
+            withGateway { gw =>
+                Fiber.initUnscoped(Abort.run[DiscordReceiveFailure | String](Discord.run(gw.config)(Discord.receive[String]([A] =>
+                    (event: Event[A]) =>
+                        event match
+                            case Event.MessageCreated(message) if message.content == "stop" => Abort.fail("stop")
+                            case other                                                      => answer[A](other)
+                )))).map { runFiber =>
+                    gw.nextConnection.map { conn =>
+                        for
+                            _ <- conn.send(hello(1000))
+                            _ <- conn.next
+                            _ <- conn.send(ready(1, "S1", gw.resumeUrl))
+                            _ <- conn.send(dispatch(2, "MESSAGE_CREATE", messageJson.replace("\"hi\"", "\"stop\"")))
+                            // Once receive ends the client closes the socket, which can refuse the rest of the burst.
+                            _ <- Abort.run[Closed](Kyo.foreachDiscard(Chunk.range(3, 60))(seq =>
+                                conn.send(dispatch(seq, "MESSAGE_CREATE", messageJson))
+                            ))
+                            result <- runFiber.get
+                        yield result
+                    }
+                }
+            }
+        }.map(results => assert(results == Chunk.fill(30)(Result.fail("stop")), s"got: $results"))
+    }
+
+    "on a held session, a dispatch that arrives after a receive ended with its handler's failure goes to the next receive" in {
+        withGateway { gw =>
+            connected(gw) { (conn, discord) =>
+                Channel.init[String](16).map { received =>
+                    val stopping = Discord.receive[String]([A] =>
+                        (event: Event[A]) =>
+                            event match
+                                case Event.MessageCreated(_) => Abort.fail("stop")
+                                case other                   => answer[A](other)
+                    )
+                    val recording = Discord.receive[Nothing]([A] => (event: Event[A]) => record(received, event).andThen(answer[A](event)))
+                    for
+                        first  <- Fiber.initUnscoped(Abort.run[DiscordReceiveFailure | String](Discord.run(discord)(stopping)))
+                        _      <- conn.send(dispatch(2, "MESSAGE_CREATE", messageJson))
+                        ended  <- first.get
+                        _      <- conn.send(dispatch(3, "TYPING_START", typingJson))
+                        second <- Fiber.initUnscoped(Discord.run(discord)(recording))
+                        event  <- received.take
+                        _      <- second.interrupt
+                        _      <- Discord.close(discord)
+                    yield assert((ended, event) == (Result.fail("stop"), "TypingStarted"))
+                    end for
+                }
+            }
+        }
+    }
+
     // --- Rate limits on REST ---
 
     "a bucket Discord said is spent refuses a call whose wait would pass requestTimeout, sending nothing" in {
@@ -574,9 +653,6 @@ object DiscordGatewayTest:
         postedCount: AtomicInt,
         logs: Channel[String]
     ):
-        /** The wait the session logged before its next reconnection. It logs once the wait's timer is armed, so advancing the clock by
-          * it after this returns always reaches the reconnection.
-          */
         /** Every line logged and not yet read. */
         def logLines(using Frame): Chunk[String] < (Sync & Abort[Closed]) = logs.drain
 
@@ -587,6 +663,9 @@ object DiscordGatewayTest:
                 else logs.take.map(line => Loop.continue(if line.contains(text) then found :+ line else found))
             }
 
+        /** The wait the session logged before its next reconnection. It logs once the wait's timer is armed, so advancing the clock by
+          * it after this returns always reaches the reconnection.
+          */
         def reconnectWait(using Frame): Duration < (Async & Abort[Any]) =
             Loop.foreach {
                 logs.take.map { line =>
@@ -681,8 +760,10 @@ object DiscordGatewayTest:
                         HttpHandler.webSocket("resume")(socket)
                     )
                 gw = Gateway(server.port, conns, opened, gatewayBotBody, lookups, channelHeaders, channelCalls, posted, postedCount, logs)
-                _      <- gw.answerGatewayBot(gatewayBot(gw.gatewayUrl))
-                result <- Log.let(Log(LogCapture(logs)))(test(gw))
+                _ <- gw.answerGatewayBot(gatewayBot(gw.gatewayUrl))
+                // A jitter under 0.001 makes the first heartbeat due at once, an extra frame a leaf that reads the socket does not expect;
+                // leaves about the first heartbeat pin their own.
+                result <- Log.let(Log(LogCapture(logs)))(Random.let(fixedJitter(0.5))(test(gw)))
             yield result
             end for
         }
