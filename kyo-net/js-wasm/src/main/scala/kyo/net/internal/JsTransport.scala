@@ -492,6 +492,9 @@ final private[kyo] class JsTransport private (
         // the exact TCP-to-handshake boundary, so the handshake deadline is armed there: `connectTimeout` bounds the TCP phase and
         // `handshakeTimeout` the handshake phase, matching the contract the other backends implement rather than conflating the two into one
         // combined bound. `Duration.Infinity` arms nothing.
+        // An error after that boundary fails the handshake, not the connect: Node reports a peer that drops mid-handshake as a bare
+        // ECONNRESET, which the code alone would classify as a TCP failure, while the other backends report a handshake failure.
+        val handshakeStarted = AtomicBoolean.Unsafe.init(false)
         if connectEvent == "secureConnect" then
             discard(socket.once(
                 "connect",
@@ -499,6 +502,7 @@ final private[kyo] class JsTransport private (
                     // The TCP phase is established: its deadline stops owning the connection, so a stall from here on is attributed to the
                     // handshake rather than reported as a connect timeout (whose own doc says no connect outcome was delivered). Runs even
                     // when handshakeTimeout is Infinity, because that is what the contract means: phase two is then unbounded by request.
+                    handshakeStarted.set(true)
                     disarmConnectDeadline()
                     if handshakeTimeout.isFinite then
                         val deadline = DeadlineTimer.arm(handshakeTimeout)
@@ -560,7 +564,10 @@ final private[kyo] class JsTransport private (
         discard(socket.once(
             "error",
             { (err: js.Dynamic) =>
-                promise.completeDiscard(Result.fail(connectError(err, host, port)))
+                val failure =
+                    if handshakeStarted.get() then NetTlsHandshakeException(host, port, errMessage(err))
+                    else connectError(err, host, port)
+                promise.completeDiscard(Result.fail(failure))
             }: js.Function1[js.Dynamic, Unit]
         ))
 
