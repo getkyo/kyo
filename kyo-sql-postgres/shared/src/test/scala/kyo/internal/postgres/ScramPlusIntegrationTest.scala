@@ -60,7 +60,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     // ── SCRAM-SHA-256-PLUS over TLS succeeds ─────────────────────────────────
 
-    "connecting to PG with SCRAM-SHA-256-PLUS over TLS succeeds".tagged("kyo.OwnContainer") in {
+    "connecting to PG with SCRAM-SHA-256-PLUS over TLS succeeds".tagged(OwnContainer.name) in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 AtomicRef.init("").flatMap { mechanismRef =>
@@ -149,7 +149,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     // ── Plaintext connect falls back to SCRAM-SHA-256 ─────────────────────────
 
-    "connecting plaintext to a PG that offers PLUS falls back to SCRAM-SHA-256".tagged("kyo.OwnContainer") in {
+    "connecting plaintext to a PG that offers PLUS falls back to SCRAM-SHA-256".tagged(OwnContainer.name) in {
         Scope.run {
             // Use a plain non-TLS Postgres container. Without TLS, no cert hash, so non-PLUS.
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
@@ -197,7 +197,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     // ── Wrong cert hash (MITM) is rejected with SQLSTATE 28000 ─────────────────
 
-    "channel binding mismatch (e.g., MITM with different cert) is rejected by the server".tagged("kyo.OwnContainer") in {
+    "channel binding mismatch (e.g., MITM with different cert) is rejected by the server".tagged(OwnContainer.name) in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 // Inject a deliberately wrong cert hash: 32 bytes of 0xAA.
@@ -249,7 +249,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     // ── Client with forced-Absent cert hash refuses PLUS ────────────────────────
 
-    "client without serverCertificateHash refuses to advertise PLUS".tagged("kyo.OwnContainer") in {
+    "client without serverCertificateHash refuses to advertise PLUS".tagged(OwnContainer.name) in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 // Force cert hash override to Absent. Even though the TLS connection has a real cert,
@@ -298,7 +298,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     // ── Client picks SCRAM-SHA-256 when cert hash absent; server accepts ──────────
 
-    "server selects SCRAM-SHA-256 over PLUS even when PLUS is offered; client honors server choice".tagged("kyo.OwnContainer") in {
+    "server selects SCRAM-SHA-256 over PLUS even when PLUS is offered; client honors server choice".tagged(OwnContainer.name) in {
         Scope.run {
             // TLS PG offers both SCRAM-SHA-256 and SCRAM-SHA-256-PLUS.
             // We connect with TLS but override cert hash to Absent, client picks non-PLUS.
@@ -350,7 +350,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
     // ── Wrong password under SCRAM-PLUS → sqlState=28P01; no state leak ─────────
 
     "wrong password under SCRAM-PLUS produces SqlConnectionAuthenticationFailedException with sqlState=28P01 and does NOT leak channel-binding state".tagged(
-        "kyo.OwnContainer"
+        OwnContainer.name
     ) in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
