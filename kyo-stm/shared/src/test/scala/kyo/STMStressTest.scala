@@ -400,36 +400,49 @@ class STMStressTest extends kyo.test.Test[Any]:
     }
 
     "TMap.snapshot / entries / values under concurrent put+remove never throw".notJs in {
-        for
-            tmap   <- TMap.init[Int, Int]
-            _      <- STM.run(Kyo.foreachDiscard(0 until 100)(i => tmap.put(i, i)))
-            thrown <- AtomicInt.init(0)
-            mutators = Async.fill(8, 8) {
-                Async.foreachDiscard(1 to 1000) { i =>
-                    (if i % 2 == 0 then STM.run(tmap.put(i % 100, i))
-                     else STM.run(tmap.removeDiscard(i % 100))).handle(Abort.run).unit
-                }
-            }
-            iterators = Async.fill(8, 8) {
-                Async.foreachDiscard(1 to 500) { _ =>
-                    STM.run(tmap.entries.map(_.toMap))
-                        .handle(Abort.run)
-                        .map {
-                            case Result.Panic(e) =>
-                                Sync.defer {
-                                    val trace = e.getStackTrace.take(40).mkString("\n    at ")
-                                    java.lang.System.err.println(s"STMSTRESS-PANIC ${e.getClass.getName}: ${e.getMessage}\n    at $trace")
-                                    Option(e.getCause).foreach(c =>
-                                        java.lang.System.err.println(s"STMSTRESS-CAUSE ${c.getClass.getName}: ${c.getMessage}")
-                                    )
-                                }.andThen(thrown.incrementAndGet.unit)
-                            case _ => ()
+        AtomicInt.init(0).map { thrown =>
+            Kyo.foreachDiscard(1 to 20) { _ =>
+                for
+                    tmap <- TMap.init[Int, Int]
+                    _    <- STM.run(Kyo.foreachDiscard(0 until 100)(i => tmap.put(i, i)))
+                    mutators = Async.fill(8, 8) {
+                        Async.foreachDiscard(1 to 1000) { i =>
+                            (if i % 2 == 0 then STM.run(tmap.put(i % 100, i))
+                             else STM.run(tmap.removeDiscard(i % 100))).handle(Abort.run).map {
+                                case Result.Panic(e) =>
+                                    Sync.defer {
+                                        val trace = e.getStackTrace.take(40).mkString("\n    at ")
+                                        java.lang.System.err.println(
+                                            s"STMSTRESS-MUTPANIC ${e.getClass.getName}: ${e.getMessage}\n    at $trace"
+                                        )
+                                    }
+                                case _ => ()
+                            }
                         }
-                }
-            }
-            _ <- Async.zip(mutators, iterators)
-            t <- thrown.get
-        yield assert(t == 0, s"thrown=$t")
+                    }
+                    iterators = Async.fill(8, 8) {
+                        Async.foreachDiscard(1 to 500) { _ =>
+                            STM.run(tmap.entries.map(_.toMap))
+                                .handle(Abort.run)
+                                .map {
+                                    case Result.Panic(e) =>
+                                        Sync.defer {
+                                            val trace = e.getStackTrace.take(40).mkString("\n    at ")
+                                            java.lang.System.err.println(
+                                                s"STMSTRESS-PANIC ${e.getClass.getName}: ${e.getMessage}\n    at $trace"
+                                            )
+                                            Option(e.getCause).foreach(c =>
+                                                java.lang.System.err.println(s"STMSTRESS-CAUSE ${c.getClass.getName}: ${c.getMessage}")
+                                            )
+                                        }.andThen(thrown.incrementAndGet.unit)
+                                    case _ => ()
+                                }
+                        }
+                    }
+                    _ <- Async.zip(mutators, iterators)
+                yield ()
+            }.andThen(thrown.get).map(t => assert(t == 0, s"thrown=$t"))
+        }
     }
 
     "typed Abort.fail inside STM is re-tried when log is stale, surfaced only when consistent".notJs in {
