@@ -44,6 +44,7 @@ jobs:
           os: linux-x64
           mode: restore
           browser: false
+          apt-set: JVM
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
