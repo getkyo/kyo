@@ -437,9 +437,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
             assert(log == Chunk("branch1", "branch2", "branch3", "release"))
         }
 
-        "nested choice points stream in the order run collects them".pendingUntilFixed(
-            "known gap: nested choice points stream in a different order than run collects them"
-        ) in {
+        "nested choice points stream in the order run collects them" in {
             val computation =
                 Choice.eval(1, 2).map { a =>
                     if a == 1 then Choice.eval(10, 11) else a
