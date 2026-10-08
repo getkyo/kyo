@@ -9,9 +9,11 @@ name: release-probe
 # existing `/release` comment trigger is the heavyweight alternative: it needs secrets and does
 # publish snapshots, so it is not usable as a routine per-PR check.
 #
-# JVM only. Both failures this exists to catch surfaced on the JVM leg: a plugin dependency that
-# could not be resolved (kyo-compat-plugin / update) and a missing native library for a C shim
-# (kyo-aeronJVM / ffiCompile, which the JVM leg compiles). ci.yml covers JS, Native, and Wasm.
+# The probe job is JVM only. Both failures it exists to catch surfaced on the JVM leg: a plugin
+# dependency that could not be resolved (kyo-compat-plugin / update) and a missing native library
+# for a C shim (kyo-aeronJVM / ffiCompile, which the JVM leg compiles). ci.yml covers JS, Native,
+# and Wasm builds in-tree. The native-consumer jobs cover what no in-tree build can: a Scala Native
+# application outside this build that resolves the published Native jars.
 #
 # The provisioning is shared with release.yml through .github/actions/release-setup rather than
 # copied, so this probe cannot drift away from the environment it is vouching for.
@@ -20,6 +22,8 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Runs the native-consumer jobs on a branch before it has a PR; the probe job's guard skips itself there upstream.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,6 +33,14 @@ permissions:
 concurrency:
   group: release-probe-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
+
+env:
+  # A version no release carries, so the consumer can only resolve what native-consumer-publish built.
+  NATIVE_CONSUMER_VERSION: 0.0.0-native-consumer
+  # The JDK the jdk-floor leg runs the consumer's sbt on: the oldest JDK a Scala Native consumer of
+  # kyo is supported on. The consumer's compile expands kyo's macros inside sbt's JVM, and they load
+  # kyo classes built for Java 25; on 17 it fails with UnsupportedClassVersionError (class file 69).
+  NATIVE_CONSUMER_JDK_FLOOR: '25'
 
 jobs:
   probe:
@@ -122,3 +134,112 @@ jobs:
         env:
           PLAN: ${{ steps.plan.outputs.jvm }}
         run: scripts/sbt.sh tool -Dplatform=JVM 'set ThisBuild / ffiCFlags ++= Seq("-DKYO_FFI_PROBE=1")' "ffiCompileAll${PLAN:+ $PLAN}"
+
+  # The Native jars a release ships, built the way release.yml's publish job builds them: on
+  # ubuntu-latest, with release-setup's staged natives. Published once and handed to every consumer
+  # leg, because a release publishes Native from that one host and every consumer, whatever its OS,
+  # links what that host packaged. A leg that published its own jars would test artifacts no release
+  # ships: a darwin publish writes darwin flag manifests the real jar does not carry.
+  native-consumer-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/release-setup
+      - name: Publish the Native closure of kyo-net and kyo-http
+        shell: bash
+        run: scripts/native-consumer-check.sh publish "$NATIVE_CONSUMER_VERSION"
+      - name: Pack the published artifacts
+        shell: bash
+        run: tar -C "$HOME/.ivy2/local" -cf native-consumer-ivy.tar io.getkyo
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-consumer-ivy
+          path: native-consumer-ivy.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # A Scala Native application outside this build, wired the way kyo-net/README.md "Scala Native
+  # builds" tells a user to, linked and run against the jars above. kyo's own Native suites link
+  # in-build, where a dependency's flag manifests are read from its class directory, so none of them
+  # can see a published jar that links nowhere.
+  #
+  # The Linux variants take away one dev package each. The bundled C compiles to stubs without its
+  # headers, so the link must still succeed and the runtime must report that capability unavailable
+  # rather than failing to build, with a reason that names the missing header (`~` matches a
+  # substring of the reason) so a binary built without the library never reads as a runtime failure.
+  native-consumer:
+    needs: native-consumer-publish
+    name: native-consumer (${{ matrix.leg }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: linux-x86_64
+            runner: ubuntu-latest
+            variant: default
+            expect: --expect io_backend=io_uring --expect io.io_uring=available --expect tls_provider!=none --expect tls_handshake=ok
+          - leg: linux-aarch64
+            runner: ubuntu-24.04-arm
+            variant: default
+            expect: --expect io_backend=io_uring --expect io.io_uring=available --expect tls_provider!=none --expect tls_handshake=ok
+          - leg: darwin-aarch64
+            runner: macos-14
+            variant: default
+            expect: --expect io_backend=kqueue --expect tls_provider!=none --expect tls_handshake=ok
+          - leg: linux-x86_64-no-libssl
+            runner: ubuntu-latest
+            variant: no-libssl
+            expect: --expect io_backend=io_uring --expect tls.openssl=unavailable --expect tls.openssl~<openssl/ssl.h> --expect tls.boringssl~OPENSSL_IS_BORINGSSL --expect tls_handshake!=failed
+          - leg: linux-x86_64-no-liburing
+            runner: ubuntu-latest
+            variant: no-liburing
+            expect: --expect io_backend=epoll --expect io.io_uring=unavailable --expect io.io_uring~<liburing.h> --expect tls_provider!=none --expect tls_handshake=ok
+          - leg: linux-x86_64-jdk-floor
+            runner: ubuntu-latest
+            variant: jdk-floor
+            expect: --expect io_backend=io_uring --expect io.io_uring=available --expect tls_provider!=none --expect tls_handshake=ok
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-consumer-ivy
+      - name: Install the published artifacts into the local ivy repository
+        shell: bash
+        run: mkdir -p "$HOME/.ivy2/local" && tar -C "$HOME/.ivy2/local" -xf native-consumer-ivy.tar
+      - uses: coursier/setup-action@v3.0.3
+        with:
+          jvm: corretto:${{ matrix.variant == 'jdk-floor' && env.NATIVE_CONSUMER_JDK_FLOOR || '25' }}
+          apps: sbt
+      - name: Host packages (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          purge() { if dpkg -s "$1" >/dev/null 2>&1; then sudo apt-get purge -y "$1"; fi; }
+          case "$VARIANT" in
+            no-libssl)   bash scripts/apt-install.sh liburing-dev && purge libssl-dev ;;
+            no-liburing) bash scripts/apt-install.sh libssl-dev && purge liburing-dev ;;
+            *)           bash scripts/apt-install.sh libssl-dev liburing-dev ;;
+          esac
+          has() { if [ -e "$1" ]; then echo present; else echo absent; fi; }
+          openssl=$(has /usr/include/openssl/ssl.h)
+          uring=$(has /usr/include/liburing.h)
+          echo "openssl headers: $openssl, liburing headers: $uring"
+          case "$VARIANT" in
+            no-libssl)   [ "$openssl" = absent ] && [ "$uring" = present ] ;;
+            no-liburing) [ "$openssl" = present ] && [ "$uring" = absent ] ;;
+            *)           [ "$openssl" = present ] && [ "$uring" = present ] ;;
+          esac
+      - name: Link and run the consumer
+        shell: bash
+        env:
+          EXPECT: ${{ matrix.expect }}
+        run: |
+          read -ra expect <<< "$EXPECT"
+          scripts/native-consumer-check.sh run "$NATIVE_CONSUMER_VERSION" "${expect[@]}"

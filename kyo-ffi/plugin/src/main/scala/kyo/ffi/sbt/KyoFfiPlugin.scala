@@ -139,12 +139,13 @@ object KyoFfiPlugin extends AutoPlugin {
                 "bundled C, read from the flag manifests they ship. Scala Native compiles a dependency's " +
                 "bundled C into this binary, so this binary is the one that has to link its libraries " +
                 "(e.g. -luring for kyo-net's io_uring shim). nativeConfig does not propagate across a " +
-                "dependency, so wire this into nativeConfig.linkingOptions alongside ffiNativeLinkingOptions."
+                "dependency; on a Scala Native project the plugin folds these into the link itself, and adding " +
+                "them to nativeConfig.linkingOptions as well is harmless."
         )
         val ffiNativeDependencyCompileOptions = taskKey[Seq[String]](
             "Scala Native compileOptions the DEPENDENCIES on this project's classpath declare for their own " +
                 "bundled C, read from the flag manifests they ship. The counterpart of " +
-                "ffiNativeDependencyLinkingOptions for the compile side; wire into nativeConfig.compileOptions."
+                "ffiNativeDependencyLinkingOptions for the compile side, folded in the same way."
         )
 
         /** Diagnostic: return the resolved `cc` command line(s) the plugin would
@@ -210,6 +211,44 @@ object KyoFfiPlugin extends AutoPlugin {
     }
 
     import autoImport._
+
+    /** How `ffiNativeDependencyLinkingOptions` answers a guarded manifest line. On a Scala Native project [[KyoFfiNativePlugin]] sets it
+      * from the build-level `nativeConfig`, not the project's: the project's `nativeConfig` is what a build folds this task's answer into,
+      * so reading it here would be a cycle. The plugin's own wiring evaluates guards against the project's final config instead.
+      */
+    private[sbt] val ffiNativeHeaderProbe =
+        taskKey[String => Boolean]("Answers whether a header is visible to the compile that builds dependencies' bundled C.")
+
+    /** `ffiGenerate` with the codegen, which compiles the project's sources and loads kyo-ffi-codegen in sbt's own JVM. */
+    private[sbt] val ffiGenerateCodegen = taskKey[Seq[File]]("ffiGenerate's codegen run.")
+
+    /** Whether `ffiGenerate` can skip the codegen: the project declares nothing to compile or link, and no binding trait can exist.
+      *
+      * The codegen discovers a binding as a trait with `kyo.ffi.Ffi` among its base classes, which can arrive through a dependency's own
+      * subtrait, so no reading of the project's sources rules a binding out. Its absence from the classpath does: a trait cannot extend a
+      * class the compile cannot see. A build that only consumes FFI modules still has kyo-ffi on its classpath and still runs the codegen.
+      */
+    private[sbt] def codegenUnneeded(libs: Seq[FfiLibrary], dependencyClasspath: Seq[File]): Boolean =
+        libs.forall(l => l.cSources.isEmpty && l.linkLibs.isEmpty && l.linkLibsByOs.isEmpty) &&
+            !dependencyClasspath.exists(declaresFfiMarker)
+
+    private def declaresFfiMarker(entry: File): Boolean =
+        if (entry.isDirectory) (entry / "kyo" / "ffi" / "Ffi.class").exists()
+        else if (entry.isFile && entry.getName.endsWith(".jar")) {
+            val zip = new java.util.zip.ZipFile(entry)
+            try zip.getEntry("kyo/ffi/Ffi.class") != null
+            finally zip.close()
+        } else false
+
+    /** `ffiGenerate` when [[codegenUnneeded]]: whatever an earlier run generated binds traits that can no longer compile, so it goes. */
+    private def ffiGenerateNothing: Def.Initialize[Task[Seq[File]]] = Def.task {
+        val out       = (Compile / sourceManaged).value / "kyo-ffi"
+        val genTarget = target.value
+        IO.delete(out)
+        writeTraitLibraryIndex(genTarget, Nil)
+        writeReachabilityMetadata(genTarget, "")
+        Seq.empty[File]
+    }
 
     /** The projects that enable this plugin, narrowed to `only` when it names any. A project enables it
       * exactly when its settings carry ffiLibraries, which the plugin defaults for every project it is
@@ -379,6 +418,11 @@ object KyoFfiPlugin extends AutoPlugin {
       * its definition).
       */
     override lazy val globalSettings: Seq[Setting[?]] = Seq(
+        // A reload is how a build picks up a dev package installed since the last probe.
+        onLoad := onLoad.value.andThen { state =>
+            headerProbeCache.clear()
+            state
+        },
         commands += ffiCompileAllCommand,
         commands += ffiPackagingCheckAllCommand,
         commands += ffiPackagingFormatCheckAllCommand,
@@ -501,7 +545,13 @@ object KyoFfiPlugin extends AutoPlugin {
         // Incremental caching: we hash the SHA-256 of every input source file plus the
         // platform/library-id config. Re-invocations with an unchanged hash short-circuit
         // and return the previously-generated files without re-running the codegen.
-        ffiGenerate := {
+        ffiGenerate := Def.taskDyn {
+            val depCp = (Compile / dependencyClasspath).value.map(_.data)
+            val libs  = ffiLibrariesResolved.value
+            if (codegenUnneeded(libs, depCp)) ffiGenerateNothing
+            else ffiGenerateCodegen
+        }.value,
+        ffiGenerateCodegen := {
             val log       = streams.value.log
             val out       = (Compile / sourceManaged).value / "kyo-ffi"
             val genTarget = target.value
@@ -567,6 +617,7 @@ object KyoFfiPlugin extends AutoPlugin {
                 s"$platform|$libraryId|$strictB|$strictC|$strictDisc|${declaredLibIds.toSeq.sorted.mkString(",")}|${systemLibs.toSeq.sorted.mkString(",")}|${probeIncludeDirs.sorted.mkString(",")}|codegen=$codegenFp"
 
             val cached = FileFunction.cached(cacheDir, FilesInfo.hash, FilesInfo.exists) { _ =>
+                CodegenBridge.checkJavaRuntime()
                 val (tastyIn, isBootstrap) = resolveTasty()
                 if (tastyIn.isEmpty) {
                     // No TASTy to run codegen over. If the user removed the last binding source
@@ -971,30 +1022,10 @@ object KyoFfiPlugin extends AutoPlugin {
         ffiNativeLinkingOptions := {
             val platform = ffiTargetPlatform.value
             val libs     = ffiLibrariesResolved.value
+            // Same target OS ffiCompile resolves its link libs for (the host unless ffiTargetOsArch
+            // overrides it), so the two never disagree about which per-OS libs a build needs.
             if (platform != "Native") Nil
-            else {
-                // Same target OS ffiCompile resolves its link libs for (the host unless
-                // ffiTargetOsArch overrides it), so the two never disagree about which per-OS libs
-                // a build needs.
-                val buildOs = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
-                libs.flatMap { lib =>
-                    val libDirs = lib.libDirs.distinct
-                    if (libDirs.nonEmpty)
-                        // Vendored archives (e.g. staged BoringSSL): Scala Native's final clang link
-                        // resolves the named archives from the staged -L tree. Scala Native places the
-                        // bundled C objects AFTER these linkingOptions on the clang command, so a plain
-                        // single-pass `-l` archive would be searched before the object that references it
-                        // and ld would drop every member as unreferenced (undefined reference to SSL_*,
-                        // BIO_*, X509_* ...). Force-load the archives so the link is order-independent:
-                        // linux/GNU ld via -Wl,--whole-archive, darwin/ld64 via -Wl,-force_load per .a.
-                        // The library's own `linkFlags` (the dynamic C++ runtime BoringSSL's C++ archives
-                        // reference: -lc++ / -lstdc++) follow the archives so they resolve too.
-                        CCompiler.vendoredArchiveForceLoadFlags(libDirs, lib.resolvedLinkLibs(buildOs), lib.staticLink, buildOs) ++
-                            lib.linkFlags
-                    else
-                        CCompiler.foldedLinkLibFlags(lib.resolvedLinkLibs(buildOs), lib.staticLink)
-                }
-            }
+            else nativeHostLinkingOptions(libs, CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1)
         },
 
         // ffiNativeCompileOptions: only meaningful on Native (Nil elsewhere). The `-I` include dirs the
@@ -1017,12 +1048,14 @@ object KyoFfiPlugin extends AutoPlugin {
         // compiled into the consumer's binary but `-luring` never reaches the link, and it fails on symbols the
         // consumer never wrote. `nativeConfig` is per-project and does not cross a dependency edge, which is
         // what the manifests exist to bridge.
+        ffiNativeHeaderProbe              := nativeHeaderProbe(ffiCCompiler.value, Nil),
         ffiNativeDependencyLinkingOptions := {
             val platform = ffiTargetPlatform.value
             val cp       = (Compile / dependencyClasspath).value.map(_.data)
             val targetOs = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
+            val probe    = ffiNativeHeaderProbe.value
             if (platform != "Native") Nil
-            else readNativeFlagManifests(cp, ffiNativeLinkFlagsDir, ffiNativeInBuildLinkFlagsDir, targetOs)
+            else readNativeFlagManifests(cp, ffiNativeLinkFlagsDir, ffiNativeInBuildLinkFlagsDir, targetOs, probe)
         },
         ffiNativeDependencyCompileOptions := {
             val platform = ffiTargetPlatform.value
@@ -1033,27 +1066,154 @@ object KyoFfiPlugin extends AutoPlugin {
         }
     ) ++ ffiPackageBinFlagsFilter
 
-    /** Read the native-flag manifests every entry of `cp` carries for `targetOs`, one flag per line, deduped first-seen.
+    /** Read the native-flag manifests every entry of `cp` carries for `targetOs`: [[nativeFlagUnits]], flattened.
       *
-      * Each entry is read from its IN-BUILD directory when it has one and from the packaged one otherwise. A module built alongside this one
-      * shares its filesystem, so the vendored tree it compiled against is a real path here and the unfiltered answer is the right one; a
-      * module resolved as a published artifact carries only the portable answer, because the paths in the other one name a machine this
-      * build has never seen.
-      *
-      * Only `targetOs`'s files are read. The classpath carries published artifacts too, and a flag set produced for another OS does not
-      * merely fail to help: `-luring` and the GNU-ld options ld64 rejects break a Darwin link outright.
+      * `headerVisible` answers a guarded line's header (see [[FfiLibrary.linkLibsGuard]]); [[nativeHeaderProbe]] builds one from the
+      * reading build's own clang and compile options. The default fails on a guarded line, which only a link-flag manifest carries.
       */
     def readNativeFlagManifests(
         cp: Seq[File],
         relDir: Seq[String],
         inBuildRelDir: Seq[String],
-        targetOs: String
+        targetOs: String,
+        headerVisible: String => Boolean = noHeaderProbe
     ): Seq[String] =
-        cp.flatMap { entry =>
+        nativeFlagUnits(cp, relDir, inBuildRelDir, targetOs, headerVisible).flatten
+
+    /** The native-flag manifests every entry of `cp` carries for `targetOs`, one unit per module manifest, in classpath order.
+      *
+      * Each entry is read from its IN-BUILD manifests when it has any and from the packaged ones otherwise. A module built alongside this
+      * one shares its filesystem, so the vendored tree it compiled against is a real path here and the unfiltered answer is the right one; a
+      * module resolved as a published artifact carries only the portable answer, because the paths in the other one name a machine this
+      * build has never seen. An entry is a class directory or a jar; a resolved dependency is always a jar.
+      *
+      * Only `targetOs`'s files are read. The classpath carries published artifacts too, and a flag set produced for another OS does not
+      * merely fail to help: `-luring` and the GNU-ld options ld64 rejects break a Darwin link outright.
+      *
+      * A module's flags stay one contiguous unit, and only a unit seen before is dropped. Deduplicating single flags instead folds a second
+      * module's `-Wl,-Bstatic ... -Wl,-Bdynamic` window into the first one's bounds, so its libraries land after the first `-Wl,-Bdynamic`
+      * and link dynamically.
+      */
+    def nativeFlagUnits(
+        cp: Seq[File],
+        relDir: Seq[String],
+        inBuildRelDir: Seq[String],
+        targetOs: String,
+        headerVisible: String => Boolean = noHeaderProbe
+    ): Seq[Seq[String]] = {
+        val visible = scala.collection.mutable.Map.empty[String, Boolean]
+        cp.flatMap(entry => readFlagManifests(entry, relDir, inBuildRelDir, targetOs)).map { manifest =>
+            manifest.flags ++ manifest.guarded.filter(g => visible.getOrElseUpdate(g.header, headerVisible(g.header))).flatMap(_.flags)
+        }.filter(_.nonEmpty).distinct
+    }
+
+    /** A header probe for a reader that has no compiler to ask. Only link-flag manifests carry guarded lines. */
+    val noHeaderProbe: String => Boolean = header =>
+        sys.error(
+            s"[kyo-ffi-plugin] a native-flag manifest on the classpath links a library only when <$header> is visible, and this reader " +
+                "was given no header probe to answer that. Pass KyoFfiPlugin.nativeHeaderProbe(clang, compileOptions)."
+        )
+
+    /** Whether each header is visible to `clang` compiling with `compileOptions`: the answer the bundled C's own `__has_include` gate gets
+      * when that compiler builds it, so the link and the C agree on whether the library is needed. One preprocessor run per header, kept
+      * until the build is reloaded.
+      */
+    def nativeHeaderProbe(clang: String, compileOptions: Seq[String]): String => Boolean = header =>
+        headerProbeCache.getOrElseUpdate((clang, compileOptions, header), probeHeader(clang, compileOptions, header))
+
+    private val headerProbeCache = scala.collection.concurrent.TrieMap.empty[(String, Seq[String], String), Boolean]
+
+    private def probeHeader(clang: String, compileOptions: Seq[String], header: String): Boolean = {
+        val dir = Files.createTempDirectory("kyo-ffi-header-probe-").toFile
+        try {
+            val src = dir / "probe.c"
+            IO.write(src, headerProbeSource(header))
+            val cmd = (clang +: compileOptions) ++ Seq("-E", src.getAbsolutePath, "-o", (dir / "probe.i").getAbsolutePath)
+            scala.sys.process.Process(cmd).!(scala.sys.process.ProcessLogger(_ => (), _ => ())) == 0
+        } finally IO.delete(dir)
+    }
+
+    private[sbt] def headerProbeSource(header: String): String =
+        s"#if !__has_include(<$header>)\n#error <$header> is not visible\n#endif\n"
+
+    /** One module's manifest for one OS: the flags it always needs, then the ones each guard admits. */
+    final private[sbt] case class FlagManifest(module: String, flags: Seq[String], guarded: Seq[GuardedFlags])
+
+    /** Flags a consumer links only when `header` is visible to its compile. */
+    final private[sbt] case class GuardedFlags(header: String, flags: Seq[String])
+
+    /** The extension of the file holding a module's guarded lines, beside its `<module>-<os>.flags`.
+      *
+      * A separate file rather than a marked line, because a reader that predates guards takes every line of a `.flags` file as one flag
+      * and would hand clang `?<openssl/ssl.h> -lssl -lcrypto` as an input file. Those readers list only `*-<os>.flags`, so they never open
+      * this one.
+      */
+    val guardedFlagsSuffix: String = ".guarded-flags"
+
+    private[sbt] def validGuardHeader(header: String): Boolean =
+        header.nonEmpty && !header.exists(c => c.isWhitespace || c == '<' || c == '>' || c == '"')
+
+    private[sbt] def renderGuardedFlags(g: GuardedFlags): String = s"?<${g.header}> ${g.flags.mkString(" ")}"
+
+    private[sbt] def parseGuardedFlags(line: String, source: String): GuardedFlags = {
+        val close = line.indexOf('>')
+        val flags = if (close > 0) line.substring(close + 1).trim.split("\\s+").toSeq.filter(_.nonEmpty) else Nil
+        if (!line.startsWith("?<") || close < 3 || flags.isEmpty)
+            sys.error(s"[kyo-ffi-plugin] $source: '$line' is not a guarded flag line (?<header> flag...).")
+        GuardedFlags(line.substring(2, close), flags)
+    }
+
+    /** The manifests one classpath entry carries for `targetOs`, sorted by module. */
+    private[sbt] def readFlagManifests(
+        entry: File,
+        relDir: Seq[String],
+        inBuildRelDir: Seq[String],
+        targetOs: String
+    ): Seq[FlagManifest] = {
+        val flagsSuffix                      = s"-$targetOs.flags"
+        val guardedSuffix                    = s"-$targetOs$guardedFlagsSuffix"
+        def lines(text: String): Seq[String] = text.linesIterator.map(_.trim).filter(_.nonEmpty).toList
+        def manifests(files: Seq[(String, String)], source: String): Seq[FlagManifest] = {
+            val flags   = files.collect { case (n, text) if n.endsWith(flagsSuffix) => n.stripSuffix(flagsSuffix) -> lines(text) }.toMap
+            val guarded = files.collect {
+                case (n, text) if n.endsWith(guardedSuffix) =>
+                    n.stripSuffix(guardedSuffix) -> lines(text).map(parseGuardedFlags(_, s"$source/$n"))
+            }.toMap
+            (flags.keySet ++ guarded.keySet).toSeq.sorted.map(m => FlagManifest(m, flags.getOrElse(m, Nil), guarded.getOrElse(m, Nil)))
+        }
+        if (entry.isDirectory) {
             val inBuild = inBuildRelDir.foldLeft(entry)(_ / _)
             val dir     = if (inBuild.isDirectory) inBuild else relDir.foldLeft(entry)(_ / _)
-            if (dir.isDirectory) (dir * s"*-$targetOs.flags").get.flatMap(IO.readLines(_)) else Seq.empty[String]
-        }.map(_.trim).filter(_.nonEmpty).distinct
+            if (!dir.isDirectory) Nil
+            else {
+                val files =
+                    IO.listFiles(dir).filter(f => f.isFile && (f.getName.endsWith(flagsSuffix) || f.getName.endsWith(guardedSuffix)))
+                manifests(files.map(f => f.getName -> IO.read(f)), dir.getAbsolutePath)
+            }
+        } else if (entry.isFile && entry.getName.endsWith(".jar")) {
+            val zip = new java.util.zip.ZipFile(entry)
+            try {
+                import scala.collection.JavaConverters._
+                val names         = zip.entries.asScala.filterNot(_.isDirectory).map(_.getName).toList
+                val inBuildPrefix = inBuildRelDir.mkString("", "/", "/")
+                val prefix        = if (names.exists(_.startsWith(inBuildPrefix))) inBuildPrefix else relDir.mkString("", "/", "/")
+                val files         = names.filter(n => n.startsWith(prefix) && !n.substring(prefix.length).contains('/')).map { n =>
+                    val in = zip.getInputStream(zip.getEntry(n))
+                    try n.substring(prefix.length) -> IO.readStream(in, java.nio.charset.StandardCharsets.UTF_8)
+                    finally in.close()
+                }.filter { case (n, _) => n.endsWith(flagsSuffix) || n.endsWith(guardedSuffix) }
+                manifests(files, s"${entry.getAbsolutePath}!/$prefix")
+            } finally zip.close()
+        } else Nil
+    }
+
+    /** `existing` with every unit of `units` that is not already in it, as a contiguous run, appended in order.
+      *
+      * This is what makes wiring the dependency flags twice harmless: the plugin wires them itself, and a build that also follows the
+      * explicit `nativeConfig` form appends the same units first. A static archive named twice defines every one of its symbols twice.
+      */
+    private[sbt] def appendMissingUnits(existing: Seq[String], units: Seq[Seq[String]]): Seq[String] =
+        units.foldLeft(existing)((acc, unit) => if (unit.isEmpty || acc.containsSlice(unit)) acc else acc ++ unit)
 
     // --- helpers (settings/task fragments) --------------------------------------
 
@@ -1371,16 +1531,20 @@ object KyoFfiPlugin extends AutoPlugin {
       * dependency's manifests and folds them into the downstream `nativeConfig`, mirroring how the bundled C
       * itself propagates.
       *
-      * The manifests are PACKAGED, so they also travel to machines that have never seen this filesystem, and two things follow. The file is
-      * named `<module>-<targetOs>.flags` and a reader keeps only its own target's, because a flag set produced for Linux (`-luring`, GNU-ld
-      * options ld64 rejects) is not merely useless on Darwin, it breaks the link. And the flags are filtered through
-      * [[partitionPortableFlags]], because a path is a fact about the machine that wrote it: a released artifact used to carry the release
-      * runner's `-L/home/runner/work/kyo/kyo/.../boringssl/staged/linux-x86_64/lib` verbatim, pointing at archives no consumer has and the
-      * artifact does not ship. What survives is what means the same thing anywhere: `-l<name>` and bare linker options.
+      * The packaged manifests travel to machines that have never seen this filesystem, and three things follow.
+      *   - There is one `<module>-<os>.flags` per OS a consumer can link on, computed from the library declarations, and a reader keeps
+      *     only its own target's. A flag set produced for Linux (`-luring`, GNU-ld options ld64 rejects) is not merely useless on Darwin,
+      *     it breaks the link, and the release writes every OS's file from one Linux runner.
+      *   - Paths are filtered out through [[partitionPortableFlags]], because a path is a fact about the machine that wrote it, and a
+      *     vendored library is left out whole (see [[packagedNativeLinkFlags]]). What survives is what means the same thing anywhere:
+      *     `-l<name>` and bare linker options.
+      *   - A library with a [[FfiLibrary.linkLibsGuard]] is written to `<module>-<os>.guarded-flags`, for the reader to evaluate.
       *
-      * No-op on JVM / JS (they load a shared library at runtime, so there are no native build flags). An
-      * empty flag set (e.g. macOS, where liburing does not apply) writes no file and removes a stale one, so
-      * a now-flagless build does not leak a previous build's flags downstream.
+      * The in-build manifests keep this host's own answer, and are written even when empty: a reader takes an entry's in-build manifests
+      * over its packaged ones only when they exist, and the packaged ones carry flags for other OSes and guards this host never needed.
+      *
+      * No-op on JVM / JS (they load a shared library at runtime, so there are no native build flags). An empty packaged flag set writes no
+      * file and removes a stale one, so a now-flagless build does not leak a previous build's flags downstream.
       */
     private def ffiNativeFlagsManifestGenerator: Def.Initialize[Task[Seq[File]]] = Def.task {
         // All task/setting lookups are hoisted out of the `if` (sbt evaluates task dependencies eagerly
@@ -1388,28 +1552,40 @@ object KyoFfiPlugin extends AutoPlugin {
         val platform     = ffiTargetPlatform.value
         val linkFlags    = ffiNativeLinkingOptions.value
         val compileFlags = ffiNativeCompileOptions.value
+        val libs         = ffiLibrariesResolved.value
         val resManaged   = (Compile / resourceManaged).value
         val moduleName   = name.value
         val targetOs     = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
         val log          = streams.value.log
-        // The `-l` names that only resolve inside a vendored tree this artifact does not ship. They travel with the tree, so they leave
-        // with it: see `partitionPortableFlags`.
-        val vendoredLinkLibs =
-            ffiLibrariesResolved.value.filter(_.libDirs.nonEmpty).flatMap(_.resolvedLinkLibs(targetOs)).distinct.toSet
         if (platform != "Native") Seq.empty[File]
         else {
-            val (portableLink, droppedLink)       = partitionPortableFlags(linkFlags, vendoredLinkLibs)
-            val (portableCompile, droppedCompile) = partitionPortableFlags(compileFlags, vendoredLinkLibs)
-            val dropped                           = (droppedLink ++ droppedCompile).distinct
-            if (dropped.nonEmpty)
+            val portableCompile = packagedNativeCompileFlags(libs)
+            val droppedCompile  = compileFlags.filterNot(portableCompile.contains)
+            if (droppedCompile.nonEmpty)
                 log.debug(
-                    s"[kyo-ffi-plugin] $moduleName: ${dropped.size} host-specific flag(s) kept out of the packaged " +
-                        s"native-flag manifest: ${dropped.mkString(" ")}"
+                    s"[kyo-ffi-plugin] $moduleName: ${droppedCompile.size} host-specific compile flag(s) kept out of the packaged " +
+                        s"native-flag manifest: ${droppedCompile.mkString(" ")}"
                 )
-            writeFfiManifest(resManaged, ffiNativeLinkFlagsDir, s"$moduleName-$targetOs.flags", portableLink) ++
-                writeFfiManifest(resManaged, ffiNativeCompileFlagsDir, s"$moduleName-$targetOs.flags", portableCompile) ++
-                writeFfiManifest(resManaged, ffiNativeInBuildLinkFlagsDir, s"$moduleName-$targetOs.flags", linkFlags) ++
-                writeFfiManifest(resManaged, ffiNativeInBuildCompileFlagsDir, s"$moduleName-$targetOs.flags", compileFlags)
+            val packaged = CCompiler.supportedOs.flatMap { os =>
+                val (link, guarded) = packagedNativeLinkFlags(libs, os)
+                writeFfiManifest(resManaged, ffiNativeLinkFlagsDir, s"$moduleName-$os.flags", link) ++
+                    writeFfiManifest(
+                        resManaged,
+                        ffiNativeLinkFlagsDir,
+                        s"$moduleName-$os$guardedFlagsSuffix",
+                        guarded.map(renderGuardedFlags)
+                    ) ++
+                    writeFfiManifest(resManaged, ffiNativeCompileFlagsDir, s"$moduleName-$os.flags", portableCompile)
+            }
+            packaged ++
+                writeFfiManifest(resManaged, ffiNativeInBuildLinkFlagsDir, s"$moduleName-$targetOs.flags", linkFlags, keepEmpty = true) ++
+                writeFfiManifest(
+                    resManaged,
+                    ffiNativeInBuildCompileFlagsDir,
+                    s"$moduleName-$targetOs.flags",
+                    compileFlags,
+                    keepEmpty = true
+                )
         }
     }
 
@@ -1436,20 +1612,60 @@ object KyoFfiPlugin extends AutoPlugin {
       * beside it, and `-Wl,-force_load,<abs path to libssl.a>` on Darwin: none of those exist on a consumer's machine, and they point at
       * archives the artifact does not ship anyway.
       *
-      * The first test is whether the flag contains a path separator at all, rather than whether it starts with one. A path can sit anywhere
+      * The test is whether the flag contains a path separator at all, rather than whether it starts with one. A path can sit anywhere
       * in a flag (`-Wl,-force_load,<path>` carries it third) and a relative path is no more portable than an absolute one, since the
       * reader's working directory is not this one either.
       *
-      * The second is `vendoredLinkLibs`: the `-l` names belonging to a library whose archives live in a vendored tree. Those names carry no
-      * path and would survive the first test, but they only mean anything next to the `-L` that finds the tree, and the artifact ships
-      * neither. Left in, `-lssl -lcrypto` would quietly resolve against a consumer's SYSTEM OpenSSL under the vendored library's name,
-      * which links and runs and reports the wrong provider. A vendored library's flags therefore leave as a set, with the tree they need.
-      *
-      * What survives is what names no file and needs no tree: a system `-l<name>` such as `-luring`, and bare linker options.
+      * A vendored library's `-l` names carry no path and would pass this test, which is why [[packagedNativeLinkFlags]] leaves such a
+      * library out before its flags get here.
       *
       * The dropped flags are not lost to the build that produced them; they are written to the in-build manifests, which
       * `ffiPackageBinFlagsFilter` keeps out of the jar.
       */
+    private[sbt] def partitionPortableFlags(flags: Seq[String]): (Seq[String], Seq[String]) =
+        flags.partition(flag => !flag.contains('/') && !flag.contains('\\'))
+
+    /** The Scala Native linking options `libs` need on `os`, for a build that compiled their real C on this machine.
+      *
+      * A vendored library (one with `libDirs`) force-loads its archives: Scala Native places the bundled C objects AFTER these options on
+      * the clang command, so a single-pass `-l` archive would be searched before the object that references it and every member dropped
+      * as unreferenced. `--whole-archive` on GNU ld, `-force_load` per archive on ld64. Its own `linkFlags` (the C++ runtime BoringSSL's
+      * archives reference) follow the archives. Any other library links its system libs by name. A guard does not apply here: this
+      * answer is for the host that compiled the real body.
+      */
+    def nativeHostLinkingOptions(libs: Seq[FfiLibrary], os: String): Seq[String] =
+        libs.flatMap { lib =>
+            val libDirs = lib.libDirs.distinct
+            if (libDirs.nonEmpty)
+                CCompiler.vendoredArchiveForceLoadFlags(libDirs, lib.resolvedLinkLibs(os), lib.staticLink, os) ++ lib.linkFlags
+            else CCompiler.nativeLinkLibFlags(lib.resolvedLinkLibs(os), lib.staticLink, os)
+        }
+
+    /** The link flags a published artifact declares for a consumer on `os`: the unconditional ones, then one guarded group per library
+      * with a [[FfiLibrary.linkLibsGuard]].
+      *
+      * Computed from the declarations rather than from the build host, because the release publishes Native from one Linux runner and
+      * every consumer, on any OS, reads that one jar. A vendored library contributes nothing: its archives do not travel, and neither do
+      * the flags that only mean something next to them (the force-load window, the C++ runtime the archives need). A consumer that
+      * supplies those archives gets their flags from whatever supplies them.
+      */
+    private[sbt] def packagedNativeLinkFlags(libs: Seq[FfiLibrary], os: String): (Seq[String], Seq[GuardedFlags]) = {
+        val portable                          = libs.filter(_.libDirs.isEmpty)
+        def flags(l: FfiLibrary): Seq[String] =
+            partitionPortableFlags(CCompiler.nativeLinkLibFlags(l.resolvedLinkLibs(os), l.staticLink, os))._1
+        val unguarded = portable.filter(_.linkLibsGuard.isEmpty).flatMap(flags)
+        val guarded   = portable.flatMap(l => l.linkLibsGuard.map(GuardedFlags(_, flags(l)))).filter(_.flags.nonEmpty)
+        (unguarded, guarded)
+    }
+
+    /** The compile flags a published artifact declares for a consumer: the portable ones of every library that is not vendored.
+      *
+      * A vendored library is left out for the reason [[packagedNativeLinkFlags]] leaves it out: its defines describe a compile against
+      * vendored headers the consumer does not have, and one that requires those headers turns the consumer's compile into an error.
+      */
+    private[sbt] def packagedNativeCompileFlags(libs: Seq[FfiLibrary]): Seq[String] =
+        partitionPortableFlags(nativeCompileOptions(libs.filter(_.libDirs.isEmpty)))._1
+
     /** The Scala Native compileOptions `libs` need: their include dirs, then the preprocessor defines among their `cFlags`.
       *
       * The defines are forwarded and nothing else is. A define changes what the C means, a header it includes or a feature it compiles in,
@@ -1459,12 +1675,6 @@ object KyoFfiPlugin extends AutoPlugin {
     private[sbt] def nativeCompileOptions(libs: Seq[FfiLibrary]): Seq[String] =
         libs.flatMap(_.includeDirs).distinct.map(d => s"-I${d.getAbsolutePath}") ++
             libs.flatMap(_.cFlags).filter(f => f.startsWith("-D") || f.startsWith("-U")).distinct
-
-    private[sbt] def partitionPortableFlags(flags: Seq[String], vendoredLinkLibs: Set[String] = Set.empty): (Seq[String], Seq[String]) =
-        flags.partition { flag =>
-            val namesVendoredLib = flag.startsWith("-l") && vendoredLinkLibs.contains(flag.drop(2))
-            !namesVendoredLib && !flag.contains('/') && !flag.contains('\\')
-        }
 
     /** The classpath-relative directory KyoFfiPlugin writes each module's library-state manifest into
       * (one `<module>.state` file per FFI module).
@@ -1517,12 +1727,18 @@ object KyoFfiPlugin extends AutoPlugin {
 
     /** Write `lines` (one per line) to `<resManaged>/<relDir>/<fileName>`, content-skipped so the
       * generated resource (and thus nativeLink's classpath hash) stays stable across no-change builds. An
-      * empty list writes nothing and removes a stale file so it does not leak downstream.
+      * empty list writes nothing and removes a stale file so it does not leak downstream, unless `keepEmpty`.
       */
-    private def writeFfiManifest(resManaged: File, relDir: Seq[String], fileName: String, lines: Seq[String]): Seq[File] = {
+    private def writeFfiManifest(
+        resManaged: File,
+        relDir: Seq[String],
+        fileName: String,
+        lines: Seq[String],
+        keepEmpty: Boolean = false
+    ): Seq[File] = {
         val destDir = relDir.foldLeft(resManaged)(_ / _)
         val dest    = destDir / fileName
-        if (lines.isEmpty) {
+        if (lines.isEmpty && !keepEmpty) {
             if (dest.exists()) IO.delete(dest)
             Seq.empty[File]
         } else {
@@ -1709,6 +1925,12 @@ object KyoFfiPlugin extends AutoPlugin {
                         s"${orphaned.mkString("[", ", ", "]")} whose OS is excluded by osTargets " +
                         s"${lib.osTargets.mkString("[", ", ", "]")}."
                 )
+            lib.linkLibsGuard.filterNot(validGuardHeader).foreach { header =>
+                sys.error(
+                    s"[kyo-ffi-plugin] FfiLibrary '${lib.id}' declares linkLibsGuard '$header'; it names a header as written inside " +
+                        "#include <...>, e.g. \"openssl/ssl.h\", with no brackets, quotes or whitespace."
+                )
+            }
         }
         topoSortLibraries(raw)
     }

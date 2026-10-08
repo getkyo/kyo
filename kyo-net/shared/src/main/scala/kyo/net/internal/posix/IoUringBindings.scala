@@ -211,6 +211,12 @@ private[net] trait IoUringBindings extends Ffi:
       */
     def kyo_uring_probe_available(depth: Int)(using AllowUnsafe): Boolean
 
+    /** True when `kyo_uring.c` compiled its stub body, which happens wherever `<liburing.h>` was not visible to the compile (every
+      * non-Linux host, and a Linux host without liburing's development headers). The probe asks this before
+      * [[kyo_uring_probe_available]], so a binary that carries no liburing is reported as such instead of as a kernel that refused a ring.
+      */
+    def kyo_uring_compiled_stub()(using AllowUnsafe): Boolean
+
 end IoUringBindings
 
 private[net] object IoUringBindings extends Ffi.Config(

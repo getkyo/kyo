@@ -1,7 +1,11 @@
 package kyo.ffi.sbt
 
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.util.jar.JarEntry
+import java.util.jar.JarOutputStream
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 
@@ -213,28 +217,294 @@ class KyoFfiPluginTest extends AnyFunSuite with Matchers {
         KyoFfiPlugin.partitionPortableFlags(Nil) shouldBe ((Nil, Nil))
     }
 
-    // A vendored library's -l names carry no path, so the path test keeps them, and on their own they are worse than useless: without the
-    // -L that finds the vendored tree, `-lssl -lcrypto` resolve against the consumer's SYSTEM OpenSSL under the vendored library's name.
-    // That links, runs, and reports the wrong provider. They leave with the tree.
-    test("partitionPortableFlags: a vendored library's link libs leave with its tree") {
-        val flags = Seq(
-            "-L/build/boringssl/staged/linux-x86_64/lib",
+    // -------------------------------------------------------------------------
+    // readNativeFlagManifests
+    // -------------------------------------------------------------------------
+
+    private val packagedLinkDir = KyoFfiPlugin.ffiNativeLinkFlagsDir.mkString("/")
+    private val inBuildLinkDir  = KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir.mkString("/")
+
+    private def readLinkFlags(cp: Seq[File], targetOs: String): Seq[String] =
+        KyoFfiPlugin.readNativeFlagManifests(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir, targetOs)
+
+    private def jarWith(entries: (String, Seq[String])*): File = {
+        val jar = Files.createTempDirectory("kyo-ffi-manifest-jar-").resolve("dep.jar").toFile
+        val out = new JarOutputStream(new FileOutputStream(jar))
+        try {
+            entries.foreach { case (path, lines) =>
+                out.putNextEntry(new JarEntry(path))
+                out.write(lines.mkString("", "\n", "\n").getBytes(StandardCharsets.UTF_8))
+                out.closeEntry()
+            }
+        } finally out.close()
+        jar
+    }
+
+    private def classDirWith(entries: (String, Seq[String])*): File = {
+        val dir = Files.createTempDirectory("kyo-ffi-manifest-dir-").toFile
+        entries.foreach { case (path, lines) =>
+            val f = new File(dir, path)
+            f.getParentFile.mkdirs()
+            Files.write(f.toPath, lines.mkString("", "\n", "\n").getBytes(StandardCharsets.UTF_8))
+        }
+        dir
+    }
+
+    private val uringWindow = Seq("-Wl,-Bstatic", "-luring", "-Wl,-Bdynamic")
+
+    test("readNativeFlagManifests: a resolved dependency jar contributes its target OS's flags") {
+        val jar = jarWith(
+            s"$packagedLinkDir/m-linux.flags"  -> uringWindow,
+            s"$packagedLinkDir/m-darwin.flags" -> Seq("-lc++")
+        )
+        readLinkFlags(Seq(jar), "linux") shouldBe uringWindow
+        readLinkFlags(Seq(jar), "darwin") shouldBe Seq("-lc++")
+    }
+
+    // A global distinct keeps the first module's window and folds the second's bounds into it, so `-lb` lands after the first
+    // `-Wl,-Bdynamic` and links dynamically.
+    test("readNativeFlagManifests: two modules' static windows both survive, in classpath order") {
+        val a = classDirWith(s"$packagedLinkDir/a-linux.flags" -> Seq("-Wl,-Bstatic", "-la", "-Wl,-Bdynamic"))
+        val b = classDirWith(s"$packagedLinkDir/b-linux.flags" -> Seq("-Wl,-Bstatic", "-lb", "-Wl,-Bdynamic"))
+        readLinkFlags(Seq(a, b), "linux") shouldBe
+            Seq("-Wl,-Bstatic", "-la", "-Wl,-Bdynamic", "-Wl,-Bstatic", "-lb", "-Wl,-Bdynamic")
+    }
+
+    test("readNativeFlagManifests: a module reached twice on the classpath contributes its flags once") {
+        val a    = classDirWith(s"$packagedLinkDir/a-linux.flags" -> Seq("-Wl,-Bstatic", "-la", "-Wl,-Bdynamic"))
+        val aJar = jarWith(s"$packagedLinkDir/a-linux.flags" -> Seq("-Wl,-Bstatic", "-la", "-Wl,-Bdynamic"))
+        val b    = classDirWith(s"$packagedLinkDir/b-linux.flags" -> Seq("-lb"))
+        readLinkFlags(Seq(a, b, aJar), "linux") shouldBe Seq("-Wl,-Bstatic", "-la", "-Wl,-Bdynamic", "-lb")
+    }
+
+    test("readNativeFlagManifests: a build-local entry reads its in-build manifest over its packaged one") {
+        val dir = classDirWith(
+            s"$inBuildLinkDir/m-linux.flags"  -> Seq("-L/staged/lib", "-lssl"),
+            s"$packagedLinkDir/m-linux.flags" -> Seq("-lstdc++")
+        )
+        readLinkFlags(Seq(dir), "linux") shouldBe Seq("-L/staged/lib", "-lssl")
+    }
+
+    test("readNativeFlagManifests: an empty in-build manifest still takes precedence over the packaged one") {
+        val dir = classDirWith(
+            s"$inBuildLinkDir/m-darwin.flags"          -> Nil,
+            s"$packagedLinkDir/m-darwin.guarded-flags" -> Seq("?<openssl/ssl.h> -lssl -lcrypto"),
+            s"$packagedLinkDir/m-darwin.flags"         -> Seq("-lm")
+        )
+        KyoFfiPlugin.readNativeFlagManifests(
+            Seq(dir),
+            KyoFfiPlugin.ffiNativeLinkFlagsDir,
+            KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir,
+            "darwin",
+            _ => true
+        ) shouldBe Nil
+    }
+
+    // -------------------------------------------------------------------------
+    // guarded link flags
+    // -------------------------------------------------------------------------
+
+    private def readGuarded(cp: Seq[File], targetOs: String, visible: Set[String]): Seq[String] =
+        KyoFfiPlugin.readNativeFlagManifests(
+            cp,
+            KyoFfiPlugin.ffiNativeLinkFlagsDir,
+            KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir,
+            targetOs,
+            visible.contains
+        )
+
+    private val netJar = () =>
+        jarWith(
+            s"$packagedLinkDir/net-linux.flags"         -> Seq("-ldl"),
+            s"$packagedLinkDir/net-linux.guarded-flags" -> Seq(
+                "?<liburing.h> -Wl,-Bstatic -luring -Wl,-Bdynamic",
+                "?<openssl/ssl.h> -lssl -lcrypto"
+            )
+        )
+
+    test("guarded flags: a group is linked only when its header is visible, after the module's unconditional flags") {
+        val jar = netJar()
+        readGuarded(Seq(jar), "linux", Set("liburing.h", "openssl/ssl.h")) shouldBe
+            Seq("-ldl", "-Wl,-Bstatic", "-luring", "-Wl,-Bdynamic", "-lssl", "-lcrypto")
+        readGuarded(Seq(jar), "linux", Set("openssl/ssl.h")) shouldBe Seq("-ldl", "-lssl", "-lcrypto")
+        readGuarded(Seq(jar), "linux", Set.empty) shouldBe Seq("-ldl")
+    }
+
+    test("guarded flags: each header is probed once per read, however many modules guard on it") {
+        val a      = classDirWith(s"$packagedLinkDir/a-linux.guarded-flags" -> Seq("?<openssl/ssl.h> -lssl"))
+        val b      = classDirWith(s"$packagedLinkDir/b-linux.guarded-flags" -> Seq("?<openssl/ssl.h> -lcrypto"))
+        val probed = scala.collection.mutable.ListBuffer.empty[String]
+        KyoFfiPlugin.readNativeFlagManifests(
+            Seq(a, b),
+            KyoFfiPlugin.ffiNativeLinkFlagsDir,
+            KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir,
+            "linux",
+            h => { probed += h; true }
+        ) shouldBe Seq("-lssl", "-lcrypto")
+        probed.toList shouldBe List("openssl/ssl.h")
+    }
+
+    test("guarded flags: a reader given no probe fails on a guarded line instead of guessing") {
+        val err = intercept[RuntimeException](readLinkFlags(Seq(netJar()), "linux"))
+        err.getMessage should include("<liburing.h>")
+    }
+
+    // A reader that predates guards lists `*-<os>.flags` and hands every line to clang as one flag, so the guarded lines must not live
+    // in a file that listing matches.
+    test("guarded flags: the file holding them is invisible to a reader that lists only *-<os>.flags") {
+        val dir = classDirWith(
+            s"$packagedLinkDir/net-linux.flags"         -> Seq("-ldl"),
+            s"$packagedLinkDir/net-linux.guarded-flags" -> Seq("?<openssl/ssl.h> -lssl -lcrypto")
+        )
+        val packaged = KyoFfiPlugin.ffiNativeLinkFlagsDir.foldLeft(dir)(new File(_, _))
+        sbt.IO.listFiles(packaged).map(_.getName).filter(_.matches(".*-linux\\.flags")).toList shouldBe List("net-linux.flags")
+    }
+
+    test("guarded flags: a malformed guarded line is an error naming the file") {
+        val dir = classDirWith(s"$packagedLinkDir/m-linux.guarded-flags" -> Seq("-lssl"))
+        val err = intercept[RuntimeException](readGuarded(Seq(dir), "linux", Set.empty))
+        err.getMessage should include("m-linux.guarded-flags")
+    }
+
+    test("guarded flags: rendering and parsing round-trip") {
+        val g = KyoFfiPlugin.GuardedFlags("openssl/ssl.h", Seq("-lssl", "-lcrypto"))
+        KyoFfiPlugin.renderGuardedFlags(g) shouldBe "?<openssl/ssl.h> -lssl -lcrypto"
+        KyoFfiPlugin.parseGuardedFlags(KyoFfiPlugin.renderGuardedFlags(g), "test") shouldBe g
+    }
+
+    test("validGuardHeader: a header as written inside #include <...>, nothing else") {
+        KyoFfiPlugin.validGuardHeader("openssl/ssl.h") shouldBe true
+        KyoFfiPlugin.validGuardHeader("liburing.h") shouldBe true
+        KyoFfiPlugin.validGuardHeader("") shouldBe false
+        KyoFfiPlugin.validGuardHeader("<openssl/ssl.h>") shouldBe false
+        KyoFfiPlugin.validGuardHeader("\"ssl.h\"") shouldBe false
+        KyoFfiPlugin.validGuardHeader("ssl .h") shouldBe false
+    }
+
+    // -------------------------------------------------------------------------
+    // nativeHeaderProbe: runs the host's C compiler
+    // -------------------------------------------------------------------------
+
+    // The probe drives Scala Native's clang, which kyo's Windows runners neither use nor provide as `cc`.
+    test("nativeHeaderProbe: answers what the compiler sees, including through the given -I") {
+        assume(!sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
+        val dir = Files.createTempDirectory("kyo-ffi-probe-inc-").toFile
+        Files.write(new File(dir, "kyo_ffi_probe_only.h").toPath, "int kyo_ffi_probe_only;\n".getBytes(StandardCharsets.UTF_8))
+        KyoFfiPlugin.nativeHeaderProbe("cc", Nil)("stdio.h") shouldBe true
+        KyoFfiPlugin.nativeHeaderProbe("cc", Nil)("kyo_ffi_probe_only.h") shouldBe false
+        KyoFfiPlugin.nativeHeaderProbe("cc", Seq(s"-I${dir.getAbsolutePath}"))("kyo_ffi_probe_only.h") shouldBe true
+    }
+
+    // -------------------------------------------------------------------------
+    // packagedNativeLinkFlags: the manifest a published artifact carries per OS
+    // -------------------------------------------------------------------------
+
+    private val uring = FfiLibrary(
+        id = "uring",
+        cSources = Seq(new File("/tmp/uring.c")),
+        linkLibsByOs = Map("linux" -> Seq("uring")),
+        staticLink = true,
+        linkLibsGuard = Some("liburing.h")
+    )
+    private val openssl = FfiLibrary(
+        id = "openssl",
+        cSources = Seq(new File("/tmp/openssl.c")),
+        linkLibs = Seq("ssl", "crypto"),
+        linkLibsGuard = Some("openssl/ssl.h")
+    )
+    private val vendored = FfiLibrary(
+        id = "boringssl",
+        cSources = Seq(new File("/tmp/boringssl.c")),
+        libDirs = Seq(new File("/staged/lib")),
+        linkLibs = Seq("ssl", "crypto"),
+        linkFlags = Seq("-lstdc++"),
+        staticLink = true
+    )
+    private val plain = FfiLibrary(id = "plain", cSources = Seq(new File("/tmp/plain.c")), linkLibs = Seq("m"))
+
+    test("packagedNativeLinkFlags: answers for each OS from the declarations, whatever host packages it") {
+        val libs = Seq(plain, uring, vendored, openssl)
+        KyoFfiPlugin.packagedNativeLinkFlags(libs, "linux") shouldBe (
+            Seq("-lm"),
+            Seq(
+                KyoFfiPlugin.GuardedFlags("liburing.h", Seq("-Wl,-Bstatic", "-luring", "-Wl,-Bdynamic")),
+                KyoFfiPlugin.GuardedFlags("openssl/ssl.h", Seq("-lssl", "-lcrypto"))
+            )
+        )
+        KyoFfiPlugin.packagedNativeLinkFlags(libs, "linux-musl") shouldBe KyoFfiPlugin.packagedNativeLinkFlags(libs, "linux")
+        KyoFfiPlugin.packagedNativeLinkFlags(libs, "darwin") shouldBe (
+            Seq("-lm"),
+            Seq(KyoFfiPlugin.GuardedFlags("openssl/ssl.h", Seq("-lssl", "-lcrypto")))
+        )
+    }
+
+    // A vendored library's -l names carry no path, and on their own they are worse than useless: without the -L that finds the vendored
+    // tree, `-lssl -lcrypto` resolve against the consumer's SYSTEM OpenSSL under the vendored library's name, which links, runs, and
+    // reports the wrong provider. The force-load window and the C++ runtime mean nothing without the archives either.
+    test("packagedNativeLinkFlags: a vendored library contributes nothing, not even its C++ runtime") {
+        KyoFfiPlugin.packagedNativeLinkFlags(Seq(vendored), "linux") shouldBe ((Nil, Nil))
+        KyoFfiPlugin.packagedNativeLinkFlags(Seq(vendored), "darwin") shouldBe ((Nil, Nil))
+        KyoFfiPlugin.packagedNativeLinkFlags(Seq(vendored, plain), "linux") shouldBe ((Seq("-lm"), Nil))
+    }
+
+    // A vendored library's define describes a compile against its vendored headers. kyo-net's staged BoringSSL passes one that turns any
+    // other OpenSSL's headers into an #error, and a consumer, which has no vendored tree, would then fail to compile the shipped C.
+    test("packagedNativeCompileFlags: a vendored library's defines stay in the build, a plain library's travel") {
+        val requiring = vendored.copy(cFlags = Seq("-DKYO_NET_REQUIRE_BORINGSSL"), includeDirs = Seq(new File("/staged/include")))
+        val feature   = plain.copy(cFlags = Seq("-DPLAIN_FEATURE", "-O2"))
+        KyoFfiPlugin.packagedNativeCompileFlags(Seq(requiring)) shouldBe Nil
+        KyoFfiPlugin.packagedNativeCompileFlags(Seq(requiring, feature)) shouldBe Seq("-DPLAIN_FEATURE")
+    }
+
+    test("nativeHostLinkingOptions: the host's own link ignores guards and force-loads vendored archives") {
+        KyoFfiPlugin.nativeHostLinkingOptions(Seq(uring, vendored), "linux") shouldBe Seq(
+            "-Wl,-Bstatic",
+            "-luring",
+            "-Wl,-Bdynamic",
+            "-L/staged/lib",
             "-Wl,--whole-archive",
             "-lssl",
             "-lcrypto",
             "-Wl,--no-whole-archive",
-            "-lstdc++",
-            "-Wl,-Bstatic",
-            "-luring",
-            "-Wl,-Bdynamic"
+            "-lstdc++"
         )
-        val (portable, dropped) = KyoFfiPlugin.partitionPortableFlags(flags, Set("ssl", "crypto"))
-        portable shouldBe Seq("-Wl,--whole-archive", "-Wl,--no-whole-archive", "-lstdc++", "-Wl,-Bstatic", "-luring", "-Wl,-Bdynamic")
-        dropped shouldBe Seq("-L/build/boringssl/staged/linux-x86_64/lib", "-lssl", "-lcrypto")
     }
 
-    test("partitionPortableFlags: a system link lib with the same spelling as no vendored lib is kept") {
-        KyoFfiPlugin.partitionPortableFlags(Seq("-lssl"), Set("crypto"))._1 shouldBe Seq("-lssl")
+    // -------------------------------------------------------------------------
+    // appendMissingUnits: wiring the dependency flags twice
+    // -------------------------------------------------------------------------
+
+    test("appendMissingUnits: units already present are not appended again") {
+        val units    = Seq(Seq("-Wl,-Bstatic", "-luring", "-Wl,-Bdynamic"), Seq("-lssl", "-lcrypto"))
+        val explicit = Seq("-L/opt/lib") ++ units.flatten
+        KyoFfiPlugin.appendMissingUnits(explicit, units) shouldBe explicit
+        KyoFfiPlugin.appendMissingUnits(Seq("-L/opt/lib"), units) shouldBe explicit
+        KyoFfiPlugin.appendMissingUnits(KyoFfiPlugin.appendMissingUnits(Nil, units), units) shouldBe units.flatten
+    }
+
+    test("appendMissingUnits: a unit whose flags are present but split apart is appended whole") {
+        KyoFfiPlugin.appendMissingUnits(Seq("-lssl", "-lz", "-lcrypto"), Seq(Seq("-lssl", "-lcrypto"))) shouldBe
+            Seq("-lssl", "-lz", "-lcrypto", "-lssl", "-lcrypto")
+    }
+
+    // -------------------------------------------------------------------------
+    // codegenUnneeded: when ffiGenerate may skip the codegen
+    // -------------------------------------------------------------------------
+
+    private val noLibrary = FfiLibrary(id = "kyo_ffi", cSources = Nil)
+
+    test("codegenUnneeded: no library and no kyo-ffi on the classpath skips the codegen") {
+        KyoFfiPlugin.codegenUnneeded(Seq(noLibrary), Seq(classDirWith("other/Thing.class" -> Nil))) shouldBe true
+    }
+
+    test("codegenUnneeded: kyo-ffi on the classpath, as a directory or a jar, keeps the codegen") {
+        KyoFfiPlugin.codegenUnneeded(Seq(noLibrary), Seq(classDirWith("kyo/ffi/Ffi.class" -> Nil))) shouldBe false
+        KyoFfiPlugin.codegenUnneeded(Seq(noLibrary), Seq(jarWith("kyo/ffi/Ffi.class" -> Nil))) shouldBe false
+    }
+
+    test("codegenUnneeded: a declared library keeps the codegen") {
+        KyoFfiPlugin.codegenUnneeded(Seq(plain), Nil) shouldBe false
+        KyoFfiPlugin.codegenUnneeded(Seq(noLibrary.copy(linkLibs = Seq("m"))), Nil) shouldBe false
     }
 }
 

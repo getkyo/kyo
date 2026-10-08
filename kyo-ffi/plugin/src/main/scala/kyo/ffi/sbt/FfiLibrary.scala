@@ -94,6 +94,18 @@ import sbt._
   *   order C compilation so a library that `#include`s another's header (or
   *   links against its symbols) is built afterwards. Unknown ids are errors;
   *   cycles are errors.
+  * @param linkLibsGuard
+  *   a header, written as it appears inside `#include <...>` (e.g.
+  *   `"openssl/ssl.h"`), that has to be visible for this library's Scala Native
+  *   link libs to apply on the machine that links the binary. It is the link
+  *   side of a C gate: C that compiles its real body only under
+  *   `__has_include(<header>)` and stubs otherwise needs the libraries only when
+  *   the header is there, and a link flag for an absent library fails a link
+  *   that compiled nothing referencing it. The published manifest carries the
+  *   flags as a guarded line, and the reading build evaluates the guard with
+  *   its own clang and `nativeConfig.compileOptions`. The flags this build
+  *   links itself (`ffiNativeLinkingOptions`) stay unconditional, as they were
+  *   computed for a host that compiled the real body.
   */
 final case class FfiLibrary(
     id: String,
@@ -109,7 +121,8 @@ final case class FfiLibrary(
     dependsOn: Seq[String] = Nil,
     compilerByOs: Map[String, String] = Map.empty,
     osTargets: Seq[String] = Nil,
-    osArchTargets: Seq[String] = Nil
+    osArchTargets: Seq[String] = Nil,
+    linkLibsGuard: Option[String] = None
 ) {
 
     /** Whether this library's shared library is built and bundled on `os` (the resolved TARGET os).

@@ -84,6 +84,12 @@ private[sbt] object CCompiler {
         else
             linkLibs.map(l => s"-l$l")
 
+    /** `foldedLinkLibFlags` for a Scala Native link on `os`. The static window is a GNU ld / lld option that ld64 and lld-link reject,
+      * so off Linux the libs are named plainly.
+      */
+    def nativeLinkLibFlags(linkLibs: Seq[String], staticLink: Boolean, os: String): Seq[String] =
+        foldedLinkLibFlags(linkLibs, staticLink && (os == "linux" || os == "linux-musl"))
+
     /** Link flags for a vendored third-party static archive search path (POSIX gcc / clang / zig).
       *
       * Differs from `foldedLinkLibFlags` in that the archives live under explicit `libDirs`

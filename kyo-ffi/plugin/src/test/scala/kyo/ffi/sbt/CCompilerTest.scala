@@ -427,6 +427,14 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         CCompiler.foldedLinkLibFlags(Nil, staticLink = true) shouldBe Nil
     }
 
+    test("nativeLinkLibFlags: the static window only where GNU ld / lld reads it") {
+        CCompiler.nativeLinkLibFlags(Seq("uring"), staticLink = true, os = "linux") shouldBe Seq("-Wl,-Bstatic", "-luring", "-Wl,-Bdynamic")
+        CCompiler.nativeLinkLibFlags(Seq("uring"), staticLink = true, os = "linux-musl") shouldBe
+            Seq("-Wl,-Bstatic", "-luring", "-Wl,-Bdynamic")
+        CCompiler.nativeLinkLibFlags(Seq("z"), staticLink = true, os = "darwin") shouldBe Seq("-lz")
+        CCompiler.nativeLinkLibFlags(Seq("z"), staticLink = true, os = "windows") shouldBe Seq("-lz")
+    }
+
     // --- Vendored static-archive link flags (BoringSSL: libDirs + os-dependent toggle) --------
 
     test("vendoredArchiveLinkFlags: linux static emits -L<dir> + the -Bstatic fold") {

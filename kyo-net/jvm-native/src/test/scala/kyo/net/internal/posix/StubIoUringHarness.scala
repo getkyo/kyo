@@ -283,4 +283,5 @@ class StubIoUringBindings extends IoUringBindings:
         0
 
     override def kyo_uring_probe_available(depth: Int)(using AllowUnsafe): Boolean = false
+    override def kyo_uring_compiled_stub()(using AllowUnsafe): Boolean             = false
 end StubIoUringBindings

@@ -3,6 +3,7 @@ package kyo.net.internal
 import kyo.AllowUnsafe
 import kyo.Chunk
 import kyo.ffi.Ffi
+import kyo.net.internal.backend.CapabilityOutcome
 
 /** The system-OpenSSL TLS provider (priority 20), the Native fallback below BoringSSL (priority 30). Lives in `shared` alongside
   * [[BoringSslProvider]]: one provider over the one shared [[OpenSslBindings]]. Only the Native `TlsProviderPlatform` registers it (the JVM
@@ -20,6 +21,13 @@ private[net] object SystemOpenSslProvider extends SslLibProvider:
     def priority = 20
 
     def libraryIds: Chunk[String] = Chunk(OpenSslBindings.library)
+
+    private[net] val compiledStubOutcome: CapabilityOutcome.CompiledStub = CapabilityOutcome.CompiledStub(
+        "kyo_net_openssl.c",
+        "<openssl/ssl.h>",
+        "install OpenSSL's development headers (libssl-dev, openssl-devel, or Homebrew openssl@3) on the machine that compiles it, which " +
+            "for Scala Native is the machine that links the binary, and relink"
+    )
 
     // bound once for the reason KqueuePollerBackend.kq is: the shared stateless binding was
     // reloaded per TLS operation. Lazy so the provider registry's touch of this object does not

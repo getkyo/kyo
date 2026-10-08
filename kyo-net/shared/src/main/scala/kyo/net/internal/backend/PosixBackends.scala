@@ -136,8 +136,9 @@ end KqueueBackend
 
 /** io_uring backend (Linux >= 5.6 only, priority 30 so it is preferred over epoll when available). Its probe runs the real
   * `kyo_uring_probe_available` shim probe (set up a tiny ring, tear it down); on a kernel without io_uring or a sandbox that blocks it the
-  * probe returns a clean `false`, which is reported as [[CapabilityOutcome.Unavailable]] and selection falls through to epoll.
-  * `createDriver` produces the completion-native `IoUringDriver`.
+  * probe returns a clean `false`, which is reported as [[CapabilityOutcome.Unavailable]] and selection falls through to epoll. A shim
+  * compiled without `<liburing.h>` returns the same `false`, so the probe asks `kyo_uring_compiled_stub` first and reports that build as
+  * [[CapabilityOutcome.CompiledStub]] instead. `createDriver` produces the completion-native `IoUringDriver`.
   *
   * It needs no separate shim exercise: `kyonet_posix_uring` is the library its own probe already loads, so an unstaged bundle surfaces here
   * as [[CapabilityOutcome.NotBundled]] through the same classification the readiness backends reach through their shim call.
@@ -156,10 +157,23 @@ private[net] object IoUringBackend extends PosixIoBackend:
                 // selected and failing at build. The probe is memoized, so the pool size this reads is the one in effect at the first
                 // selection; that matches the host-static premise the memo rests on, since the pool width is a process-wide flag that does
                 // not change once selection has run.
-                val depth = math.max(256, kyo.net.ioPoolSize() * 64)
-                if Ffi.load[IoUringBindings].kyo_uring_probe_available(depth) then CapabilityOutcome.Available
-                else CapabilityOutcome.Unavailable(s"io_uring could not initialize a ring at the production depth $depth")
+                probeRing(Ffi.load[IoUringBindings], math.max(256, kyo.net.ioPoolSize() * 64))
             }
+
+    private[backend] val compiledStub: CapabilityOutcome.CompiledStub = CapabilityOutcome.CompiledStub(
+        "kyo_uring.c",
+        "<liburing.h>",
+        "install liburing's development headers (liburing-dev) on the machine that compiles it, which for Scala Native is the machine " +
+            "that links the binary, and relink"
+    )
+
+    private[backend] def probeRing(bindings: IoUringBindings, depth: Int)(using AllowUnsafe): CapabilityOutcome =
+        if bindings.kyo_uring_compiled_stub() then compiledStub
+        else if bindings.kyo_uring_probe_available(depth) then CapabilityOutcome.Available
+        else
+            CapabilityOutcome.Unavailable(
+                s"io_uring is compiled into this binary but could not initialize a ring at the production depth $depth"
+            )
 
     def createDriver()(using AllowUnsafe, Frame): IoDriver[PosixHandle] =
         IoUringDriver.init()

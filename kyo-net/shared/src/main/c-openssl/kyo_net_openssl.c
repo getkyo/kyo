@@ -37,7 +37,7 @@
  * released from a Linux runner carried a shim referencing 64 raw SSL_*, BIO_*, EVP_*, ERR_* and PEM_*
  * symbols, and a macOS consumer's Scala Native link failed on every one of them, whether or not their
  * program used TLS at all. Off a host with the headers the #else branch below defines the same
- * kyo_ossl_* surface as stubs, so the link stays whole and kyo_ossl_probe_available reports 0, which
+ * kyo_ossl_* surface as stubs, so the link stays whole and kyo_ossl_compiled_stub reports 1, which
  * is what makes SystemOpenSslProvider demote at selection instead of at the first connection. This
  * mirrors the BoringSSL shim's staged / stub pair and kyo_uring.c's Linux / non-Linux pair.
  */
@@ -68,6 +68,13 @@ int kyo_ossl_probe_available(void) {
     SSL_CTX_free(ctx);
     return 1;
 }
+
+/*
+ * Which body of this file was compiled: 0 here, 1 in the stub below. Kept apart from the probe's 1/0 so
+ * SslLibProvider can report a binary built without <openssl/ssl.h> as a build fact rather than as a
+ * library that failed its SSL_CTX probe.
+ */
+int kyo_ossl_compiled_stub(void) { return 0; }
 
 /* ---- exported wrappers ---------------------------------------------------------------------- */
 
@@ -112,10 +119,12 @@ int kyo_ossl_peer_cert_end_point_hash(long ssl_ptr, unsigned char *out_buf, int 
 /*
  * No system OpenSSL headers on this host. Every entry point reports the library absent, using the same
  * sentinels the real wrappers return on failure (0 / NULL-as-0 / -1), so a caller that reaches one gets
- * a clean refusal rather than a crash. Nothing should reach one: kyo_ossl_probe_available returns 0, so
- * SystemOpenSslProvider.isAvailable is false and the TLS registry falls through. Signatures MUST match
- * the real wrappers above byte for byte, since the @extern OpenSslBindings names them either way.
+ * a clean refusal rather than a crash. Nothing should reach one: kyo_ossl_compiled_stub returns 1, so
+ * SystemOpenSslProvider reports the missing headers and the TLS registry falls through. Signatures MUST
+ * match the real wrappers above byte for byte, since the @extern OpenSslBindings names them either way.
  */
+
+int kyo_ossl_compiled_stub(void) { return 1; }
 
 int kyo_ossl_probe_available(void) { return 0; }
 

@@ -3,6 +3,7 @@ package kyo.net.internal
 import kyo.AllowUnsafe
 import kyo.Chunk
 import kyo.ffi.Ffi
+import kyo.net.internal.backend.CapabilityOutcome
 
 /** The BoringSSL TLS provider, the priority-30 primary on every platform that stages BoringSSL (JVM, Native, JS, and Wasm). Lives in `shared`:
   * one provider over the one shared [[BoringSslBindings]], driving the in-process TLS engine on all four platforms (via Panama on JVM,
@@ -19,6 +20,13 @@ private[net] object BoringSslProvider extends SslLibProvider:
     def priority = 30
 
     def libraryIds: Chunk[String] = Chunk(BoringSslBindings.library)
+
+    private[net] val compiledStubOutcome: CapabilityOutcome.CompiledStub = CapabilityOutcome.CompiledStub(
+        "kyo_net_boringssl.c",
+        "BoringSSL's headers (OPENSSL_IS_BORINGSSL)",
+        "only a build that stages BoringSSL (kyo-net/build/boringssl/build-boringssl.sh) compiles it in, so TLS uses the next registered " +
+            "provider"
+    )
 
     // bound once for the reason KqueuePollerBackend.kq is: the shared stateless binding was
     // reloaded per TLS operation. Lazy so the provider registry's touch of this object does not

@@ -229,6 +229,37 @@ class IoBackendRegistryTest extends Test:
         assert(recordingLog.warnCount.get() == 1, s"expected one demotion warning, got ${recordingLog.warnCount.get()}")
     }
 
+    "the demotion warning states each skipped candidate's reason once, not wrapped in a second 'unavailable'" in {
+        // The warning already says the candidates are unavailable, so the per-candidate text is the cause alone. A cause that restates
+        // the status reads "io_uring (unavailable (...))", and the same doubling reaches every caller that frames an outcome.
+        val recordingLog = new RecordingLog(Log.live.unsafe)
+        val list = Chunk(Stub("io_uring", 30, CapabilityOutcome.Unavailable("kernel does not provide io_uring")), Stub("epoll", 20, true))
+        select(list, Absent, recordingLog) match
+            case Result.Success(stub) => assert(stub.name == "epoll")
+            case other                => fail(other.toString)
+        val warnings = recordingLog.warnings.toArray.map(_.toString).toSeq
+        assert(warnings.size == 1, s"expected one demotion warning, got $warnings")
+        assert(
+            warnings.head.endsWith("higher-priority backend(s) unavailable: io_uring (kernel does not provide io_uring)"),
+            s"got ${warnings.head}"
+        )
+    }
+
+    "the report prints each candidate's status once: 'available' or 'unavailable (<cause>)'" in {
+        val list = Chunk(
+            Stub("io_uring", 30, CapabilityOutcome.Unavailable("kernel does not provide io_uring")),
+            Stub("kqueue", 20, CapabilityOutcome.UnsupportedOS)
+        )
+        select(list, Absent) match
+            case Result.Failure(e: NetBackendUnavailableException) =>
+                val message = e.getMessage
+                assert(message.contains("io_uring[30] unavailable (kernel does not provide io_uring)"), s"got $message")
+                assert(message.contains("kqueue[20] unavailable (not applicable to this OS/runtime)"), s"got $message")
+                assert(!message.contains("unavailable (unavailable"), s"got $message")
+            case other => fail(other.toString)
+        end match
+    }
+
     "selection skips every non-available outcome alike and lands on the floor" in {
         // The three degrades a real registry produces on one host: a kernel too old for io_uring, a native that was never staged for this
         // platform, and a backend belonging to another OS. They are three different operator situations, so the report keeps them apart,

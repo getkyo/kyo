@@ -10,7 +10,7 @@ import kyo.net.Test
   * exercising it against the real kernel; `struct timespec` is the codegen [[Timespec]] passed by value.
   *
   * Registers a connected loopback socket for `EVFILT_READ`, writes a byte to its peer, and confirms `kevent` reports the fd readable with the
-  * `EVFILT_READ` filter and the data byte count. Skips on non-macOS/BSD hosts (`sys/event.h` absent / stubbed).
+  * `EVFILT_READ` filter and the data byte count. Skips on non-macOS/BSD hosts, where `kyo_kqueue.c` answers ENOSYS.
   *
   * `kevent`, `KqueueBindings.close`, and the socket `connect`/`accept`/`send`/`close` calls are `@Ffi.blocking`, so they are generated as
   * fiber-suspending `… < Async`; the `loopbackPair` helper and the test body are threaded through the suite's async `run`.
@@ -62,6 +62,21 @@ class KqueueBindingsTest extends Test:
     end loopbackPair
 
     "KqueueBindings" - {
+        // The binding is generated where kyo is published and linked where it is consumed. Bound to libc's kqueue and kevent behind a
+        // codegen probe of <sys/event.h>, it would follow the publishing host: real externs a Linux consumer cannot link, or throwing stubs
+        // that leave a macOS consumer with no kqueue at all.
+        "is callable on every platform: kqueue's absence is an errno, not a missing symbol" in {
+            val created = kq.kqueue()
+            if PosixConstants.isMacOrBsd then
+                assert(created.value >= 0, s"kqueue failed errno=${created.errorCode}")
+                kq.close(created.value).safe.get.map(rc => assert(rc == 0))
+            else
+                assert(created.value == -1)
+                assert(created.errorCode == PosixConstants.ENOSYS)
+                succeed
+            end if
+        }
+
         "kqueue + kevent EVFILT_READ reports a readable socket" in {
             assumeKqueue()
             val kqfd = kq.kqueue()

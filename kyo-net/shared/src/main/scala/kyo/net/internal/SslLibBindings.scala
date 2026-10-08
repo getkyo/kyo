@@ -112,4 +112,10 @@ private[net] trait SslLibBindings:
       */
     def probeAvailable()(using AllowUnsafe): Boolean
 
+    /** True when the shim compiled its stub body because the library's headers were not visible to the compile, so the binary carries no
+      * TLS library at all. The provider asks this before [[probeAvailable]], whose `false` would otherwise read as a library that is
+      * present and failed.
+      */
+    def compiledStub()(using AllowUnsafe): Boolean
+
 end SslLibBindings

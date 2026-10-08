@@ -20,8 +20,8 @@
  * still DEFINED off Linux, which is what keeps a macOS Scala Native link whole:
  * this file is compiled on the machine that links, so the platform decision is
  * made against the target rather than against whichever host published the
- * artifact. io_uring's absence stays a runtime answer, kyo_uring_probe_available
- * returning 0, and the backend probe reports it unavailable.
+ * artifact. io_uring's absence stays a runtime answer: kyo_uring_compiled_stub
+ * returns 1, and the backend probe reports a binary built without liburing.
  */
 #include "kyo_net_api.h"
 
@@ -342,6 +342,14 @@ KYO_NET_API int kyo_uring_probe_available(int depth) {
     return 1;
 }
 
+/*
+ * Which body of this file was compiled: 0 here, 1 in the stub below. A separate entry point rather than
+ * a third value from kyo_uring_probe_available, whose 1/0 the binding reads as a Boolean: the backend
+ * asks this first, so a binary built without <liburing.h> is reported as a build fact and never as a
+ * kernel that refused a ring.
+ */
+KYO_NET_API int kyo_uring_compiled_stub(void) { return 0; }
+
 #else
 
 /*
@@ -351,13 +359,13 @@ KYO_NET_API int kyo_uring_probe_available(int depth) {
  *
  * The stubs exist because the Scala binding is emitted when kyo is COMPILED while
  * the Scala Native link happens on the CONSUMER's host. An artifact published from
- * Linux carries @extern declarations for all 30 symbols; leaving this translation
+ * Linux carries @extern declarations for every symbol; leaving this translation
  * unit empty off Linux made those symbols undefined at a macOS link ("ld: symbol(s)
  * not found for architecture arm64") and no user-side flag could remove them, since
  * backend selection is a runtime decision and every backend is statically reachable.
  * Defining the symbols here keeps the link graph whole on every target and leaves
- * io_uring's absence where it belongs: kyo_uring_probe_available returns 0, so the
- * backend probe reports it unavailable and selection falls through.
+ * io_uring's absence where it belongs: kyo_uring_compiled_stub returns 1, so the
+ * backend probe reports the missing liburing and selection falls through.
  *
  * struct io_uring and struct io_uring_sqe do not exist off Linux; the stubs take
  * void* where the Linux definitions take those pointers, which is the same ABI and
@@ -467,5 +475,7 @@ KYO_NET_API int kyo_uring_eventfd_read(int fd) { (void)fd; errno = ENOSYS; retur
 KYO_NET_API int kyo_uring_eventfd_close(int fd) { (void)fd; errno = ENOSYS; return -1; }
 
 KYO_NET_API int kyo_uring_probe_available(int depth) { (void)depth; return 0; }
+
+KYO_NET_API int kyo_uring_compiled_stub(void) { return 1; }
 
 #endif

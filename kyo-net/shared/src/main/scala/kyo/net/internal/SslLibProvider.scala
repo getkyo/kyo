@@ -10,11 +10,12 @@ import kyo.net.internal.backend.CapabilityProbe
   * [[SslLibBindings]], so the BoringSSL primary and the system-OpenSSL fallback share their engine construction, config application, and
   * client identity binding, and differ only in the backing library, name, and priority.
   *
-  * A concrete provider supplies [[lib]] (the loaded [[SslLibBindings]]), [[name]], [[priority]], and its library id. [[doProbe]] runs the
-  * one-call `probeAvailable` probe (allocate + free an `SSL_CTX`) and classifies any load failure (missing staged archive / symbol / no
-  * system OpenSSL) rather than collapsing it: a host without the backend still falls through to whatever else is registered, and now says
-  * which library it was missing. [[createEngine]] applies the [[NetTlsConfig]] to a fresh `SSL_CTX`, wires an `SSL` with its two memory BIOs,
-  * selects the connect/accept role, and returns a [[NativeSslEngine]] over the same backend.
+  * A concrete provider supplies [[lib]] (the loaded [[SslLibBindings]]), [[name]], [[priority]], its library id, and the outcome its shim's
+  * stub body reports. [[doProbe]] first asks the shim whether it compiled its stub body (the headers were absent where it was compiled),
+  * then runs the one-call `probeAvailable` probe (allocate + free an `SSL_CTX`), and classifies any load failure (missing staged archive /
+  * symbol / no system OpenSSL) rather than collapsing it: a host without the backend still falls through to whatever else is registered,
+  * and says which library it was missing. [[createEngine]] applies the [[NetTlsConfig]] to a fresh `SSL_CTX`, wires an `SSL` with its two
+  * memory BIOs, selects the connect/accept role, and returns a [[NativeSslEngine]] over the same backend.
   */
 abstract private[net] class SslLibProvider extends TlsEngineProvider:
 
@@ -24,6 +25,11 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
       */
     private[internal] def lib: SslLibBindings
 
+    /** What [[doProbe]] reports when [[lib]] is the shim's stub body: the shim's source, the header that gates it, and the remedy for this
+      * library.
+      */
+    private[net] def compiledStubOutcome: CapabilityOutcome.CompiledStub
+
     /** Allocate and free an `SSL_CTX` through the backing library. Memoized by `CapabilityDescriptor.probe`, which matters here beyond the
       * general host-static argument: running this per TLS connect/listen meant many concurrent `SSL_CTX_new`/`SSL_CTX_free` calls across
       * scheduler carriers, multiplying the surface for any OpenSSL/BoringSSL global-state contention. That memo replaces the `@volatile`
@@ -31,8 +37,14 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
       */
     private[net] def doProbe(using AllowUnsafe): CapabilityOutcome =
         CapabilityProbe.run(libraryIds) {
-            if lib.probeAvailable() then CapabilityOutcome.Available
-            else CapabilityOutcome.Unavailable(s"the '$name' TLS library is present but its SSL_CTX probe reported it unusable")
+            val l = lib
+            if l.compiledStub() then compiledStubOutcome
+            else if l.probeAvailable() then CapabilityOutcome.Available
+            else
+                CapabilityOutcome.Unavailable(
+                    s"the '$name' TLS library is compiled into this binary but its SSL_CTX probe reported it unusable"
+                )
+            end if
         }
 
     def createEngine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): TlsEngine =

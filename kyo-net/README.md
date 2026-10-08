@@ -286,7 +286,7 @@ Migration: a consumer that upgrades to the classifier distribution without addin
 
 ## Scala Native builds
 
-A Scala Native build links kyo-net's C shims into the binary rather than loading a shared library, so the C compiles on the machine doing the link. Scala Native picks the sources up from the jar on its own; what it does not pick up is the libraries each shim needs at link time. Those travel as classpath manifests, and the kyo FFI plugin is what reads them, so a Native build of anything that reaches a socket needs the plugin and the two lines that fold its answer into `nativeConfig`:
+A Scala Native build links kyo-net's C shims into the binary rather than loading a shared library, so the C compiles on the machine doing the link. Scala Native picks the sources up from the jar on its own; what it does not pick up is the libraries each shim needs at link time. Those travel as classpath manifests, and the kyo FFI plugin is what reads them, so a Native build of anything that reaches a socket needs the plugin enabled on the Native project:
 
 ```
 // project/plugins.sbt
@@ -296,18 +296,23 @@ addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" % kyoVersion)
 ```
 // the Native project, or a crossProject's .nativeSettings
 .enablePlugins(kyo.ffi.sbt.KyoFfiPlugin)
-.settings(
-    nativeConfig := {
-        val base = nativeConfig.value
-        base
-            .withLinkingOptions(base.linkingOptions ++ ffiNativeDependencyLinkingOptions.value)
-            .withCompileOptions(base.compileOptions ++ ffiNativeDependencyCompileOptions.value)
-    }
-)
 ```
 
-`ffiNativeDependencyLinkingOptions` and `ffiNativeDependencyCompileOptions` are the flags kyo-net declares for its own shims, read off the manifests it ships. They have to be wired in explicitly because `nativeConfig` is per-project and does not cross a dependency edge, while the C does: Scala Native compiles kyo-net's shims into your binary, so your link is the one that needs their libraries. On Linux that is `-luring`; on macOS the shims need nothing beyond libc.
+With `ScalaNativePlugin` enabled too, the plugin folds kyo-net's flags into the link itself. They have to come from somewhere because `nativeConfig` is per-project and does not cross a dependency edge, while the C does: Scala Native compiles kyo-net's shims into your binary, so your link is the one that needs their libraries.
 
-`[kyo-ffi-plugin]` lines in the build output confirm the plugin is active. This is a build-time dependency only: nothing in the application imports it.
+Which libraries depends on the machine. Each shim compiles its real body only where its header is visible and a stub otherwise, and the link follows the same test: `-luring` when `liburing.h` is visible (liburing-dev on Debian and Ubuntu), `-lssl -lcrypto` when `openssl/ssl.h` is (libssl-dev). The plugin answers it by running your build's own clang with your `nativeConfig.compileOptions`, so an `-I` pointing at a non-default OpenSSL prefix counts. A machine without a dev package links the stub and reports that backend or TLS provider unavailable at runtime, with a reason that names the missing header, for example `io_uring[30] unavailable (kyo_uring.c was compiled without <liburing.h>, ...)` in the startup selection report. That reason means the library is not in the binary: install the dev package and relink. A library that is in the binary and fails at runtime says so instead (`io_uring is compiled into this binary but could not initialize a ring ...`).
 
-The I/O backend is chosen at runtime, as on every other platform, and the shims that do not apply to the target compile to stubs whose probes report unavailable, so a macOS binary links the same sources a Linux one does and selects kqueue. In-process TLS needs a staged BoringSSL or the host's OpenSSL; where neither is present the TLS provider reports unavailable and `connectTls` fails closed rather than falling back to plaintext.
+The same flags are available as `ffiNativeDependencyLinkingOptions` and `ffiNativeDependencyCompileOptions`, for a build that sets the link tasks' own `nativeLink / nativeConfig` (which replaces the plugin's wiring) or wants the flags visible in `nativeConfig`. Adding them there as well is harmless, because the plugin does not append a group of flags the link configuration already carries:
+
+```
+nativeConfig := {
+    val base = nativeConfig.value
+    base
+        .withLinkingOptions(base.linkingOptions ++ ffiNativeDependencyLinkingOptions.value)
+        .withCompileOptions(base.compileOptions ++ ffiNativeDependencyCompileOptions.value)
+}
+```
+
+sbt has to run on JDK 25 or newer, even though the binary is native: the plugin runs its code generator inside sbt's JVM, and your compile runs kyo's macros there, which load kyo classes built for Java 25. On an older JDK the build fails with "kyo-ffi-plugin needs sbt to run on JDK 25 or newer". `[kyo-ffi-plugin]` lines in the build output confirm the plugin is active. This is a build-time dependency only: nothing in the application imports it.
+
+The I/O backend is chosen at runtime, as on every other platform, and the shims that do not apply to the target compile to stubs whose probes report unavailable, so a macOS binary links the same sources a Linux one does and selects kqueue. In-process TLS on a Native build uses the host's OpenSSL, decided by the same header test as its link flags; where the headers are absent the TLS provider reports unavailable and `connectTls` fails closed rather than falling back to plaintext.

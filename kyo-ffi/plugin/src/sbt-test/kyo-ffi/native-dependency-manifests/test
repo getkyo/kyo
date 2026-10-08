@@ -1,0 +1,9 @@
+# A Native consumer that resolves an FFI module as a published jar links that module's bundled C with the flags its manifests carry.
+> producer/publishLocal
+$ copy-file changes/consumer.sbt build.sbt
+> reload
+> consumer/checkRun
+> consumer/checkDependencyLinkFlags
+> consumer/checkLinkedOnce
+> autoConsumer/checkLinkedOnce
+> autoConsumer/checkRun

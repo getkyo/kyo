@@ -1,7 +1,6 @@
 package kyo.net.internal
 
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.ffi.Ffi
 
 /** Minimal load probe for the bundled BoringSSL shim (`kyonet_boringssl`).
@@ -30,7 +29,6 @@ end BoringSslProbe
 
 private[net] object BoringSslProbe extends Ffi.Config(
         library = "kyonet_boringssl",
-        headers = Chunk("openssl/ssl.h"),
         // On Native the shim's C (kyo_net_boringssl.c) is compiled INTO the binary (copied under
         // resources/scala-native by KyoFfiPlugin) and the staged BoringSSL archives are archive-linked
         // via ffiNativeLinkingOptions, so the generated Native binding must NOT emit

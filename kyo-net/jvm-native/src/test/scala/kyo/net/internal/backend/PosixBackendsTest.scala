@@ -1,7 +1,9 @@
 package kyo.net.internal.backend
 
 import kyo.*
+import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.posix.IoUringBindings
 import kyo.net.internal.posix.PosixConstants
 
 /** The real posix backends' identity and probes on the running host.
@@ -63,6 +65,23 @@ class PosixBackendsTest extends Test:
                 cancel(s"$backend demoted because '$id' is not bundled for $platform, which is the honest outcome on this host")
             case other =>
                 cancel(s"$backend is not available on this host: ${other.describe}")
+        end match
+    }
+
+    "io_uring over a shim compiled without <liburing.h> reports the missing headers, not a ring that failed to initialize" in {
+        // kyo_uring.c compiles its stub body wherever <liburing.h> is not visible, which is every non-Linux host and a Linux host without
+        // liburing's development headers. The stub's ring probe answers 0 too, so only the shim's own answer about which body it is can
+        // tell "relink with liburing" apart from "the kernel or sandbox refused the ring".
+        val bindings = Ffi.load[IoUringBindings]
+        if !PosixConstants.isLinux then assert(bindings.kyo_uring_compiled_stub(), "off Linux kyo_uring.c can only compile its stub body")
+        IoUringBackend.probeRing(bindings, 256) match
+            case outcome if bindings.kyo_uring_compiled_stub() =>
+                assert(outcome == IoUringBackend.compiledStub, s"got $outcome")
+                assert(outcome.describe.contains("<liburing.h>"), outcome.describe)
+            case CapabilityOutcome.Available           => succeed
+            case CapabilityOutcome.Unavailable(reason) =>
+                assert(reason.contains("compiled into this binary"), s"a real body's ring failure must say liburing is present: $reason")
+            case other => fail(s"a real kyo_uring.c body reported $other")
         end match
     }
 

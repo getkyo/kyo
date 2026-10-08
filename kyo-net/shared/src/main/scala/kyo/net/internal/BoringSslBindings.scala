@@ -1,7 +1,6 @@
 package kyo.net.internal
 
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 
@@ -43,12 +42,14 @@ private[net] trait BoringSslBindings extends SslLibBindings, Ffi:
     def shutdownStep(ssl: Long)(using AllowUnsafe): Int
     def peerCertEndPointHash(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int
     def probeAvailable()(using AllowUnsafe): Boolean
+    def compiledStub()(using AllowUnsafe): Boolean
 
 end BoringSslBindings
 
 private[net] object BoringSslBindings extends Ffi.Config(
         library = "kyonet_boringssl",
-        headers = Chunk("openssl/ssl.h", "openssl/x509.h"),
+        // No `headers`: kyo_net_boringssl.c defines every kyo_bssl_* symbol on every host (stubs off BoringSSL's headers), and a codegen
+        // header probe would answer for the publishing host rather than the one that links the binary.
         // The neutral SslLibBindings method names map to the shim's kyo_bssl_* C symbols here, so the
         // generated binding resolves each method to its prefixed export on Panama (JVM) and @extern (Native).
         symbols = Map(
@@ -73,7 +74,8 @@ private[net] object BoringSslBindings extends Ffi.Config(
             "pending"                       -> "kyo_bssl_pending",
             "shutdownStep"                  -> "kyo_bssl_shutdown_step",
             "peerCertEndPointHash"          -> "kyo_bssl_peer_cert_end_point_hash",
-            "probeAvailable"                -> "kyo_bssl_probe_available"
+            "probeAvailable"                -> "kyo_bssl_probe_available",
+            "compiledStub"                  -> "kyo_bssl_compiled_stub"
         ),
         // On Native the shim's C (kyo_net_boringssl.c) is compiled INTO the binary (copied under
         // resources/scala-native by KyoFfiPlugin) and the staged BoringSSL archives are archive-linked

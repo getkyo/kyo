@@ -1,0 +1,2 @@
+# The packaged link-flag manifests name every target OS, each with that OS's libraries, independent of the OS that packaged them.
+> checkPackagedManifests

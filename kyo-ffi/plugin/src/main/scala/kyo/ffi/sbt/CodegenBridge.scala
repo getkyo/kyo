@@ -65,6 +65,8 @@ private[sbt] object CodegenBridge {
         val generatorCls =
             try cl.loadClass("kyo.ffi.codegen.FfiGenerator$")
             catch {
+                case e: UnsupportedClassVersionError =>
+                    throw unsupportedJavaRuntime(e)
                 case e: ClassNotFoundException =>
                     log.warn(
                         "[kyo-ffi-plugin] kyo.ffi.codegen.FfiGenerator not found on the codegen classloader; " +
@@ -235,6 +237,45 @@ private[sbt] object CodegenBridge {
             finally in.close()
     }
 
+    /** The oldest JDK sbt can run on in a build using this plugin, baked into the plugin jar beside `version.txt`.
+      *
+      * It is the release kyo's own modules are built for rather than the codegen's: the consumer's compile runs kyo's macros inside sbt's
+      * JVM, so an older JDK fails there even when the codegen loads. Absent when the plugin's sources are compiled into a build's own
+      * meta-build, which hands it an in-build codegen classpath compiled by the same JDK that runs it.
+      */
+    def requiredJavaRelease: Option[Int] = {
+        val in = getClass.getResourceAsStream("/kyo-ffi-plugin/sbt-java-release.txt")
+        if (in == null) None
+        else
+            try Some(new String(readAll(in), java.nio.charset.StandardCharsets.UTF_8).trim.toInt)
+            finally in.close()
+    }
+
+    def runningJavaVersion: String = sys.props.getOrElse("java.specification.version", "unknown")
+
+    /** The complaint when a JVM reporting `running` as its `java.specification.version` cannot load a codegen compiled for `required`. */
+    private[sbt] def javaRuntimeShortfall(required: Int, running: String): Option[String] = {
+        val major = scala.util.Try(running.stripPrefix("1.").takeWhile(_.isDigit).toInt).toOption
+        if (major.exists(_ >= required)) None
+        else Some(s"kyo-ffi-plugin needs sbt to run on JDK $required or newer; this sbt runs on JDK $running")
+    }
+
+    /** Fails before the codegen or its compiler is loaded, since a too-old JVM otherwise surfaces as an `UnsupportedClassVersionError`
+      * naming a class file version.
+      */
+    def checkJavaRuntime(): Unit =
+        requiredJavaRelease.flatMap(javaRuntimeShortfall(_, runningJavaVersion)).foreach { message =>
+            throw new sbt.MessageOnlyException(s"[kyo-ffi-plugin] $message")
+        }
+
+    /** `e`'s class file version is the JDK it needs plus 44, which is all a plugin compiled into a meta-build has to go on. */
+    private def unsupportedJavaRuntime(e: UnsupportedClassVersionError): Exception = {
+        val fromError = "class file version (\\d+)".r.findFirstMatchIn(String.valueOf(e.getMessage)).map(_.group(1).toInt - 44)
+        val message   = requiredJavaRelease.orElse(fromError).flatMap(javaRuntimeShortfall(_, runningJavaVersion))
+            .getOrElse(s"kyo-ffi-codegen cannot load on this JVM: ${e.getMessage}")
+        new sbt.MessageOnlyException(s"[kyo-ffi-plugin] $message")
+    }
+
     private def readAll(in: java.io.InputStream): Array[Byte] = {
         val out = new java.io.ByteArrayOutputStream
         val buf = new Array[Byte](8192)
@@ -326,7 +367,8 @@ private[sbt] object CodegenBridge {
                 return Nil
             }
         } catch {
-            case t: Throwable =>
+            case e: UnsupportedClassVersionError => throw unsupportedJavaRuntime(e)
+            case t: Throwable                    =>
                 log.warn(s"[kyo-ffi-plugin] compileSourcesToTasty failed: ${t.getClass.getName}: ${t.getMessage}")
                 return Nil
         }

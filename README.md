@@ -253,10 +253,12 @@ One source tree, one Scala 3 LTS compiler, four published targets:
 
 | Platform     | Runtime              | Coordinate |
 | ------------ | -------------------- | ---------- |
-| JVM          | JDK 21+              | `%%`       |
+| JVM          | JDK 25+              | `%%`       |
 | Scala.js     | Node.js, browsers    | `%%%`      |
 | Scala Native | Native binary (LLVM) | `%%`       |
 | WebAssembly  | Node.js 24+          | `%%%`      |
+
+Kyo's JVM modules are compiled for Java 25, since the foreign-memory modules call `java.lang.foreign`. The exceptions, compiled for Java 17, are kyo-scheduler and its ZIO, Pekko and Finagle integrations, kyo-stats-registry, kyo-config, and the kyo-compat backends.
 
 Scala.js and the WebAssembly backend share a single-threaded, event-loop concurrency model; on the JVM, Kyo runs its multi-threaded work-stealing scheduler.
 

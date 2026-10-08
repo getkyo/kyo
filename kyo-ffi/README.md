@@ -106,6 +106,8 @@ lazy val demo = crossProject(JSPlatform, JVMPlatform, NativePlatform)
 
 Platform detection is automatic: a sub-project with `ScalaNativePlugin` enabled gets the Native backend, a Scala.js project gets the JS backend, everything else defaults to JVM. Override with `ffiTargetPlatform := "JVM" | "Native" | "JS"` when the detection cannot infer the right answer.
 
+sbt has to run on JDK 25 or newer, whatever JDK the application targets: the code generator runs inside sbt's own JVM, and so do the kyo macros your compile expands, which load kyo classes built for Java 25. On an older one `ffiGenerate` fails with "kyo-ffi-plugin needs sbt to run on JDK 25 or newer; this sbt runs on JDK 21". A project that has neither `kyo-ffi` on its classpath nor a declared library skips the generator, and with it the requirement.
+
 Drop a C file in `src/main/c/`:
 
 ```c
@@ -840,6 +842,8 @@ object KqueueBindings extends Ffi.Config(library = "c", headers = Chunk("sys/eve
 
 On a macOS build host, `EpollBindings` emits stubs while `KqueueBindings` generates real `@extern` calls. On Linux, the reverse. This prevents link failures without requiring platform-specific source trees.
 
+The probe answers for the machine that runs the code generator, and a published Native artifact carries that answer to every consumer. A library built on Linux and linked on macOS gets the Linux answer: stubs for `kqueue`, and `@extern` calls to `epoll` symbols the macOS linker cannot find. For a library you publish, bind a C wrapper you ship instead: a `nativeBundled` source that defines every entry point on every platform, real behind `#if __has_include(<sys/event.h>)` and a stub returning an error code otherwise, with no `headers` entry. Scala Native compiles that source where the binary links, so the choice follows the consumer's platform. kyo-net's `kyo_epoll.c` and `kyo_kqueue.c` are built this way.
+
 > **Note:** on Scala Native, `headers` and `nativeBundled` jointly decide link behavior. `headers` drives the `cc -E` probe (a missing header emits stubs instead of `@extern`), while `nativeBundled = true` suppresses `@link` so the C is compiled into the binary rather than linked with `-l<library>`. Set them together: one without the other produces unexpected stubs or an unresolvable `-l`.
 
 ## Shipping native code across platforms
@@ -885,6 +889,7 @@ If a binding's `Ffi.Config(library = "...")` id is not declared in `ffiLibraries
 | `dependsOn` | other library ids this one must build after (build-order topological sort) |
 | `compilerByOs` | override the C compiler for one OS (e.g. `cl` on Windows) |
 | `osTargets` | the OS names this library is built and bundled for; empty (the default) means every OS |
+| `linkLibsGuard` | a header (`"openssl/ssl.h"`) a Scala Native consumer's compile must see for this library's link libs to apply; see "Link libraries behind a header gate" |
 
 `FfiLibrary.resolvedLinkLibs(os)` returns the combined `linkLibs` plus the matching `linkLibsByOs` entries for the current OS.
 
@@ -907,6 +912,23 @@ On the JVM, where the native manifest is read, a platform a library does not nam
 
 Scala Native is unaffected either way: it compiles every declared C source into the binary on every OS, which is what keeps the stub symbols resolvable there. `osTargets` governs the JVM and JS shared library only.
 
+### Link libraries behind a header gate
+
+On Scala Native the C compiles on the machine that links the binary, which is a consumer's machine once the module is published. C that compiles its real body only under `__has_include(<liburing.h>)` and a stub otherwise needs `-luring` only where the header is there; on a machine without it, the flag fails a link that compiled nothing calling the library. `linkLibsGuard` declares the flag gate beside the C one:
+
+```scala doctest:expect=skipped
+ffiLibraries := Seq(
+    FfiLibrary(
+        "kyo_tls",
+        tlsCSources,
+        linkLibs = Seq("ssl", "crypto"),
+        linkLibsGuard = Some("openssl/ssl.h")
+    )
+)
+```
+
+The published manifest carries these flags as a guarded group, and the consumer's build compiles a one-line probe with its own clang and `nativeConfig.compileOptions`, so a `-I` pointing at a non-default prefix counts, and links the group only when the header is visible. The build that declares the library links its own binaries unconditionally, since it compiled the real body. The guard applies to Scala Native only; the JVM and JS shared library link on the build host as before.
+
 ### Static linking vendored archives
 
 `FfiLibrary.linkLibs` folds vendored static archives (`lib<name>.a` under `libDirs`) into the shim. Static-linking a vendored archive is a three-field interaction: `libDirs` points `-L` at the archives, `linkLibs` names them, and `linkLibsByOs` splits the per-OS set. Two things commonly trip up a first integration:
@@ -928,6 +950,8 @@ ffiLibraries := Seq(
 - **Multiple archives can collide on duplicate symbols.** Linking a whole vendored tree (a library archive plus its bundled copies of common objects) can fail with hundreds of duplicate-symbol errors on `ld64`. Link only the archive that actually provides the symbols your bindings call (for instance the driver archive, not also a client archive that re-bundles the same objects).
 
 `ffiPackage` bundles only the libraries the plugin compiles from your `cSources` shim into `META-INF/native/<os>-<arch>/`; it does not bundle a standalone third-party `.so`. To ship a third-party library, static-link it into your shim via `linkLibs` (above) so there is a single self-contained artifact, rather than relying on a separately-distributed shared object.
+
+On Scala Native a vendored library's flags stay in the build that has its archives. The manifest a published artifact carries for a downstream Native build leaves out everything a library with `libDirs` declares (its link libraries, force-load flags, include directories and `-D` defines), because the consumer has neither the archives nor the headers. Scala Native still compiles the library's C on the consumer's machine, so that C has to compile without the vendored headers, typically to a stub body selected with `__has_include` or a header-defined macro.
 
 > **Caution:** on Scala Native the plugin computes the link options but does not wire them into the build. A consumer using `ffiLibraries` with `linkLibs` / `libDirs` / `staticLink` must add `nativeConfig.linkingOptions ++= ffiNativeLinkingOptions.value` themselves, or the static link fails with undefined-reference errors. On JVM and JS the plugin links the shim directly and no manual wiring is needed.
 
@@ -1037,6 +1061,7 @@ Setting one of those at `ThisBuild` has no effect.
 | `ffiNpmBundleTemplate` | emit a `package.json` pinning `koffi` to `^2.7` (Scala.js) |
 | `ffiDumpCcCommand` | return the `cc` command-line that `ffiCompile` would invoke (diagnostic; does not run the compiler) |
 | `ffiNativeLinkingOptions` | compute the Native linking options to wire into `nativeConfig.linkingOptions` |
+| `ffiNativeDependencyLinkingOptions` / `ffiNativeDependencyCompileOptions` | the Native flags the dependencies on the classpath declare for their bundled C, read from the manifests they ship; folded into the link automatically when `ScalaNativePlugin` is enabled |
 | `ffiPackagingCheck` | verify each staged native matches the platform directory it sits in, and that every declared library has one for each `ffiRequiredPlatforms` entry |
 
 ### Release commands

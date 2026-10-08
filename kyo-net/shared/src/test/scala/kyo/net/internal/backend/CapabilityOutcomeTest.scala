@@ -1,5 +1,6 @@
 package kyo.net.internal.backend
 
+import kyo.Chunk
 import kyo.net.Test
 
 /** Pins what a demoted backend's one line tells the reader.
@@ -32,8 +33,45 @@ class CapabilityOutcomeTest extends Test:
         "the other outcomes stay one short line each" in {
             assert(CapabilityOutcome.Available.describe == "available")
             assert(CapabilityOutcome.UnsupportedOS.describe == "not applicable to this OS/runtime")
-            assert(CapabilityOutcome.Unavailable("the kernel is too old").describe == "unavailable (the kernel is too old)")
+            assert(CapabilityOutcome.Unavailable("the kernel is too old").describe == "the kernel is too old")
             assert(CapabilityOutcome.VersionTooOld("1.0", "2.0").describe == "native version 1.0 is below the required 2.0")
+        }
+
+        // Every caller already frames a non-available outcome as unavailable (the selection report, the demotion and forced-backend
+        // warnings, the consumer report), so a describe that restates the status prints it twice: "unavailable (unavailable (...))".
+        "never restates the unavailable status its callers already print" in {
+            val outcomes = Chunk(
+                CapabilityOutcome.UnsupportedOS,
+                CapabilityOutcome.Unavailable("the kernel is too old"),
+                CapabilityOutcome.CompiledStub("kyo_uring.c", "<liburing.h>", "install liburing-dev and relink"),
+                CapabilityOutcome.NotBundled("kyonet_posix_uring", "linux-x86_64"),
+                CapabilityOutcome.VersionTooOld("1.0", "2.0"),
+                CapabilityOutcome.ProbeFailed(new RuntimeException("boom"))
+            )
+            outcomes.foreach { outcome =>
+                assert(!outcome.describe.startsWith("unavailable"), s"describe restates the status: ${outcome.describe}")
+                assert(outcome.status == s"unavailable (${outcome.describe})", s"got ${outcome.status}")
+            }
+            succeed
+        }
+
+        // The stub body of a header-gated shim is a build fact. The line must say the library is absent from the binary and name the
+        // header and the remedy, because "present but its probe failed" sends the reader after a runtime fault that does not exist.
+        "CompiledStub says the binary was built without the header, and names the remedy" in {
+            val described =
+                CapabilityOutcome.CompiledStub("kyo_uring.c", "<liburing.h>", "install liburing's development headers and relink").describe
+            assert(described.contains("kyo_uring.c was compiled without <liburing.h>"), described)
+            assert(described.contains("stub"), described)
+            assert(described.contains("install liburing's development headers and relink"), described)
+            assert(!described.contains("present"), described)
+        }
+    }
+
+    "status" - {
+        "is 'available' or 'unavailable (<describe>)', stating the status once" in {
+            assert(CapabilityOutcome.Available.status == "available")
+            assert(CapabilityOutcome.Unavailable("the kernel is too old").status == "unavailable (the kernel is too old)")
+            assert(CapabilityOutcome.UnsupportedOS.status == "unavailable (not applicable to this OS/runtime)")
         }
     }
 

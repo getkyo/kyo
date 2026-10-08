@@ -23,23 +23,33 @@
  *
  * Opaque `SSL_CTX*` / `SSL*` cross the FFI boundary as pointers (carried as `long`). The caller
  * never dereferences them; it only round-trips them back into these functions.
+ *
+ * Header gate: the real body compiles only against BoringSSL's own headers, and the #else branch at
+ * the end defines the same kyo_bssl_* surface as stubs whose probe reports 0. A Scala Native consumer
+ * compiles this file on the machine that links the binary, where the headers in scope are usually a
+ * system OpenSSL's or none at all, and the BoringSSL archives this body needs are not on its link; the
+ * stub keeps that link whole and lets BoringSslProvider demote at selection. Compiling the real body
+ * against another OpenSSL's headers would be worse than failing: OpenSSL 3's BIO_new_mem_buf takes an
+ * int length and BoringSSL's an ossl_ssize_t, so a -1 reaches BoringSSL as 0xFFFFFFFF and the PEM
+ * reader runs past the string. A build that stages BoringSSL defines KYO_NET_REQUIRE_BORINGSSL, which
+ * turns a wrong include order there into a compile error instead of a silent stub.
  */
+#if __has_include(<openssl/ssl.h>)
 #include <openssl/ssl.h>
+#endif
+
+#if defined(KYO_NET_REQUIRE_BORINGSSL) && !defined(OPENSSL_IS_BORINGSSL)
+#error "kyo_net_boringssl.c is compiled against non-BoringSSL headers: the staged BoringSSL include must precede every other"
+#endif
+
+#if defined(OPENSSL_IS_BORINGSSL)
+
 #include <openssl/bio.h>
 #include <openssl/x509.h>
 #include <openssl/evp.h>
 #include <openssl/objects.h>
 #include <openssl/err.h>
 #include <openssl/crypto.h>
-
-/*
- * The archives linked are BoringSSL's, so the headers must be too. Where another OpenSSL's headers win the include
- * search, calls compile against different prototypes: OpenSSL 3's BIO_new_mem_buf takes an int length, BoringSSL's an
- * ossl_ssize_t, so a -1 reaches BoringSSL as 0xFFFFFFFF and the PEM reader runs past the string.
- */
-#ifndef OPENSSL_IS_BORINGSSL
-#error "kyo_net_boringssl.c is compiled against non-BoringSSL headers: the staged BoringSSL include must precede every other"
-#endif
 
 #define KYO_SSL_PREFIX kyo_bssl_
 #include "kyo_ssl_common.h"
@@ -58,6 +68,13 @@ int kyo_bssl_probe_available(void) {
     SSL_CTX_free(ctx);
     return 1;
 }
+
+/*
+ * Which body of this file was compiled: 0 here, 1 in the stub below. Kept apart from the probe's 1/0 so
+ * SslLibProvider can report a binary built without BoringSSL's headers as a build fact rather than as a
+ * library that failed its SSL_CTX probe.
+ */
+int kyo_bssl_compiled_stub(void) { return 0; }
 
 /* ---- exported wrappers ---------------------------------------------------------------------- */
 
@@ -149,3 +166,147 @@ int kyo_bssl_test_break_write_bio(long ssl_ptr) {
     st->write_bio = broken;
     return 0;
 }
+
+#else
+
+/*
+ * Every entry point reports the bundle absent with the sentinel its real counterpart returns on failure
+ * (0 / NULL-as-0 / -1 / -2). Signatures MUST match the real wrappers above byte for byte, since the
+ * @extern BoringSslBindings name them either way.
+ */
+
+long kyo_bssl_ctx_new(int isServer) {
+    (void)isServer;
+    return 0; /* allocation-failure sentinel: no live context */
+}
+
+void kyo_bssl_ctx_free(long ctx_ptr) {
+    (void)ctx_ptr;
+}
+
+int kyo_bssl_ctx_set_cert(long ctx_ptr, const char *cert_pem, const char *key_pem) {
+    (void)ctx_ptr;
+    (void)cert_pem;
+    (void)key_pem;
+    return -1;
+}
+
+void kyo_bssl_ctx_set_verify_mode(long ctx_ptr, int mode) {
+    (void)ctx_ptr;
+    (void)mode;
+}
+
+int kyo_bssl_ctx_load_ca(long ctx_ptr, const char *ca_pem) {
+    (void)ctx_ptr;
+    (void)ca_pem;
+    return -1;
+}
+
+int kyo_bssl_ctx_load_system_ca(long ctx_ptr) {
+    (void)ctx_ptr;
+    return 0;
+}
+
+int kyo_bssl_ctx_set_min_max_version(long ctx_ptr, int min, int max) {
+    (void)ctx_ptr;
+    (void)min;
+    (void)max;
+    return -1;
+}
+
+long kyo_bssl_ssl_new(long ctx_ptr, const char *hostname) {
+    (void)ctx_ptr;
+    (void)hostname;
+    return 0; /* allocation-failure sentinel: no live SSL */
+}
+
+int kyo_bssl_ssl_set_verify_name(long ssl_ptr, const char *hostname) {
+    (void)ssl_ptr;
+    (void)hostname;
+    return 0; /* set-failure sentinel: no reference identity bound */
+}
+
+int kyo_bssl_ssl_require_unmatchable_identity(long ssl_ptr) {
+    (void)ssl_ptr;
+    return 0; /* set-failure sentinel: no reference identity bound */
+}
+
+void kyo_bssl_ssl_set_connect_state(long ssl_ptr) {
+    (void)ssl_ptr;
+}
+
+void kyo_bssl_ssl_set_accept_state(long ssl_ptr) {
+    (void)ssl_ptr;
+}
+
+void kyo_bssl_ssl_free(long ssl_ptr) {
+    (void)ssl_ptr;
+}
+
+int kyo_bssl_do_handshake_step(long ssl_ptr) {
+    (void)ssl_ptr;
+    return -2; /* fatal-error sentinel */
+}
+
+int kyo_bssl_feed_ciphertext(long ssl_ptr, const unsigned char *buf, int len) {
+    (void)ssl_ptr;
+    (void)buf;
+    (void)len;
+    return -1;
+}
+
+int kyo_bssl_drain_ciphertext(long ssl_ptr, unsigned char *buf, int len) {
+    (void)ssl_ptr;
+    (void)buf;
+    (void)len;
+    return -1;
+}
+
+int kyo_bssl_read_plain(long ssl_ptr, unsigned char *buf, int len) {
+    (void)ssl_ptr;
+    (void)buf;
+    (void)len;
+    return -2; /* fatal-error sentinel */
+}
+
+int kyo_bssl_write_plain(long ssl_ptr, const unsigned char *buf, int len) {
+    (void)ssl_ptr;
+    (void)buf;
+    (void)len;
+    return -2; /* fatal-error sentinel */
+}
+
+int kyo_bssl_pending(long ssl_ptr) {
+    (void)ssl_ptr;
+    return 0;
+}
+
+int kyo_bssl_shutdown_step(long ssl_ptr) {
+    (void)ssl_ptr;
+    return -2; /* fatal-error sentinel */
+}
+
+int kyo_bssl_peer_cert_end_point_hash(long ssl_ptr, unsigned char *out_buf, int out_len) {
+    (void)ssl_ptr;
+    (void)out_buf;
+    (void)out_len;
+    return -1; /* no peer cert */
+}
+
+int kyo_bssl_probe_available(void) {
+    return 0;
+}
+
+int kyo_bssl_compiled_stub(void) {
+    return 1;
+}
+
+void kyo_bssl_test_put_error(void) {
+}
+
+int kyo_bssl_test_break_write_bio(long ssl_ptr) {
+    (void)ssl_ptr;
+    return -1;
+}
+
+#endif
