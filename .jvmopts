@@ -3,4 +3,5 @@
 -XX:+UseCompactObjectHeaders
 -XX:MaxMetaspaceSize=2G
 -XX:ReservedCodeCacheSize=256M
+-XX:+ExitOnOutOfMemoryError
 -Dfile.encoding=UTF-8
