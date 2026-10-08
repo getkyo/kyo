@@ -863,7 +863,7 @@ class TChunkTest extends kyo.test.Test[Any]:
                     assert(snap == Chunk(1, 2, 3, 4, 5))
             }
 
-            "concurrent slice assertion is non-vacuous".notJs in {
+            "concurrent slice assertion is non-vacuous" in {
                 val retrySchedule = STM.defaultRetrySchedule.forever
                 val size          = 100
                 for
@@ -1201,7 +1201,7 @@ class TChunkTest extends kyo.test.Test[Any]:
                     assert(sz == 5)
             }
 
-            "preserves order under concurrent appends".notJs in {
+            "preserves order under concurrent appends" in {
                 val n = 200
                 for
                     chunk <- TChunk.init[Int]
@@ -1284,7 +1284,7 @@ class TChunkTest extends kyo.test.Test[Any]:
         }
 
         "concurrent appends" - {
-            "each value appears exactly once with no duplicates or substitutions".notJs in {
+            "each value appears exactly once with no duplicates or substitutions" in {
                 val n = 100
                 for
                     chunk <- TChunk.init[Int]

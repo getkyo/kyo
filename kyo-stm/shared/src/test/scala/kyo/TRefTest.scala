@@ -820,14 +820,14 @@ class TRefTest extends kyo.test.Test[Any]:
         }
     }
 
-    "TRef JVM visibility" - {
+    "TRef visibility" - {
 
-        "JVM-only sanity: single-fiber sequential read sees written value".onlyJvm in {
+        "single-fiber sequential read sees written value" in {
             for
                 ref <- TRef.init(0)
                 _   <- STM.run(ref.set(123))
                 obs <- STM.run(ref.get)
-            yield assert(obs == 123, "JVM: sequential same-fiber write -> read must observe the new value")
+            yield assert(obs == 123, "sequential same-fiber write -> read must observe the new value")
         }
     }
 

@@ -2,8 +2,7 @@ package kyo
 
 /** Stress and concurrency tests for kyo-stm.
   *
-  * Most tests are JS-excluded because the scenarios require real OS threads / preemption; cross-platform specs use `run`. Fiber and
-  * iteration counts are kept high enough to be meaningful but bounded, with `Async.timeout` guarding against livelock.
+  * Fiber and iteration counts are kept high enough to be meaningful but bounded, with `Async.timeout` guarding against livelock.
   */
 class STMStressTest extends kyo.test.Test[Any]:
 
@@ -11,7 +10,7 @@ class STMStressTest extends kyo.test.Test[Any]:
     // the CPU and can trip the per-leaf Async.timeout guards spuriously.
     override def config = super.config.sequential
 
-    "every transaction under heavy single-ref contention commits, none starves".notJs in {
+    "every transaction under heavy single-ref contention commits, none starves" in {
         // 64 reader-writer fibers plus one writer all contend the same TRef. Barging bounds the
         // politeness yield a writer makes to fresher readers, so every contended transaction
         // commits within its retry budget — none is starved into an FailedTransaction.
@@ -44,7 +43,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             assert(c == 64, s"committed=$c (every contended reader transaction must commit)")
     }
 
-    "TMap.snapshot under concurrent put never returns half-applied state".notJs in {
+    "TMap.snapshot under concurrent put never returns half-applied state" in {
         for
             tmap                <- TMap.init[Int, Int]
             _                   <- STM.run(Kyo.foreachDiscard(0 until 50)(i => tmap.put(i, 0)))
@@ -68,7 +67,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == 0, s"violations=$v")
     }
 
-    "long-running STM workload releases per-fiber transaction state".notJs in {
+    "long-running STM workload releases per-fiber transaction state" in {
         for
             ref <- TRef.init(Chunk.empty[Int])
             _   <- Async.fill(8, 8) {
@@ -81,7 +80,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(finalSize == 0, s"finalSize=$finalSize")
     }
 
-    "TMap.clear during concurrent puts produces a clean log with no orphan inner TRefs".notJs in {
+    "TMap.clear during concurrent puts produces a clean log with no orphan inner TRefs" in {
         for
             tmap     <- TMap.init[Int, Int]
             _        <- STM.run(Kyo.foreachDiscard(0 until 100)(i => tmap.put(i, i)))
@@ -103,7 +102,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         )
     }
 
-    "opacity: invariant r1 < r2 holds inside transaction across writer interleaving".notJs in {
+    "opacity: invariant r1 < r2 holds inside transaction across writer interleaving" in {
         // Opacity (Guerraoui-Kapalka): an in-flight transaction must never observe a
         // read-set-inconsistent pair, even if it is doomed to abort. The only writer keeps
         // r1 < r2 (r1 = i*2, r2 = i*2+1), so a reader that observes r1 >= r2 has seen a
@@ -141,7 +140,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == 0, s"opacity violation: reader observed r1 >= r2 $v time(s)")
     }
 
-    "older transaction makes progress under stream of newer short transactions".notJs in {
+    "older transaction makes progress under stream of newer short transactions" in {
         for
             ref           <- TRef.init(0)
             elderDone     <- AtomicBoolean.init(false)
@@ -185,7 +184,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             assert(attempts < 2000, s"the elder was starved pathologically before committing: attempts=$attempts")
     }
 
-    "nested transaction rollback under concurrent contention does not leak inner writes".notJs in {
+    "nested transaction rollback under concurrent contention does not leak inner writes" in {
         for
             outerRef <- TRef.init(0)
             innerRef <- TRef.init(0)
@@ -240,7 +239,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(woken && nr >= 2, s"woken=$woken nestedRetries=$nr")
     }
 
-    "transaction's own writes do not trigger self-wakeup pending-list churn".notJs in {
+    "transaction's own writes do not trigger self-wakeup pending-list churn" in {
         for
             ref       <- TRef.init(0)
             spurious  <- AtomicInt.init(0)
@@ -272,7 +271,7 @@ class STMStressTest extends kyo.test.Test[Any]:
     // A transaction blocked in `retryIf` is not queued anywhere: it reruns when its own retry-schedule timer fires, so waiters released by
     // one commit complete in timer order, not arrival order. What holds is that none completes while its condition is false, so publishing
     // one value at a time and waiting for the waiter it releases fixes the completion order.
-    "a retrying waiter completes only once the value it waits for is committed".notJs in {
+    "a retrying waiter completes only once the value it waits for is committed" in {
         for
             ref       <- TRef.init(0)
             completed <- AtomicRef.init(Chunk.empty[Int])
@@ -307,7 +306,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         )
     }
 
-    "signalling waiters does not hold per-ref lock".notJs in {
+    "signalling waiters does not hold per-ref lock" in {
         for
             ref       <- TRef.init(0)
             completed <- AtomicInt.init(0)
@@ -332,7 +331,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(p == 16, s"completed=$p")
     }
 
-    "two transactions touching the same two refs in different source orders never deadlock".notJs in {
+    "two transactions touching the same two refs in different source orders never deadlock" in {
         for
             a      <- TRef.init(0)
             b      <- TRef.init(0)
@@ -368,7 +367,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(finalA == 100 && finalB == 100 && c >= 100, s"finalA=$finalA finalB=$finalB cycles=$c")
     }
 
-    "concurrent nested handleErrorWith chains do not desync".notJs in {
+    "concurrent nested handleErrorWith chains do not desync" in {
         for
             ref          <- TRef.init(0)
             wrongHandler <- AtomicInt.init(0)
@@ -399,7 +398,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(wrong == 0 && right >= 64, s"right=$right wrong=$wrong")
     }
 
-    "TMap.snapshot / entries / values under concurrent put+remove never throw".notJs in {
+    "TMap.snapshot / entries / values under concurrent put+remove never throw" in {
         def recordPanic(panics: AtomicRef[Chunk[Throwable]])(result: Result[FailedTransaction, Any]): Unit < Sync =
             result match
                 case Result.Panic(e) => panics.updateAndGet(_.append(e)).unit
@@ -427,7 +426,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "typed Abort.fail inside STM is re-tried when log is stale, surfaced only when consistent".notJs in {
+    "typed Abort.fail inside STM is re-tried when log is stale, surfaced only when consistent" in {
         for
             outer      <- TRef.init[TRef[String]](null)
             firstInner <- TRef.init("X")
@@ -472,7 +471,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(ok == 64 && err == 0, s"err=$err ok=$ok")
     }
 
-    "per-retry TRef allocation does not cause livelock on per-ref locks".notJs in {
+    "per-retry TRef allocation does not cause livelock on per-ref locks" in {
         for
             outer    <- TRef.init(Map.empty[Int, Int])
             finished <- AtomicInt.init(0)
@@ -489,7 +488,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(f == 32, s"finished=$f")
     }
 
-    "two-queue STM atomicity: dequeue observes both heads or neither, never one".notJs in {
+    "two-queue STM atomicity: dequeue observes both heads or neither, never one" in {
         for
             q1         <- TRef.init(Chunk.empty[Int])
             q2         <- TRef.init(Chunk.empty[Int])
@@ -525,7 +524,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == 0, s"violations=$v")
     }
 
-    "a fiber observing post-commit value via another ref also observes all commit-batched writes".notJs in {
+    "a fiber observing post-commit value via another ref also observes all commit-batched writes" in {
         // The writer commits `a` and `b` together; the reader must never see `a` from one
         // commit and `b` from another (publish-ordering atomicity / opacity).
         for
@@ -559,7 +558,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == 0, s"violations=$v")
     }
 
-    "long-running large transaction commits within bounded retries under short-tx contention".notJs in {
+    "long-running large transaction commits within bounded retries under short-tx contention" in {
         for
             refs       <- Kyo.fill(1000)(TRef.init(0))
             longDone   <- AtomicBoolean.init(false)
@@ -620,7 +619,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(ids.size == a && a > 32, s"ids.size=${ids.size} attempts=$a")
     }
 
-    "TMap.fold (transactional iteration) makes progress under concurrent writes".notJs in {
+    "TMap.fold (transactional iteration) makes progress under concurrent writes" in {
         for
             tmap <- TMap.init[Int, Int]
             _    <- STM.run(Kyo.foreachDiscard(0 until 200)(i => tmap.put(i, 0)))
@@ -666,7 +665,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(w, s"woken=$w")
     }
 
-    "doomed STM transaction aborts before user code observes division-by-zero from stale snapshot".notJs in {
+    "doomed STM transaction aborts before user code observes division-by-zero from stale snapshot" in {
         for
             a          <- TRef.init(10)
             b          <- TRef.init(2)
@@ -698,7 +697,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == 0, s"violations=$v")
     }
 
-    "batches of 8 STM-update fibers never deadlock or lose a progress increment".notJs in {
+    "batches of 8 STM-update fibers never deadlock or lose a progress increment" in {
         // Fixed work, not a wall-clock soak: the properties are no-deadlock (the run completes) and no-loss (every one of the 8 updates in every
         // batch commits), proven by the exact final ref value. How many batches complete per unit of time is machine-dependent, so it is never
         // asserted; running a fixed count removes that throughput floor while still driving sustained 8-way STM contention.
@@ -721,7 +720,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "STM atomicity holds under sustained mixed read/write workload (JIT-warming soak)".notJs in {
+    "STM atomicity holds under sustained mixed read/write workload (JIT-warming soak)" in {
         for
             ref         <- TRef.init(0L)
             totalWrites <- AtomicLong.init(0)
@@ -743,7 +742,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == 0 && w == 40000L && finalRef == 40000L, s"writes=$w violations=$v finalRef=$finalRef")
     }
 
-    "STM.retryIf with N concurrent waiters survives sustained wake/sleep cycles".notJs in {
+    "STM.retryIf with N concurrent waiters survives sustained wake/sleep cycles" in {
         for
             ref      <- TRef.init(0)
             wakes    <- AtomicInt.init(0)
@@ -772,7 +771,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(w == 100 && e == 0, s"wakes=$w errors=$e")
     }
 
-    "100 concurrent readers on the same TRef chain commit within bounded time".notJs in {
+    "100 concurrent readers on the same TRef chain commit within bounded time" in {
         for
             chain <- Kyo.fill(50)(TRef.init(0))
             done  <- AtomicInt.init(0)
@@ -811,7 +810,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         )
     }
 
-    "read lock release -> write lock acquire transition produces no stale-read observers".notJs in {
+    "read lock release -> write lock acquire transition produces no stale-read observers" in {
         for
             ref    <- TRef.init(0)
             torn   <- AtomicInt.init(0)
@@ -838,7 +837,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(t == 0, s"torn=$t")
     }
 
-    "child fiber forked inside STM.run does not observe parent's transaction tick".notJs in {
+    "child fiber forked inside STM.run does not observe parent's transaction tick" in {
         // Each parent writes a value unique to itself, then forks a child that reads `ref` in a
         // fresh STM.run. A child must never see its own parent's still-uncommitted write; it may
         // only see the committed value of an already-finished parent, or the initial 0. (A
@@ -872,7 +871,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "long Async.sleep inside STM body does not livelock concurrent transactions".notJs in {
+    "long Async.sleep inside STM body does not livelock concurrent transactions" in {
         for
             x           <- TRef.init(1)
             slowDone    <- AtomicInt.init(0)
@@ -912,7 +911,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(d == 100 && finalRef == 100, s"done=$d finalRef=$finalRef")
     }
 
-    "sequential STM.run on same fiber preserves write order in observers".notJs in {
+    "sequential STM.run on same fiber preserves write order in observers" in {
         for
             ref        <- TRef.init(0)
             outOfOrder <- AtomicInt.init(0)
@@ -945,7 +944,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(o == 50 && finalRef == 50, s"ok=$o finalRef=$finalRef")
     }
 
-    "concurrent TRef.init produces 1000 unique IDs".notJs in {
+    "concurrent TRef.init produces 1000 unique IDs" in {
         for
             ids <- AtomicRef.init(Set.empty[Int])
             _   <- Async.fill(1000, 100) {
@@ -955,7 +954,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(s.size == 1000, s"ids.size=${s.size}")
     }
 
-    "TRef inside lazy val is initialized once even under concurrent access".notJs in {
+    "TRef inside lazy val is initialized once even under concurrent access" in {
         class Holder:
             lazy val ref: TRef[Int] =
                 import AllowUnsafe.embrace.danger
@@ -972,7 +971,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "two-doctor invariant (>=1 on-call) holds under concurrent set-to-off transactions".notJs in {
+    "two-doctor invariant (>=1 on-call) holds under concurrent set-to-off transactions" in {
         Loop.repeat(100) {
             for
                 docA  <- TRef.init(true)
@@ -1007,7 +1006,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
-    "observer between writer's first ref-publish and last ref-publish sees no half-state".notJs in {
+    "observer between writer's first ref-publish and last ref-publish sees no half-state" in {
         for
             refs   <- Kyo.fill(10)(TRef.init(0))
             torn   <- AtomicInt.init(0)
@@ -1072,7 +1071,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         )
     }
 
-    "TRef.use does not livelock when writer ticks always exceed reader's start tick".notJs in {
+    "TRef.use does not livelock when writer ticks always exceed reader's start tick" in {
         for
             ref        <- TRef.init(0)
             readerDone <- AtomicBoolean.init(false)
@@ -1088,16 +1087,47 @@ class STMStressTest extends kyo.test.Test[Any]:
             reader <- Fiber.initUnscoped {
                 Abort.run {
                     STM.run(STM.defaultRetrySchedule)(ref.use(_ + 1))
-                }.andThen(readerDone.set(true))
+                }.map(r => readerDone.set(true).andThen(r))
             }
-            _ <- Abort.run(Async.timeout(5.seconds)(reader.get))
-            _ <- stop.set(true)
-            _ <- writer.get
-            d <- readerDone.get
-        yield assert(d, s"readerDone=$d")
+            read <- Abort.run(Async.timeout(5.seconds)(reader.get))
+            _    <- stop.set(true)
+            _    <- writer.get
+            d    <- readerDone.get
+        yield assert(d && read.exists(_.isSuccess), s"the reader must commit within its retry budget: readerDone=$d result=$read")
     }
 
-    "updateReadTick CAS loop bounded under 100 concurrent readers".notJs in {
+    "TRef.set does not livelock when readTick stays fresher than writer's start tick" in {
+        for
+            ref        <- TRef.init(0)
+            writerDone <- AtomicBoolean.init(false)
+            stop       <- AtomicBoolean.init(false)
+            readers    <- Fiber.initUnscoped {
+                Async.fill(8, 8) {
+                    Loop(()) { _ =>
+                        stop.get.map {
+                            case true  => Loop.done(())
+                            case false => STM.run(ref.get).andThen(Loop.continue(()))
+                        }
+                    }
+                }
+            }
+            writer <- Fiber.initUnscoped {
+                Abort.run {
+                    STM.run(STM.defaultRetrySchedule)(ref.set(42))
+                }.map(r => writerDone.set(true).andThen(r))
+            }
+            write <- Abort.run(Async.timeout(5.seconds)(writer.get))
+            _     <- stop.set(true)
+            _     <- readers.get
+            d     <- writerDone.get
+            v     <- STM.run(ref.get)
+        yield assert(
+            d && write.exists(_.isSuccess) && v == 42,
+            s"the writer must commit within its retry budget: writerDone=$d result=$write value=$v"
+        )
+    }
+
+    "updateReadTick CAS loop bounded under 100 concurrent readers" in {
         for
             ref       <- TRef.init(0)
             readsDone <- AtomicInt.init(0)
@@ -1107,7 +1137,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(d == 100, s"readsDone=$d")
     }
 
-    "TRef.lock CAS loop terminates under 200 concurrent reader-acquire attempts".notJs in {
+    "TRef.lock CAS loop terminates under 200 concurrent reader-acquire attempts" in {
         for
             ref  <- TRef.init(0)
             done <- AtomicInt.init(0)
@@ -1117,7 +1147,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(d == 200, s"done=$d")
     }
 
-    "unlock reader-release loop terminates under 200 concurrent release attempts".notJs in {
+    "unlock reader-release loop terminates under 200 concurrent release attempts" in {
         for
             ref  <- TRef.init(0)
             done <- AtomicInt.init(0)
@@ -1127,7 +1157,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(d == 200, s"done=$d")
     }
 
-    "multi-ref commit with conflict on last ref does not livelock".notJs in {
+    "multi-ref commit with conflict on last ref does not livelock" in {
         for
             refs      <- Kyo.fill(10)(TRef.init(0))
             done      <- AtomicInt.init(0)
@@ -1145,7 +1175,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(d == 32, s"done=$d")
     }
 
-    "32 concurrent TMap.put with unique new keys all complete within bounded wall-clock".notJs in {
+    "32 concurrent TMap.put with unique new keys all complete within bounded wall-clock" in {
         for
             tmap <- TMap.init[Int, Int]
             done <- AtomicInt.init(0)
@@ -1156,7 +1186,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(d == 32 && finalSize == 32, s"done=$d finalSize=$finalSize")
     }
 
-    "TRef.use log entry tick matches the value read (no torn read-then-log)".notJs in {
+    "TRef.use log entry tick matches the value read (no torn read-then-log)" in {
         for
             ref        <- TRef.init(0)
             violations <- AtomicInt.init(0)
@@ -1182,7 +1212,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == 0, s"violations=$v")
     }
 
-    "TRef.set never logs a Write whose prev.tick mismatches the current entry tick".notJs in {
+    "TRef.set never logs a Write whose prev.tick mismatches the current entry tick" in {
         for
             ref            <- TRef.init(0)
             commitFailures <- AtomicInt.init(0)
@@ -1204,7 +1234,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(c + f == 64 * 500, s"committed=$c failures=$f finalRef=$finalRef")
     }
 
-    "observers immediately after a committing writer never see write-locked-with-stale-readTick state".notJs in {
+    "observers immediately after a committing writer never see write-locked-with-stale-readTick state" in {
         for
             refs   <- Kyo.fill(10)(TRef.init(0))
             torn   <- AtomicInt.init(0)
@@ -1234,7 +1264,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(t == 0, s"torn=$t")
     }
 
-    "differential: single-ref and two-ref STM commits behave equivalently under same workload".notJs in {
+    "differential: single-ref and two-ref STM commits behave equivalently under same workload" in {
         def workload(refs: Seq[TRef[Int]]) =
             for
                 done   <- AtomicInt.init(0)
@@ -1261,7 +1291,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "concurrent writer between validate-phase and lock-phase forces retry, not silent commit".notJs in {
+    "concurrent writer between validate-phase and lock-phase forces retry, not silent commit" in {
         for
             a       <- TRef.init(0)
             b       <- TRef.init(0)
@@ -1286,7 +1316,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(c >= 64 && finalA == 64 && finalB == 64, s"commits=$c finalA=$finalA finalB=$finalB")
     }
 
-    "concurrent put(K, v1) + put(K, v2) — only one inner TRef in final map".notJs in {
+    "concurrent put(K, v1) + put(K, v2) leaves only one inner TRef in final map" in {
         Loop.repeat(50) {
             for
                 tmap  <- TMap.init[Int, Int]
@@ -1302,7 +1332,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
-    "100 concurrent updateWith(K)(_.map(_ + 1)) increments K's value exactly 100 times".notJs in {
+    "100 concurrent updateWith(K)(_.map(_ + 1)) increments K's value exactly 100 times" in {
         for
             tmap <- TMap.init[Int, Int]
             _    <- STM.run(tmap.put(0, 0))
@@ -1313,7 +1343,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == Present(100), s"v=$v")
     }
 
-    "concurrent remove(K) + put(K, v) yields consistent (key-present XOR key-absent) state".notJs in {
+    "concurrent remove(K) + put(K, v) yields consistent (key-present XOR key-absent) state" in {
         for
             tmap       <- TMap.init[Int, Int]
             _          <- STM.run(tmap.put(0, 99))
@@ -1335,7 +1365,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == 0, s"violations=$v")
     }
 
-    "32 concurrent TTable.insert produces 32 unique IDs and 32 stored records".notJs in {
+    "32 concurrent TTable.insert produces 32 unique IDs and 32 stored records" in {
         for
             table <- TTable.init["name" ~ String & "n" ~ Int]
             ids   <- AtomicRef.init(Set.empty[Int])
@@ -1349,7 +1379,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(s.size == 32 && size == 32, s"ids.size=${s.size} size=$size")
     }
 
-    "concurrent update(id, r1) + update(id, r2) leaves indexes consistent with one final record".notJs in {
+    "concurrent update(id, r1) + update(id, r2) leaves indexes consistent with one final record" in {
         Loop.repeat(50) {
             for
                 table <- TTable.Indexed.init["name" ~ String, "name" ~ String]
@@ -1370,7 +1400,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
-    "concurrent remove(id) + update(id, r) leaves indexes consistent with final store state".notJs in {
+    "concurrent remove(id) + update(id, r) leaves indexes consistent with final store state" in {
         Loop.repeat(50) {
             for
                 table   <- TTable.Indexed.init["name" ~ String, "name" ~ String]
@@ -1391,7 +1421,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
-    "transactions of size 7, 8, 9, 10 with same refs all complete without deadlock".notJs in {
+    "transactions of size 7, 8, 9, 10 with same refs all complete without deadlock" in {
         val sizes = Seq(7, 8, 9, 10, 15, 20)
         for
             refs <- Kyo.fill(20)(TRef.init(0))
@@ -1417,7 +1447,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "two transactions each performing N puts on different key sets do not deadlock".notJs in {
+    "two transactions each performing N puts on different key sets do not deadlock" in {
         Loop.repeat(10) {
             for
                 tmap <- TMap.init[Int, Int]
@@ -1430,7 +1460,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
-    "concurrent TMap.removeAll + put preserves consistency".notJs in {
+    "concurrent TMap.removeAll + put preserves consistency" in {
         Loop.repeat(20) {
             for
                 tmap <- TMap.init[Int, Int]
@@ -1448,7 +1478,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
-    "TTable.Indexed with empty Indexes survives concurrent insert/update/remove".notJs in {
+    "TTable.Indexed with empty Indexes survives concurrent insert/update/remove" in {
         for
             table <- TTable.init["name" ~ String & "n" ~ Int]
             done  <- AtomicInt.init(0)
@@ -1526,7 +1556,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
-    "TMap.entries observes consistent (outer, inner) snapshot or aborts".notJs in {
+    "TMap.entries observes consistent (outer, inner) snapshot or aborts" in {
         for
             tmap       <- TMap.init[Int, Int]
             _          <- STM.run(Kyo.foreachDiscard(0 until 20)(i => tmap.put(i, i)))
@@ -1548,7 +1578,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == 0, s"violations=$v")
     }
 
-    "queryIds result is consistent with a single timeline of inserts/updates".notJs in {
+    "queryIds result is consistent with a single timeline of inserts/updates" in {
         for
             table           <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
             inconsistencies <- AtomicInt.init(0)
@@ -1573,7 +1603,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(v == 0, s"inconsistencies=$v")
     }
 
-    "slow TMap.fold under concurrent put aborts cleanly (no accumulator escape)".notJs in {
+    "slow TMap.fold under concurrent put aborts cleanly (no accumulator escape)" in {
         for
             tmap          <- TMap.init[Int, Int]
             _             <- STM.run(Kyo.foreachDiscard(0 until 20)(i => tmap.put(i, 1)))
@@ -1599,7 +1629,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(folded >= 0 && folded <= finalSum + 1000, s"folded=$folded finalSum=$finalSum")
     }
 
-    "transaction reading A then B aborts at commit if A was concurrently written".notJs in {
+    "transaction reading A then B aborts at commit if A was concurrently written" in {
         // The writer always writes a == b atomically in one transaction. Commit-time
         // validation must ensure any committed reader that read A then B observed a
         // consistent timeline, i.e. va == vb. `violations` is a TRef so the increment is
@@ -1652,7 +1682,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
-    "sustained reader-acquire spam against one TRef: writer eventually exits via STM.run schedule cap".notJs in {
+    "sustained reader-acquire spam against one TRef: writer eventually exits via STM.run schedule cap" in {
         for
             ref          <- TRef.init(0)
             writerExited <- AtomicBoolean.init(false)
@@ -1683,7 +1713,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(exited, s"writerExited=$exited")
     }
 
-    "100x repeat of 64-fiber STM increment workload yields exactly 6400 each time".notJs in {
+    "100x repeat of 64-fiber STM increment workload yields exactly 6400 each time" in {
         for
             results <- AtomicRef.init(Chunk.empty[Int])
             _       <- Loop.repeat(100) {
@@ -1698,7 +1728,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(r.forall(_ == 64), s"results=$r")
     }
 
-    "concurrent TChunk.append from 32 fibers yields final size 32".notJs in {
+    "concurrent TChunk.append from 32 fibers yields final size 32" in {
         for
             tchunk <- TChunk.init(Chunk.empty[Int])
             _      <- Async.fillIndexed(32, 32) { i =>
@@ -1708,7 +1738,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(finalChunk.size == 32 && finalChunk.distinct.size == 32, s"size=${finalChunk.size}")
     }
 
-    "STM.run(Schedule.repeat(5)) under contention bounds attempts to 6".notJs in {
+    "STM.run(Schedule.repeat(5)) under contention bounds attempts to 6" in {
         for
             ref      <- TRef.init(0)
             attempts <- AtomicInt.init(0)
@@ -1729,7 +1759,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(a <= 6, s"attempts=$a")
     }
 
-    "atomic update across TMap + TRef + TChunk preserves cross-type invariant".notJs in {
+    "atomic update across TMap + TRef + TChunk preserves cross-type invariant" in {
         for
             tmap       <- TMap.init[Int, Int]
             tref       <- TRef.init(0)
@@ -1786,7 +1816,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(result == Result.succeed(5) && se >= 2, s"result=$result sideEffects=$se")
     }
 
-    "nested TRef pointer-chase under concurrent rotation never observes orphan node".notJs in {
+    "nested TRef pointer-chase under concurrent rotation never observes orphan node" in {
         for
             leaf       <- TRef.init(0)
             mid        <- TRef.init(leaf)
@@ -1850,7 +1880,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(w && via == "a", s"woken=$w sawVia=$via")
     }
 
-    "panic in STM body is suppressed-and-retried if log is stale".notJs in {
+    "panic in STM body is suppressed-and-retried if log is stale" in {
         for
             outer      <- TRef.init(0)
             propagated <- AtomicInt.init(0)
@@ -1878,7 +1908,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(p == 0 && o >= 32, s"propagated=$p ok=$o")
     }
 
-    "high-concurrency commits never produce a mismatched ref/entry pair in CommitBuffer".notJs in {
+    "high-concurrency commits never produce a mismatched ref/entry pair in CommitBuffer" in {
         for
             refs   <- Kyo.fill(20)(TRef.init(0))
             panics <- AtomicInt.init(0)
@@ -1894,7 +1924,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(p == 0, s"panics=$p")
     }
 
-    "every STM.run multi-ref commit observes sorted buffer before lock phase".notJs in {
+    "every STM.run multi-ref commit observes sorted buffer before lock phase" in {
         val sizes = Seq(7, 8, 9, 10, 15, 20)
         for
             refs <- Kyo.fill(20)(TRef.init(0))
@@ -1919,7 +1949,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "TMap.snapshot observes consistent (outer, inner) snapshot or aborts (snapshot variant)".notJs in {
+    "TMap.snapshot observes consistent (outer, inner) snapshot or aborts (snapshot variant)" in {
         for
             tmap       <- TMap.init[Int, Int]
             _          <- STM.run(Kyo.foreachDiscard(0 until 20)(i => tmap.put(i, i)))
