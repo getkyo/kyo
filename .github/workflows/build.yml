@@ -9,11 +9,17 @@ name: build
 #
 # Parallel across os poles: the calling workflow (ci.yml, or ci-dispatch.yml) calls this once per pole.
 # Those calls have no `needs:` between them so the poles run as independent CI jobs.
+#
+# The macOS poles are the exception to the 16GB sizing below: macos-arm64 (3 vCPU / 7 GB) and macos-x64
+# (4 vCPU / 14 GB) run Native on kyo-net and kyo-http only, to cover kyo-net's kqueue driver; a dispatch
+# with `macos-full` runs any target over the whole plan instead. Their knobs (NATIVE_ONLY, their
+# NATIVE_LINK_CPUS and NATIVE_LINK_BATCH) are derived from `inputs.os` next to the others; their driver
+# heaps come from scripts/sbt-heap-lib.sh like every other pole's.
 on:
   workflow_call:
     inputs:
       os:
-        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64, windows-x64).'
+        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64, windows-x64, macos-arm64, macos-x64).'
         type: string
         required: true
       runner-image:
@@ -35,6 +41,11 @@ on:
         type: string
         required: false
         default: ''
+      macos-full:
+        description: 'macOS poles only: run the whole Native plan instead of the kqueue modules (kyo-net, kyo-http).'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   # `targets` arrives as a JSON array so the matrix reads it directly. Parsing it in a separate
@@ -79,6 +90,15 @@ jobs:
       # KEPT (native-specific behavior): the effect-runtime foundation, kyo-net, kyo-tasty, the schema readers
       # (json/yaml/ion), kyo-http, kyo-test-*, stm/actor/flow, and modules with native-specific source.
       NATIVE_SKIP: "${{ matrix.target == 'Native' && 'kyo-aeron,kyo-sql,kyo-sql-postgres,kyo-sql-mysql,kyo-sql-tests,kyo-pod,kyo-ui,kyo-browser,kyo-slack,kyo-mcp,kyo-jsonrpc,kyo-jsonrpc-http,kyo-lsp,kyo-ai,kyo-markdown,kyo-zio,kyo-zio-test,kyo-scheduler-zio,kyo-stats-otlp,kyo-reactive-streams,kyo-case-app,kyo-compat-future,kyo-compat-kyo,kyo-compat-zio,kyo-schema-tests,kyo-schema-protobuf,kyo-schema-msgpack,kyo-schema-bson,kyo-stats-registry,kyo-tasty-fixtures-internal' || '' }}"
+      # The macOS pole exists for kyo-net's kqueue driver, which no other runner reaches: the plan is the
+      # two modules whose Native tests drive it, kyo-net (every transport suite on every backend the host
+      # registers, TLS over the staged BoringSSL) and kyo-http (its server and client suites open real
+      # loopback connections on the host transport). kyo-sql's wire drivers also run on kyo-net, but their
+      # suites need a database container and a hosted Mac has no container runtime, so they would run
+      # nothing there. ci-test.sh applies this as `--only` to the same two invocations NATIVE_SKIP reaches;
+      # the dependencies of the two compile on demand and are neither linked nor run. Empty on every other
+      # pole, so the Linux legs are unchanged, and empty under `macos-full`, which runs the Linux plan.
+      NATIVE_ONLY: "${{ matrix.target == 'Native' && contains(inputs.os, 'macos') && !inputs.macos-full && 'kyo-net,kyo-http' || '' }}"
       # Cap the Native link drivers to 3 CPUs (-XX:ActiveProcessorCount). The scala-native toolchain
       # sizes its optimizer pool and its concurrent clang forks from availableProcessors, and that fork
       # fleet stacked on the driver heap is what overcommits the 16GB runner (kernel OOM, exit 143) when
@@ -86,14 +106,16 @@ jobs:
       # modules of accumulated heap, which frees headroom for one more optimizer thread: the old 2-CPU
       # cap was sized for a driver already carrying the whole set and left the box half idle (load 1.5
       # to 2 on 4 vCPUs) across a three hour link phase. ci-test.sh applies this to every nativeLink
-      # invocation; the plan process, the test batches, and the cross pass keep all 4 CPUs.
-      NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && '3' || '' }}"
+      # invocation; the plan process, the test batches, and the cross pass keep all 4 CPUs. The arm64
+      # macOS runner has 3 vCPUs: 2 leaves one to the driver.
+      NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && (inputs.os == 'macos-arm64' && '2' || '3') || '' }}"
       # Modules per sbt process in the Native link and test pools. Each batch is a fresh driver, so none
       # carries more than 8 modules of accumulated heap and metaspace into a link or a test fork; the
       # measured accumulation delta (+2.2G RSS) builds up around the tenth module of a shared driver. A
       # full run pays ~4 extra sbt startups (~1 min each) per pool and, in exchange, a crash re-runs one
-      # batch instead of the whole phase. Native target only.
-      NATIVE_LINK_BATCH: "${{ matrix.target == 'Native' && '8' || '' }}"
+      # batch instead of the whole phase. Native target only. The 7 GB arm64 macOS runner takes 4: its link
+      # driver has less than half the heap the 8-module figure was measured against.
+      NATIVE_LINK_BATCH: "${{ matrix.target == 'Native' && (inputs.os == 'macos-arm64' && '4' || '8') || '' }}"
       NATIVE_TEST_BATCH: "${{ matrix.target == 'Native' && '8' || '' }}"
       # Modules per sbt process in the JS and Wasm run phases. sbt-scalajs keeps every module's linker
       # state in the driver for the session, so one 6G driver linking every Wasm test bundle reached

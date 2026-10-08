@@ -49,7 +49,7 @@ set -uo pipefail
 # and Wasm, and the plan is it on Native. A job whose selection holds none of those modules builds
 # and pulls nothing; a full run selects every module and so provides every image.
 #
-# Reads CI, GITHUB_ACTIONS, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
+# Reads CI, GITHUB_ACTIONS, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP, NATIVE_ONLY,
 # NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX,
 # JS_TEST_BATCH, WASM_TEST_BATCH, CONTAINER_SWEEP, CONTAINER_FIXTURES, and FIXTURE_IMAGES_SCRIPT
 # from the environment; mutates none of them except
@@ -457,6 +457,30 @@ if [ "${1:-}" = "--self-test" ]; then
     else record no "a skipped module is absent from the plan and from both pools"; fi
     FAKE_SKIP=""
 
+    # 16a. NATIVE_ONLY reaches the same two invocations as `--only`, composed with NATIVE_SKIP, and the
+    # batches carry neither; the plan (the fake's) is consumed as it was written.
+    FAKE_PLAN="kyo-netNative kyo-httpNative"
+    run_runner_env "$PASS_BODY" Native test NATIVE_SKIP="kyo-aeron" NATIVE_ONLY="kyo-net,kyo-http"
+    if call_nth_has 1 "$H_TOOL testKyo --dry-run --plan-file" \
+       && call_nth_has 1 "--exclude kyo-aeron --only kyo-net,kyo-http" \
+       && call_nth_is 2 "$H_LINK testKyo --phase link --scala 3 --modules kyo-netNative,kyo-httpNative Native" \
+       && call_nth_is 3 "$H_RUN testKyo --scala 3 --modules kyo-netNative,kyo-httpNative Native" \
+       && call_nth_is 4 "$H_RUN testKyo --cross --exclude kyo-aeron --only kyo-net,kyo-http --all Native" \
+       && exit_is 0
+    then record ok "NATIVE_ONLY reaches the plan and the cross pass as --only; batches carry no --only"
+    else record no "NATIVE_ONLY reaches the plan and the cross pass as --only; batches carry no --only"; fi
+
+    # 16b. The 7 GB macOS pole's Native leg: each invocation gets its role's heap at that memory, so the
+    # links and the run phases differ.
+    run_runner_env "$PASS_BODY" Native test SBT_HEAP_MEMORY_MB=7168 NATIVE_ONLY="kyo-net,kyo-http"
+    if call_nth_has 1 "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap tool) testKyo --dry-run --plan-file" \
+       && call_nth_is 2 "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap link) testKyo --phase link --scala 3 --modules kyo-netNative,kyo-httpNative Native" \
+       && call_nth_is 3 "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap run) testKyo --scala 3 --modules kyo-netNative,kyo-httpNative Native" \
+       && call_nth_is 4 "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap run) testKyo --cross --only kyo-net,kyo-http --all Native" \
+       && [ "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap link)" != "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap run)" ] && exit_is 0
+    then record ok "on a 7 GB runner the Native links and run phases each get their role's heap"
+    else record no "on a 7 GB runner the Native links and run phases each get their role's heap"; fi
+
     # 17. An empty plan links and tests nothing, and still runs the cross pass (a diff can touch only
     # cross-built modules).
     FAKE_PLAN=""
@@ -805,7 +829,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
     # The pinned count catches a case that stops running without failing; a new case raises it.
-    EXPECTED_TOTAL=70
+    EXPECTED_TOTAL=72
     if [ "$TOTAL" -ne "$EXPECTED_TOTAL" ]; then
         echo "ran $TOTAL cases, expected $EXPECTED_TOTAL: a case stopped running, or a new one needs EXPECTED_TOTAL raised"
     fi
@@ -888,6 +912,12 @@ NATIVE_HEAVY="${NATIVE_HEAVY:-}"
 # natively. Empty by default (so the self-test and any standalone run keep the full set); the CI
 # workflow sets it for the Native target.
 NATIVE_SKIP="${NATIVE_SKIP:-}"
+
+# Space- or comma-separated base names the Native leg is NARROWED to, applied as `--only` to the same
+# two invocations NATIVE_SKIP reaches, composable with it. A pole that exists for one driver (the macOS
+# pole for kyo-net's kqueue) names the modules whose tests drive it and links nothing else; their
+# dependencies compile on demand. Empty by default: the whole set.
+NATIVE_ONLY="${NATIVE_ONLY:-}"
 
 # When non-empty, every nativeLink invocation runs with -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS:
 # each link batch and each NATIVE_HEAVY pre-link. The scala-native toolchain sizes its optimizer pool
@@ -1401,16 +1431,19 @@ check_worker_count() {
 run_native() {
     local arg; arg=$(run_arg)
 
-    # Comma-separated base names to drop from the Native leg (empty by default; CI sets NATIVE_SKIP).
-    # Only the two invocations that select for themselves, the plan and the cross pass, take it.
-    local skip_csv skip_flag
+    # Comma-separated base names to drop from (NATIVE_SKIP) or narrow to (NATIVE_ONLY) the Native leg,
+    # both empty by default. Only the two invocations that select for themselves, the plan and the cross
+    # pass, take them.
+    local skip_csv skip_flag only_csv only_flag
     skip_csv=$(printf '%s' "$NATIVE_SKIP" | tr -s ', ' ',' | sed 's/^,//; s/,$//')
     skip_flag=""; [ -n "$skip_csv" ] && skip_flag="--exclude $skip_csv"
+    only_csv=$(printf '%s' "$NATIVE_ONLY" | tr -s ', ' ',' | sed 's/^,//; s/,$//')
+    only_flag=""; [ -n "$only_csv" ] && only_flag="--only $only_csv"
 
     # compile: compile main and test only, no plan, no link, no run.
     if [ "$ACTION" = "compile" ]; then
-        compile_phase compile-main "$skip_flag" "$arg" || return $?
-        compile_phase compile-test "$skip_flag" "$arg" || return $?
+        compile_phase compile-main "$skip_flag" "$only_flag" "$arg" || return $?
+        compile_phase compile-test "$skip_flag" "$only_flag" "$arg" || return $?
         return 0
     fi
 
@@ -1418,7 +1451,7 @@ run_native() {
 
     # One selection for the whole run: the shell partitions this file, so both pools work the
     # identical module list and each batch's membership lands in the runner log.
-    local plan_cmd; plan_cmd=$(native_cmd "testKyo --dry-run --plan-file $PLAN" "$skip_flag" '--scala 3' "$arg" Native)
+    local plan_cmd; plan_cmd=$(native_cmd "testKyo --dry-run --plan-file $PLAN" "$skip_flag" "$only_flag" '--scala 3' "$arg" Native)
     log "planning native modules: sbt $plan_cmd"
     sbt_resolve_retry tool "$plan_cmd" || { log "native planning failed"; return 1; }
     if [ ! -f "$PLAN" ]; then
@@ -1454,7 +1487,7 @@ run_native() {
     done
     # The cross-build modules select themselves per Scala 2.x version, so they are outside the plan
     # and outside both pools.
-    run_watched "cross pass" run "$(native_cmd 'testKyo --cross' "$skip_flag" "$arg" Native)" || return 1
+    run_watched "cross pass" run "$(native_cmd 'testKyo --cross' "$skip_flag" "$only_flag" "$arg" Native)" || return 1
     return 0
 }
 

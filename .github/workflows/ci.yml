@@ -6,7 +6,12 @@ name: ci
 # run JVM/JS/Native/Wasm; windows-x64 runs JVM/JS (the Native target's libcurl/libh2o/openssl
 # toolchain is provisioned via apt and has no Windows port, and Scala.js's Wasm backend does not
 # instantiate on Windows: every module, with or without native code, dies at startup on an
-# emitted import whose module name is empty).
+# emitted import whose module name is empty); macos-arm64 runs Native alone, on kyo-net and
+# kyo-http only (NATIVE_ONLY in build.yml): kyo-net's kqueue driver runs nowhere but on a Mac, the
+# Linux legs exercise io_uring and epoll and the Windows legs the NIO floor, so without this pole
+# a kqueue-only hang is invisible to a green main. Native reaches the driver at link time with two
+# modules; the JVM, JS and Wasm rows would cost hours on the 3-vCPU runner for behavior the Linux
+# legs already cover.
 #
 # Dispatching a custom run lives in ci-dispatch.yml. Keeping it out of this file is what stops a
 # pull request from reporting a set of skipped jobs it can never run: a job whose condition is
@@ -28,7 +33,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # A constant matrix, so nothing gates it and all ten build jobs enter their queues at once.
+  # A constant matrix, so nothing gates it and all eleven build jobs enter their queues at once.
   # Deriving it in a prep job would cost a full runner slot to compute a constant, and the
   # `needs:` on it would hold every real build behind that acquisition; on a saturated queue that
   # is tens of minutes before the first compile starts.
@@ -51,6 +56,12 @@ jobs:
           # is the RC6 shape. Building cleanly proves little on Windows in particular, where the shim
           # once linked into a DLL with an empty export table and every lookup failed at runtime.
           - { os: windows-arm64, image: windows-11-arm, targets: '["JVM","JS"]' }
+          # macos-14 is the arm64 tier that is free for public repos (3 vCPU, 7 GB, 14 GB disk) and the
+          # image the release's natives-darwin producer already runs on, so its Homebrew, clang, cmake
+          # and Go are the toolchain that has staged the darwin natives on every release, and the
+          # coursier cache key is the one that producer writes. build.yml sizes the link CPUs and link
+          # batches for it and narrows the plan.
+          - { os: macos-arm64,   image: macos-14,         targets: '["Native"]' }
     uses: ./.github/workflows/build.yml
     with:
       os: ${{ matrix.pole.os }}

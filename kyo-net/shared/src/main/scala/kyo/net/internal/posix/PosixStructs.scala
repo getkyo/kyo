@@ -418,7 +418,10 @@ end SockAddr
   * The full `struct stat` layout differs by OS AND by Linux architecture and is large, but only `st_mode` (the file-type bits the probe masks
   * with `S_IFMT`) is read, so a single host-aware offset suffices instead of a full struct binding. The field's offset and width diverge
   * across the supported targets:
-  *   - macOS/BSD (the 64-bit-inode `struct stat`): `st_mode` is a `__uint16_t` at offset 4, after the 4-byte `st_dev`.
+  *   - macOS arm64 and BSD (the 64-bit-inode `struct stat`): `st_mode` is a `__uint16_t` at offset 4, after the 4-byte `st_dev`.
+  *   - macOS x86_64: the unsuffixed `fstat` symbol, which the binding resolves by name, is the legacy 32-bit-inode entry point (the SDK
+  *     header maps C callers to `fstat$INODE64` instead). Its `struct stat` has a 4-byte `st_ino`, so `st_mode` is a `__uint16_t` at
+  *     offset 8; offset 4 lands on the inode number.
   *   - Linux x86_64 (the x86 `struct stat`): `st_mode` is a 4-byte `mode_t` at offset 24, after `st_dev` (8), `st_ino` (8), `st_nlink` (8).
   *   - Linux aarch64 (the asm-generic `struct stat`, shared by riscv64 and the other newer arches): `st_mode` comes BEFORE `st_nlink`, so it
   *     is a 4-byte `mode_t` at offset 16, after `st_dev` (8) and `st_ino` (8). This is NOT the x86_64 layout: reading offset 24 on aarch64
@@ -429,25 +432,38 @@ end SockAddr
   */
 private[net] object PosixStat:
 
-    /** Byte offset of `st_mode` within `struct stat`: 4 on macOS/BSD, 24 on Linux x86_64, 16 on Linux aarch64 (asm-generic). The x86_64 vs
-      * aarch64 split reuses the same host-arch detection [[EpollEvent.isX86_64]] uses for `struct epoll_event`.
+    /** Byte offset of `st_mode` within the `struct stat` of the given OS and arch: 8 on macOS x86_64, 4 on macOS arm64 and BSD, 24 on Linux
+      * x86_64, 16 on Linux aarch64 (asm-generic). A function of the platform rather than of the host so every layout can be checked from any
+      * one host.
       */
-    val modeOffset: Int =
-        if PosixConstants.isMacOrBsd then 4
-        else if EpollEvent.isX86_64 then 24
+    private[posix] def modeOffsetFor(isMac: Boolean, isMacOrBsd: Boolean, isX86_64: Boolean): Int =
+        if isMac && isX86_64 then 8
+        else if isMacOrBsd then 4
+        else if isX86_64 then 24
         else 16
 
-    /** Read `st_mode` (the file-type and permission bits) from a `fstat`-filled buffer using the host layout. macOS stores it in 2 bytes,
-      * Linux in 4; both are read little-endian and the file-type bits the probe needs live in the low 16 bits either way.
+    /** Byte offset of `st_mode` within the host's `struct stat`. The x86_64 vs aarch64 split reuses the same host-arch detection
+      * [[EpollEvent.isX86_64]] uses for `struct epoll_event`.
       */
-    def stMode(buf: Buffer[Byte])(using AllowUnsafe): Int =
-        if PosixConstants.isMacOrBsd then
-            (buf.get(modeOffset) & 0xff) | ((buf.get(modeOffset + 1) & 0xff) << 8)
+    val modeOffset: Int = modeOffsetFor(PosixConstants.isMac, PosixConstants.isMacOrBsd, EpollEvent.isX86_64)
+
+    /** Read `st_mode` (the file-type and permission bits) from a `struct stat` of the given OS and arch. macOS stores it in 2 bytes, Linux
+      * in 4; both are read little-endian and the file-type bits the probe needs live in the low 16 bits either way.
+      */
+    private[posix] def stModeFor(buf: Buffer[Byte], isMac: Boolean, isMacOrBsd: Boolean, isX86_64: Boolean)(using AllowUnsafe): Int =
+        val offset = modeOffsetFor(isMac, isMacOrBsd, isX86_64)
+        if isMacOrBsd then
+            (buf.get(offset) & 0xff) | ((buf.get(offset + 1) & 0xff) << 8)
         else
-            (buf.get(modeOffset) & 0xff) |
-                ((buf.get(modeOffset + 1) & 0xff) << 8) |
-                ((buf.get(modeOffset + 2) & 0xff) << 16) |
-                ((buf.get(modeOffset + 3) & 0xff) << 24)
-    end stMode
+            (buf.get(offset) & 0xff) |
+                ((buf.get(offset + 1) & 0xff) << 8) |
+                ((buf.get(offset + 2) & 0xff) << 16) |
+                ((buf.get(offset + 3) & 0xff) << 24)
+        end if
+    end stModeFor
+
+    /** Read `st_mode` from a `fstat`-filled buffer using the host layout. */
+    def stMode(buf: Buffer[Byte])(using AllowUnsafe): Int =
+        stModeFor(buf, PosixConstants.isMac, PosixConstants.isMacOrBsd, EpollEvent.isX86_64)
 
 end PosixStat

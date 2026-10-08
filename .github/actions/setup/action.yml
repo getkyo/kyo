@@ -69,6 +69,25 @@ runs:
       shell: bash
       run: bash scripts/apt-install.sh libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
 
+    # The system OpenSSL the Native link resolves on a Mac is Homebrew's openssl@3 (build.sbt,
+    # systemOpensslPrefix). The image ships it; the guard makes an image that stops shipping it fail here,
+    # on a named package, instead of at link time on a missing -lssl.
+    - name: Install OpenSSL (macOS)
+      if: ${{ inputs.target == 'Native' && contains(inputs.os, 'macos') }}
+      shell: bash
+      run: brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+
+    - name: Configure build environment (macOS)
+      if: ${{ contains(inputs.os, 'macos') }}
+      shell: bash
+      run: |
+        # Spotlight indexes every file the build writes. On the 3 vCPU arm64 runner mdworker_shared and
+        # mds_stores held up to 800 MB and kept the load at 12 to 15 through a Native link.
+        sudo mdutil -a -i off || echo "warning: could not disable Spotlight indexing"
+        # A hosted Mac has no container runtime; the pin registers zero kyo-pod container leaves, as on
+        # Windows, so a CLI that answers `version` without a usable daemon cannot fail the container suites.
+        echo "KYO_POD_RUNTIME=none" >> "$GITHUB_ENV"
+
     # liburing is a build-time-only dependency of the kyo-net io_uring shim (kyo_uring.c), statically
     # linked so the shipped artifact has no runtime liburing dependency. Every platform target compiles the
     # shim on Linux (JVM/JS/Wasm via the kyo-ffi plugin's cc, Native via the Scala Native linker), so this

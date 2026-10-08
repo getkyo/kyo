@@ -103,7 +103,7 @@ The sbt JVM is configured by the checked-in `.jvmopts`, so no environment setup 
 
 #### The sbt Heap
 
-The driver heap is chosen in one place, `scripts/sbt-heap-lib.sh`, by the role the sbt process plays: `compile`, `docs`, `test-jvm`, `run`, `link`, `publish` or `tool`. Each role's value is what that driver measured as needing on a 16GB CI runner, clamped to the memory of the machine it runs on. CI and `scripts/build.sh` start every sbt through it, and the `checks` workflow fails on a heap set anywhere else (`scripts/sbt-heap-check.sh`).
+The driver heap is chosen in one place, `scripts/sbt-heap-lib.sh`, by the role the sbt process plays: `compile`, `docs`, `test-jvm`, `run`, `link`, `publish` or `tool`. Each role's value is what that driver measured as needing on a 16GB CI runner, clamped to the memory of the machine it runs on less the role's reserve (4GB, 2GB for `link`, which on the 7GB macOS runner keeps the 5GB its links were measured at). CI and `scripts/build.sh` start every sbt through it, and the `checks` workflow fails on a heap set anywhere else (`scripts/sbt-heap-check.sh`).
 
 A bare `sbt` carries no heap flag, so the JVM picks a quarter of physical memory. For the heap CI uses, start sbt through `scripts/sbt.sh` with a role; for any other heap, add `-J-Xmx`, which the launcher places after the role's:
 
@@ -193,7 +193,7 @@ Pull requests to the main repository require maintainer approval before CI runs,
 
 1. **Enable Actions on your fork.** GitHub disables a fork's workflows by default. Open your fork's **Actions** tab (`https://github.com/<your-user>/<your-fork>/actions`) and enable them when prompted.
 
-2. **Run the `ci-dispatch` workflow.** The `ci` workflow runs only on pushes and pull requests to `main`; the manually runnable one is `ci-dispatch` (`.github/workflows/ci-dispatch.yml`). In the **Actions** tab, select **ci-dispatch** and click **Run workflow**, then choose your branch. Pull-request CI runs four os poles: `linux-x64` and `linux-arm64` with JVM, JS, Native and Wasm, and `windows-x64` and `windows-arm64` with JVM and JS. The **oses** default omits `windows-arm64`; set it to `linux-x64 linux-arm64 windows-x64 windows-arm64` to match pull-request CI. Leave **mode** as `full` for a complete run, or set it to `diff` to test only the modules your branch changed, which is what pull-request CI runs.
+2. **Run the `ci-dispatch` workflow.** The `ci` workflow runs only on pushes and pull requests to `main`; the manually runnable one is `ci-dispatch` (`.github/workflows/ci-dispatch.yml`). In the **Actions** tab, select **ci-dispatch** and click **Run workflow**, then choose your branch. Pull-request CI runs five os poles: `linux-x64` and `linux-arm64` with JVM, JS, Native and Wasm, `windows-x64` and `windows-arm64` with JVM and JS, and `macos-arm64` with Native on kyo-net and kyo-http alone (the modules whose tests drive kyo-net's kqueue driver). The **oses** default omits `windows-arm64` and `macos-arm64`; set it to `linux-x64 linux-arm64 windows-x64 windows-arm64 macos-arm64` to match pull-request CI. Leave **mode** as `full` for a complete run, or set it to `diff` to test only the modules your branch changed, which is what pull-request CI runs.
 
 3. **Or open a fork-internal pull request.** A PR from your working branch against your fork's own `main` triggers the same diff-mode run an upstream PR would, on your runners, with no approval needed. It also runs `release-probe`, a no-secrets publishability check, for free.
 

@@ -20,6 +20,9 @@ private[net] object PosixConstants:
     /** True on macOS/BSD, where `AF_INET6` is 30 and SIGPIPE is suppressed via `SO_NOSIGPIPE` rather than `MSG_NOSIGNAL`. */
     val isMacOrBsd: Boolean = kyo.internal.Platform.isMacOrBsd
 
+    /** True on macOS alone, where the unsuffixed `fstat` symbol's `struct stat` differs between x86_64 and arm64 (see [[PosixStat]]). */
+    val isMac: Boolean = kyo.internal.Platform.isMac
+
     /** True on Linux, where epoll, `MSG_NOSIGNAL`, and `AF_INET6 == 10` apply. */
     val isLinux: Boolean = kyo.internal.Platform.isLinux
 
@@ -177,8 +180,9 @@ private[net] object PosixConstants:
     val S_IFIFO: Int = 0x1000
     val S_IFCHR: Int = 0x2000
 
-    /** Upper bound on `sizeof(struct stat)` for the layouts this module supports: 128-144 bytes on Linux x86_64/aarch64, 144 on macOS/BSD.
-      * `PosixStat` decodes only `st_mode`, at offset 24 (Linux x86_64), 16 (Linux aarch64), or 4 (macOS/BSD), so 256 covers the whole
+    /** Upper bound on `sizeof(struct stat)` for the layouts this module supports: 128-144 bytes on Linux x86_64/aarch64, 144 on macOS/BSD,
+      * less for macOS x86_64's legacy 32-bit-inode layout. `PosixStat` decodes only `st_mode`, at offset 24 (Linux x86_64), 16 (Linux aarch64), 8 (macOS
+      * x86_64) or 4 (macOS arm64, BSD), so 256 covers the whole
       * struct on every listed layout and the decoded field with room to spare: `fstat` fills the leading prefix and the trailing slack is
       * ignored. The bound is derived from the published layouts; `PosixStructsAbiTest` checks it against a real `fstat` on the host running
       * the suite.
