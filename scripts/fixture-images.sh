@@ -25,6 +25,7 @@ set -uo pipefail
 FIXTURES='
 pull  kyo-telegram ghcr.io/skrashevich/telegram-mock-ai@sha256:7e75f8f8d7902072a5e318ffe9f9b93240087601419b82f7137261b41a48d606
 pull  kyo-whatsapp docker.io/dgadelha/whaloc@sha256:793780655dbe3be764de559625be0026a67978a3a9527e23d9d023f613c51314
+pull  kyo-email    docker.io/mailserver/docker-mailserver@sha256:d0fe7668defe157aad57ea31b1707ad1e2fb57d7a91bdf17cbdf876549946c86
 build kyo-teams    localhost/kyo-teams-playground:0.2.28   kyo-teams/shared/src/test/playground
 build kyo-discord  localhost/kyo-discord-spacebar:0eb6f04f6d-4 kyo-discord/shared/src/test/spacebar
 build kyo-slack    localhost/kyo-slack-simulator:87373b8855-1  kyo-slack/shared/src/test/slack-simulator
@@ -105,7 +106,7 @@ provide() {
 # -- self-test: a fake podman and docker record every call, so each case asserts which images a
 # plan provides into which runtime without touching a real one. Each case's assertion is a string
 # evaluated after the run, hence the single quotes. --
-# shellcheck disable=SC2016,SC2329
+# shellcheck disable=SC2016,SC2034,SC2329
 self_test() {
     SELF_TEST_DIR=$(mktemp -d)
     trap 'rm -rf "$SELF_TEST_DIR"' EXIT
@@ -120,6 +121,9 @@ self_test() {
         if eval "$2"; then echo "  PASS: $1"; pass=$((pass + 1)); else echo "  FAIL: $1"; fail=$((fail + 1)); sed 's/^/    /' "$dir/calls" "$dir/out"; fi
     }
     calls() { grep -cE -- "$1" "$dir/calls"; }
+    local pulls builds
+    pulls=$(grep -c '^pull ' <<< "$FIXTURES")
+    builds=$(grep -c '^build ' <<< "$FIXTURES")
 
     echo "Running fixture-images.sh self-tests..."
 
@@ -134,23 +138,23 @@ self_test() {
 
     plan=--all
     run
-    check "--all provides every entry" '[ "$(calls " pull -q ")" = 4 ] && [ "$(calls " build -q ")" = 6 ]'
+    check "--all provides every entry" '[ "$(calls " pull -q ")" = $((2 * pulls)) ] && [ "$(calls " build -q ")" = $((2 * builds)) ]'
 
     run KYO_POD_RUNTIME=none
     check "KYO_POD_RUNTIME=none provides nothing" '[ ! -s "$dir/calls" ]'
 
     run KYO_POD_RUNTIME=podman
-    check "KYO_POD_RUNTIME names the one runtime used" '[ "$(calls "^docker")" = 0 ] && [ "$(calls "^podman pull")" = 2 ]'
+    check "KYO_POD_RUNTIME names the one runtime used" '[ "$(calls "^docker")" = 0 ] && [ "$(calls "^podman pull")" = "$pulls" ]'
 
     touch "$dir/docker-down"
     run
-    check "a runtime that does not answer is left out" '[ "$(calls "^docker (pull|build)")" = 0 ] && [ "$(calls "^podman build")" = 3 ]'
+    check "a runtime that does not answer is left out" '[ "$(calls "^docker (pull|build)")" = 0 ] && [ "$(calls "^podman build")" = "$builds" ]'
     rm -f "$dir/docker-down"
 
     touch "$dir/pull-fails"
     run
     check "a failed pull is retried three times, warns, and does not fail the step" \
-        '[ "$(calls "pull -q ghcr.io")" = 6 ] && grep -q "::warning title=fixture image pull failed" "$dir/out" && [ "$(calls " build -q ")" = 6 ]'
+        '[ "$(calls "pull -q ghcr.io")" = 6 ] && grep -q "::warning title=fixture image pull failed" "$dir/out" && [ "$(calls " build -q ")" = $((2 * builds)) ]'
     rm -f "$dir/pull-fails"
 
     echo "fixture-images.sh self-tests: $pass passed, $fail failed"

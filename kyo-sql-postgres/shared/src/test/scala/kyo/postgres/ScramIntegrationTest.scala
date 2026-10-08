@@ -54,7 +54,7 @@ class ScramIntegrationTest extends SqlContainerTest:
             }
         }
 
-    "StartupExchange succeeds with SCRAM-SHA-256 server, connect completes without error".tagged("kyo.OwnContainer") in {
+    "StartupExchange succeeds with SCRAM-SHA-256 server, connect completes without error".tagged(OwnContainer.name) in {
         Scope.run {
             // Default postgres:16 uses scram-sha-256; no authMethod override needed.
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
@@ -68,7 +68,7 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM wrong password raises SqlConnectionAuthenticationFailedException".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM wrong password raises SqlConnectionAuthenticationFailedException".tagged(OwnContainer.name) in {
         Scope.run {
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
             // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
@@ -98,7 +98,7 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM server signature verified, no error after successful SCRAM".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM server signature verified, no error after successful SCRAM".tagged(OwnContainer.name) in {
         Scope.run {
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
             // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
@@ -113,7 +113,7 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM populates ParameterStatus, server_version present after SCRAM connect".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM populates ParameterStatus, server_version present after SCRAM connect".tagged(OwnContainer.name) in {
         Scope.run {
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
             // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
@@ -131,7 +131,7 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM SELECT 1 returns correct result after authentication".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM SELECT 1 returns correct result after authentication".tagged(OwnContainer.name) in {
         Scope.run {
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
             // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
@@ -149,7 +149,7 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange trust auth still works after SCRAM addition, regression".tagged("kyo.OwnContainer") in {
+    "StartupExchange trust auth still works after SCRAM addition, regression".tagged(OwnContainer.name) in {
         Scope.run {
             // Verify cleartext (password) auth still works after adding SCRAM support.
             val regPredefConfig    = ContainerPredef.Postgres.Config.default.password("regpw")
@@ -171,7 +171,7 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM authenticates a role whose name holds a comma and an equals sign".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM authenticates a role whose name holds a comma and an equals sign".tagged(OwnContainer.name) in {
         // RFC 5802 section 5.1 reserves both characters in the client-first message's name attribute. The exchange sends an empty
         // name, as libpq does, and the server takes the role from the startup packet, so the name never reaches the SCRAM grammar.
         Scope.run {
@@ -194,7 +194,7 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM authenticates a role whose password the server stored in its SASLprep form".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM authenticates a role whose password the server stored in its SASLprep form".tagged(OwnContainer.name) in {
         // The server prepares the password when it stores the secret, so the secret of "pass", a no-break space and three fullwidth
         // digits is the secret of "pass 123": the client must salt the prepared form, and both spellings log in.
         Scope.run {
@@ -213,7 +213,7 @@ class ScramIntegrationTest extends SqlContainerTest:
     }
 
     "StartupExchange SCRAM authenticates roles whose passwords NFKC composes and B.1 maps to nothing, under either spelling".tagged(
-        "kyo.OwnContainer"
+        OwnContainer.name
     ) in {
         // "e" and a combining acute compose to U+00E9 under NFKC; a soft hyphen (RFC 3454 table B.1) maps to nothing. The server stores the
         // prepared form's secret, so the raw and the prepared spellings both log in.
@@ -237,7 +237,7 @@ class ScramIntegrationTest extends SqlContainerTest:
     }
 
     "StartupExchange SCRAM authenticates roles whose passwords the profile prohibits: U+2028 (table C.2.2) and a bidi violation".tagged(
-        "kyo.OwnContainer"
+        OwnContainer.name
     ) in {
         // A line separator is a prohibited control character, and an Arabic letter after a Latin one breaks RFC 3454 section 6; SASLprep
         // fails, the server stores the raw password's secret, and the client salts the raw password, the fallback libpq applies.
@@ -258,7 +258,7 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM authenticates a role whose password the profile refuses, stored and sent raw".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM authenticates a role whose password the profile refuses, stored and sent raw".tagged(OwnContainer.name) in {
         // An emoji is unassigned in Unicode 3.2, so SASLprep refuses the password; the server stores the raw password's secret and the
         // client salts the raw password, the fallback libpq applies.
         Scope.run {
@@ -273,7 +273,7 @@ class ScramIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "StartupExchange SCRAM stores BackendKeyData, processId > 0 after SCRAM connect".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM stores BackendKeyData, processId > 0 after SCRAM connect".tagged(OwnContainer.name) in {
         Scope.run {
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
             // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test

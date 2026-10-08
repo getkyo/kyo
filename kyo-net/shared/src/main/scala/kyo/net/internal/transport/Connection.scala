@@ -108,7 +108,7 @@ final private[kyo] class Connection[Handle] private (
       */
     @volatile private[kyo] var certHashFn: Maybe[() => Maybe[Span[Byte]]] = Absent
 
-    /** Returns the SHA-256 hash of the server's leaf certificate DER bytes (RFC 5929 tls-server-end-point). Delegates to the
+    /** Returns the RFC 5929 tls-server-end-point hash of the server's leaf certificate. Delegates to the
       * transport-installed certHashFn (a cache read gated on [[isOpen]]; see [[certHashFn]]), or returns Absent if not supported.
       */
     override def serverCertificateHash: Maybe[Span[Byte]] =

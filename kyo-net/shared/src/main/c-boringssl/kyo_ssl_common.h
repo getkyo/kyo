@@ -436,15 +436,17 @@ static int KYO_SSL_FN(shutdown_step)(long ssl_ptr) {
 /* ---- peer certificate hash (RFC 5929 tls-server-end-point) ----------------------------------- */
 
 /*
- * RFC 5929 tls-server-end-point channel binding: SHA-256 of the peer leaf certificate's DER bytes
- * (i2d_X509). Writes 32 bytes into out_buf. Returns 32 on success, or -1 when there is no peer cert
- * / out_len < 32 / a hashing error. The peer-cert accessor name differs per library: OpenSSL 3
- * exposes SSL_get1_peer_certificate, BoringSSL exposes SSL_get_peer_certificate; both up-ref the
- * cert, so X509_free balances it. The 32 bytes match across both backends: same DER encoding, same
- * SHA-256.
+ * RFC 5929 tls-server-end-point channel binding: the peer leaf certificate's DER bytes (i2d_X509)
+ * hashed with the hash of the certificate's own signature algorithm, or SHA-256 when that hash is MD5
+ * or SHA-1 (section 4.1). A server binds with this rule, so a SHA-256-only client is refused for a
+ * certificate signed with SHA-384 or SHA-512. A signature with no single hash (Ed25519, RSASSA-PSS)
+ * has no defined binding and returns -1. Writes the digest into out_buf and returns its length, or -1
+ * when there is no peer cert / out_len < EVP_MAX_MD_SIZE / a hashing error. The peer-cert accessor
+ * name differs per library: OpenSSL 3 exposes SSL_get1_peer_certificate, BoringSSL exposes
+ * SSL_get_peer_certificate; both up-ref the cert, so X509_free balances it.
  */
-static int KYO_SSL_FN(peer_cert_sha256)(long ssl_ptr, unsigned char *out_buf, int out_len) {
-    if (!ssl_ptr || !out_buf || out_len < 32) return -1;
+static int KYO_SSL_FN(peer_cert_end_point_hash)(long ssl_ptr, unsigned char *out_buf, int out_len) {
+    if (!ssl_ptr || !out_buf || out_len < EVP_MAX_MD_SIZE) return -1;
     KYO_SSL_FN(ssl_state) *st = (KYO_SSL_FN(ssl_state) *)(intptr_t)ssl_ptr;
 
 #if defined(OPENSSL_IS_BORINGSSL)
@@ -456,13 +458,22 @@ static int KYO_SSL_FN(peer_cert_sha256)(long ssl_ptr, unsigned char *out_buf, in
 #endif
     if (!cert) return -1;
 
+    int md_nid = NID_undef;
+    if (!OBJ_find_sigid_algs(X509_get_signature_nid(cert), &md_nid, NULL) || md_nid == NID_undef) {
+        X509_free(cert);
+        return -1;
+    }
+    if (md_nid == NID_md5 || md_nid == NID_sha1) md_nid = NID_sha256;
+    const EVP_MD *md = EVP_get_digestbynid(md_nid);
+    if (!md) { X509_free(cert); return -1; }
+
     unsigned char *der = NULL;
     int der_len = i2d_X509(cert, &der);
     if (der_len <= 0 || !der) { X509_free(cert); return -1; }
 
     unsigned int hash_len = 0;
-    int ok = EVP_Digest(der, (size_t)der_len, out_buf, &hash_len, EVP_sha256(), NULL);
+    int ok = EVP_Digest(der, (size_t)der_len, out_buf, &hash_len, md, NULL);
     OPENSSL_free(der);
     X509_free(cert);
-    return (ok == 1 && hash_len == 32) ? 32 : -1;
+    return (ok == 1 && hash_len > 0) ? (int)hash_len : -1;
 }

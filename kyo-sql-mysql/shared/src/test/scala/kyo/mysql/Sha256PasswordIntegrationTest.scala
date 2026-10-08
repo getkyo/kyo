@@ -82,7 +82,7 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
 
     // ─── Leaf 1: non-TLS → RSA-OAEP path ────────────────────────────────────
 
-    "MySQL user configured with sha256_password authenticates via RSA-OAEP (non-TLS)".tagged("kyo.OwnContainer") in {
+    "MySQL user configured with sha256_password authenticates via RSA-OAEP (non-TLS)".tagged(OwnContainer.name) in {
         Scope.run {
             withSha256User(Maybe.Absent) { (host, port, user, pass, db) =>
                 // Connect without TLS: HandshakeExchange sends empty auth → receives PEM key → XOR+RSA-OAEP encrypts → server decrypts.
@@ -101,7 +101,7 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
 
     // ─── Leaf 2: TLS path skips RSA encryption ───────────────────────────────
 
-    "TLS path skips RSA encryption for sha256_password (cleartext NUL-terminated)".tagged("kyo.OwnContainer") in {
+    "TLS path skips RSA encryption for sha256_password (cleartext NUL-terminated)".tagged(OwnContainer.name) in {
         Scope.run {
             withSha256User(Maybe.Present(NetTlsConfig(trustAll = true))) { (host, port, user, pass, db) =>
                 // Connect with TLS (trustAll): sends cleartext NUL-terminated password in HandshakeResponse41, no RSA involved.
@@ -124,7 +124,7 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
 
     // ─── Leaf 3: sha256_password as the SERVER's default plugin ──────────────
 
-    "sha256_password named by the server's own HandshakeV10 authenticates over plaintext".tagged("kyo.OwnContainer") in {
+    "sha256_password named by the server's own HandshakeV10 authenticates over plaintext".tagged(OwnContainer.name) in {
         // The only configuration that reaches computeAuthResponse's sha256_password branch. The client's initial auth
         // response has to be the single byte 0x01, which is what makes the server answer with its RSA public key; an
         // empty response is read as an empty password and the connection is refused with a real password set.

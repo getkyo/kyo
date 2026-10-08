@@ -119,6 +119,8 @@ final case class ContainerVolumeMissingException(id: Container.Volume.Id)(using 
   * @see
   *   [[kyo.ContainerPortConflictException]] Host port already allocated
   * @see
+  *   [[kyo.ContainerImagePlatformConflictException]] Image store holds another platform's copy
+  * @see
   *   [[kyo.ContainerVolumeInUseException]] Volume still in use
   */
 sealed class ContainerConflictException(message: String, cause: String | Throwable = "")(using Frame)
@@ -139,6 +141,27 @@ final case class ContainerAlreadyStoppedException(id: Container.Id)(using Frame)
 /** The requested port is already allocated on the host. */
 final case class ContainerPortConflictException(port: Int, detail: String)(using Frame)
     extends ContainerConflictException(s"Port $port is already allocated", detail) derives CanEqual
+
+/** The daemon refused to pull `image` for `platform` because its store already holds another platform's copy under the same reference.
+  *
+  * Docker's classic image store keeps one image per reference, so a reference pinned to a multi-platform index digest can name only one
+  * platform's copy at a time, and a pull for a second platform answers `cannot overwrite digest`. Docker's containerd image store and
+  * podman keep a copy per platform under one reference and never raise this. Docker Engine 29 and later use the containerd store by
+  * default on a fresh install; an older install, or one upgraded in place, may still use the classic store.
+  *
+  * kyo-pod does not remove the cached copy, because other users of the daemon may rely on it. Either remove the image, or reference the
+  * platform's own manifest digest from the index (`docker manifest inspect <image>` lists them), which the classic store keeps under a
+  * reference of its own.
+  *
+  * `platform` is `Absent` when the pull named none and the daemon chose its own.
+  */
+final case class ContainerImagePlatformConflictException(image: ContainerImage, platform: Maybe[Container.Platform], detail: String)(
+    using Frame
+) extends ContainerConflictException(
+        s"Cannot pull ${image.reference} for ${platform.map(_.reference).getOrElse("the daemon's platform")}: the image store already " +
+            "holds another platform's copy under this reference",
+        detail
+    ) derives CanEqual
 
 /** The volume is still attached to one or more containers. */
 final case class ContainerVolumeInUseException(id: Container.Volume.Id, containers: String)(using Frame)

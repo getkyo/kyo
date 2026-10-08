@@ -57,7 +57,7 @@ class BaseAITestSelectionTest extends BaseAITest:
         /** A provider stand-in answering both probe paths with `status`, recording what each request carried. */
         def withProvider[A](status: Int, body: String)(f: (String, AtomicRef[Chunk[Seen]]) => A < (Async & Scope))(using
             Frame
-        ): A < (Async & Scope & Abort[HttpBindException]) =
+        ): A < (Async & Scope & Abort[HttpBindException | HttpRouteException]) =
             AtomicRef.init(Chunk.empty[Seen]).map { seen =>
                 def route(path: String) =
                     HttpRoute.getRaw(path)
@@ -65,7 +65,7 @@ class BaseAITestSelectionTest extends BaseAITest:
                         .response(_.bodyText)
                         .handler { req =>
                             seen.updateAndGet(_.append(Seen(path, req.fields.authorization, req.fields.`x-api-key`)))
-                                .andThen(HttpResponse(HttpStatus(status)).addField("body", body))
+                                .andThen(HttpResponse(HttpStatus.init(status).getOrThrow).addField("body", body))
                         }
                 HttpServer.initWith(HttpServerConfig.default)(route("v1/models"), route("v1/key")) { server =>
                     f(s"http://127.0.0.1:${server.port}/v1", seen)

@@ -41,6 +41,29 @@ class TransportTlsIntrospectionTest extends Test:
                 end for
         }
 
+    // RFC 5929 section 4.1: the hash is the certificate's own signature hash, SHA-256 only when that is MD5 or SHA-1.
+    Seq(TlsTestCertShared.ecdsaSha384, TlsTestCertShared.rsaSha512).foreach { cert =>
+        s"a server certificate signed with ${cert.signatureAlgorithm} is hashed with its own signature hash" -
+            eachBackendTls {
+                (transport, serverTls, clientTls) =>
+                    for
+                        (certPath, keyPath) <- TlsTestCertShared.writeSignedPems(cert)
+                        signedTls = serverTls.copy(certChainPath = Present(certPath), privateKeyPath = Present(keyPath))
+                        listener <- transport.listenTls("127.0.0.1", 0, 16, signedTls)(_ => ()).safe.get
+                        _        <- Scope.ensure(Sync.defer(listener.close()))
+                        client   <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                    yield
+                        val hash = client.serverCertificateHash
+                        client.close()
+                        listener.close()
+                        assert(
+                            hash.exists(_.toArray.sameElements(cert.endPointHash)),
+                            s"expected the ${cert.endPointHash.length}-byte tls-server-end-point hash, got ${hash.map(_.toArray.length)} bytes"
+                        )
+                    end for
+            }
+    }
+
     "a plaintext connection has no server certificate hash" - eachBackend { transport =>
         for
             listener <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get

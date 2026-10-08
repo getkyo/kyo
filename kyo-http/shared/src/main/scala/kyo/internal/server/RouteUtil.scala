@@ -36,6 +36,7 @@ private[kyo] object RouteUtil:
 
     // ==================== Client: encode request ====================
 
+    /** Encodes a request for the route, failing with [[kyo.HttpCookieException]] when a cookie field breaks the RFC 6265 grammar. */
     inline def encodeRequest[In, Out, S, A, S2](
         route: HttpRoute[In, Out, S],
         request: HttpRequest[In]
@@ -43,21 +44,39 @@ private[kyo] object RouteUtil:
         inline onEmpty: ( /* url */ String, HttpHeaders) => A < S2,
         inline onBuffered: ( /* url */ String, HttpHeaders, Span[Byte]) => A < S2,
         inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A < S2
-    )(using Frame): A < (S2 & Sync) =
+    )(using Frame): A < (S2 & Sync & Abort[HttpCookieException]) =
         val bodyField = sentBodyField(route, request)
         if requiresMultipartBoundary(bodyField) then
             multipartBoundaryFromHeaders(request.headers) match
                 case Present(boundary) =>
-                    encodeRequestWithBoundary(route, request, Present(boundary))(onEmpty, onBuffered, onStreaming)
+                    encodeRequestWithBoundary[In, Out, S, A < (S2 & Abort[HttpCookieException])](route, request, Present(boundary))(
+                        onEmpty,
+                        onBuffered,
+                        onStreaming,
+                        Abort.fail(_)
+                    )
                 case Absent =>
                     UUID.v4String.map { boundary =>
-                        encodeRequestWithBoundary(route, request, Present(boundary))(onEmpty, onBuffered, onStreaming)
+                        encodeRequestWithBoundary[In, Out, S, A < (S2 & Abort[HttpCookieException])](route, request, Present(boundary))(
+                            onEmpty,
+                            onBuffered,
+                            onStreaming,
+                            Abort.fail(_)
+                        )
                     }
         else
-            encodeRequestWithBoundary(route, request, Absent)(onEmpty, onBuffered, onStreaming)
+            encodeRequestWithBoundary[In, Out, S, A < (S2 & Abort[HttpCookieException])](route, request, Absent)(
+                onEmpty,
+                onBuffered,
+                onStreaming,
+                Abort.fail(_)
+            )
         end if
     end encodeRequest
 
+    /** Encodes a request with a known multipart boundary. A cookie field that breaks the RFC 6265 grammar goes to `onInvalid` instead of
+      * the header, since concatenating it would add or overwrite cookies the caller never named.
+      */
     private[kyo] inline def encodeRequestWithBoundary[In, Out, S, A](
         route: HttpRoute[In, Out, S],
         request: HttpRequest[In],
@@ -65,7 +84,8 @@ private[kyo] object RouteUtil:
     )(
         inline onEmpty: ( /* url */ String, HttpHeaders) => A,
         inline onBuffered: ( /* url */ String, HttpHeaders, Span[Byte]) => A,
-        inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A
+        inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A,
+        inline onInvalid: HttpCookieException => A
     )(using Frame): A =
         val fields    = route.request.fields
         val dict      = request.fields.dict
@@ -82,23 +102,22 @@ private[kyo] object RouteUtil:
         if hasParams then
             val queryBuilder  = new StringBuilder
             val headerBuilder = ChunkBuilder.init[(String, String)]
-            val cookieBuilder = encodeRequestParams(fields, dict, queryBuilder, headerBuilder)
-            cookieBuilder match
-                case Present(cb) =>
-                    discard(headerBuilder += ("Cookie" -> cb.toString))
+            encodeRequestParams(fields, dict, queryBuilder, headerBuilder) match
+                case Present(refused) =>
+                    onInvalid(refused)
                 case Absent =>
+                    val extraHeaders: HttpHeaders = headerBuilder.result()
+                    val url                       = request.url.rawQuery match
+                        case Present(rq) =>
+                            if queryBuilder.nonEmpty then s"$basePath?$rq&$queryBuilder"
+                            else s"$basePath?$rq"
+                        case _ =>
+                            if queryBuilder.nonEmpty then s"$basePath?$queryBuilder"
+                            else basePath
+                    val hdrs = if extraHeaders.isEmpty then request.headers
+                    else request.headers.concat(extraHeaders)
+                    encodeBody(effectiveBodyField, dict, url, hdrs, boundary)(onEmpty, onBuffered, onStreaming)
             end match
-            val extraHeaders: HttpHeaders = headerBuilder.result()
-            val url                       = request.url.rawQuery match
-                case Present(rq) =>
-                    if queryBuilder.nonEmpty then s"$basePath?$rq&$queryBuilder"
-                    else s"$basePath?$rq"
-                case _ =>
-                    if queryBuilder.nonEmpty then s"$basePath?$queryBuilder"
-                    else basePath
-            val hdrs = if extraHeaders.isEmpty then request.headers
-            else request.headers.concat(extraHeaders)
-            encodeBody(effectiveBodyField, dict, url, hdrs, boundary)(onEmpty, onBuffered, onStreaming)
         else
             val url = request.url.rawQuery match
                 case Present(rq) => s"$basePath?$rq"
@@ -329,6 +348,7 @@ private[kyo] object RouteUtil:
 
     // ==================== Server: encode response ====================
 
+    /** Encodes a response for the route, failing with [[kyo.HttpCookieException]] when a cookie field breaks the RFC 6265 grammar. */
     def encodeResponse[In, Out, S, A, S2](
         route: HttpRoute[In, Out, S],
         response: HttpResponse[Out]
@@ -336,21 +356,26 @@ private[kyo] object RouteUtil:
         onEmpty: (HttpStatus, HttpHeaders) => A < S2,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A < S2,
         onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A < S2
-    )(using Frame): A < (S2 & Sync) =
+    )(using Frame): A < (S2 & Sync & Abort[HttpCookieException]) =
+        def encode(boundary: Maybe[String]): A < (S2 & Abort[HttpCookieException]) =
+            encodeResponseWithBoundary[In, Out, S, A < (S2 & Abort[HttpCookieException])](route, response, boundary)(
+                onEmpty,
+                onBuffered,
+                onStreaming,
+                Abort.fail(_)
+            )
         val bodyField = findBodyField(route.response.fields)
         if requiresMultipartBoundary(bodyField) then
             multipartBoundaryFromHeaders(response.headers) match
-                case Present(boundary) =>
-                    encodeResponseWithBoundary(route, response, Present(boundary))(onEmpty, onBuffered, onStreaming)
-                case Absent =>
-                    UUID.v4String.map { boundary =>
-                        encodeResponseWithBoundary(route, response, Present(boundary))(onEmpty, onBuffered, onStreaming)
-                    }
-        else
-            encodeResponseWithBoundary(route, response, Absent)(onEmpty, onBuffered, onStreaming)
+                case Present(boundary) => encode(Present(boundary))
+                case Absent            => UUID.v4String.map(boundary => encode(Present(boundary)))
+        else encode(Absent)
         end if
     end encodeResponse
 
+    /** Encodes a response with a known multipart boundary. A cookie field that breaks the RFC 6265 grammar goes to `onInvalid` instead of a
+      * Set-Cookie header, since a ';' in it would write attributes the handler never set.
+      */
     private def encodeResponseWithBoundary[In, Out, S, A](
         route: HttpRoute[In, Out, S],
         response: HttpResponse[Out],
@@ -358,7 +383,8 @@ private[kyo] object RouteUtil:
     )(
         onEmpty: (HttpStatus, HttpHeaders) => A,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
-        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A,
+        onInvalid: HttpCookieException => A
     )(using Frame): A =
         val fields      = route.response.fields
         val routeStatus = route.response.status
@@ -372,11 +398,14 @@ private[kyo] object RouteUtil:
         else
             val dict          = response.fields.dict
             val headerBuilder = ChunkBuilder.init[(String, String)]
-            encodeResponseParams(fields, dict, headerBuilder)
-            val extraHeaders: HttpHeaders = headerBuilder.result()
-            val headers                   = if extraHeaders.isEmpty then response.headers
-            else response.headers.concat(extraHeaders)
-            encodeResponseBody(bodyField, dict, status, headers, boundary)(onEmpty, onBuffered, onStreaming)
+            encodeResponseParams(fields, dict, headerBuilder) match
+                case Present(refused) => onInvalid(refused)
+                case Absent           =>
+                    val extraHeaders: HttpHeaders = headerBuilder.result()
+                    val headers                   = if extraHeaders.isEmpty then response.headers
+                    else response.headers.concat(extraHeaders)
+                    encodeResponseBody(bodyField, dict, status, headers, boundary)(onEmpty, onBuffered, onStreaming)
+            end match
         end if
     end encodeResponseWithBoundary
 
@@ -515,49 +544,50 @@ private[kyo] object RouteUtil:
         dict: Dict[String, Any],
         queryBuilder: StringBuilder,
         headerBuilder: ChunkBuilder[(String, String)]
-    ): Maybe[StringBuilder] =
-        @tailrec def loop(i: Int, cookieBuilder: Maybe[StringBuilder]): Maybe[StringBuilder] =
-            if i >= fields.size then cookieBuilder
+    )(using Frame): Maybe[HttpCookieException] =
+        @tailrec def loop(i: Int, cookieBuilder: Maybe[StringBuilder]): Maybe[HttpCookieException] =
+            if i >= fields.size then
+                cookieBuilder.foreach(cb => discard(headerBuilder += ("Cookie" -> cb.toString)))
+                Absent
             else
-                val nextCookie = fields(i) match
+                fields(i) match
                     case param: HttpRoute.Field.Param[?, ?, ?] =>
                         val wireName = if param.wireName.isEmpty then param.fieldName else param.wireName
-                        dict.get(param.fieldName).flatMap(unwrapOptional(param.optional, _)).map { v =>
-                            val encoded = param.codec.asInstanceOf[HttpCodec[Any]].encode(v)
-                            param.kind match
-                                case HttpRoute.Field.Param.Location.Query =>
-                                    if queryBuilder.nonEmpty then discard(queryBuilder.append('&'))
-                                    discard(queryBuilder
-                                        .append(PercentEncoding.encode(wireName, PercentEncoding.Mode.Component))
-                                        .append('=')
-                                        .append(PercentEncoding.encode(encoded, PercentEncoding.Mode.Component)))
-                                    cookieBuilder
-                                case HttpRoute.Field.Param.Location.Header =>
-                                    discard(headerBuilder += (wireName -> encoded))
-                                    cookieBuilder
-                                case HttpRoute.Field.Param.Location.Cookie =>
-                                    // The request-side mirror of Set-Cookie serialization, and the same grammar applies: RFC 6265
-                                    // section 4.2.1 makes "; " the separator BETWEEN cookie-pairs, so a value carrying one does not
-                                    // extend a cookie, it appends another. Concatenating unchecked would let a caller-supplied value
-                                    // add or overwrite cookies the caller never named, and a CR or LF would end the header outright.
-                                    // Refused rather than escaped for the reason the response side gives: the grammar defines no
-                                    // escape, so there is nothing to encode to that a server would decode back.
-                                    require(
-                                        HttpHeaders.isValidCookieName(wireName),
-                                        s"cookie name must be a token per RFC 6265 section 4.1.1; got: $wireName"
-                                    )
-                                    require(
-                                        HttpHeaders.isValidCookieValue(encoded),
-                                        s"cookie value must be cookie-octets per RFC 6265 section 4.1.1 (no controls, whitespace, ';', ',', '\"' or '\\\\'); got: $encoded"
-                                    )
-                                    val cb = cookieBuilder.getOrElse(new StringBuilder)
-                                    if cookieBuilder.nonEmpty then discard(cb.append("; "))
-                                    discard(cb.append(wireName).append('=').append(encoded))
-                                    Present(cb)
-                            end match
-                        }.getOrElse(cookieBuilder)
-                    case _: HttpRoute.Field.Body[?, ?] => cookieBuilder
-                loop(i + 1, nextCookie)
+                        dict.get(param.fieldName).flatMap(unwrapOptional(param.optional, _)) match
+                            case Present(v) =>
+                                val encoded = param.codec.asInstanceOf[HttpCodec[Any]].encode(v)
+                                param.kind match
+                                    case HttpRoute.Field.Param.Location.Query =>
+                                        if queryBuilder.nonEmpty then discard(queryBuilder.append('&'))
+                                        discard(queryBuilder
+                                            .append(PercentEncoding.encode(wireName, PercentEncoding.Mode.Component))
+                                            .append('=')
+                                            .append(PercentEncoding.encode(encoded, PercentEncoding.Mode.Component)))
+                                        loop(i + 1, cookieBuilder)
+                                    case HttpRoute.Field.Param.Location.Header =>
+                                        discard(headerBuilder += (wireName -> encoded))
+                                        loop(i + 1, cookieBuilder)
+                                    case HttpRoute.Field.Param.Location.Cookie =>
+                                        // The request-side mirror of Set-Cookie serialization, and the same grammar applies: RFC 6265
+                                        // section 4.2.1 makes "; " the separator BETWEEN cookie-pairs, so a value carrying one does not
+                                        // extend a cookie, it appends another. Concatenating unchecked would let a caller-supplied value
+                                        // add or overwrite cookies the caller never named, and a CR or LF would end the header outright.
+                                        // Refused rather than escaped for the reason the response side gives: the grammar defines no
+                                        // escape, so there is nothing to encode to that a server would decode back.
+                                        if !HttpHeaders.isValidCookieName(wireName) then
+                                            Present(HttpCookieException("the name of a cookie"))
+                                        else if !HttpHeaders.isValidCookieValue(encoded) then
+                                            Present(HttpCookieException(s"the value of cookie '$wireName'"))
+                                        else
+                                            val cb = cookieBuilder.getOrElse(new StringBuilder)
+                                            if cookieBuilder.nonEmpty then discard(cb.append("; "))
+                                            discard(cb.append(wireName).append('=').append(encoded))
+                                            loop(i + 1, Present(cb))
+                                        end if
+                                end match
+                            case _ => loop(i + 1, cookieBuilder)
+                        end match
+                    case _: HttpRoute.Field.Body[?, ?] => loop(i + 1, cookieBuilder)
         loop(0, Absent)
     end encodeRequestParams
 
@@ -565,26 +595,32 @@ private[kyo] object RouteUtil:
         fields: Chunk[HttpRoute.Field[?]],
         dict: Dict[String, Any],
         headerBuilder: ChunkBuilder[(String, String)]
-    ): Unit =
-        @tailrec def loop(i: Int): Unit =
-            if i < fields.size then
+    )(using Frame): Maybe[HttpCookieException] =
+        @tailrec def loop(i: Int): Maybe[HttpCookieException] =
+            if i >= fields.size then Absent
+            else
                 fields(i) match
                     case param: HttpRoute.Field.Param[?, ?, ?] =>
                         val wireName = if param.wireName.isEmpty then param.fieldName else param.wireName
-                        dict.get(param.fieldName).flatMap(unwrapOptional(param.optional, _)).foreach { v =>
-                            param.kind match
-                                case HttpRoute.Field.Param.Location.Header =>
-                                    discard(headerBuilder += (wireName -> param.codec.asInstanceOf[HttpCodec[Any]].encode(v)))
-                                case HttpRoute.Field.Param.Location.Cookie =>
-                                    v match
-                                        case cookie: HttpCookie[?] =>
-                                            discard(headerBuilder += ("Set-Cookie" -> HttpHeaders.serializeCookie(wireName, cookie)))
-                                        case _ =>
-                                case _ =>
-                        }
-                    case _: HttpRoute.Field.Body[?, ?] =>
-                end match
-                loop(i + 1)
+                        dict.get(param.fieldName).flatMap(unwrapOptional(param.optional, _)) match
+                            case Present(v) =>
+                                param.kind match
+                                    case HttpRoute.Field.Param.Location.Header =>
+                                        discard(headerBuilder += (wireName -> param.codec.asInstanceOf[HttpCodec[Any]].encode(v)))
+                                        loop(i + 1)
+                                    case HttpRoute.Field.Param.Location.Cookie =>
+                                        v match
+                                            case cookie: HttpCookie[?] =>
+                                                HttpHeaders.renderCookie(wireName, cookie) match
+                                                    case refused: HttpCookieException => Present(refused)
+                                                    case rendered: String             =>
+                                                        discard(headerBuilder += ("Set-Cookie" -> rendered))
+                                                        loop(i + 1)
+                                            case _ => loop(i + 1)
+                                    case _ => loop(i + 1)
+                            case _ => loop(i + 1)
+                        end match
+                    case _: HttpRoute.Field.Body[?, ?] => loop(i + 1)
         loop(0)
     end encodeResponseParams
 
@@ -1091,7 +1127,7 @@ private[kyo] object RouteUtil:
     private val MaxFramedLineBytes: Int = MaxFramedLine.toBytes.toInt
 
     private def tooLarge(size: Long, limit: Int)(using Frame): Result.Error[HttpException] =
-        Result.Failure(HttpPayloadTooLargeException(if size > Int.MaxValue.toLong then Int.MaxValue else size.toInt, limit))
+        Result.Failure(HttpPayloadTooLargeException(size.bytes, limit.bytes))
 
     // NDJSON: one JSON record per line, framed by kyo-schema-json, which strips the terminator and any CR before it, skips blank lines
     // and a byte order mark, and bounds a record.

@@ -1,5 +1,6 @@
 package kyo.scheduler
 
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -67,7 +68,13 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions with Ev
       * Thread.sleep needed since blocked threads have flat CPU time immediately.
       */
     private def assertDetectsBlocking(setup: () => AutoCloseable = () => NoOpCloseable)(op: CountDownLatch => Unit): Unit = {
-        val resource = setup()
+        val resource        = setup()
+        var released        = false
+        def release(): Unit =
+            if (!released) {
+                released = true
+                resource.close()
+            }
         try {
             val detector = new BlockingMonitor(1)
             val started  = new CountDownLatch(1)
@@ -90,9 +97,12 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions with Ev
 
             done.countDown()
             thread.interrupt()
+            // Before the join: socket calls ignore Thread.interrupt, and closing the resource is what returns them.
+            release()
             thread.join(5000)
-        } finally
-            resource.close()
+            assert(!thread.isAlive(), "the blocked thread did not return once released")
+            ()
+        } finally release()
     }
 
     /** Runs an active operation and verifies the detector does NOT identify it as blocked. Waits for the thread to accumulate CPU time (via
@@ -236,9 +246,11 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions with Ev
             }
 
             "Socket.read — RUNNABLE but blocked" in {
-                val server = new ServerSocket(0)
+                // Bound to the loopback address, not the wildcard: with SO_REUSEADDR a wildcard bind can take a port another process
+                // listens on at 127.0.0.1, and the connect then reaches that listener instead, or times out when its queue is full.
+                val server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())
                 val client = new Socket()
-                client.connect(new InetSocketAddress("127.0.0.1", server.getLocalPort))
+                client.connect(new InetSocketAddress(server.getInetAddress(), server.getLocalPort))
                 val accepted = server.accept()
                 assertDetectsBlocking(() =>
                     new AutoCloseable {

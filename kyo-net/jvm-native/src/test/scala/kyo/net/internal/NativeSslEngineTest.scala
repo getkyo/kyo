@@ -26,7 +26,7 @@ class NativeSslEngineTest extends Test:
         "writePlain",
         "hasBufferedPlaintext",
         "readBuffered",
-        "certSha256",
+        "serverEndPointHash",
         "shutdownStep"
     )
 
@@ -48,7 +48,7 @@ class NativeSslEngineTest extends Test:
                 assert(engine.writePlain(buf, 1) == 0, "writePlain after free() must return 0 (want-read sentinel)")
                 assert(!engine.hasBufferedPlaintext, "hasBufferedPlaintext after free() must return false")
                 assert(engine.readBuffered().isEmpty, "readBuffered after free() must return an empty span")
-                assert(engine.certSha256() == Absent, "certSha256 after free() must return Absent")
+                assert(engine.serverEndPointHash() == Absent, "serverEndPointHash after free() must return Absent")
                 assert(engine.shutdownStep() == -2, "shutdownStep after free() must return -2 (fatal), not call the native shim")
             finally buf.close()
             end try

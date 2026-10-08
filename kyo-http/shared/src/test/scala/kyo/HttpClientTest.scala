@@ -177,15 +177,46 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "negative maxRedirects throws" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpClientConfig(maxRedirects = -1)
+        "a negative maxRedirects behaves as zero: the first redirect fails with HttpRedirectLoopException" in {
+            val route = HttpRoute.getRaw("hop").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.redirect("/hop").addField("body", "hop"))
+            withServer(ep) { url =>
+                def follow(limit: Int) =
+                    HttpClient.withConfig(_.maxRedirects(limit))(Abort.run[HttpException](HttpClient.getText(s"$url/hop")))
+                follow(-1).map { negative =>
+                    follow(0).map { zero =>
+                        (negative, zero) match
+                            case (Result.Failure(n: HttpRedirectLoopException), Result.Failure(z: HttpRedirectLoopException)) =>
+                                assert((n.count, n.chain, z.count, z.chain) == (0, Chunk.empty, 0, Chunk.empty))
+                            case other => fail(s"expected HttpRedirectLoopException for both, got $other")
+                    }
+                }
             }
         }
 
-        "zero timeout throws" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpClientConfig(timeout = Duration.Zero)
+        "a zero timeout fails the request at once with HttpTimeoutException, before it reaches the server" in {
+            val hits  = new AtomicInteger(0)
+            val route = HttpRoute.getRaw("ping").response(_.bodyText)
+            val ep    = route.handler { _ => discard(hits.incrementAndGet()); HttpResponse.ok("pong") }
+            withServer(ep) { url =>
+                HttpClient.withConfig(_.timeout(Duration.Zero))(Abort.run[HttpException](HttpClient.getText(s"$url/ping"))).map {
+                    case Result.Failure(e: HttpTimeoutException) =>
+                        assert((e.duration, hits.get()) == (Duration.Zero, 0))
+                    case other => fail(s"expected HttpTimeoutException, got $other")
+                }
+            }
+        }
+
+        "a zero connectTimeout fails the connect at once with HttpConnectTimeoutException" in {
+            val hits  = new AtomicInteger(0)
+            val route = HttpRoute.getRaw("ping").response(_.bodyText)
+            val ep    = route.handler { _ => discard(hits.incrementAndGet()); HttpResponse.ok("pong") }
+            withServer(ep) { url =>
+                HttpClient.withConfig(_.connectTimeout(Duration.Zero))(Abort.run[HttpException](HttpClient.getText(s"$url/ping"))).map {
+                    case Result.Failure(e: HttpConnectTimeoutException) =>
+                        assert((e.timeout, hits.get()) == (Duration.Zero, 0))
+                    case other => fail(s"expected HttpConnectTimeoutException, got $other")
+                }
             }
         }
 
@@ -210,15 +241,72 @@ class HttpClientTest extends BaseHttpTest:
             )
         }
 
-        "zero connectTimeout throws" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpClientConfig(connectTimeout = Duration.Zero)
+        "a maxConnectionsPerHost of zero or less fails every request with HttpPoolExhaustedException" in {
+            val hits  = new AtomicInteger(0)
+            val route = HttpRoute.getRaw("ping").response(_.bodyText)
+            val ep    = route.handler { _ => discard(hits.incrementAndGet()); HttpResponse.ok("pong") }
+            withServer(ep) { url =>
+                def attempt(limit: Int) =
+                    HttpClient.init(maxConnectionsPerHost = limit).map { limited =>
+                        HttpClient.let(limited)(Abort.run[HttpException](HttpClient.getText(s"$url/ping")))
+                    }
+                attempt(0).map { zero =>
+                    attempt(-1).map { negative =>
+                        (zero, negative) match
+                            case (Result.Failure(z: HttpPoolExhaustedException), Result.Failure(n: HttpPoolExhaustedException)) =>
+                                assert((z.maxConnections, n.maxConnections, hits.get()) == (0, -1, 0))
+                            case other => fail(s"expected HttpPoolExhaustedException for both, got $other")
+                    }
+                }
             }
         }
 
-        "maxConnectionsPerHost must be positive" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpClient.initUnscoped(maxConnectionsPerHost = 0)
+        "a maxConnectionsPerHost of one serves requests over one connection" in {
+            val route = HttpRoute.getRaw("ping").response(_.bodyText)
+            withServer(route.handler(_ => HttpResponse.ok("pong"))) { url =>
+                HttpClient.init(maxConnectionsPerHost = 1).map { single =>
+                    HttpClient.let(single) {
+                        HttpClient.getText(s"$url/ping").map(a =>
+                            HttpClient.getText(s"$url/ping").map(b => assert((a, b) == ("pong", "pong")))
+                        )
+                    }
+                }
+            }
+        }
+
+        "an idleConnectionTimeout of zero never reuses a connection" in {
+            // A raw peer that answers every request it reads on every connection it accepts, and counts the connections: two
+            // sequential requests reuse one connection under a positive idle timeout, and open two under a zero one.
+            val response = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\npong".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+            def countingPeer(accepted: AtomicInteger)(conn: kyo.net.Connection): Unit =
+                import AllowUnsafe.embrace.danger
+                discard(accepted.incrementAndGet())
+                def answer(): Unit =
+                    conn.inbound.takeFiber().asInstanceOf[kyo.scheduler.IOPromise[Closed, Span[Byte]]].onComplete {
+                        case Result.Success(_) =>
+                            discard(conn.outbound.offer(Span.fromUnsafe(response)))
+                            answer()
+                        case _ => ()
+                    }
+                answer()
+            end countingPeer
+            def connectionsFor(idle: Duration): Int < (Async & Abort[Any] & Scope) =
+                val accepted = new AtomicInteger(0)
+                Sync.Unsafe.defer(kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16)(countingPeer(accepted))).map { fiber =>
+                    fiber.safe.use { listener =>
+                        Scope.ensure(Sync.Unsafe.defer(listener.close())).andThen {
+                            HttpClient.init(idleConnectionTimeout = idle).map { client =>
+                                HttpClient.let(client) {
+                                    val url = s"http://127.0.0.1:${listener.port}/x"
+                                    HttpClient.getText(url).andThen(HttpClient.getText(url)).andThen(accepted.get())
+                                }
+                            }
+                        }
+                    }
+                }
+            end connectionsFor
+            connectionsFor(Duration.Zero).map { zero =>
+                connectionsFor(1.hours).map(positive => assert((zero, positive) == (2, 1)))
             }
         }
     }
@@ -621,10 +709,11 @@ class HttpClientTest extends BaseHttpTest:
             val route     = HttpRoute.getRaw("big").response(_.bodyText)
             val ep        = route.handler(_ => HttpResponse.ok(largeBody))
             withServer(ep) { url =>
-                HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                HttpClient.withConfig(_.maxResponseLength(64.kib)) {
                     Abort.run[HttpException](HttpClient.getText(s"$url/big")).map {
-                        case Result.Failure(_: HttpPayloadTooLargeException) => succeed
-                        case other                                           =>
+                        case Result.Failure(e: HttpPayloadTooLargeException) =>
+                            assert((e.bodySize, e.maxSize) == (256.kib, 64.kib))
+                        case other =>
                             fail(s"expected HttpPayloadTooLargeException for a 256 KiB response under a 64 KiB cap, got $other")
                     }
                 }
@@ -637,8 +726,38 @@ class HttpClientTest extends BaseHttpTest:
             val route = HttpRoute.getRaw("ok").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok(body))
             withServer(ep) { url =>
-                HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                HttpClient.withConfig(_.maxResponseLength(64.kib)) {
                     HttpClient.getText(s"$url/ok").map(b => assert(b.length == 32 * 1024))
+                }
+            }
+        }
+
+        "a zero maxResponseLength narrows to one byte" in {
+            val one = HttpRoute.getRaw("one").response(_.bodyText)
+            val two = HttpRoute.getRaw("two").response(_.bodyText)
+            withServer(one.handler(_ => HttpResponse.ok("a")), two.handler(_ => HttpResponse.ok("ab"))) { url =>
+                HttpClient.withConfig(_.maxResponseLength(ByteSize.Zero)) {
+                    HttpClient.getText(s"$url/one").map { body =>
+                        Abort.run[HttpException](HttpClient.getText(s"$url/two")).map { refused =>
+                            assert(body == "a")
+                            refused match
+                                case Result.Failure(e: HttpPayloadTooLargeException) =>
+                                    assert((e.bodySize, e.maxSize) == (2.bytes, 1.bytes))
+                                case other => fail(s"expected HttpPayloadTooLargeException, got $other")
+                            end match
+                        }
+                    }
+                }
+            }
+        }
+
+        "a maxResponseLength beyond Int.MaxValue narrows to Int.MaxValue" in {
+            // Truncating 4 GiB plus one byte to an Int reads as one byte and refuses this body; narrowing keeps the largest cap a buffer
+            // can hold.
+            val route = HttpRoute.getRaw("ok").response(_.bodyText)
+            withServer(route.handler(_ => HttpResponse.ok("hello"))) { url =>
+                HttpClient.withConfig(_.maxResponseLength(4.gib + 1.bytes)) {
+                    HttpClient.getText(s"$url/ok").map(b => assert(b == "hello"))
                 }
             }
         }
@@ -2058,7 +2177,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1024)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1.kib)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(512)(0.toByte) // 512 bytes, within 1024 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -2072,7 +2191,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64.bytes)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(128)(0.toByte) // 128 bytes, exceeds 64 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -2086,7 +2205,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100.bytes)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(100)(0.toByte) // exactly 100 bytes
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -2100,7 +2219,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(100.bytes)
             withServerConfig(config)(ep) { url =>
                 val body = Span.fill(101)(0.toByte) // 101 bytes, over 100 limit
                 send(url, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -2112,7 +2231,7 @@ class HttpClientTest extends BaseHttpTest:
         "empty body always succeeds" in {
             val route  = HttpRoute.getRaw("data").response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(1.bytes)
             withServerConfig(config)(ep) { url =>
                 send(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/data"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -2125,7 +2244,7 @@ class HttpClientTest extends BaseHttpTest:
                 .request(_.bodyText)
                 .response(_.bodyText)
             val ep     = route.handler(req => HttpResponse.ok(req.fields.body))
-            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64)
+            val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(64.bytes)
             withServerConfig(config)(ep) { url =>
                 // First request: too large, should get 413
                 val bigBody = "x" * 128
@@ -2150,7 +2269,7 @@ class HttpClientTest extends BaseHttpTest:
             val config = HttpServerConfig.default
             assert(config.port == 0)
             assert(config.host == "127.0.0.1")
-            assert(config.maxContentLength == 65536)
+            assert(config.maxContentLength == 64.kib)
             assert(config.backlog == 128)
             assert(config.keepAlive == true)
             assert(config.tcpFastOpen == true)
@@ -2160,13 +2279,13 @@ class HttpClientTest extends BaseHttpTest:
 
         "builder methods" in {
             val config = HttpServerConfig.default
-                .maxContentLength(1024)
+                .maxContentLength(1.kib)
                 .backlog(256)
                 .keepAlive(false)
                 .tcpFastOpen(false)
                 .flushConsolidationLimit(128)
                 .strictCookieParsing(true)
-            assert(config.maxContentLength == 1024)
+            assert(config.maxContentLength == 1.kib)
             assert(config.backlog == 256)
             assert(config.keepAlive == false)
             assert(config.tcpFastOpen == false)

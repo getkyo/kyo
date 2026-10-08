@@ -101,11 +101,11 @@ private[net] trait SslLibBindings:
     /** One shutdown (close_notify) step. `1` complete, `0` need more I/O, `-2` fatal error. */
     def shutdownStep(ssl: Long)(using AllowUnsafe): Int
 
-    /** RFC 5929 tls-server-end-point, the SHA-256 of the peer leaf certificate DER (`i2d_X509` + SHA-256). Writes 32 bytes into `outBuf`;
-      * returns `32` on success or `-1` when there is no peer cert / `outLen < 32` / a hashing error. The 32 bytes are identical across the two
-      * backends for the same cert: same DER encoding, same digest.
+    /** RFC 5929 tls-server-end-point: the peer leaf certificate DER (`i2d_X509`) hashed with its signature algorithm's hash, SHA-256 when
+      * that is MD5 or SHA-1. Writes the digest into `outBuf` and returns its length, or `-1` when there is no peer cert, the signature has no
+      * single hash (Ed25519, RSASSA-PSS), `outLen` is below 64, or hashing fails.
       */
-    def peerCertSha256(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int
+    def peerCertEndPointHash(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int
 
     /** `SSL_CTX_new(TLS_method())` then free, returning true when the backing library is present and functional (no `UnsatisfiedLinkError` /
       * missing symbol). The provider calls this to gate selecting the engine.

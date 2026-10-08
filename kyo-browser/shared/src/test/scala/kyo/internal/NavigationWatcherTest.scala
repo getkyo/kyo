@@ -489,7 +489,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
       */
     private def slowImageServer[A, S](f: (String, Int) => A < (Browser & S))(using
         Frame
-    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException] & Async & S) =
+    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException | HttpRouteException] & Async & S) =
         val pageBytes = Span.fromUnsafe(
             """<html><head></head><body><img src="/slow.png" alt=""></body></html>""".getBytes("UTF-8")
         )
@@ -585,7 +585,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
       */
     private def statusServer[A, S](status: HttpStatus, path: String)(f: (String, Int) => A < (Browser & S))(using
         Frame
-    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException] & Async & S) =
+    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException | HttpRouteException] & Async & S) =
         val body    = Span.fromUnsafe(s"<html><body>status ${status.code}</body></html>".getBytes("UTF-8"))
         val handler = HttpRoute.getRaw(path).response(_.bodyBinary).handler { _ =>
             HttpResponse(status)

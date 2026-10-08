@@ -330,17 +330,13 @@ class HttpServerTest extends BaseHttpTest:
             }
         }
 
-        "rest capture must be last segment" in {
+        "a rest capture that is not the last segment fails server init with HttpRouteException" in {
             val route = HttpRoute.getRaw("api" / Capture.Rest("mid") / "suffix").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("unreachable"))
-            Abort.run[Throwable] {
-                withServer(ep) { _ => () }
-            }.map { result =>
-                result match
-                    case Result.Error(ex: IllegalArgumentException) =>
-                        assert(ex.getMessage.contains("Rest capture must be the last segment"))
-                    case other =>
-                        fail(s"Expected IllegalArgumentException, got $other")
+            Abort.run[HttpRouteException](HttpServer.init(0, "127.0.0.1")(ep).unit).map {
+                case Result.Failure(e) =>
+                    assert((e.route, e.detail) == ("GET /api/:mid*/suffix", "a Rest capture must be the last segment in a path"))
+                case other => fail(s"Expected HttpRouteException, got $other")
             }
         }
 
@@ -875,6 +871,18 @@ class HttpServerTest extends BaseHttpTest:
                 send(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/login"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
                     assert(resp.fields.session.value == "tok123")
+                }
+            }
+        }
+
+        "a response cookie carrying ';' is answered 500 rather than written" - {
+            val route = HttpRoute.getRaw("login")
+                .response(_.cookie[String]("session"))
+            val ep = route.handler(_ => HttpResponse.ok.addField("session", HttpCookie("tok; Domain=evil.example")))
+            runServer(ep) { url =>
+                Abort.run[HttpException](HttpClient.getText(s"$url/login")).map {
+                    case Result.Failure(e: HttpStatusException) => assert(e.status == HttpStatus.InternalServerError)
+                    case other                                  => fail(s"expected a 500, got $other")
                 }
             }
         }
@@ -1500,12 +1508,14 @@ class HttpServerTest extends BaseHttpTest:
             val handler = route.handler(_ => HttpResponse.ok("ok"))
             for
                 port <- Scope.run(
-                    kyo.net.NonEphemeralPort.bind[HttpServer, HttpBindException, Scope](_ => true)(port =>
+                    kyo.net.NonEphemeralPort.bind[HttpServer, HttpBindException | HttpRouteException, Scope](
+                        _.isInstanceOf[HttpBindException]
+                    )(port =>
                         HttpServer.init(loopback.port(port))(handler)
                     ).map(server => server.closeNow.andThen(server.port))
                 )
                 refused <- Abort.run[HttpException](HttpClient.getText(s"http://127.0.0.1:$port/test"))
-                rebound <- Abort.run[HttpBindException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit))
+                rebound <- Abort.run[HttpBindException | HttpRouteException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit))
             yield
                 refused match
                     case Result.Failure(e: HttpConnectException) => assert(e.port == port)
@@ -4079,11 +4089,14 @@ class HttpServerTest extends BaseHttpTest:
             val route                            = HttpRoute.getRaw("test").response(_.bodyText)
             val handler                          = route.handler(_ => HttpResponse.ok("hello"))
             def bind(port: Int): Boolean < Async =
-                Abort.run[HttpBindException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit)).map(_.isSuccess)
+                Abort.run[HttpBindException | HttpRouteException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit))
+                    .map(_.isSuccess)
             for
                 bound <- Promise.init[Int, Any]
                 fiber <- Fiber.initUnscoped(Scope.run(
-                    kyo.net.NonEphemeralPort.bind[HttpServer, HttpBindException, Scope](_ => true)(port =>
+                    kyo.net.NonEphemeralPort.bind[HttpServer, HttpBindException | HttpRouteException, Scope](
+                        _.isInstanceOf[HttpBindException]
+                    )(port =>
                         HttpServer.init(loopback.port(port))(handler)
                     ).map(server => bound.completeDiscard(Result.succeed(server.port))).andThen(Async.never)
                 ))
@@ -4262,7 +4275,7 @@ class HttpServerTest extends BaseHttpTest:
 
     "the request head limit (RFC 6585 section 5, RFC 9110 section 15.5.15)" - {
 
-        val smallHead = loopback.transportConfig(HttpTransportConfig.default.maxHeaderSize(256))
+        val smallHead = loopback.transportConfig(HttpTransportConfig.default.maxHeaderSize(256.bytes))
         val hello     = HttpHandler.getText("hello")(_ => "world")
         val sizeRoute = HttpRoute.postRaw("u").request(_.bodyBinary).response(_.bodyText)
         val size      = sizeRoute.handler(req => HttpResponse.ok(req.fields.body.size.toString))
@@ -4350,7 +4363,7 @@ class HttpServerTest extends BaseHttpTest:
         }
 
         "with the default head limit, a connection that carried a 4 MiB body answers the requests after it" in {
-            val config = loopback.maxContentLength(8 * 1024 * 1024)
+            val config = loopback.maxContentLength(8.mib)
             val sizes  = Chunk(4 * 1024 * 1024, 500000, 500000, 500000)
             HttpServer.init(config)(size).map { server =>
                 HttpClient.init().map { httpClient =>

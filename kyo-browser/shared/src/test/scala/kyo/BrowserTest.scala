@@ -126,7 +126,7 @@ abstract class BrowserTest extends BaseChromeTest:
       */
     def withLocalhostServer[A, S](handlers: HttpHandler[?, ?, ?]*)(f: (String, Int) => A < S)(using
         Frame
-    ): A < (Async & Scope & Abort[HttpBindException] & S) =
+    ): A < (Async & Scope & Abort[HttpBindException | HttpRouteException] & S) =
         HttpServer.init(0, "127.0.0.1")(handlers*).map { server =>
             f(server.host, server.port)
         }

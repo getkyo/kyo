@@ -78,7 +78,7 @@ class JdkSslEngineTest extends Test:
         }
     }
 
-    "JdkSslEngine handshakes and produces the golden certSha256 bytes" in {
+    "JdkSslEngine handshakes and produces the golden serverEndPointHash bytes" in {
         Sync.defer {
             val client = SslEngineProvider.createEngine(clientConfig, "localhost", isServer = false)
             val server = SslEngineProvider.createEngine(serverConfig, "localhost", isServer = true)
@@ -88,13 +88,16 @@ class JdkSslEngineTest extends Test:
                 val plaintext = "hello-tls-jdk".getBytes("UTF-8")
                 val echoed    = TlsEngineLoopback.roundTrip(client, server, plaintext)
                 assert(echoed.sameElements(plaintext), s"plaintext round-trip mismatch: got ${new String(echoed, "UTF-8")}")
-                client.certSha256() match
+                client.serverEndPointHash() match
                     case Present(hash) =>
                         val bytes = hash.toArrayUnsafe
                         assert(bytes.length == 32, s"expected 32 bytes, got ${bytes.length}")
-                        assert(bytes.sameElements(TlsTestCert.certGoldenSha256), "JdkSslEngine certSha256 did not match the golden value")
+                        assert(
+                            bytes.sameElements(TlsTestCert.certGoldenSha256),
+                            "JdkSslEngine serverEndPointHash did not match the golden value"
+                        )
                     case Absent =>
-                        fail("certSha256 was Absent after a completed JdkSslEngine handshake")
+                        fail("serverEndPointHash was Absent after a completed JdkSslEngine handshake")
                 end match
             finally
                 client.free()

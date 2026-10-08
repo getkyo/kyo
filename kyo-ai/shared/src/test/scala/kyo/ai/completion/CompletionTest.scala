@@ -91,7 +91,10 @@ class CompletionTest extends kyo.test.Test[Any]:
 
     "classifyHttp maps 401/403 to auth, 429 to throttle, 5xx to unavailable, and any other status to AIRequestRejectedException" in {
         def status(code: Int) =
-            Completion.classifyHttp(Config.OpenAI.default, HttpStatusException(HttpStatus(code), "POST", "https://example.test"))
+            Completion.classifyHttp(
+                Config.OpenAI.default,
+                HttpStatusException(HttpStatus.init(code).getOrThrow, "POST", "https://example.test")
+            )
         assert(status(401).isInstanceOf[AIProviderAuthException])
         assert(status(403).isInstanceOf[AIProviderAuthException])
         assert(status(429).isInstanceOf[AIRateLimitException])

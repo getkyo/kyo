@@ -29,7 +29,7 @@ class WhatsAppMediaTest extends BaseWhatsAppTest:
 
     def withUploadServer[A, S](responseBody: String, statusOk: Boolean = true)(
         test: (Int, Channel[Seq[HttpRequest.Part]], Channel[(String, String)]) => A < S
-    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         Channel.init[Seq[HttpRequest.Part]](1).map { partsCapture =>
             Channel.init[(String, String)](1).map { reqCapture =>
                 val route = HttpRoute.postRaw(s"v25.0/${phoneId.value}/media")
@@ -48,7 +48,7 @@ class WhatsAppMediaTest extends BaseWhatsAppTest:
 
     def withGetServer[A, S](path: String, responseBody: String, statusOk: Boolean = true)(
         test: (Int, Channel[(String, String)]) => A < S
-    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         Channel.init[(String, String)](1).map { reqCapture =>
             val handler = HttpRoute.getRaw(path).response(_.bodyText).handler { req =>
                 reqCapture.put((req.path, req.headers.get("Authorization").getOrElse(""))).andThen(
@@ -60,7 +60,7 @@ class WhatsAppMediaTest extends BaseWhatsAppTest:
 
     def withDeleteServer[A, S](path: String, responseBody: String, statusOk: Boolean = true)(
         test: (Int, Channel[(String, String)]) => A < S
-    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         Channel.init[(String, String)](1).map { reqCapture =>
             val handler = HttpRoute.deleteRaw(path).response(_.bodyText).handler { req =>
                 reqCapture.put((req.path, req.headers.get("Authorization").getOrElse(""))).andThen(
@@ -73,7 +73,7 @@ class WhatsAppMediaTest extends BaseWhatsAppTest:
     /** A media host serving `bytes` at `/bytes`, and the Graph server whose media info points at it. */
     def withMediaHost[A, S](bytes: Span[Byte], reqId: WhatsAppId.MediaId)(test: Int => A < S)(using
         Frame
-    ): A < (S & Async & Scope & Abort[HttpBindException]) =
+    ): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         val bytesHandler = HttpRoute.getRaw("bytes").response(_.bodyBinary).handler(_ => HttpResponse.ok(bytes))
         HttpServer.init(0, "localhost")(bytesHandler).map { host =>
             val infoBody    = mediaInfoBody(s"\"${bytes.size}\"", s"http://localhost:${host.port}/bytes")

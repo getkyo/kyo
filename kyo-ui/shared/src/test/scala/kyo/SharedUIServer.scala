@@ -24,9 +24,9 @@ private[kyo] object SharedUIServer:
         AtomicRef.Unsafe.init[UI](UI.div())
     end current
 
-    @volatile private var cachedUrl: Promise.Unsafe[String, Abort[HttpBindException]] =
+    @volatile private var cachedUrl: Promise.Unsafe[String, Abort[HttpBindException | HttpRouteException]] =
         import AllowUnsafe.embrace.danger
-        Promise.Unsafe.init[String, Abort[HttpBindException]]()
+        Promise.Unsafe.init[String, Abort[HttpBindException | HttpRouteException]]()
     end cachedUrl
 
     private val initStarted =
@@ -38,7 +38,7 @@ private[kyo] object SharedUIServer:
     def set(ui: UI)(using Frame): Unit < Sync = current.safe.set(ui)
 
     /** The shared server's base URL, binding it on first call. */
-    def url(using Frame): String < (Async & Abort[HttpBindException]) =
+    def url(using Frame): String < (Async & Abort[HttpServerException]) =
         ensureStarted.andThen(cachedUrl.safe.get)
 
     private def ensureStarted(using Frame): Unit < Async =
@@ -46,7 +46,7 @@ private[kyo] object SharedUIServer:
             if initStarted.compareAndSet(false, true) then
                 Fiber.initUnscoped {
                     Scope.run {
-                        Abort.run[HttpBindException] {
+                        Abort.run[HttpBindException | HttpRouteException] {
                             for
                                 handlers <- UI.runHandlers("/")(current.safe.get)
                                 // 127.0.0.1, not localhost: Chrome resolves localhost to ::1 first, where nothing listens, so

@@ -404,7 +404,7 @@ private[kyo] object Rest:
             retryOn = _.isServerError,
             transportConfig = config.transport,
             tls = config.tls,
-            maxResponseLength = StreamCoreExtensions.readBufferCapacity(config.maxResponseLength),
+            maxResponseLength = config.maxResponseLength,
             autoFilters = false,
             clientFilter = HttpFilter.noop
         )
@@ -451,12 +451,12 @@ private[kyo] object Rest:
             case _: HttpConnectionClosedException => Present((Kind.ConnectionClosed, Absent, Absent))
             case _: HttpProtocolException         => Present((Kind.Protocol, Absent, Absent))
             case _: HttpMalformedBodyException    => Present((Kind.Protocol, Absent, Absent))
-            case e: HttpPayloadTooLargeException  => Present((Kind.PayloadTooLarge(e.bodySize.bytes, e.maxSize.bytes), Absent, Absent))
+            case e: HttpPayloadTooLargeException  => Present((Kind.PayloadTooLarge(e.bodySize, e.maxSize), Absent, Absent))
             case _: (HttpUrlParseException | HttpNonAsciiException | HttpInvalidFieldException | HttpWebSocketHandshakeException |
                     HttpUnixConnectException | HttpRedirectLoopException | HttpStatusException | HttpBindException | HttpHandlerException |
                     HttpFieldDecodeException | HttpPathDecodeException | HttpMissingFieldException |
                     HttpJsonDecodeException | HttpFormDecodeException | HttpUnsupportedMediaTypeException | HttpStreamingDecodeException |
-                    HttpMissingBoundaryException) => Absent
+                    HttpMissingBoundaryException | HttpCookieException | HttpRouteException | HttpInvalidStatusException) => Absent
         end match
     end describe
 

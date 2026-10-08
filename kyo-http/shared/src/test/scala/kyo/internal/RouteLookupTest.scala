@@ -59,7 +59,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "matches simple path" in {
             val route  = HttpRoute.getRaw("hello")
-            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
+            val router = routerOf(Seq(mkEndpoint(route)), Absent)
             val lookup = new RouteLookup(8)
             val req    = buildParsedRequest(GET, "/hello")
 
@@ -73,7 +73,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "returns NotFound for missing path" in {
             val route  = HttpRoute.getRaw("hello")
-            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
+            val router = routerOf(Seq(mkEndpoint(route)), Absent)
             val lookup = new RouteLookup(8)
             val req    = buildParsedRequest(GET, "/missing")
 
@@ -86,7 +86,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "matches path with captures" in {
             val route  = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("userId"))
-            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
+            val router = routerOf(Seq(mkEndpoint(route)), Absent)
             val lookup = new RouteLookup(8)
             val req    = buildParsedRequest(GET, "/users/42")
 
@@ -104,7 +104,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "matches nested path" in {
             val route  = HttpRoute.getRaw("api" / HttpPath.Literal("v1") / HttpPath.Literal("items"))
-            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
+            val router = routerOf(Seq(mkEndpoint(route)), Absent)
             val lookup = new RouteLookup(8)
             val req    = buildParsedRequest(GET, "/api/v1/items")
 
@@ -118,7 +118,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "HEAD matches GET" in {
             val route  = HttpRoute.getRaw("users")
-            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
+            val router = routerOf(Seq(mkEndpoint(route)), Absent)
             val lookup = new RouteLookup(8)
             val req    = buildParsedRequest(HEAD, "/users")
 
@@ -131,7 +131,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "MethodNotAllowed" in {
             val route  = HttpRoute.getRaw("users")
-            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
+            val router = routerOf(Seq(mkEndpoint(route)), Absent)
             val lookup = new RouteLookup(8)
             val req    = buildParsedRequest(POST, "/users")
 
@@ -144,7 +144,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "streaming flags" in {
             val streamRoute = HttpRoute.postRaw("upload").request(_.bodyStream)
-            val router      = HttpRouter(Seq(mkEndpoint(streamRoute)), Absent)
+            val router      = routerOf(Seq(mkEndpoint(streamRoute)), Absent)
             val lookup      = new RouteLookup(8)
             val req         = buildParsedRequest(POST, "/upload")
 
@@ -159,7 +159,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "streaming response flags" in {
             val route  = HttpRoute.getRaw("events").response(_.bodySseJson[User])
-            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
+            val router = routerOf(Seq(mkEndpoint(route)), Absent)
             val lookup = new RouteLookup(8)
             val req    = buildParsedRequest(GET, "/events")
 
@@ -174,7 +174,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "multiple captures" in {
             val route  = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("userId") / "posts" / HttpPath.Capture[Int]("postId"))
-            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
+            val router = routerOf(Seq(mkEndpoint(route)), Absent)
             val lookup = new RouteLookup(8)
             val req    = buildParsedRequest(GET, "/users/42/posts/7")
 
@@ -194,7 +194,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
         "reset reuses lookup" in {
             val usersRoute = HttpRoute.getRaw("users")
             val postsRoute = HttpRoute.getRaw("posts")
-            val router     = HttpRouter(Seq(mkEndpoint(usersRoute), mkEndpoint(postsRoute)), Absent)
+            val router     = routerOf(Seq(mkEndpoint(usersRoute), mkEndpoint(postsRoute)), Absent)
             val lookup     = new RouteLookup(8)
 
             // First match
@@ -220,7 +220,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "with query string" in {
             val route  = HttpRoute.getRaw("search")
-            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
+            val router = routerOf(Seq(mkEndpoint(route)), Absent)
             val lookup = new RouteLookup(8)
             val req    = buildParsedRequest(GET, "/search?q=hello&page=2")
 
@@ -236,7 +236,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
         "endpoint accessor returns correct handler" in {
             val usersRoute = HttpRoute.getRaw("users")
             val postsRoute = HttpRoute.getRaw("posts")
-            val router     = HttpRouter(Seq(mkEndpoint(usersRoute), mkEndpoint(postsRoute)), Absent)
+            val router     = routerOf(Seq(mkEndpoint(usersRoute), mkEndpoint(postsRoute)), Absent)
             val lookup     = new RouteLookup(8)
 
             val req = buildParsedRequest(GET, "/posts")
@@ -250,7 +250,7 @@ class RouteLookupTest extends kyo.BaseHttpTest:
 
         "captureNames accessor" in {
             val route  = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("userId") / "posts" / HttpPath.Capture[Int]("postId"))
-            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
+            val router = routerOf(Seq(mkEndpoint(route)), Absent)
             val lookup = new RouteLookup(8)
             val req    = buildParsedRequest(GET, "/users/42/posts/7")
 

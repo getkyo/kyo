@@ -90,11 +90,11 @@ class SlackConfigTest extends kyo.test.Test[Any]:
     private def others(c: SlackConfig) =
         (c.appLevel, c.bot, c.keepAliveInterval, c.reconnect, c.baseUrl, c.requestTimeout, c.connectTimeout, c.maxResponseLength)
 
-    "a response length is narrowed where the client hands it to kyo-http: zero to one byte, beyond Int.MaxValue bytes to Int.MaxValue" in {
+    "a response length reaches kyo-http as given, for kyo-http to narrow where it reads a body" in {
         val config  = configOf(appLevelOf("xapp-1"), botOf("xoxb-1"))
-        val lengths = Chunk(0.bytes, 1.bytes, 16.mb, (Int.MaxValue.toLong + 1).bytes)
-            .map(v => SlackConfig.httpConfig(config.maxResponseLength(v)).maxResponseLength)
-        assert(lengths == Chunk(1, 1, 16 * 1000 * 1000, Int.MaxValue))
+        val sizes   = Chunk(0.bytes, 1.bytes, 16.mb, (Int.MaxValue.toLong + 1).bytes)
+        val lengths = sizes.map(v => SlackConfig.httpConfig(config.maxResponseLength(v)).maxResponseLength)
+        assert(lengths == sizes)
     }
 
     "a response length bound is kept as given, zero and beyond Int.MaxValue bytes included, for the client to narrow" in {

@@ -196,7 +196,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                     HttpResponse.ok(s"received $totalBytes bytes")
                 }
             }
-            val serverConfig = HttpServerConfig.default.maxContentLength(200000)
+            val serverConfig = HttpServerConfig.default.maxContentLength(200000.bytes)
             tempSocketPath().map { sockPath =>
                 val fullConfig = serverConfig.unixSocket(sockPath)
                 Sync.ensure(Sync.defer(cleanupSocket(sockPath))) {

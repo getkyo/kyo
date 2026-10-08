@@ -95,23 +95,23 @@ class WhatsAppConfigTest extends BaseWhatsAppTest:
         assert(WhatsAppConfig.init(token, phone).map(c => (c.retry, c.retryMaxDelay)) == Result.succeed((Absent, 60.seconds)))
     }
 
-    "a zero response bound is held as given and narrowed to one byte at the request config" in {
+    "a zero response bound is held as given and reaches the request config unchanged, for kyo-http to narrow" in {
         assert(WhatsAppConfig.init(token, phone, maxResponseLength = ByteSize.Zero).map(c =>
             (c.maxResponseLength, c.httpConfig.maxResponseLength)
-        ) == Result.succeed((ByteSize.Zero, 1)))
+        ) == Result.succeed((ByteSize.Zero, ByteSize.Zero)))
     }
 
     "a one-byte response bound is held and reaches the request config unchanged" in {
         assert(WhatsAppConfig.init(token, phone, maxResponseLength = 1.bytes).map(c =>
             (c.maxResponseLength, c.httpConfig.maxResponseLength)
-        ) == Result.succeed((1.bytes, 1)))
+        ) == Result.succeed((1.bytes, 1.bytes)))
     }
 
-    "a response bound past Int.MaxValue bytes is held as given and narrowed to Int.MaxValue at the request config" in {
+    "a response bound past Int.MaxValue bytes is held as given and reaches the request config unchanged, for kyo-http to narrow" in {
         val over = ByteSize.fromBytes(Int.MaxValue.toLong + 1)
         assert(WhatsAppConfig.init(token, phone, maxResponseLength = over).map(c =>
             (c.maxResponseLength, c.httpConfig.maxResponseLength)
-        ) == Result.succeed((over, Int.MaxValue)))
+        ) == Result.succeed((over, over)))
     }
 
     // Built apart from the construction line: a leaf's development-mode message renders the source lines around its frame.

@@ -52,17 +52,12 @@ jobs:
   # job would cost a full runner slot per pole to do no work, and every build here would wait
   # behind that acquisition.
   build:
-    # JVM full runs peak at ~95-100 min on Linux (browser/UI/caliban suites serialize under a
-    # shared Chrome instance that cannot take concurrent CDP connections) and run slower on the
-    # Windows pole, where runner-slot contention has pushed a full JVM run past 180 min. The binding
-    # pole is Native on the slower linux-arm64 runner: it links every module the plan selects
-    # (~90s+ per link under the NATIVE_LINK_CPUS cap) and then runs every one of their test
-    # binaries. The old "linux-x64 Native completes in ~200 min" figure came from runs that
-    # reported success after starting 10 of 58 modules, so it never measured a full pass. The
-    # slowest full jobs measured at ~170 min (windows-x64 JVM 2h49m, linux-arm64 JVM 2h47m,
-    # linux-x64 Wasm 2h43m); 240 min keeps ~70 min of headroom over them while a hung job fails
-    # two hours before the 360 min GitHub-hosted ceiling.
-    timeout-minutes: 240
+    # Main's full jobs, week of 2026-10-05: medians 149 min (linux-x64 Native) to 223 min
+    # (linux-x64 JVM), completed jobs up to 238 min, and 9 jobs cancelled at a 240 min cap in two
+    # weeks. linux-x64 runners come in CPU speed classes that move the same JVM job between about
+    # 170 and 225 min. 300 min keeps headroom over the slow class while a hung job still fails an
+    # hour before the 360 min GitHub-hosted ceiling.
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       max-parallel: 4

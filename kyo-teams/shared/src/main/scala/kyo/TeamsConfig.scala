@@ -23,8 +23,8 @@ import kyo.internal.teams.ServiceUrls
   * `maxTokenLength` bounds an inbound token before it is parsed.
   *
   * `maxResponseLength` and `keysMaxResponseLength` (4 MiB each) bound the bodies of the module's calls and of its key fetches. Any size
-  * is held as given. kyo-http's limit is a positive `Int`, so the request narrows it: zero becomes 1 byte and a size above
-  * `Int.MaxValue` bytes becomes `Int.MaxValue`.
+  * is held as given and kyo-http narrows it where it reads a body: zero becomes 1 byte and a size above `Int.MaxValue` bytes becomes
+  * `Int.MaxValue`.
   *
   * `retry` is `Absent` by default, so a failure reaches the caller as it happened. Given a schedule, a Bot Connector call answered 412,
   * 429, 502, 503 or 504 (the statuses Microsoft says to retry) is sent again under it, waiting at least a `Retry-After` the answer

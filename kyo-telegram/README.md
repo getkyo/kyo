@@ -230,7 +230,7 @@ val webhook: Result[TelegramInvalidTokenException | TelegramInvalidWebhookConfig
 
 type WebhookConfigFailure = TelegramInvalidTokenException | TelegramInvalidWebhookConfigException
 
-val server: HttpServer < (Async & Scope & Abort[WebhookConfigFailure | HttpBindException] & Env[Telegram]) =
+val server: HttpServer < (Async & Scope & Abort[WebhookConfigFailure | HttpBindException | HttpRouteException] & Env[Telegram]) =
     Abort.get(webhook).map { webhook =>
         Telegram.Webhook.handler[TelegramSendFailure](webhook) {
             case Telegram.Update.Message(_, message) if isStandupCommand(message) =>
@@ -239,7 +239,7 @@ val server: HttpServer < (Async & Scope & Abort[WebhookConfigFailure | HttpBindE
         }.map(handler => HttpServer.init(8443, "0.0.0.0")(handler))
     }
 
-val serving: Unit < (Async & Abort[WebhookConfigFailure | HttpBindException]) =
+val serving: Unit < (Async & Abort[WebhookConfigFailure | HttpBindException | HttpRouteException]) =
     Telegram.run(config)(Scope.run(server.map(_.await)))
 
 val register: Unit < (Async & Abort[WebhookConfigFailure | TelegramSetWebhookFailure | HttpException] & Env[Telegram]) =

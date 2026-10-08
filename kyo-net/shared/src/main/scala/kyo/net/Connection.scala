@@ -55,10 +55,13 @@ abstract class Connection:
       */
     private[net] def start()(using AllowUnsafe, Frame): Boolean
 
-    /** Returns the SHA-256 hash of the server's leaf certificate DER bytes (RFC 5929 tls-server-end-point), or Absent if the connection is
-      * not TLS, has no peer certificate, or is already closed.
+    /** Returns the RFC 5929 tls-server-end-point hash of the server's leaf certificate, or Absent if the connection is not TLS, has no peer
+      * certificate, or is already closed.
       *
-      * A non-TLS connection, or a platform without TLS introspection support, returns Absent.
+      * The hash is the one RFC 5929 section 4.1 selects: the hash of the certificate's own signature algorithm, or SHA-256 when that is MD5
+      * or SHA-1, so a certificate signed with `ecdsa-with-SHA384` yields 48 bytes and one signed with `sha512WithRSAEncryption` 64. A
+      * certificate whose signature has no single hash (Ed25519, RSASSA-PSS), a non-TLS connection, or a platform without TLS introspection
+      * support returns Absent.
       */
     def serverCertificateHash: Maybe[Span[Byte]]
 

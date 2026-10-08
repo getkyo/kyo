@@ -89,7 +89,7 @@ class WhatsAppWebhookTest extends BaseWhatsAppTest:
     /** POSTs `request` to a server running `handler` and answers the response status. */
     def postStatus[E](handler: HttpHandler["body" ~ Span[Byte], Any, E])(request: Int => HttpRequest["body" ~ Span[Byte]])(using
         Frame
-    ): Result[HttpException, HttpStatus] < (Async & Scope & Abort[HttpBindException]) =
+    ): Result[HttpException, HttpStatus] < (Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         HttpServer.init(0, "localhost")(handler).map { server =>
             val route = HttpRoute.postRaw("/").request(_.bodyBinary).response(_.bodyBinary)
             Abort.run[HttpException](HttpClient.use(_.sendWith(route, request(server.port))(_.status)))
@@ -320,7 +320,7 @@ class WhatsAppWebhookTest extends BaseWhatsAppTest:
     def handshake(configured: String, presented: String)(using
         Frame,
         kyo.test.AssertScope
-    ): String < (Async & Scope & Abort[HttpBindException]) =
+    ): String < (Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         HttpServer.init(
             0,
             "localhost"
