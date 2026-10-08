@@ -39,7 +39,7 @@ final private[runner] class JsRunner(
             case Args.Result.Error(msg) =>
                 java.lang.System.err.println(s"[kyo-test] CLI error: $msg")
             case Args.Result.Ok(_) =>
-                ()
+                EventLoopWatchdog.start()
 
     /** The flags as an overlay over each suite's own config; see `TestRunner.runReport`. */
     private[internal] val baseOverlay: RunConfig => RunConfig =
