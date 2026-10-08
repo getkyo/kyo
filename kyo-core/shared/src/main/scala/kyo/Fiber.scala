@@ -936,12 +936,13 @@ object Fiber:
 
             final class Success[E, A, S2](size: Int, frame: Frame) extends Race[E, A, S2](frame):
                 import AllowUnsafe.embrace.danger
-                val pending                                = AtomicInt.Unsafe.init(size)
+                // Counts failures only. A success that counted itself down before completing the race would let a failure
+                // on another thread see the count reach zero and complete the race with its error first.
+                val failuresLeft                           = AtomicInt.Unsafe.init(size)
                 def apply(result: Result[E, A < S2]): Unit =
-                    val last = pending.decrementAndGet() == 0
                     result.foldError(
                         v => super.completeDiscard(Result.succeed(v)),
-                        e => if last then super.completeDiscard(e)
+                        e => if failuresLeft.decrementAndGet() == 0 then super.completeDiscard(e)
                     )
                 end apply
             end Success

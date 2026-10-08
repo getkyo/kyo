@@ -125,12 +125,17 @@ private[kyo] object PathWatch:
         val moved   = scala.collection.mutable.ArrayBuffer.empty[(Path, Path)]
         var old     = 0
         while old < removed.size do
-            val from       = removed(old)
-            val identity   = before(from).identity
+            val from     = removed(old)
+            val identity = before(from).identity
+            // A rename never changes whether an entry is a directory, and an identity built on a coarse birth time can be shared
+            // by a directory and a file created in the same tick.
+            val directory  = before(from).directory
             val candidates = identity.fold(Seq.empty[(Path, Int)])(id =>
-                created.zipWithIndex.filter((to, _) => after(to).identity.contains(id))
+                created.zipWithIndex.filter((to, _) => after(to).directory == directory && after(to).identity.contains(id))
             )
-            val oldMatches = identity.fold(0)(id => removed.count(candidate => before(candidate).identity.contains(id)))
+            val oldMatches = identity.fold(0)(id =>
+                removed.count(candidate => before(candidate).directory == directory && before(candidate).identity.contains(id))
+            )
             if identity.isDefined && candidates.size == 1 && oldMatches == 1 then
                 val (to, newIndex) = candidates.head
                 moved += ((from, to))
