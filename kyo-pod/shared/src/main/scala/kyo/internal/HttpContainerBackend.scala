@@ -351,7 +351,10 @@ final private[kyo] class HttpContainerBackend(
             if portBindings.isEmpty then None
             else Some(portBindings.keys.map(_ -> Map.empty[String, String]).toMap)
 
-        val params        = config.name.map(n => Seq("name" -> n)).getOrElse(Seq.empty)
+        // Without `platform` the daemon creates from whatever copy its store holds under the reference; with it, from that platform's
+        // copy, refusing when it holds only another's (API 1.41).
+        val params = config.name.map(n => Seq("name" -> n)).getOrElse(Seq.empty) ++
+            config.platform.map(p => Seq("platform" -> p.reference)).getOrElse(Seq.empty)
         val nameForErrors = config.name.getOrElse("new-container")
 
         bindsKyo.map { binds =>
@@ -1225,21 +1228,30 @@ final private[kyo] class HttpContainerBackend(
             case Result.Success(resp) =>
                 resp.headers.get("X-Docker-Container-Path-Stat") match
                     case Present(encoded) =>
-                        val decoded = new String(java.util.Base64.getDecoder.decode(encoded), java.nio.charset.StandardCharsets.UTF_8)
-                        Json.decode[FileStatDto](decoded) match
-                            case Result.Success(dto) =>
-                                val modifiedAt = parseInstantOrEpoch(dto.mtime)
-                                FileStat(
-                                    name = dto.name,
-                                    size = dto.size,
-                                    mode = dto.mode,
-                                    modifiedAt = modifiedAt,
-                                    linkTarget = if dto.linkTarget.nonEmpty then Present(dto.linkTarget) else Absent
-                                )
-                            case Result.Failure(_) =>
+                        ContainerBackend.decodeBase64(encoded) match
+                            case Result.Success(bytes) =>
+                                val decoded = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                                Json.decode[FileStatDto](decoded) match
+                                    case Result.Success(dto) =>
+                                        val modifiedAt = parseInstantOrEpoch(dto.mtime)
+                                        FileStat(
+                                            name = dto.name,
+                                            size = dto.size,
+                                            mode = dto.mode,
+                                            modifiedAt = modifiedAt,
+                                            linkTarget = if dto.linkTarget.nonEmpty then Present(dto.linkTarget) else Absent
+                                        )
+                                    case Result.Failure(_) =>
+                                        Abort.fail(ContainerDecodeException(
+                                            "Parse error in stat",
+                                            s"Failed to parse file stat JSON for container ${id.value}"
+                                        ))
+                                    case Result.Panic(t) => Abort.panic(t)
+                                end match
+                            case Result.Failure(failure) =>
                                 Abort.fail(ContainerDecodeException(
                                     "Parse error in stat",
-                                    s"Failed to parse file stat JSON for container ${id.value}"
+                                    s"X-Docker-Container-Path-Stat header for container ${id.value} is not base64: ${failure.message}"
                                 ))
                             case Result.Panic(t) => Abort.panic(t)
                         end match
@@ -1509,7 +1521,7 @@ final private[kyo] class HttpContainerBackend(
                 auth.flatMap(a => registryAuthHeader(image, a)).fold(Seq.empty[(String, String)])(h => Seq("X-Registry-Auth" -> h))
             val headers    = Seq("Content-Type" -> "application/json") ++ authHeader
             val byteStream = HttpClient.postStreamBytes(url("/images/create", params*), Span.empty[Byte], headers)
-            consumeNdjsonStream(byteStream, processPullLine(_, image))(
+            consumeNdjsonStream(byteStream, processPullLine(_, image, platform))(
                 onHttpFailure = e => normalizePullError(e, image, auth),
                 onPanic = e => Abort.fail(ContainerBackendException(s"Unexpected error pulling ${image.reference}", e))
             )
@@ -1590,9 +1602,10 @@ final private[kyo] class HttpContainerBackend(
                     lower.contains("authentication required")
     end isAuthDenialBody
 
-    private def processPullLine(
+    private[internal] def processPullLine(
         line: String,
-        image: ContainerImage
+        image: ContainerImage,
+        platform: Maybe[Container.Platform]
     )(using Frame): Unit < (Abort[ContainerException] & Emit[Chunk[ContainerImage.PullProgress]]) =
         Json.decode[PullProgressDto](line) match
             case Result.Success(dto) =>
@@ -1600,6 +1613,8 @@ final private[kyo] class HttpContainerBackend(
                 errMsg match
                     case Some(err) if err.contains("not found") || err.contains("manifest unknown") =>
                         Abort.fail(ContainerImageMissingException(image))
+                    case Some(err) if DaemonErrorPhrases.PlatformCopyConflict.exists(err.toLowerCase.contains) =>
+                        Abort.fail(ContainerImagePlatformConflictException(image, platform, err))
                     case Some(err) =>
                         Abort.fail(ContainerOperationException(
                             s"Pull failed for ${image.reference}: $err",
@@ -1661,6 +1676,12 @@ final private[kyo] class HttpContainerBackend(
             )
         }
     end imageInspect
+
+    // Docker and podman's compat layer both answer `Os` and `Arch` with Go's GOOS/GOARCH names, which are the platform names.
+    def hostPlatform(using Frame): Container.Platform < (Async & Abort[ContainerException]) =
+        withErrorMapping(ResourceContext.Op("version")) {
+            HttpClient.getJson[VersionDto](url("/version"))
+        }.map(dto => Container.Platform(dto.Os, dto.Arch))
 
     def imageRemove(image: ContainerImage, force: Boolean, noPrune: Boolean)(
         using Frame
@@ -2690,6 +2711,8 @@ final private[kyo] class HttpContainerBackend(
         mtime: String = "",
         linkTarget: String = ""
     ) derives Schema
+
+    final private case class VersionDto(Os: String = "", Arch: String = "") derives Schema
 
     // --- DTOs for image operations ---
 

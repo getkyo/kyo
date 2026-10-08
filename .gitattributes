@@ -6,6 +6,8 @@
 # the same reason).
 kyo-data/shared/src/test/scala/kyo/FrameCrlfTest.scala text eol=crlf
 
-# Vendored test vectors are checked in byte for byte (NIST's files end lines in CRLF); their MANIFEST pins each file's
-# SHA-256 and the build fails when line-ending normalization changes one.
+# Third-party data and test vectors checked in byte for byte (NIST's files end lines in CRLF): each
+# file's SHA-256 is pinned in a MANIFEST that the build verifies, and line-ending normalization would
+# change the bytes and fail that check.
+kyo-email/data/** -text
 **/src/test/vectors/** -text

@@ -27,7 +27,7 @@ class CancelIntegrationTest extends SqlContainerTest:
     /** Sleeps far longer than any assertion below waits, so the query is unambiguously still in flight. */
     private val longQuery = "SELECT pg_sleep(30)"
 
-    "Async.timeout releases the caller from a query the server is still running".tagged("kyo.OwnContainer") in {
+    "Async.timeout releases the caller from a query the server is still running".tagged(OwnContainer.name) in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
@@ -56,7 +56,7 @@ class CancelIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "interrupting the query's fiber releases the caller".tagged("kyo.OwnContainer") in {
+    "interrupting the query's fiber releases the caller".tagged(OwnContainer.name) in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
@@ -118,7 +118,7 @@ class CancelIntegrationTest extends SqlContainerTest:
             }
         }
 
-    "interrupting a stream reclaims the connection inside the cancel budget".tagged("kyo.OwnContainer") in {
+    "interrupting a stream reclaims the connection inside the cancel budget".tagged(OwnContainer.name) in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 val url    = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
@@ -175,7 +175,7 @@ class CancelIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "the wire cancel reaches a batch the server is still computing".tagged("kyo.OwnContainer") in {
+    "the wire cancel reaches a batch the server is still computing".tagged(OwnContainer.name) in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 val url    = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"

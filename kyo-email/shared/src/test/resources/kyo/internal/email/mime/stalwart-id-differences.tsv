@@ -1,0 +1,8 @@
+# Differences between kyo-email's reading of message ids and Stalwart mail-parser's, over resources/id.json at commit
+# 4eba485d9450c757b2f3ec29c44663740cff0afe (kyo-email/shared/src/test/vectors/stalwart). Kept by hand: MessageIdCodecTest
+# prints, in this format, each row missing here and each row here that no longer occurs.
+# Columns, tab-separated: vector index from 0, header, the module's ids, Stalwart's ids (space-separated), reason.
+# Backslash, tab, CR and LF in a value are written as \\, \t, \r and \n, and any other control character as \uXXXX.
+# Reasons, each the first rule of MessageIdCodecStalwart.classify that holds:
+#   CfwsInsideId: Stalwart keeps the white space and comments inside an obsolete msg-id; RFC 5322 section 4.5.4 says they are not part of the id, and the module removes them
+6	<1234   @   local(blah)  .machine .example>\n	1234@local.machine.example	1234   @   local(blah)  .machine .example	CfwsInsideId

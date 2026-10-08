@@ -1,0 +1,39 @@
+From: Whomever <whoever@example.com>
+To: Someone <someone@example.com>
+Date: Sat, 10 Oct 2009 00:30:04 +0200
+Subject: whatever
+Content-Type: multipart/mixed; boundary=outer
+
+This is a multi-part message in MIME format.
+
+--outer
+Content-Type: multipart/alternative; boundary=inner
+
+This is a nested multi-part message in MIME format.
+
+--inner
+Content-Type: text/plain; charset="us-ascii"
+
+Hello
+
+--inner
+Content-Type: text/html; charset="us-ascii"
+
+<html><body>Hello</body></html>
+
+--inner--
+
+This is the end of the inner MIME multipart.
+
+--outer
+Content-Type: message/rfc822
+
+From: Someone Else
+Subject: Hello, this is an elaborate request for you to finally say hello
+ already!
+
+Please say Hello
+
+--outer--
+
+This is the end of the outer MIME multipart.

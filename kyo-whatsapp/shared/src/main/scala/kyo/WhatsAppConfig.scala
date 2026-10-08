@@ -7,8 +7,7 @@ package kyo
   * version.
   * `requestTimeout` bounds each request and `connectTimeout` opening its connection. `maxResponseLength` bounds an answer's body; its
   * default, 100 MB, is the largest media Meta stores (a document), so `WhatsAppMedia.download` of any stored file fits. It is never
-  * refused: kyo-http holds the bound as an `Int`, so the request config narrows it by kyo-core's buffer rule, zero to one byte and past
-  * `Int.MaxValue` to `Int.MaxValue`.
+  * refused: kyo-http narrows it where it reads a body, zero to one byte and past `Int.MaxValue` to `Int.MaxValue`.
   *
   * `retry`, when set, sends a call again on the Graph errors Meta documents as retryable, after the schedule's delay or the answer's
   * `Retry-After`, whichever is longer, until the schedule ends. No wait exceeds `retryMaxDelay` (default 60 seconds): an answer asking
@@ -89,10 +88,7 @@ object WhatsAppConfig:
             .orElse(if positiveFinite(retryMaxDelay) then Absent else Present(Problem.RetryMaxDelay(retryMaxDelay)))
     end problemOf
 
-    /** The kyo-http configuration of a request that carries the token. Every field is set, so nothing is inherited from the caller.
-      * `problemOf` has refused every timeout `HttpClientConfig` throws on, and the response bound is narrowed into the range it accepts, so
-      * building it cannot throw.
-      */
+    /** The kyo-http configuration of a request that carries the token. Every field is set, so nothing is inherited from the caller. */
     private def httpConfigOf(requestTimeout: Duration, connectTimeout: Duration, maxResponseLength: ByteSize): HttpClientConfig =
         HttpClientConfig(
             baseUrl = Absent,
@@ -104,7 +100,7 @@ object WhatsAppConfig:
             retryOn = _.isServerError,
             transportConfig = HttpTransportConfig.default,
             tls = HttpTlsConfig.default,
-            maxResponseLength = StreamCoreExtensions.readBufferCapacity(maxResponseLength),
+            maxResponseLength = maxResponseLength,
             autoFilters = false,
             clientFilter = HttpFilter.noop
         )

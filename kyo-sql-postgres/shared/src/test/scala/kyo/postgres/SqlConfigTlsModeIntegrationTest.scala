@@ -107,7 +107,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 1: sslmode=disable ───────────────────────────────────────────────
     // Uses ContainerPredef.Postgres, no TLS, no shared fixture needed.
 
-    "sslmode=disable connects without TLS".tagged("kyo.OwnContainer") in {
+    "sslmode=disable connects without TLS".tagged(OwnContainer.name) in {
         Scope.run {
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
             // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
@@ -131,7 +131,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 2: sslmode=require ───────────────────────────────────────────────
     // Shared TLS container; trustAll=true accepts the self-signed cert.
 
-    "sslmode=require connects with TLS, accepts self-signed cert".tagged("kyo.OwnContainer") in {
+    "sslmode=require connects with TLS, accepts self-signed cert".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             val config = SqlConfig.default.copy(tls = Present(NetTlsConfig(trustAll = true)))
             val url    = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=require"
@@ -151,7 +151,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 3: sslmode=verify-ca rejects wrong CA ───────────────────────────
     // Shared TLS container; client uses wrongCaCertPath, handshake must fail.
 
-    "sslmode=verify-ca rejects connection when CA path is wrong".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-ca rejects connection when CA path is wrong".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             val url =
                 s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=verify-ca&sslrootcert=${ctx.wrongCaCertPath}"
@@ -184,7 +184,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 4: sslmode=verify-full rejects hostname mismatch ────────────────
     // Shared TLS container (CN=localhost); connect via 127.0.0.1, verify-full rejects.
 
-    "sslmode=verify-full rejects connection when hostname mismatches cert SAN".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-full rejects connection when hostname mismatches cert SAN".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             // Connect to the same container but via 127.0.0.1; the server cert has CN=localhost.
             // verify-full checks hostname against CN/SAN, so 127.0.0.1 ≠ localhost → reject.
@@ -217,7 +217,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 5: sslmode=verify-ca positive case ───────────────────────────────
     // Shared TLS container; client uses matching caCertPath, connection must succeed.
 
-    "sslmode=verify-ca connects when CA path matches server cert issuer".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-ca connects when CA path matches server cert issuer".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             val url =
                 s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=verify-ca&sslrootcert=${ctx.caCertPath}"
@@ -239,7 +239,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 6: sslmode=verify-full positive case ─────────────────────────────
     // Shared TLS container; connect via "localhost", cert CN=localhost, hostname verification passes.
 
-    "sslmode=verify-full connects when CA matches AND hostname matches SAN".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-full connects when CA matches AND hostname matches SAN".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             // Connect via "localhost", cert CN=localhost, so hostname verification passes.
             val url =
@@ -261,7 +261,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 7: sslmode=verify-ca missing sslrootcert ────────────────────────
     // Shared TLS container; no sslrootcert, JDK default trust store rejects self-signed cert.
 
-    "sslmode=verify-ca with missing sslrootcert fails at SqlClient.init with SqlConnectionException".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-ca with missing sslrootcert fails at SqlClient.init with SqlConnectionException".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             // No sslrootcert param, so TlsContext.build refuses at TlsContext.scala:54 with
             // SqlConnectionTlsConfigException("verify-ca") before any socket is opened. The refusal is the
@@ -293,7 +293,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 8: sslmode=verify-ca malformed PEM ───────────────────────────────
     // Shared TLS container; malformed PEM file, SSL context creation fails.
 
-    "sslmode=verify-ca with malformed PEM at sslrootcert fails with SqlConnectionException".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-ca with malformed PEM at sslrootcert fails with SqlConnectionException".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             // Write a malformed PEM file to a temp path using kyo.Path (cross-platform).
             Path.tempUnscoped(prefix = "kyo-sql-bad-cert-", suffix = ".pem").flatMap { tempPath =>
@@ -333,7 +333,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 9: cancellation mid-TLS handshake ────────────────────────────────
     // Shared TLS container; cancel a fiber quickly, then probe pool reusability.
 
-    "cancellation mid-TLS handshake leaves no leaked connection".tagged("kyo.OwnContainer") in {
+    "cancellation mid-TLS handshake leaves no leaked connection".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             val url =
                 s"postgres://${ctx.user}:${ctx.password}@localhost:${ctx.port}/${ctx.db}?sslmode=verify-full&sslrootcert=${ctx.caCertPath}"
@@ -367,7 +367,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 10: sslmode=allow connects plaintext when server permits plaintext ─
 
-    "sslmode=allow connects plaintext when server permits plaintext".tagged("kyo.OwnContainer") in {
+    "sslmode=allow connects plaintext when server permits plaintext".tagged(OwnContainer.name) in {
         Scope.run {
             // Plain Postgres container (no cert mount → no TLS support)
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
@@ -395,7 +395,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // this via requiresSsl and retries with TLS. The connection must end up
     // encrypted, verified via pg_stat_ssl.ssl = "true".
 
-    "sslmode=allow upgrades to TLS when server requires TLS".tagged("kyo.OwnContainer") in {
+    "sslmode=allow upgrades to TLS when server requires TLS".tagged(OwnContainer.name) in {
         withRequireSslContainer { ctx =>
             // sslmode=allow: tries plaintext first → gets SQLSTATE 28000 → retries with TLS.
             // The reconnect succeeds because the container also has TLS certs (same as the main fixture).
@@ -422,7 +422,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 12: sslmode=prefer connects with TLS when server supports TLS ────
     // Uses the shared TLS container. prefer sends SSLRequest, gets 'S', upgrades.
 
-    "sslmode=prefer connects with TLS when server supports TLS".tagged("kyo.OwnContainer") in {
+    "sslmode=prefer connects with TLS when server supports TLS".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             // The shared TLS container advertises SSL ('S' response to SSLRequest).
             // prefer mode: SSLRequest → 'S' → upgrade to TLS → proceed with startup.
@@ -441,7 +441,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 13: sslmode=prefer falls back to plaintext when server refuses TLS
 
-    "sslmode=prefer falls back to plaintext when server refuses TLS".tagged("kyo.OwnContainer") in {
+    "sslmode=prefer falls back to plaintext when server refuses TLS".tagged(OwnContainer.name) in {
         Scope.run {
             // Plain Postgres container: no cert → SSLRequest returns 'N' → plaintext fallback.
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
@@ -466,7 +466,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 14: sslmode=prefer with invalid cert still connects ──────────────
     // "no validation; the trap users walk into": prefer doesn't validate certs.
 
-    "sslmode=prefer with invalid cert still connects (no validation; the trap users walk into)".tagged("kyo.OwnContainer") in {
+    "sslmode=prefer with invalid cert still connects (no validation; the trap users walk into)".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             // prefer mode uses trustAll=true (no cert validation), so even an "invalid" CA path
             // won't cause a handshake failure, the user gets TLS without validation.
@@ -490,7 +490,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // server rejects plaintext). All subsequent queries on the same connection run over
     // TLS, each is verified via pg_stat_ssl.ssl = "true".
 
-    "sslmode=allow upgraded connection sends subsequent queries over TLS".tagged("kyo.OwnContainer") in {
+    "sslmode=allow upgraded connection sends subsequent queries over TLS".tagged(OwnContainer.name) in {
         withRequireSslContainer { ctx =>
             // hostssl-only pg_hba.conf forces the allow upgrade.
             // After reconnect with TLS, every subsequent query on the connection is encrypted.
@@ -521,7 +521,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 16: cancellation during opportunistic-TLS upgrade returns connection to clean state ──
 
-    "cancellation during opportunistic-TLS upgrade returns connection to clean state".tagged("kyo.OwnContainer") in {
+    "cancellation during opportunistic-TLS upgrade returns connection to clean state".tagged(OwnContainer.name) in {
         withTlsContainer { ctx =>
             // Use prefer mode (which sends SSLRequest before startup) to exercise the upgrade path.
             // Cancel the fiber mid-negotiation; verify pool is still reusable.

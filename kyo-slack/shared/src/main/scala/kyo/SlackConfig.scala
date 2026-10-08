@@ -161,10 +161,6 @@ object SlackConfig:
     /** The kyo-http config of every call a client makes, replacing the caller's. Every field is stated, so nothing of
       * a caller's config (a filter, a base url, a relaxed TLS, retries, redirects) reaches a request that carries a
       * credential. `tls = HttpTlsConfig.default` resolves to the client's own default TLS, never a caller's.
-      *
-      * Every value meets kyo-http's own requirements, so building it never throws: `init` admits only positive, finite
-      * timeouts, and the response length is narrowed by kyo-core's buffer rule, zero to one byte and past `Int.MaxValue`
-      * bytes to `Int.MaxValue`.
       */
     private[kyo] def httpConfig(config: SlackConfig): HttpClientConfig =
         HttpClientConfig(
@@ -177,7 +173,7 @@ object SlackConfig:
             retryOn = _.isServerError,
             transportConfig = HttpTransportConfig.default,
             tls = HttpTlsConfig.default,
-            maxResponseLength = readBufferCapacity(config.maxResponseLength),
+            maxResponseLength = config.maxResponseLength,
             autoFilters = false,
             clientFilter = HttpFilter.noop
         )

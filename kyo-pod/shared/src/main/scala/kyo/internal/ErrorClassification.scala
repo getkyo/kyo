@@ -102,6 +102,9 @@ private[internal] object DaemonErrorPhrases:
       */
     val AlreadyInUse: Seq[String] = Seq("already in use")
 
+    /** Phrase by which Docker's classic image store refuses a pull of a reference it already holds for another platform. */
+    val PlatformCopyConflict: Seq[String] = Seq("cannot overwrite digest")
+
     /** Phrases matching the "container is not in the running state" condition shared by both backends.
       *
       * The daemon refuses a state-dependent operation (exec-create, top) on a non-running container with one of these. Podman's

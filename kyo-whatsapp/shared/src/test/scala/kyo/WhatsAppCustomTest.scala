@@ -18,7 +18,7 @@ class WhatsAppCustomTest extends BaseWhatsAppTest:
     /** Serves `body` with `status` on every path, and hands `test` the port and each request's method, path, query, auth and body. */
     def withServer[A, S](body: String, status: HttpStatus = HttpStatus(200))(
         test: (Int, Channel[Captured]) => A < S
-    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+    )(using Frame): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         Channel.init[Captured](4).map { captured =>
             def record(req: HttpRequest[?], sent: String) =
                 captured.put(Captured(

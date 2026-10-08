@@ -3,6 +3,7 @@ package kyo
 import java.util.concurrent.ConcurrentHashMap
 import kyo.Tag.internal.Type.Entry.*
 import kyo.internal.Platform
+import kyo.internal.SafePublish
 import kyo.internal.TagHash
 import kyo.internal.TagMacro
 import kyo.internal.XXHash
@@ -328,11 +329,63 @@ object Tag extends kyo.internal.TagPlatformSpecific:
             if Platform.isJS then 1
             else Runtime.getRuntime().availableProcessors() * 8
 
-        private val cacheEntries = 128
-        final private case class Comparison(a: Tag[Any], b: Tag[Any], mode: Mode, result: Boolean)
-        private val cacheSlots: Array[Array[Maybe[Comparison]]] = Array.fill(threadSlots) {
-            Array.fill[Maybe[Comparison]](cacheEntries)(Absent)
-        }
+        @SafePublish final private case class Comparison @noinline() (a: Tag[Any], b: Tag[Any], mode: Mode, result: Boolean):
+            def matches(a: Tag[Any], b: Tag[Any], mode: Mode): Boolean = (a eq this.a) && (b eq this.b) && mode == this.mode
+
+        /** Recent `checkTypes` results for one thread slot, keyed by the compared tags' identity and the mode.
+          *
+          * Hashes choose the set; they never authorize reuse. Each entry holds one immutable comparison, so a racing
+          * replacement can cost a reader its hit but cannot hand it one pair's result under another pair's identity.
+          *
+          * Threads whose hashes pick the same cache share it, and the entries are plain, so an entry is safe to publish only
+          * because its fields are final and the JVM orders a final field's construction before any read of it. Scala Native
+          * orders only fields marked `@safePublish`, so `Comparison` carries that annotation: without it, an arm64 reader
+          * could follow the new reference into memory still holding the object that occupied it before, and fail its type
+          * test or read another comparison's result. Scala Native emits the annotation's release fence at the
+          * constructor's return and drops it when the optimizer inlines the constructor, so the constructor is
+          * `@noinline`.
+          */
+        final private[kyo] class ComparisonCache(sets: Int):
+            // Two entries per set: a set keeps its two most recently used comparisons. With one, two hot comparisons whose hashes
+            // share it evict each other on every check, and the hashes come from the encoded tags, so any change to an encoding can
+            // create such a pair. Measured on Native: one pair took kyo-stm's miss rate from 3.8% to 46%, each miss decoding and
+            // walking both types.
+            private val entries = Array.fill[Maybe[Comparison]](sets * 2)(Absent)
+
+            def set(a: Tag[Any], b: Tag[Any], mode: Mode): Int =
+                var hash = (TagHash.of(a).toLong << 32) | (TagHash.of(b) & 0xffffffffL)
+                hash += mode.factor
+                hash ^= (hash >>> 30)
+                hash *= 0xbf58476d1ce4e5b9L
+                hash ^= (hash >>> 27)
+                hash &= Long.MaxValue
+                (hash & (sets - 1)).toInt
+            end set
+
+            def get(set: Int, a: Tag[Any], b: Tag[Any], mode: Mode): Maybe[Boolean] =
+                val first = set * 2
+                entries(first) match
+                    case Present(cached) if cached.matches(a, b, mode) => Present(cached.result)
+                    case head                                          =>
+                        entries(first + 1) match
+                            case Present(cached) if cached.matches(a, b, mode) =>
+                                entries(first + 1) = head
+                                entries(first) = Present(cached)
+                                Present(cached.result)
+                            case _ => Absent
+                end match
+            end get
+
+            def put(set: Int, a: Tag[Any], b: Tag[Any], mode: Mode, result: Boolean): Unit =
+                val first = set * 2
+                entries(first + 1) = entries(first)
+                entries(first) = Present(Comparison(a, b, mode, result))
+            end put
+        end ComparisonCache
+
+        private[kyo] val comparisonCaches: Array[ComparisonCache] = Array.fill(threadSlots)(ComparisonCache(64))
+
+        private[kyo] def cacheSlot(thread: Thread): Int = thread.hashCode & (threadSlots - 1)
 
         private def dynamicHashCode(tag: String, map: Map[Entry.Id, Any]): Int =
             val builder = new java.lang.StringBuilder(tag)
@@ -355,34 +408,19 @@ object Tag extends kyo.internal.TagPlatformSpecific:
             case Equality extends Mode(31)
             case Subtype  extends Mode(37)
 
-        /** Cache type checks only when the actual compared tags and comparison mode match.
-          *
-          * Hashes choose the slot; they never authorize reuse. A slot holds one immutable comparison, so a racing
-          * replacement can cost a reader its hit but cannot hand it one pair's result under another pair's identity.
-          * The entry's fields are final, which is what lets an unsynchronized slot carry it: a reader that observes
-          * the reference at all observes it fully constructed, and a reader that observes a stale one simply misses.
-          */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
-            // Use memoized hashes to select a slot, then verify the actual compared tags before reusing a result.
-            var hash = (TagHash.of(a).toLong << 32) | (TagHash.of(b) & 0xffffffffL)
-            hash += mode.factor
-            hash ^= (hash >>> 30)
-            hash *= 0xbf58476d1ce4e5b9L
-            hash ^= (hash >>> 27)
-            hash &= Long.MaxValue
-            val idx   = (hash & (cacheEntries - 1)).toInt
-            val cache = cacheSlots(Thread.currentThread().hashCode & (threadSlots - 1))
-            cache(idx) match
-                case Present(cached) if (a eq cached.a) && (b eq cached.b) && mode == cached.mode =>
-                    cached.result
-                case _ =>
+            val cache = comparisonCaches(cacheSlot(Thread.currentThread()))
+            val set   = cache.set(a.erased, b.erased, mode)
+            cache.get(set, a.erased, b.erased, mode) match
+                case Present(cached) => cached
+                case Absent          =>
                     val aTpe   = a.tpe
                     val bTpe   = b.tpe
                     val result =
                         mode match
                             case Mode.Equality => isSameType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
                             case Mode.Subtype  => isSubType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
-                    cache(idx) = Present(Comparison(a.erased, b.erased, mode, result))
+                    cache.put(set, a.erased, b.erased, mode, result)
                     result
             end match
         end checkTypes

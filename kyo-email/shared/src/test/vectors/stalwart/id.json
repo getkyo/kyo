@@ -1,0 +1,68 @@
+[
+  {
+    "header": "<1234@local.machine.example>\n",
+    "expected": [
+      "1234@local.machine.example"
+    ]
+  },
+  {
+    "header": "<1234@local.machine.example> <3456@example.net>\n",
+    "expected": [
+      "1234@local.machine.example",
+      "3456@example.net"
+    ]
+  },
+  {
+    "header": "<1234@local.machine.example>\n <3456@example.net> \n",
+    "expected": [
+      "1234@local.machine.example",
+      "3456@example.net"
+    ]
+  },
+  {
+    "header": "<1234@local.machine.example>\n\n <3456@example.net>\n",
+    "expected": [
+      "1234@local.machine.example"
+    ]
+  },
+  {
+    "header": "              <testabcd.1234@silly.test>  \n",
+    "expected": [
+      "testabcd.1234@silly.test"
+    ]
+  },
+  {
+    "header": "<5678.21-Nov-1997@example.com>\n",
+    "expected": [
+      "5678.21-Nov-1997@example.com"
+    ]
+  },
+  {
+    "header": "<1234   @   local(blah)  .machine .example>\n",
+    "expected": [
+      "1234   @   local(blah)  .machine .example"
+    ]
+  },
+  {
+    "header": "<>\n",
+    "expected": null
+  },
+  {
+    "header": "malformed@id.machine.example\n",
+    "expected": [
+      "malformed@id.machine.example"
+    ]
+  },
+  {
+    "header": "   malformed2@id.machine.example \t  \n",
+    "expected": [
+      "malformed2@id.machine.example"
+    ]
+  },
+  {
+    "header": "   m \n",
+    "expected": [
+      "m"
+    ]
+  }
+]

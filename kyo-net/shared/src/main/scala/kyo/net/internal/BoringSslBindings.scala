@@ -41,7 +41,7 @@ private[net] trait BoringSslBindings extends SslLibBindings, Ffi:
     def writePlain(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int
     def pending(ssl: Long)(using AllowUnsafe): Int
     def shutdownStep(ssl: Long)(using AllowUnsafe): Int
-    def peerCertSha256(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int
+    def peerCertEndPointHash(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int
     def probeAvailable()(using AllowUnsafe): Boolean
 
 end BoringSslBindings
@@ -72,7 +72,7 @@ private[net] object BoringSslBindings extends Ffi.Config(
             "writePlain"                    -> "kyo_bssl_write_plain",
             "pending"                       -> "kyo_bssl_pending",
             "shutdownStep"                  -> "kyo_bssl_shutdown_step",
-            "peerCertSha256"                -> "kyo_bssl_peer_cert_sha256",
+            "peerCertEndPointHash"          -> "kyo_bssl_peer_cert_end_point_hash",
             "probeAvailable"                -> "kyo_bssl_probe_available"
         ),
         // On Native the shim's C (kyo_net_boringssl.c) is compiled INTO the binary (copied under

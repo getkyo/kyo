@@ -9,7 +9,7 @@ import kyo.net.Test
   *
   * Each BoringSSL leaf builds a client and a server [[NativeSslEngine]] over the bundled-BoringSSL backing and the fixed [[TlsTestCert]],
   * drives the handshake through the in-memory [[TlsEngineLoopback]] (ciphertext shuttled via feed/drain, no socket), then asserts the
-  * negotiated session: a plaintext round-trip is byte-equal and `certSha256()` equals the precomputed golden 32 bytes on both platforms. The
+  * negotiated session: a plaintext round-trip is byte-equal and `serverEndPointHash()` equals the precomputed golden 32 bytes on both platforms. The
   * OpenSSL leaves mirror that with a [[NativeSslEngine]] over the system-OpenSSL `kyonet_openssl` shim, gated on `probeAvailable()`.
   * A final interop leaf crosses the two engines (BoringSSL client against OpenSSL server and the reverse) to prove the prefixed shims share
   * one TLS implementation on the Native binary with no symbol clash. Each leaf cancels when its engine is unavailable for the host
@@ -66,29 +66,29 @@ class TlsEngineTest extends Test:
         }
     }
 
-    "certSha256 returns the precomputed 32-byte golden value (RFC 5929) and is byte-identical JVM+Native" in {
+    "serverEndPointHash returns the precomputed 32-byte golden value (RFC 5929) and is byte-identical JVM+Native" in {
         if !boringSslAvailable then cancel("BoringSSL not staged for this host")
         Sync.defer {
             withEngines { (client, server) =>
                 assert(TlsEngineLoopback.handshake(client, server), "handshake did not complete")
-                client.certSha256() match
+                client.serverEndPointHash() match
                     case Present(hash) =>
                         val bytes = hash.toArrayUnsafe
                         assert(bytes.length == 32, s"expected 32 bytes, got ${bytes.length}")
-                        assert(bytes.sameElements(TlsTestCert.certGoldenSha256), "certSha256 did not match the golden value")
+                        assert(bytes.sameElements(TlsTestCert.certGoldenSha256), "serverEndPointHash did not match the golden value")
                     case Absent =>
-                        fail("certSha256 was Absent after a completed handshake with a peer cert")
+                        fail("serverEndPointHash was Absent after a completed handshake with a peer cert")
                 end match
             }
         }
     }
 
-    "certSha256 is Absent when there is no peer certificate" in {
+    "serverEndPointHash is Absent when there is no peer certificate" in {
         if !boringSslAvailable then cancel("BoringSSL not staged for this host")
         Sync.defer {
             // A fresh client engine with no completed handshake has no peer cert.
             val client = BoringSslProvider.createEngine(clientConfig, "localhost", isServer = false)
-            try assert(client.certSha256() == Absent, "expected Absent with no peer cert")
+            try assert(client.serverEndPointHash() == Absent, "expected Absent with no peer cert")
             finally client.free()
         }
     }
@@ -106,28 +106,28 @@ class TlsEngineTest extends Test:
         }
     }
 
-    "OpenSslEngine certSha256 returns the precomputed 32-byte golden value (RFC 5929), byte-identical to BoringSSL" in {
+    "OpenSslEngine serverEndPointHash returns the precomputed 32-byte golden value (RFC 5929), byte-identical to BoringSSL" in {
         if !openSslAvailable then cancel("system OpenSSL not available for this host")
         Sync.defer {
             withOpenSslEngines { (client, server) =>
                 assert(TlsEngineLoopback.handshake(client, server), "handshake did not complete")
-                client.certSha256() match
+                client.serverEndPointHash() match
                     case Present(hash) =>
                         val bytes = hash.toArrayUnsafe
                         assert(bytes.length == 32, s"expected 32 bytes, got ${bytes.length}")
-                        assert(bytes.sameElements(TlsTestCert.certGoldenSha256), "certSha256 did not match the golden value")
+                        assert(bytes.sameElements(TlsTestCert.certGoldenSha256), "serverEndPointHash did not match the golden value")
                     case Absent =>
-                        fail("certSha256 was Absent after a completed handshake with a peer cert")
+                        fail("serverEndPointHash was Absent after a completed handshake with a peer cert")
                 end match
             }
         }
     }
 
-    "OpenSslEngine certSha256 is Absent when there is no peer certificate" in {
+    "OpenSslEngine serverEndPointHash is Absent when there is no peer certificate" in {
         if !openSslAvailable then cancel("system OpenSSL not available for this host")
         Sync.defer {
             val client = SystemOpenSslProvider.createEngine(clientConfig, "localhost", isServer = false)
-            try assert(client.certSha256() == Absent, "expected Absent with no peer cert")
+            try assert(client.serverEndPointHash() == Absent, "expected Absent with no peer cert")
             finally client.free()
         }
     }
@@ -145,9 +145,10 @@ class TlsEngineTest extends Test:
                 val echoed1 = TlsEngineLoopback.roundTrip(bClient, oServer, msg1)
                 assert(echoed1.sameElements(msg1), s"round-trip mismatch (B->O): got ${new String(echoed1, "UTF-8")}")
                 // The cert binding the client computes over the OpenSSL server's leaf equals the same golden.
-                bClient.certSha256() match
-                    case Present(hash) => assert(hash.toArrayUnsafe.sameElements(TlsTestCert.certGoldenSha256), "B->O certSha256 mismatch")
-                    case Absent        => fail("B->O certSha256 was Absent after a completed handshake")
+                bClient.serverEndPointHash() match
+                    case Present(hash) =>
+                        assert(hash.toArrayUnsafe.sameElements(TlsTestCert.certGoldenSha256), "B->O serverEndPointHash mismatch")
+                    case Absent => fail("B->O serverEndPointHash was Absent after a completed handshake")
                 end match
             finally
                 bClient.free()
@@ -162,9 +163,10 @@ class TlsEngineTest extends Test:
                 val msg2    = "openssl-client-boring-server".getBytes("UTF-8")
                 val echoed2 = TlsEngineLoopback.roundTrip(oClient, bServer, msg2)
                 assert(echoed2.sameElements(msg2), s"round-trip mismatch (O->B): got ${new String(echoed2, "UTF-8")}")
-                oClient.certSha256() match
-                    case Present(hash) => assert(hash.toArrayUnsafe.sameElements(TlsTestCert.certGoldenSha256), "O->B certSha256 mismatch")
-                    case Absent        => fail("O->B certSha256 was Absent after a completed handshake")
+                oClient.serverEndPointHash() match
+                    case Present(hash) =>
+                        assert(hash.toArrayUnsafe.sameElements(TlsTestCert.certGoldenSha256), "O->B serverEndPointHash mismatch")
+                    case Absent => fail("O->B serverEndPointHash was Absent after a completed handshake")
                 end match
             finally
                 oClient.free()

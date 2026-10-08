@@ -19,6 +19,10 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
   */
 class AnnotationFidelityConcurrencyTest extends kyo.test.Test[Any]:
 
+    // Each leaf already loads at a concurrency of the core count (the tailrec one capped at 4), so overlapping them buys
+    // no throughput: on a 4-core CI runner the deprecated leaf took 19 s alone and 39 to 42 s beside the tailrec one.
+    override def config = super.config.sequential
+
     "symbolsAnnotatedWith(scala.deprecated) resolves identically across concurrent loads without scala-library" in {
         import Tasty.Name.asString
         // standard minus scala-library: many files, all scala.* refs unresolved -> abundant cross-file negId collisions.

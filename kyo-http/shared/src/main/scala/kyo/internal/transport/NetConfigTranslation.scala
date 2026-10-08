@@ -45,7 +45,7 @@ private[kyo] object NetConfigTranslation:
       * (server dispatch and client connection), not a byte-transport concern, so `kyo.net.NetConfig` has no such field.
       */
     def toNetConfig(c: HttpTransportConfig): NetConfig =
-        NetConfig(channelCapacity = c.channelCapacity, readChunkSize = c.readChunkSize.bytes)
+        NetConfig(channelCapacity = c.channelCapacity, readChunkSize = c.readChunkSize)
 
     /** Wraps transport.connect with TLS config translation. Keeps the kyo.net.NetTlsConfig reference inside internal/. */
     def connectTls(

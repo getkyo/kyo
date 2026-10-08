@@ -166,7 +166,7 @@ class TlsIntegrationTest extends SqlContainerTest:
             assert(ssl == "true", s"the connection must be encrypted (pg_stat_ssl.ssl = 'true'), got '$ssl'")
         }
 
-    "TLS connection, SELECT 1 returns correct row".tagged("kyo.OwnContainer") in {
+    "TLS connection, SELECT 1 returns correct row".tagged(OwnContainer.name) in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
@@ -184,7 +184,7 @@ class TlsIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "TLS connection, multi-row query SELECT generate_series(1,10) returns 10 rows".tagged("kyo.OwnContainer") in {
+    "TLS connection, multi-row query SELECT generate_series(1,10) returns 10 rows".tagged(OwnContainer.name) in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
@@ -197,7 +197,7 @@ class TlsIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "TLS connection, error recovery: bad SQL followed by valid query works".tagged("kyo.OwnContainer") in {
+    "TLS connection, error recovery: bad SQL followed by valid query works".tagged(OwnContainer.name) in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
@@ -217,7 +217,7 @@ class TlsIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "TLS connection, connect with Present(tls) to non-TLS Postgres raises SqlConnectionException".tagged("kyo.OwnContainer") in {
+    "TLS connection, connect with Present(tls) to non-TLS Postgres raises SqlConnectionException".tagged(OwnContainer.name) in {
         Scope.run {
             // Start a standard (non-TLS) Postgres and try to connect with TLS required.
             // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
@@ -247,7 +247,7 @@ class TlsIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "TLS connection, SCRAM-SHA-256 auth works over TLS".tagged("kyo.OwnContainer") in {
+    "TLS connection, SCRAM-SHA-256 auth works over TLS".tagged(OwnContainer.name) in {
         Scope.run {
             // postgres:16-alpine uses scram-sha-256 by default; explicitly set to confirm.
             withPostgresTls(extraEnv = Map("POSTGRES_HOST_AUTH_METHOD" -> "scram-sha-256")) {
@@ -263,7 +263,7 @@ class TlsIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "TLS connection through SqlClient.init authenticates and queries over an encrypted connection".tagged("kyo.OwnContainer") in {
+    "TLS connection through SqlClient.init authenticates and queries over an encrypted connection".tagged(OwnContainer.name) in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 SqlClient.init(

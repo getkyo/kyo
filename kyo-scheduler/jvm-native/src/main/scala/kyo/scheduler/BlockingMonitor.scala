@@ -267,7 +267,8 @@ private[scheduler] class BlockingMonitor(
                 val task = tasks(i)
                 if ((task ne null) && task.needsInterrupt() && worker.interruptLock.compareAndSet(false, true)) {
                     try {
-                        if (worker.currentTask eq task) {
+                        // needsInterrupt again under the lock: Worker.interruptReleased clears the flag under it once the answer turns false.
+                        if ((worker.currentTask eq task) && task.needsInterrupt()) {
                             val mount = worker.mount
                             if (mount ne null)
                                 mount.interrupt()

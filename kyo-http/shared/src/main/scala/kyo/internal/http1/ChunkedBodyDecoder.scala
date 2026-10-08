@@ -33,7 +33,7 @@ private[kyo] object ChunkedBodyDecoder:
         state: DecoderState = new DecoderState
     )(
         onResult: Result[Closed, Span[Byte]] => Unit,
-        onTooLarge: Int => Unit,
+        onTooLarge: Long => Unit,
         onInvalid: HttpMalformedBodyException => Unit
     )(using AllowUnsafe, Frame): Unit =
         val accumulator = new GrowableByteBuffer
@@ -53,10 +53,10 @@ private[kyo] object ChunkedBodyDecoder:
         state: DecoderState,
         maxBytes: Int,
         onResult: Result[Closed, Span[Byte]] => Unit,
-        onTooLarge: Int => Unit,
+        onTooLarge: Long => Unit,
         onInvalid: HttpMalformedBodyException => Unit
     )(using AllowUnsafe, Frame): Unit =
-        val pending = accumulator.size + state.pendingSize
+        val pending = accumulator.size.toLong + state.pendingSize
         if pending > maxBytes then onTooLarge(pending)
         else
             state.drain(accumulator) match
@@ -137,9 +137,9 @@ private[kyo] object ChunkedBodyDecoder:
         onProgress: () => Unit,
         onAwait: () => Unit
     )(using Frame): Span[Byte] < (Async & Abort[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException]) =
-        val pending = accumulator.size + state.pendingSize
+        val pending = accumulator.size.toLong + state.pendingSize
         if pending > maxBytes then
-            Abort.fail(HttpPayloadTooLargeException(pending, maxBytes))
+            Abort.fail(HttpPayloadTooLargeException(pending.bytes, maxBytes.bytes))
         else
             state.drain(accumulator) match
                 case DrainResult.Done =>
@@ -221,7 +221,7 @@ private[kyo] object ChunkedBodyDecoder:
                     else Kyo.unit
                 flush.andThen {
                     if state.pendingSize > maxControlBytes then
-                        Abort.fail(HttpPayloadTooLargeException(state.pendingSize, maxControlBytes))
+                        Abort.fail(HttpPayloadTooLargeException(state.pendingSize.bytes, maxControlBytes.bytes))
                     else
                         // Bytes already in hand are taken without announcing a wait, as in bufferedLoop.
                         inbound.safe.poll.map {
