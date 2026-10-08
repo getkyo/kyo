@@ -989,7 +989,7 @@ object Fiber:
                                 // Atomically update both ok/nok counters using CAS
                                 val p   = packed.get()
                                 val ok  = (p & 0xffffffffL) + (if result.isSuccess then 1 else 0)
-                                val nok = (p >>> 32) + (if result.isFailure then 1 else 0)
+                                val nok = (p >>> 32) + (if result.isError then 1 else 0)
                                 val np  = (nok << 32) | ok
                                 if !packed.compareAndSet(p, np) then
                                     // CAS failed, retry the update

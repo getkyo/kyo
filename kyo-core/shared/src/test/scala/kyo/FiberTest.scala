@@ -984,9 +984,7 @@ class FiberTest extends kyo.test.Test[Any]:
         }
 
         // deviation: the real-clock timeout only turns a gather that never completes into a failure; it decides no pass.
-        "a panicking input counts as a failed input".pendingUntilFixed(
-            "gather counts successes with isSuccess and failures with isFailure, so a Panic is neither and ok + nok never reaches the total"
-        ) in {
+        "a panicking input counts as a failed input" in {
             val error = new Exception("test panic")
             for
                 fiber <- Fiber.internal.gather(10)(Seq(
@@ -1000,9 +998,7 @@ class FiberTest extends kyo.test.Test[Any]:
         }
 
         // deviation: the real-clock timeout only turns a gather that never completes into a failure; it decides no pass.
-        "every input panicking fails with the panic".pendingUntilFixed(
-            "gather counts successes with isSuccess and failures with isFailure, so a Panic is neither and ok + nok never reaches the total"
-        ) in {
+        "every input panicking fails with the panic" in {
             val error = new Exception("test panic")
             for
                 fiber  <- Fiber.internal.gather(2)(Seq(Abort.panic(error), Abort.panic(error)))

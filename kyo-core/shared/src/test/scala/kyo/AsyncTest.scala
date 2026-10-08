@@ -1139,9 +1139,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             }
 
             // deviation: the real-clock timeout only turns a gather that never completes into a failure; it decides no pass.
-            "a panicking input counts as a failed input".pendingUntilFixed(
-                "Fiber.internal.gather counts a Panic as neither a success nor a failure, so ok + nok never reaches the total"
-            ) in {
+            "a panicking input counts as a failed input" in {
                 val error = new Exception("test panic")
                 for
                     result <- Abort.run[Timeout](Async.timeout(5.seconds)(
@@ -1152,9 +1150,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             }
 
             // deviation: the real-clock timeout only turns a gather that never completes into a failure; it decides no pass.
-            "every input panicking fails with the panic".pendingUntilFixed(
-                "Fiber.internal.gather counts a Panic as neither a success nor a failure, so ok + nok never reaches the total"
-            ) in {
+            "every input panicking fails with the panic" in {
                 val error = new Exception("test panic")
                 for
                     result <- Abort.run[Timeout](Async.timeout(5.seconds)(

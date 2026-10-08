@@ -81,6 +81,8 @@ class BoringSslBundleTest extends Test:
             // build-boringssl.sh for supported runners, but a developer machine / unsupported os-arch
             // legitimately has no staged archive (same posture as the Linux-only io_uring test).
             stagedFor(hostOsArch) match
+                case Absent if hostOsArch.startsWith("windows") =>
+                    cancel(s"BoringSSL has no $hostOsArch build: build-boringssl.sh targets Linux and macOS only")
                 case Absent =>
                     cancel(s"BoringSSL not staged for $hostOsArch (run build-boringssl.sh $hostOsArch)")
                 case Present((ssl, crypto)) =>
