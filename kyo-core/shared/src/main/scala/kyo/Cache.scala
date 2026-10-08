@@ -262,19 +262,23 @@ object Cache:
         f: A => B < S
     )(using Frame): (A => B < (Async & S)) < Sync =
         Sync.Unsafe.defer {
-            val store = Unsafe.init[A, Promise[B, Any]](maxSize, expireAfterAccess, expireAfterWrite)
-            (v: A) =>
+            val store                       = Unsafe.init[A, Promise[B, Any]](maxSize, expireAfterAccess, expireAfterWrite)
+            def call(v: A): B < (Async & S) =
                 Sync.Unsafe.defer {
-                    val promise       = Promise.Unsafe.init[B, Any]().safe
+                    // Uninterruptible: every caller of the key parks on this one promise, so a caller's interrupt must end that
+                    // caller and not the entry the others are waiting for.
+                    val promise       = Promise.Unsafe.initUninterruptible[B, Any]().safe
                     val cachedPromise = store.getOrElse(v, promise)
                     // Identity check: if cachedPromise is our promise, we won the race and must compute.
                     // Otherwise, another caller already inserted their Promise — wait on it.
                     if (cachedPromise.asInstanceOf[AnyRef]) eq (promise.asInstanceOf[AnyRef]) then
                         // Won the race — compute the value
                         Sync.Unsafe.ensure {
-                            // On interruption, remove from cache so next caller retries
-                            if promise.unsafe.interrupt() then
+                            // The computing caller left before producing the value: removed before the waiters wake, so
+                            // the one that asks first recomputes.
+                            if !promise.unsafe.done() then
                                 store.remove(v)
+                                promise.unsafe.completeDiscard(Async.Abandoned.result)
                         } {
                             Abort.runWith[Throwable](f(v)) {
                                 case Result.Success(v) =>
@@ -293,10 +297,11 @@ object Cache:
                             }
                         }
                     else
-                        // Lost the race — wait on existing promise
-                        cachedPromise.get
+                        // Lost the race — wait on existing promise, and ask again if its computing caller abandoned it
+                        cachedPromise.getResult.map(r => if Async.Abandoned.is(r) then call(v) else cachedPromise.get)
                     end if
                 }
+            call
         }
 
     /** Creates a memoized version of a two-argument function. */

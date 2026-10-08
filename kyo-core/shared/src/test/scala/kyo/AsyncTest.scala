@@ -1578,9 +1578,7 @@ class AsyncTest extends kyo.test.Test[Any]:
         def parkedOnValue(caller: Fiber[Int, Any])(using Frame): Boolean < Sync =
             caller.waiters.map(_ == 1)
 
-        "a waiter's interrupt leaves the value intact for the other waiters".pendingUntilFixed(
-            "the memoized slot's promise is handed to every caller, so one waiter's interrupt completes it for all of them"
-        ) in {
+        "a waiter's interrupt leaves the value intact for the other waiters" in {
             // The promise is the memoized slot, shared by every caller, and one caller going away is not the
             // computation going away. Both survivors are checked, one already parked when the interrupt landed
             // and one that arrived after it, because a slot broken by the interrupt fails them in different ways.
@@ -1609,9 +1607,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "a waiter's interrupt does not poison the value for later callers".pendingUntilFixed(
-            "the slot keeps the interrupted promise, and there is no eviction to recover through"
-        ) in {
+        "a waiter's interrupt does not poison the value for later callers" in {
             // The interrupted caller is gone before the value is produced, so nothing it did can reach the caller
             // that asks once the slot is settled: that one is an ordinary hit.
             for
@@ -1635,15 +1631,11 @@ class AsyncTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // Bounded because the symptom is non-termination: the waiter parks on a promise nothing completes,
-        // and the suite's per-leaf default is Duration.Infinity. The bound is not the pass condition, and it
-        // fires only while the defect stands; once a waiter is told, the assertions decide the leaf in
-        // milliseconds.
-        "the computing caller's interrupt fails the waiters and the next caller recomputes".pendingUntilFixed(
-            "a waiter parked on the slot's promise is never completed, so this leaf ends on its bound rather than on a result"
-        ).timeout(5.seconds) in {
-            // The other half of the contract: a value that was never produced must not be served, and a waiter
-            // must be told so rather than left parked on a promise nothing will ever complete.
+        // Bounded because the symptom is non-termination: a waiter left parked on a promise nothing completes
+        // never ends, and the suite's per-leaf default is Duration.Infinity. The bound is not the pass condition.
+        "the computing caller's interrupt hands the computation to a waiter".timeout(5.seconds) in {
+            // The other half of the contract: one caller's interrupt reaches no other caller. A value that was never
+            // produced is not served; the waiter computes it itself, and a later caller reads that value.
             for
                 counter   <- AtomicInt.init(0)
                 gate      <- Latch.init(1)
@@ -1653,14 +1645,15 @@ class AsyncTest extends kyo.test.Test[Any]:
                 waiting   <- Fiber.initUnscoped(memoized)
                 _         <- assertEventually(parkedOnValue(waiting))
                 _         <- computing.interrupt
+                _         <- assertEventually(counter.get.map(_ == 2))
                 _         <- gate.release
-                failed    <- waiting.getResult
-                retried   <- memoized
+                v         <- waiting.get
+                later     <- memoized
                 count     <- counter.get
             yield
-                assert(failed.panic.exists(_.isInstanceOf[Interrupted]), "a waiter on a cancelled computation must fail")
-                assert(retried == 42)
-                assert(count == 2, "the next caller must recompute rather than read a value never produced")
+                assert(v == 42, "the waiter must get the value from its own recomputation")
+                assert(later == 42)
+                assert(count == 2, "a later caller must read the recomputed value rather than compute again")
             end for
         }
     }

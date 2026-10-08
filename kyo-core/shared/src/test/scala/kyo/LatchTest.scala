@@ -65,9 +65,7 @@ class LatchTest extends kyo.test.Test[Any]:
         yield assert(p == 0)
     }
 
-    "a waiter's interrupt leaves the latch whole for every other waiter".pendingUntilFixed(
-        "await hands out the latch's own promise, so one waiter's interrupt completes it for all of them"
-    ) in {
+    "a waiter's interrupt leaves the latch whole for every other waiter" in {
         // A latch is shared, and one party stopping is not the latch stopping. Interrupting a waiter must reach
         // that waiter alone: the parties still waiting go on waiting, and the release that follows lets them
         // through. Both survivors are checked, one that was already parked when the interrupt landed and one that

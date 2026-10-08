@@ -89,7 +89,9 @@ object Latch:
             if n <= 0 then noop
             else
                 new Unsafe:
-                    val promise = Promise.Unsafe.init[Unit, Any]()
+                    // Uninterruptible: every waiter parks on this one promise, so a waiter's interrupt must end that waiter
+                    // and not the latch the others are waiting on.
+                    val promise = Promise.Unsafe.initUninterruptible[Unit, Any]()
                     val count   = AtomicInt.Unsafe.init(n)
 
                     def await()(using AllowUnsafe) = promise

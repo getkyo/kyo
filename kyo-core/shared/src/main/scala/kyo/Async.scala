@@ -765,12 +765,17 @@ object Async extends AsyncPlatformSpecific:
       */
     def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < Sync =
         Sync.Unsafe.defer {
-            val ref                              = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[A, Any]])
-            @tailrec def loop(): A < (S & Async) =
+            val ref                     = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[A, Any]])
+            def loop(): A < (S & Async) =
                 ref.get() match
-                    case Present(v) => v.safe.get
-                    case Absent     =>
-                        val promise = Promise.Unsafe.init[A, Any]()
+                    case Present(p) =>
+                        // A computation its caller abandoned produced nothing for anyone: the waiter asks again, and one of
+                        // the waiters becomes the new computing caller.
+                        p.safe.getResult.map(r => if Abandoned.is(r) then loop() else p.safe.get)
+                    case Absent =>
+                        // Uninterruptible: every caller parks on this one promise, so a waiter's interrupt must end that
+                        // waiter and not the value the others are waiting for.
+                        val promise = Promise.Unsafe.initUninterruptible[A, Any]()
                         if ref.compareAndSet(Absent, Present(promise)) then
                             Abort.run(v).map { r =>
                                 Sync.Unsafe.defer {
@@ -782,7 +787,9 @@ object Async extends AsyncPlatformSpecific:
                             }.handle(Sync.ensure {
                                 Sync.Unsafe.defer {
                                     if !promise.done() then
+                                        // Cleared before the waiters wake, so the one that asks first recomputes.
                                         ref.set(Absent)
+                                        promise.completeDiscard(Abandoned.result)
                                 }
                             })
                         else
@@ -790,6 +797,17 @@ object Async extends AsyncPlatformSpecific:
                         end if
             Kyo.lift(Sync.defer(loop()))
         }
+
+    /** The outcome a shared computation's promise carries when its computing caller left before producing a value. Waiters retry on
+      * it, so no caller ever receives it: one fiber's interrupt reaches no other fiber.
+      */
+    private[kyo] object Abandoned extends Exception("shared computation abandoned by its computing caller", null, false, false):
+        val result: Result.Panic             = Result.Panic(this)
+        def is(r: Result[Any, Any]): Boolean =
+            r match
+                case Result.Panic(e) => e eq this
+                case _               => false
+    end Abandoned
 
     /** Converts a Future to an asynchronous computation.
       *

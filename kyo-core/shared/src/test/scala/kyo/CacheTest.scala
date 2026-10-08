@@ -1654,9 +1654,7 @@ class CacheTest extends kyo.test.Test[Any]:
         def parkedOnEntry(caller: Fiber[Int, Any])(using Frame): Boolean < Sync =
             caller.waiters.map(_ == 1)
 
-        "a caller's interrupt leaves the value intact for the other callers".pendingUntilFixed(
-            "the entry's promise is handed to every caller of the key, so one caller's interrupt completes it for all of them"
-        ) in {
+        "a caller's interrupt leaves the value intact for the other callers" in {
             // The entry's promise is the entry, shared by every caller of the key, and one caller going away is
             // not the computation going away. Both survivors are checked, one already parked when the interrupt
             // landed and one that arrived after it, because an entry broken by the interrupt fails them in
@@ -1685,9 +1683,7 @@ class CacheTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "a caller's interrupt does not poison the entry for later callers".pendingUntilFixed(
-            "the interrupted entry stays in the store, so the key serves that interrupt until it is evicted"
-        ) in {
+        "a caller's interrupt does not poison the entry for later callers" in {
             // The interrupted caller is gone before the value is produced, so nothing it did can reach the caller
             // that asks for the same key once the entry is settled: that one is an ordinary hit.
             val calls = new AtomicInteger(0)
@@ -1710,12 +1706,10 @@ class CacheTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "the computing caller's interrupt fails the waiters and the next caller recomputes".ignore(
-            "the gate is a Latch awaited by the interrupted caller, so the interrupt can complete the latch's shared promise and fail the recompute; that defect is pinned by LatchTest's waiter-interrupt leaf"
-        ) in {
-            // The other half of the contract: a value that was never produced must not be served, and the entry
-            // must be gone by the time a waiter learns its computation was cancelled, so a waiter that reacts by
-            // asking again recomputes rather than finding the dead entry.
+        // Bounded because a waiter left parked on an entry nothing completes never ends; the bound is not the pass condition.
+        "the computing caller's interrupt hands the computation to a waiter".timeout(5.seconds) in {
+            // The other half of the contract: one caller's interrupt reaches no other caller. A value that was never
+            // produced is not served; the waiter computes it itself, and a later caller of the key reads that value.
             val calls = new AtomicInteger(0)
             for
                 gate      <- Latch.init(1)
@@ -1725,13 +1719,14 @@ class CacheTest extends kyo.test.Test[Any]:
                 waiting   <- Fiber.initUnscoped(m(1))
                 _         <- assertEventually(parkedOnEntry(waiting))
                 _         <- computing.interrupt
+                _         <- assertEventually(Sync.defer(calls.get() == 2))
                 _         <- gate.release
-                failed    <- waiting.getResult
-                retried   <- m(1)
+                v         <- waiting.get
+                later     <- m(1)
             yield
-                assert(failed.panic.exists(_.isInstanceOf[Interrupted]), "a waiter on a cancelled computation must fail")
-                assert(retried == 10)
-                assert(calls.get() == 2, "the next caller must recompute rather than read a value never produced")
+                assert(v == 10, "the waiter must get the value from its own recomputation")
+                assert(later == 10)
+                assert(calls.get() == 2, "a later caller must read the recomputed value rather than compute again")
             end for
         }
     }

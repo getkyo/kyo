@@ -181,8 +181,10 @@ object Exchange:
     )(using frame: Frame, eTag: ConcreteTag[E], wireTag: Tag[Emit[Chunk[Wire]]]): Exchange[Req, Resp, Event, E] < Sync =
         Sync.Unsafe.defer {
             val eventChannel = Channel.Unsafe.init[Event](eventCapacity, Access.MultiProducerMultiConsumer)
-            val donePromise  = Promise.Unsafe.init[Unit, Abort[E | Closed]]()
-            val pendingMap   = new ConcurrentHashMap[Id, Promise.Unsafe[Resp, Abort[E | Closed]]]()
+            // Uninterruptible: every awaitDone caller parks on it, so a caller's interrupt must end that caller and not the
+            // exchange's termination the others are waiting on.
+            val donePromise = Promise.Unsafe.initUninterruptible[Unit, Abort[E | Closed]]()
+            val pendingMap  = new ConcurrentHashMap[Id, Promise.Unsafe[Resp, Abort[E | Closed]]]()
             // `ensureMap` rather than `map`: the reader fiber is live once the spawn returns and only the `Unsafe`
             // built below can close it.
             Fiber.initUnscoped(readerLoop(pendingMap, eventChannel, donePromise, frame, receive, decode)).ensureMap { fiber =>
@@ -251,7 +253,13 @@ object Exchange:
                     discard(eventChannel.close())
                 }
             case Result.Panic(t) =>
-                Sync.Unsafe.defer(discard(eventChannel.close())).andThen(Abort.panic(t))
+                Sync.Unsafe.defer {
+                    val panicked = Result.Panic(t)
+                    discard(donePromise.completeDiscard(panicked))
+                    pending.forEach((_, p) => p.completeDiscard(panicked))
+                    pending.clear()
+                    discard(eventChannel.close())
+                }.andThen(Abort.panic(t))
         }
 
     // ── Extensions ────────────────────────────────────────────────────────────
@@ -452,8 +460,10 @@ object Exchange:
             eventCapacity: Int = 16
         )(using frame: Frame, eTag: ConcreteTag[E], allow: AllowUnsafe): Exchange.Unsafe[Id, Wire, Req, Resp, Event, E] =
             val eventChannel = Channel.Unsafe.init[Event](eventCapacity, Access.MultiProducerMultiConsumer)
-            val donePromise  = Promise.Unsafe.init[Unit, Abort[E | Closed]]()
-            val pendingMap   = new ConcurrentHashMap[Id, Promise.Unsafe[Resp, Abort[E | Closed]]]()
+            // Uninterruptible: every awaitDone caller parks on it, so a caller's interrupt must end that caller and not the
+            // exchange's termination the others are waiting on.
+            val donePromise = Promise.Unsafe.initUninterruptible[Unit, Abort[E | Closed]]()
+            val pendingMap  = new ConcurrentHashMap[Id, Promise.Unsafe[Resp, Abort[E | Closed]]]()
             new Exchange.Unsafe[Id, Wire, Req, Resp, Event, E](
                 nextIdFn = nextId,
                 encodeFn = encode,
