@@ -1,7 +1,8 @@
 package kyo.bench.arena
 
-import io.vertx.core.AbstractVerticle
 import io.vertx.core.DeploymentOptions
+import io.vertx.core.Future
+import io.vertx.core.VerticleBase
 import io.vertx.core.Vertx
 import io.vertx.core.http.Http2Settings
 import io.vertx.core.http.HttpServer
@@ -12,24 +13,24 @@ import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.PrintStream
 import java.io.PrintWriter
-import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.ServerSocket
-import java.net.URL
-import scala.util.Success
-import scala.util.Try
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.TimeUnit
 import scala.util.control.NonFatal
 
 object TestHttpServer:
-    // Linux CI under load (high parallelism, GC pressure) can take >2s for vertx
-    // to fork the server process AND bind the port. The original 20×100ms = 2s budget
-    // hit Connection-refused failures (build-pr 25611709736 linux-x64/JVM); 100×100ms = 10s
-    // gives enough headroom while keeping fast-path startup snappy when the server is
-    // already responsive (waitForServer returns on the first 200 OK).
-    val maxRetries   = 100
-    val retryDelayMs = 100
+
+    // Only a catastrophic guard: readiness is the child's own signal, and a child that dies fails the wait at once. A cold forked JVM
+    // on a loaded windows-arm64 runner took more than 10 s to deploy, so no budget sized to a normal startup is safe.
+    private val startupGuardMinutes = 5L
 
     def log(port: Int, msg: String) = println(s"TestHttpServer(port=$port): $msg")
+
+    // The child prints this only after every verticle instance has bound its port, so a parent that sees it can connect.
+    private def readyLine(port: Int) = s"TestHttpServer(port=$port): listening"
 
     // Each HTTP benchmark forks its own server process; a hardcoded port made those
     // processes collide (a second bind silently failed, then a process exit left the
@@ -42,65 +43,44 @@ object TestHttpServer:
         finally socket.close()
     end freePort
 
-    def waitForServer(url: String, port: Int): Boolean =
-        def tryConnect(): Try[Boolean] = Try {
-            val connection = java.net.URI.create(url).toURL().openConnection().asInstanceOf[HttpURLConnection]
-            connection.setRequestMethod("GET")
-            connection.setConnectTimeout(1000)
-            connection.setReadTimeout(1000)
-            try
-                val responseCode = connection.getResponseCode()
-                responseCode == 200
-            finally
-                connection.disconnect()
-            end try
-        }
+    def start(concurrency: Int): String = start(concurrency, "kyo.bench.arena.TestHttpServer")
 
-        var retries = 0
-        while retries < maxRetries do
-            tryConnect() match
-                case Success(true) =>
-                    log(port, "Server is ready")
-                    return true
-                case _ =>
-                    retries += 1
-                    if retries < maxRetries then
-                        Thread.sleep(retryDelayMs)
-                    log(port, s"Waiting for server... (attempt $retries/$maxRetries)")
-        end while
-
-        log(port, "Server failed to start after maximum retries")
-        false
-    end waitForServer
-
-    def start(concurrency: Int): String =
+    private[arena] def start(concurrency: Int, mainClass: String): String =
         val port      = freePort()
         val javaBin   = System.getProperty("java.home") + "/bin/java"
         val classpath = System.getProperty("java.class.path")
         val command   =
-            List(javaBin, "-cp", classpath, "kyo.bench.arena.TestHttpServer", concurrency.toString, port.toString)
+            List(javaBin, "-cp", classpath, mainClass, concurrency.toString, port.toString)
         val builder = new ProcessBuilder(command*)
-        try
-            log(port, "forking")
-            val process = builder.start()
-            Runtime.getRuntime().addShutdownHook(new Thread:
-                override def run(): Unit =
-                    log(port, "stopping")
-                    process.destroy())
-            redirect(process.getInputStream, System.out)
-            redirect(process.getErrorStream, System.err)
-
-            val serverUrl = s"http://127.0.0.1:$port/ping"
-            if !waitForServer(serverUrl, port) then
-                throw new RuntimeException("Server failed to start")
-
-            serverUrl
-        finally
-            log(port, "forked")
+        log(port, "forking")
+        val process = builder.start()
+        Runtime.getRuntime().addShutdownHook(new Thread:
+            override def run(): Unit =
+                log(port, "stopping")
+                process.destroy())
+        val ready = new CompletableFuture[Unit]
+        redirect(process.getInputStream, System.out, line => if line == readyLine(port) then discard(ready.complete(())))
+        redirect(process.getErrorStream, System.err, _ => ())
+        discard(process.onExit().thenAccept(exited =>
+            discard(ready.completeExceptionally(
+                new RuntimeException(s"Server failed to start: the server process exited with code ${exited.exitValue} before listening")
+            ))
+        ))
+        try ready.get(startupGuardMinutes, TimeUnit.MINUTES)
+        catch
+            case e: ExecutionException =>
+                throw e.getCause
+            case _: TimeoutException =>
+                process.destroy()
+                throw new RuntimeException(s"Server failed to start: no listening report within $startupGuardMinutes minutes")
         end try
+        log(port, "ready")
+        s"http://127.0.0.1:$port/ping"
     end start
 
-    def redirect(inputStream: InputStream, outputStream: PrintStream): Unit =
+    private def discard[A](a: A): Unit = ()
+
+    def redirect(inputStream: InputStream, outputStream: PrintStream, onLine: String => Unit): Unit =
         val runnable =
             new Runnable:
                 def run(): Unit =
@@ -110,14 +90,17 @@ object TestHttpServer:
                     while { line = reader.readLine(); line != null } do
                         writer.println(s"[TestHttpServer] $line")
                         writer.flush()
+                        onLine(line)
+                    end while
                 end run
         val thread = new Thread(runnable)
         thread.setDaemon(true)
         thread.start()
     end redirect
 
-    class PingVerticle extends AbstractVerticle:
-        override def start(): Unit =
+    class PingVerticle extends VerticleBase:
+        // Returning the listen future makes deployment succeed only once this instance has bound the port.
+        override def start(): Future[?] =
             val port          = config().getInteger("port")
             val serverOptions = new HttpServerOptions()
                 .setMaxInitialLineLength(8192)
@@ -147,11 +130,7 @@ object TestHttpServer:
                         end try
                 end try
                 ()
-            }.listen(port, "127.0.0.1").andThen { result =>
-                if !result.succeeded then
-                    log(port, s"Failed to start server: ${result.cause}")
-            }
-            ()
+            }.listen(port, "127.0.0.1")
         end start
     end PingVerticle
 
@@ -166,9 +145,11 @@ object TestHttpServer:
                 .setConfig(new JsonObject().put("port", port))
         vertx.deployVerticle(classOf[PingVerticle], options).andThen { result =>
             if result.succeeded then
-                log(port, s"Deployed ${result.result}")
+                println(readyLine(port))
+                java.lang.System.out.flush()
             else
                 log(port, s"Deployment failed: ${result.cause}")
+                java.lang.System.exit(1)
         }
         try
             java.util.concurrent.locks.LockSupport.park()

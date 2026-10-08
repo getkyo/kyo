@@ -4,6 +4,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.lang.reflect.InvocationTargetException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.stream.Collectors
@@ -11,21 +12,19 @@ import scala.jdk.CollectionConverters.*
 
 object Registry:
 
-    def loadAll(): Seq[ArenaBench[?]] =
-        val packageName = this.getClass.getPackage.getName
-        val classes     =
-            findClasses(packageName).sortBy(_.getSimpleName())
+    def classes(): Seq[Class[? <: ArenaBench[?]]] =
+        findClasses(this.getClass.getPackage.getName)
+            .map(_.asSubclass(classOf[ArenaBench[?]]))
+            .sortBy(_.getSimpleName())
 
-        classes.map(cls =>
-            val constructor = cls.getConstructors.find(_.getParameterCount == 0)
-            constructor match
-                case Some(ctor) =>
-                    ctor.newInstance().asInstanceOf[ArenaBench[?]]
-                case None =>
-                    kyo.bug(s"Class ${cls.getSimpleName} does not have an empty constructor")
-            end match
-        )
-    end loadAll
+    def instantiate(cls: Class[? <: ArenaBench[?]]): ArenaBench[?] =
+        cls.getConstructors.find(_.getParameterCount == 0) match
+            case Some(ctor) =>
+                try ctor.newInstance().asInstanceOf[ArenaBench[?]]
+                catch case e: InvocationTargetException => throw e.getCause
+            case None =>
+                kyo.bug(s"Class ${cls.getSimpleName} does not have an empty constructor")
+    end instantiate
 
     private def findClasses(packageName: String): Seq[Class[?]] =
         val resourcePath = Path.of(getClass.getResource(".").toURI())
