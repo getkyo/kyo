@@ -6,7 +6,7 @@ import kyo.ai.Context
 
 class CodexCompletionTest extends kyo.test.Test[Any]:
 
-    "the app-server command disables exactly the ten features and runs read-only" in {
+    "the app-server command disables exactly the fourteen features and runs read-only" in {
         assert(
             CodexCompletion.disabledFeatures == Chunk(
                 "plugins",
@@ -18,7 +18,11 @@ class CodexCompletionTest extends kyo.test.Test[Any]:
                 "workspace_dependencies",
                 "tool_suggest",
                 "multi_agent",
-                "hooks"
+                "hooks",
+                "sleep_tool",
+                "goals",
+                "view_image",
+                "image_generation"
             ),
             s"command tooling must stay out of the provider session: ${CodexCompletion.disabledFeatures}"
         )
@@ -90,6 +94,115 @@ class CodexCompletionTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "a built-in tool the model starts ends the turn instead of leaving it waiting on that tool" in {
+        // Recorded shape from `codex app-server` 0.156.1: after an answered round the model reasoned, then started the CLI's own
+        // sleep tool for 12 hours. A built-in never reaches kyo as item/tool/call, so only the item it starts can end the turn.
+        def item(itemType: String)(using Frame) =
+            CodexWire.RpcEvent("item/started", Structure.encode(CodexWire.ItemNotification("t1", "u1", CodexWire.ThreadItem(itemType))))
+        val sleep = recorded(
+            "item/started",
+            """{"item":{"type":"sleep","id":"call_31b5","durationMs":43200000},"threadId":"t1","turnId":"u1","startedAtMs":1791413368}"""
+        )
+        Scope.run {
+            for
+                transports <- JsonRpcTransport.inMemory
+                (ours, peers) = transports
+                interrupted <- AtomicInt.init
+                events      <- Channel.init[CodexWire.RpcEvent](8)
+                handler     <- JsonRpcHandler.init(ours)
+                _           <- JsonRpcHandler.init(
+                    peers,
+                    JsonRpcRoute.request[CodexWire.TurnInterruptParams, Structure.Value]("turn/interrupt") { (_, _) =>
+                        interrupted.incrementAndGet.andThen(events.put(interruptedTurn)).andThen(Structure.Value.Record(Chunk.empty))
+                    }
+                )
+                bridge <- CodexCompletion.initBridge
+                _      <- bridge.answered.set(true)
+                _      <- events.put(item("dynamicToolCall"))
+                _      <- events.put(item("reasoning"))
+                _      <- events.put(sleep)
+                stderr <- AtomicRef.init("")
+                // Bounded, so the turn left waiting on the sleep reports as a timeout instead of hanging the suite.
+                turn <- Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[AIGenException | Closed](
+                    CodexCompletion.collectTurn(handler, events, "t1", "u1", stderr, bridge)
+                )))
+                count <- interrupted.get
+            yield
+                assert(turn.isSuccess, s"the turn must end when the model starts a built-in tool, got: $turn")
+                assert(count == 1, s"the turn must be interrupted exactly once, got $count")
+            end for
+        }
+    }
+
+    "a turn interrupted on a captured result reports the usage the app-server sends after the interrupt" in {
+        // Recorded from `codex app-server` 0.156.1: the request that called result_tool reports its usage only after kyo has
+        // answered the call and interrupted, and the interrupted turn/completed follows it.
+        val usage = recorded(
+            "thread/tokenUsage/updated",
+            """{"threadId":"t1","turnId":"u1","tokenUsage":{"total":{"totalTokens":6603,"inputTokens":6583,"cachedInputTokens":0,"outputTokens":20,"reasoningOutputTokens":0}}}"""
+        )
+        val toolCallDone =
+            CodexWire.RpcEvent(
+                "item/completed",
+                Structure.encode(CodexWire.ItemNotification("t1", "u1", CodexWire.ThreadItem("dynamicToolCall")))
+            )
+        Scope.run {
+            for
+                transports <- JsonRpcTransport.inMemory
+                (ours, peers) = transports
+                events  <- Channel.init[CodexWire.RpcEvent](8)
+                handler <- JsonRpcHandler.init(ours)
+                _       <- JsonRpcHandler.init(
+                    peers,
+                    JsonRpcRoute.request[CodexWire.TurnInterruptParams, Structure.Value]("turn/interrupt") { (_, _) =>
+                        events.put(usage).andThen(events.put(interruptedTurn)).andThen(Structure.Value.Record(Chunk.empty))
+                    }
+                )
+                bridge <- CodexCompletion.initBridge
+                _      <- bridge.resultCapture.set(Present(("call_1", """{"resultValue":"ok"}""")))
+                _      <- events.put(toolCallDone)
+                stderr <- AtomicRef.init("")
+                turn   <- Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[AIGenException | Closed](
+                    CodexCompletion.collectTurn(handler, events, "t1", "u1", stderr, bridge)
+                )))
+            yield
+                val stats = turn.getOrThrow.getOrThrow._2
+                assert(stats.inputTokens == 6583L && stats.outputTokens == 20L, s"the interrupted turn must keep its usage: $stats")
+                assert(stats.turns == 1, s"one provider request ran: $stats")
+            end for
+        }
+    }
+
+    "a turn that completes on its own right after a captured result ends without an interrupt" in {
+        val completedTurn = recorded("turn/completed", """{"threadId":"t1","turn":{"id":"u1","status":"completed","error":null}}""")
+        Scope.run {
+            for
+                transports <- JsonRpcTransport.inMemory
+                (ours, peers) = transports
+                interrupted <- AtomicInt.init
+                events      <- Channel.init[CodexWire.RpcEvent](8)
+                handler     <- JsonRpcHandler.init(ours)
+                _           <- JsonRpcHandler.init(
+                    peers,
+                    JsonRpcRoute.request[CodexWire.TurnInterruptParams, Structure.Value]("turn/interrupt") { (_, _) =>
+                        interrupted.incrementAndGet.andThen(Structure.Value.Record(Chunk.empty))
+                    }
+                )
+                bridge <- CodexCompletion.initBridge
+                _      <- bridge.resultCapture.set(Present(("call_1", """{"resultValue":"ok"}""")))
+                _      <- events.put(completedTurn)
+                stderr <- AtomicRef.init("")
+                turn   <- Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[AIGenException | Closed](
+                    CodexCompletion.collectTurn(handler, events, "t1", "u1", stderr, bridge)
+                )))
+                count <- interrupted.get
+            yield
+                assert(turn.isSuccess && turn.getOrThrow.isSuccess, s"a completed turn has nothing left to wait for: $turn")
+                assert(count == 0, s"a completed turn must not be interrupted, got $count")
+            end for
+        }
+    }
+
     "threadStartParams runs the session read-only with approvals off" in {
         val params = CodexWire.threadStartParams(
             Config.Codex.default,
@@ -112,6 +225,10 @@ class CodexCompletionTest extends kyo.test.Test[Any]:
 
     private def recorded(method: String, json: String)(using Frame): CodexWire.RpcEvent =
         CodexWire.RpcEvent(method, Json.decode[Structure.Value](json).getOrThrow)
+
+    // What `codex app-server` 0.156.1 sends once a turn/interrupt lands.
+    private def interruptedTurn(using Frame): CodexWire.RpcEvent =
+        recorded("turn/completed", """{"threadId":"t1","turn":{"id":"u1","status":"interrupted","error":null}}""")
 
     "a systemError status is not the turn's failure: the reason arrives after it" in {
         AtomicRef.init("").map { stderrTail =>

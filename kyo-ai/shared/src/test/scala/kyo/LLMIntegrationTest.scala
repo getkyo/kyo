@@ -255,13 +255,15 @@ class LLMIntegrationTest extends BaseAITest:
                     // be switched off must spend less for it: the state reaches the endpoint and the turn
                     // is cheaper.
                     //
-                    // An endpoint that CANNOT is sent its lowest level, the least it will spend. That
-                    // against the default compares two adjacent levels, whose spend is not reliably
-                    // ordered: runs were seen at 25 against 27, and 12 against 7, nothing about the
-                    // endpoint violated. Asserting the ordering there tests the sampler, so the honest
-                    // observable is used instead: kyo did not pretend to disable what cannot be disabled,
-                    // and the turn still reasons.
-                    if config.reasoningOff.isInstanceOf[Config.ReasoningOff.CannotDisable] then
+                    // An endpoint that CANNOT is sent its lowest level, the least it will spend, or, where
+                    // the wire has no bytes for off at all, the very request the reasoning turn sent. Either
+                    // way the two turns are samples of the same or adjacent levels, whose spend is not
+                    // reliably ordered: runs were seen at 25 against 27, 12 against 7, and 72 against 39,
+                    // nothing about the endpoint violated. Asserting the ordering there tests the sampler,
+                    // so the honest observable is used instead: kyo did not pretend to disable what cannot
+                    // be disabled, and the turn still reasons. The entry's own mismatch report is what
+                    // declares that the off ask cannot ride.
+                    if off.reasoningMismatch.isDefined then
                         assert(
                             offTokens > 0,
                             s"${backend.label} cannot disable reasoning, so the off turn still reasons: off=$offTokens"

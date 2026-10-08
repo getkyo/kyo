@@ -161,7 +161,8 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
             Backend("Baseten", Config.Baseten, Absent, Config.Baseten.gpt_oss_120b)
         )
 
-    /** The backends this run exercises: every one by default, narrowed by the `kyo.ai.provider` flag.
+    /** The backends this run exercises: every one by default, narrowed by the `kyo.ai.completion.provider` flag
+      * (`KYO_AI_COMPLETION_PROVIDER`).
       *
       * There is no curated enabled list. A run costs nothing for a backend whose key or CLI is absent,
       * because [[requireBackend]] cancels that arm and reports it, so the honest default is all of them:
