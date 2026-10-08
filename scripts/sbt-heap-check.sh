@@ -11,6 +11,8 @@
 #   bare-sbt     no workflow or action line starts sbt directly instead of scripts/sbt.sh
 #   script-sbt   a script that starts sbt, by name, through a variable holding it, or inside a wrapper
 #                function, sources sbt-heap-lib.sh or goes through scripts/sbt.sh
+#   oom-exit     .jvmopts carries -XX:+ExitOnOutOfMemoryError: a driver whose task thread runs out of heap otherwise
+#                stays up with nothing running until the CI job is cancelled at its time limit
 # Forked JVMs configured in build.sbt (test forks, tool runners) are not drivers and are not checked.
 set -uo pipefail
 
@@ -64,6 +66,10 @@ check_tree() {
         done < <(grep -nE -- '(^|[^[:alnum:]_./-])sbt([[:space:]]|$)|\$' "$f")
     done < <(find "$root/scripts" -type f -name '*.sh' 2>/dev/null)
 
+    if ! grep -qxF -- '-XX:+ExitOnOutOfMemoryError' "$root/.jvmopts" 2>/dev/null; then
+        echo "oom-exit: .jvmopts: no -XX:+ExitOnOutOfMemoryError line"; found=1
+    fi
+
     return "$found"
 }
 
@@ -79,12 +85,16 @@ self_test() {
             echo "  FAIL: $1 (rc=$rc)"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
         fi
     }
-    reset() { rm -rf "$dir"/.github "$dir"/scripts "$dir"/.jvmopts "$dir"/.sbtopts; mkdir -p "$dir/.github/workflows" "$dir/scripts"; }
+    reset() {
+        rm -rf "$dir"/.github "$dir"/scripts "$dir"/.jvmopts "$dir"/.sbtopts
+        mkdir -p "$dir/.github/workflows" "$dir/scripts"
+        printf -- '-XX:+ExitOnOutOfMemoryError\n' > "$dir/.jvmopts"
+    }
     echo "Running sbt-heap-check.sh self-tests..."
 
     reset
     printf 'steps:\n  - run: scripts/sbt.sh compile doctest\n  # sbt doctest runs here\n  - name: Set up JDK + sbt\n' > "$dir/.github/workflows/a.yml"
-    printf -- '-Xss10M\n-XX:+UseG1GC\n' > "$dir/.jvmopts"
+    printf -- '-Xss10M\n-XX:+UseG1GC\n-XX:+ExitOnOutOfMemoryError\n' > "$dir/.jvmopts"
     printf 'SBT_HEAP_RESERVE_MB=4096\nfoo() { printf -- "-J-Xmx%%sM" 1; }\n' > "$dir/scripts/sbt-heap-lib.sh"
     printf '#!/bin/bash\n. "$here/sbt-heap-lib.sh"\nsbt "$(sbt_heap tool)" x\n' > "$dir/scripts/ok.sh"
     expect "a clean tree passes" 0 ""
@@ -165,6 +175,14 @@ self_test() {
     } > "$dir/scripts/m.sh"
     expect "a script larger than a pipe buffer that sources the lib passes" 0 ""
 
+    reset
+    printf -- '-Xss10M\n-XX:+UseG1GC\n' > "$dir/.jvmopts"
+    expect "a .jvmopts without ExitOnOutOfMemoryError fails" 1 "oom-exit: .jvmopts:"
+
+    reset
+    rm "$dir/.jvmopts"
+    expect "a missing .jvmopts fails" 1 "oom-exit: .jvmopts:"
+
     echo "Results: $pass/$((pass+fail)) passed, $fail failed"
     [ "$fail" = 0 ]
 }
@@ -176,6 +194,6 @@ root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 if check_tree "$root"; then
     echo "sbt-heap-check: every sbt driver heap comes from scripts/sbt-heap-lib.sh"
 else
-    echo "sbt-heap-check: set the driver heap in scripts/sbt-heap-lib.sh and start sbt through scripts/sbt.sh" >&2
+    echo "sbt-heap-check: set the driver heap in scripts/sbt-heap-lib.sh, start sbt through scripts/sbt.sh, and keep -XX:+ExitOnOutOfMemoryError in .jvmopts" >&2
     exit 1
 fi

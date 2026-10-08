@@ -28,10 +28,15 @@ on:
         required: false
         default: 'linux-x64 linux-arm64 windows-x64'
       command:
-        description: 'Used only when mode=custom: the recommended form is ./scripts/ci-test.sh <platform> <action>.'
+        description: 'Used only when mode=custom: the recommended form is ./scripts/ci-test.sh <platform> <action>, which provides the container images its modules start. A raw sbt command does not: name its modules in fixtures.'
         type: string
         required: false
         default: './scripts/ci-test.sh JVM test'
+      fixtures:
+        description: 'Used only when mode=custom: space-separated sbt projects (kyo-discordJVM ...) whose container images scripts/fixture-images.sh provides before the command, or all. Empty provides none beyond the database images every run pulls.'
+        type: string
+        required: false
+        default: ''
       custom-runner:
         description: 'Used only when mode=custom: the GitHub-hosted runner label the command runs on.'
         type: choice
@@ -155,6 +160,21 @@ jobs:
         with:
           os: ${{ steps.os.outputs.os }}
           target: JVM
+      # ci-test.sh provides the images its own selection starts; a command that runs sbt directly gets only the database images
+      # container-check.sh pulls, and every live suite whose emulator is missing fails on it.
+      - name: Provide container fixtures
+        if: ${{ inputs.fixtures != '' }}
+        shell: bash
+        env:
+          FIXTURES: ${{ inputs.fixtures }}
+        run: |
+          if [ "$FIXTURES" = "all" ]; then
+            bash scripts/fixture-images.sh --all
+          else
+            read -r -a projects <<< "$FIXTURES"
+            printf '%s\n' "${projects[@]}" > "$RUNNER_TEMP/fixture-plan"
+            bash scripts/fixture-images.sh "$RUNNER_TEMP/fixture-plan"
+          fi
       - name: Run command
         shell: bash
         env:

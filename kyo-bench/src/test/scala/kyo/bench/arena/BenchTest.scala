@@ -30,27 +30,26 @@ abstract class BenchTest extends AsyncFreeSpec with Assertions:
 
     inline given [A]: CanEqual[A, A] = CanEqual.derived
 
-    def test[A](b: ArenaBench[A]): Unit =
-        b match
-            case b: SyncAndFork[A] =>
-                s"sync$target" in {
-                    assert(runSync(b) == b.expectedResult)
-                    detectRuntimeLeak()
-                }
-            case _ =>
-        end match
-        b match
-            case b: Fork[A] =>
-                s"fork$target" in {
-                    assert(runFork(b) == b.expectedResult)
-                    detectRuntimeLeak()
-                }
-            case _ =>
-        end match
+    def test(cls: Class[? <: ArenaBench[?]]): Unit =
+        // Built inside the leaves rather than while the suite is constructed: a benchmark whose setup throws (the HTTP benchmarks
+        // fork a server) fails its own leaves with that cause instead of aborting every benchmark in the suite.
+        lazy val bench = Registry.instantiate(cls)
+        if classOf[SyncAndFork[?]].isAssignableFrom(cls) then
+            s"sync$target" in {
+                val b = bench.asInstanceOf[SyncAndFork[Any]]
+                assert(runSync(b) == b.expectedResult)
+                detectRuntimeLeak()
+            }
+        end if
+        if classOf[Fork[?]].isAssignableFrom(cls) then
+            s"fork$target" in {
+                val b = bench.asInstanceOf[Fork[Any]]
+                assert(runFork(b) == b.expectedResult)
+                detectRuntimeLeak()
+            }
+        end if
     end test
 
-    Registry.loadAll().foreach { b =>
-        b.getClass.getSimpleName - test(b)
-    }
+    Registry.classes().foreach(cls => cls.getSimpleName - test(cls))
 
 end BenchTest

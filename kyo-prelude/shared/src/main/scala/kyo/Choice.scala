@@ -114,20 +114,25 @@ object Choice:
       */
     def runStream[A, S](v: A < (Choice & S))(using Frame, Tag[Emit[Chunk[A]]]): Stream[A, S] =
         Stream {
+            // In `run`'s order: every pending branch is expanded where it stands, and only the leading run of finished values
+            // is emitted, so a value after a pending branch waits until everything that branch chooses has been emitted.
             Loop(Chunk(v)) { curr =>
-                val (done, pending) = curr.partition(_.evalNow.isDefined)
+                val done = curr.takeWhile(_.evalNow.isDefined)
+                val rest = curr.dropLeft(done.length)
                 Emit
                     .valueWhen(done.nonEmpty)(done.asInstanceOf[Chunk[A]])
                     .andThen {
-                        if pending.isEmpty then Loop.done
+                        if rest.isEmpty then Loop.done
                         else
-                            Kyo.foreach(pending) { v =>
-                                // the remainder is resumed once per choice, so a resource opened before the choice
-                                // is shared across every branch and released once, after all of them
-                                ArrowEffect.handleFirstRepeated(Tag[Choice], v)(
-                                    handle = [C] => (input, cont) => Chunk.from(input).map(cont(_)),
-                                    done = r => Chunk(r: A < (Choice & S))
-                                )
+                            Kyo.foreach(rest) { v =>
+                                if v.evalNow.isDefined then Chunk(v)
+                                else
+                                    // the remainder is resumed once per choice, so a resource opened before the choice
+                                    // is shared across every branch and released once, after all of them
+                                    ArrowEffect.handleFirstRepeated(Tag[Choice], v)(
+                                        handle = [C] => (input, cont) => Chunk.from(input).map(cont(_)),
+                                        done = r => Chunk(r: A < (Choice & S))
+                                    )
                             }.map(r => Loop.continue(r.flattenChunk))
                     }
             }

@@ -400,29 +400,31 @@ class STMStressTest extends kyo.test.Test[Any]:
     }
 
     "TMap.snapshot / entries / values under concurrent put+remove never throw".notJs in {
+        def recordPanic(panics: AtomicRef[Chunk[Throwable]])(result: Result[FailedTransaction, Any]): Unit < Sync =
+            result match
+                case Result.Panic(e) => panics.updateAndGet(_.append(e)).unit
+                case _               => ()
+        def render(e: Throwable): String =
+            (s"${e.getClass.getName}: ${e.getMessage}" +: e.getStackTrace.take(30).map(frame => s"    at $frame")).mkString("\n")
         for
             tmap   <- TMap.init[Int, Int]
             _      <- STM.run(Kyo.foreachDiscard(0 until 100)(i => tmap.put(i, i)))
-            thrown <- AtomicInt.init(0)
+            panics <- AtomicRef.init(Chunk.empty[Throwable])
             mutators = Async.fill(8, 8) {
                 Async.foreachDiscard(1 to 1000) { i =>
                     (if i % 2 == 0 then STM.run(tmap.put(i % 100, i))
-                     else STM.run(tmap.removeDiscard(i % 100))).handle(Abort.run).unit
+                     else STM.run(tmap.removeDiscard(i % 100))).handle(Abort.run).map(recordPanic(panics))
                 }
             }
             iterators = Async.fill(8, 8) {
                 Async.foreachDiscard(1 to 500) { _ =>
-                    STM.run(tmap.entries.map(_.toMap))
-                        .handle(Abort.run)
-                        .map {
-                            case Result.Panic(_) => thrown.incrementAndGet.unit
-                            case _               => ()
-                        }
+                    STM.run(tmap.entries.map(_.toMap)).handle(Abort.run).map(recordPanic(panics))
                 }
             }
             _ <- Async.zip(mutators, iterators)
-            t <- thrown.get
-        yield assert(t == 0, s"thrown=$t")
+            p <- panics.get
+        yield assert(p.isEmpty, s"${p.size} panics, first ${p.size min 3}:\n${p.take(3).map(render).mkString("\n")}")
+        end for
     }
 
     "typed Abort.fail inside STM is re-tried when log is stale, surfaced only when consistent".notJs in {

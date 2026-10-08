@@ -514,7 +514,12 @@ object TestKyo {
         "CODE_OF_CONDUCT.md",
         "LICENSE.txt",
         "MANIFESTO.md",
-        "kyo-logo.pdf"
+        "kyo-logo.pdf",
+        // Run only by the checks workflow, which runs on every pull request; nothing a test job runs sources them.
+        "scripts/build-selftest.sh",
+        "scripts/ci-monitor-selftest.sh",
+        "scripts/sbt-heap-check.sh",
+        "scripts/sbt-heap-lib-test.sh"
     )
     private val inertDirectories = Seq(".claude/")
     // Contributor guides, in the root and in modules. A doctest that links to one still sees its change.
