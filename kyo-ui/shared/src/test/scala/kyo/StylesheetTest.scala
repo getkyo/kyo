@@ -31,6 +31,37 @@ class StylesheetTest extends kyo.test.Test[Any]:
         assert(Selector.tag("body").css == "body")
     }
 
+    "Selector.and joins two conditions on the same element, with no separator" in {
+        assert(Selector.cls("btn").and(Selector.cls("lg")).css == ".btn.lg")
+        assert(
+            Selector.data("theme", "brand").and(Selector.data("scheme", "dark")).css ==
+                "[data-theme=\"brand\"][data-scheme=\"dark\"]"
+        )
+        assert(Selector.cls("a").and(Selector.cls("b")).css != Selector.cls("a").descendant(Selector.cls("b")).css)
+        assert(Selector.cls("a").and(Selector.cls("b")).css != Selector.cls("a").child(Selector.cls("b")).css)
+    }
+
+    "Selector.and chains, and a pseudo attaches to the whole compound" in {
+        val sel = Selector.tag("a").and(Selector.cls("nav")).and(Selector.data("current", "page"))
+        assert(sel.css == "a.nav[data-current=\"page\"]")
+        assert(sel.pseudo("hover").css == "a.nav[data-current=\"page\"]:hover")
+    }
+
+    "Selector.and puts a type selector first, whichever side names it" in {
+        assert(Selector.cls("nav").and(Selector.tag("a")).css == "a.nav")
+        assert(Selector.data("current", "page").and(Selector.tag("li")).css == "li[data-current=\"page\"]")
+        assert(Selector.tag("li").and(Selector.cls("x")).css == "li.x")
+    }
+
+    "scopedVars takes a compound selector" in {
+        val css = Stylesheet.scopedVars(
+            Selector.data("theme", "brand").and(Selector.data("scheme", "dark")),
+            "primary" -> "#3366cc"
+        ).render
+        assert(css.contains("[data-theme=\"brand\"][data-scheme=\"dark\"] {"))
+        assert(css.contains("--primary: #3366cc;"))
+    }
+
     "media query wraps inner rule in @media block" in {
         val css = Stylesheet.media(MediaQuery.minWidth(768.px))(
             Stylesheet.rule("grid", Style.column)
