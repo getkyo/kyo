@@ -1,8 +1,10 @@
 package kyo
 
+import kyo.scheduler.IOPromise
 import scala.annotation.implicitNotFound
 import scala.annotation.nowarn
 import scala.annotation.tailrec
+import scala.collection.mutable.ArrayBuffer
 
 /** A reactive value that can change over time, providing both synchronous access to its current state and asynchronous notification of
   * changes.
@@ -88,6 +90,15 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       */
     def nextWith[B, S](f: A => B < S)(using Frame): B < (S & Async)
 
+    /** The version of this signal at the call, as a [[Signal.Change]] that a later write completes, or `Absent` for a signal built by
+      * [[Signal.initRaw]], whose only way to wait is `nextWith`.
+      *
+      * Arming before reading `current` is what makes a wait exact: a write that lands after the read completes the armed change, so the
+      * wait returns and the value is read again. `nextWith` cannot give that guarantee to a caller that read first, and a combinator that
+      * waits through forked fibers registers later still.
+      */
+    private[kyo] def arm(using Frame): Maybe[Signal.Change] < Sync
+
     /** Runs `f` for the current value and for every subsequent change, each inside a fresh [[Scope]] that closes when the next value arrives.
       *
       * This is a live subscription: `f` runs once for the current value, then again on every change, and the computation runs forever (fork it
@@ -161,7 +172,8 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
         Signal._initRawF(
             [C, S] => g => self.currentWith(a => g(f(a))),
             [C, S] => g => self.nextWith(a => g(f(a))),
-            [S] => (ri, g) => self.observe[S](ri)(a => g(f(a)))
+            [S] => (ri, g) => self.observe[S](ri)(a => g(f(a))),
+            self.arm
         )
 
     /** Dynamically switches to an inner signal based on the current value.
@@ -170,8 +182,7 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       * that change. This is switchMap semantics (no monad laws): the previous inner is implicitly dropped on outer change. The caller
       * re-arms via `nextWith` in a loop matching the `streamChanges` driver pattern.
       *
-      * Note: like `streamChanges`, may skip intermediate values if changes occur faster than they can be processed. The read/arm race
-      * window in `SignalRef` propagates here.
+      * Note: like `streamChanges`, may skip intermediate values if changes occur faster than they can be processed.
       *
       * @param f
       *   The function that produces an inner signal from the current value
@@ -180,17 +191,22 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       */
     @nowarn("msg=anonymous")
     inline def switchMap[B](inline f: A => Signal[B])(using CanEqual[B, B], Frame): Signal[B] =
-        Signal.initRaw(
-            currentWith = [C, S] => g => self.currentWith(a => f(a).currentWith(g)),
-            nextWith = [C, S] =>
+        Signal._initArmed(
+            [C, S] => g => self.currentWith(a => f(a).currentWith(g)),
+            [C, S] =>
                 g =>
-                    self.currentWith { a =>
-                        val inner = f(a)
-                        Signal.awaitAny(Seq(self, inner))
-                            .andThen(self.currentWith { a2 =>
-                                (if a2 == a then inner else f(a2)).currentWith(g)
-                            })
-                    }
+                    self.arm.map { outer =>
+                        self.currentWith { a =>
+                            val inner = f(a)
+                            inner.arm.map { innerChange =>
+                                Signal.awaitChange(Signal.Change.any(Seq(outer, innerChange)))(Signal.awaitAny(Seq(self, inner)))
+                                    .andThen(self.currentWith { a2 =>
+                                        (if a2 == a then inner else f(a2)).currentWith(g)
+                                    })
+                            }
+                        }
+                    },
+            self.arm.map(outer => self.currentWith(a => f(a).arm.map(inner => Signal.Change.any(Seq(outer, inner)))))
         )
 
     /** Pairs this signal with another, waiting for both to change before emitting.
@@ -202,10 +218,16 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       */
     @nowarn("msg=anonymous")
     inline def zip[B](other: Signal[B])(using CanEqual[(A, B), (A, B)], Frame): Signal[(A, B)] =
-        Signal.initRaw(
-            currentWith = [C, S] => g => self.currentWith(a => other.currentWith(b => g((a, b)))),
-            nextWith = [C, S] => g => Async.zip(self.next, other.next).andThen(self.currentWith(a => other.currentWith(b => g((a, b)))))
+        def armed(using Frame): Maybe[Signal.Change] < Sync = self.arm.map(a => other.arm.map(b => Signal.Change.all(Seq(a, b))))
+        Signal._initArmed(
+            [C, S] => g => self.currentWith(a => other.currentWith(b => g((a, b)))),
+            [C, S] =>
+                g =>
+                    armed.map(change => Signal.awaitChange(change)(Async.zip(self.next, other.next).unit))
+                        .andThen(self.currentWith(a => other.currentWith(b => g((a, b))))),
+            armed
         )
+    end zip
 
     /** Pairs this signal with another, emitting when either changes (Rx combineLatest semantics).
       *
@@ -218,9 +240,10 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       */
     @nowarn("msg=anonymous")
     inline def combineLatest[B](other: Signal[B])(using CanEqual[(A, B), (A, B)], Frame): Signal[(A, B)] =
-        Signal.initRaw(
-            currentWith = [C, S] => g => self.currentWith(a => other.currentWith(b => g((a, b)))),
-            nextWith = [C, S] => g => Signal.awaitAny(Seq(self, other)).andThen(self.currentWith(a => other.currentWith(b => g((a, b)))))
+        Signal._initArmed(
+            [C, S] => g => self.currentWith(a => other.currentWith(b => g((a, b)))),
+            [C, S] => g => Signal.awaitAny(Seq(self, other)).andThen(self.currentWith(a => other.currentWith(b => g((a, b))))),
+            self.arm.map(a => other.arm.map(b => Signal.Change.any(Seq(a, b))))
         )
 
     /** Creates a stream that continuously emits the current value of the signal.
@@ -239,7 +262,10 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
     /** Creates a stream that emits only when the signal's value changes.
       *
       * This method produces a stream that emits values only when they differ from the previous value. Note that rapid changes may result in
-      * some intermediate values being skipped if they occur faster than they can be processed.
+      * some intermediate values being skipped if they occur faster than they can be processed, but the latest value is never lost: each
+      * round arms the wait for the next change before reading `current`, so a write that lands after the read wakes the wait. A signal
+      * built by [[Signal.initRaw]] cannot arm, so for one of those a write in that window is reconciled within
+      * [[Signal.defaultRepairInterval]] by re-reading `current`.
       *
       * @return
       *   A stream that emits only when values change
@@ -247,15 +273,18 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
     final def streamChanges(using Frame, Tag[Emit[Chunk[A]]]): Stream[A, Async] =
         Stream(
             Loop(Maybe.empty[A]) { last =>
-                currentWith { curr =>
-                    if last.forall(_ != curr) then
-                        Emit.valueWith(Chunk(curr))(Loop.continue(Present(curr)))
-                    else
-                        nextWith { a =>
-                            Emit.valueWith(Chunk(a))(Loop.continue(Present(a)))
-                        }
+                arm.map { change =>
+                    currentWith { curr =>
+                        if last.forall(_ != curr) then
+                            Emit.valueWith(Chunk(curr))(Loop.continue(Present(curr)))
+                        else
+                            change match
+                                case Present(change) => change.await.andThen(Loop.continue(last))
+                                case Absent          =>
+                                    Async.race(Seq(nextWith(_ => ()), Async.sleep(Signal.defaultRepairInterval)))
+                                        .andThen(Loop.continue(last))
+                    }
                 }
-
             }
         )
     end streamChanges
@@ -283,7 +312,65 @@ object Signal:
       */
     def awaitAny(signals: Seq[Signal[?]])(using Frame): Unit < Async =
         if signals.isEmpty then Async.never
-        else Async.race(signals.map(_.next)).unit
+        else
+            Kyo.foreach(signals)(_.arm).map(changes => awaitChange(Change.any(changes))(Async.race(signals.map(_.next)).unit))
+
+    /** Waits on `change` when there is one, else on `fallback`, the wait of a signal that cannot arm. */
+    private[kyo] def awaitChange(change: Maybe[Change])(fallback: => Unit < Async)(using Frame): Unit < Async =
+        change match
+            case Present(change) => change.await
+            case Absent          => fallback
+
+    /** The versions of one or more signals taken by [[Signal.arm]]: the promises their next writes complete, combined the way the
+      * combinator waits on them. Holding one registers nothing, so an arm a round drops costs nothing. [[Change.await]] registers on
+      * each promise and removes every registration when it returns or is interrupted, so a source that stays idle while another changes
+      * collects no waiters across rounds.
+      */
+    private[kyo] enum Change derives CanEqual:
+        case Of(promise: IOPromise[?, ?])
+        case AnyOf(changes: Chunk[Change])
+        case AllOf(changes: Chunk[Change])
+        case Never
+    end Change
+
+    private[kyo] object Change:
+
+        def any(changes: Seq[Maybe[Change]]): Maybe[Change] =
+            if changes.exists(_.isEmpty) then Absent else Present(AnyOf(Chunk.from(changes.map(_.get))))
+
+        def all(changes: Seq[Maybe[Change]]): Maybe[Change] =
+            if changes.exists(_.isEmpty) then Absent else Present(AllOf(Chunk.from(changes.map(_.get))))
+
+        extension (self: Change)
+            def await(using Frame): Unit < Async =
+                Sync.Unsafe.defer(awaitUnsafe(self))
+        end extension
+
+        // Unsafe: raw completion callbacks, so that each can be removed by reference once the wait ends.
+        private def awaitUnsafe(change: Change)(using AllowUnsafe, Frame): Unit < Async =
+            val fired                                           = Promise.Unsafe.init[Unit, Any]()
+            val registrations                                   = ArrayBuffer.empty[(IOPromise[?, ?], Function1[?, ?])]
+            def watch(change: Change, onFire: () => Unit): Unit =
+                change match
+                    case Of(promise)    => registrations += ((promise, register(promise, onFire)))
+                    case AnyOf(changes) => changes.foreach(watch(_, onFire))
+                    case AllOf(changes) =>
+                        val pending = AtomicInt.Unsafe.init(changes.size)
+                        changes.foreach { change =>
+                            val once = AtomicBoolean.Unsafe.init(false)
+                            watch(change, () => if once.compareAndSet(false, true) && pending.decrementAndGet() == 0 then onFire())
+                        }
+                    case Never => ()
+            watch(change, () => fired.completeUnitDiscard())
+            Sync.ensure(registrations.foreach((promise, callback) => discard(promise.remove(callback))))(fired.safe.get)
+        end awaitUnsafe
+
+        private def register[E, A](promise: IOPromise[E, A], onFire: () => Unit): Function1[?, ?] =
+            val callback: Result[E, A] => Unit = _ => onFire()
+            promise.onComplete(callback)
+            callback
+        end register
+    end Change
 
     /** Zips a sequence of signals, waiting for all to change before emitting.
       *
@@ -303,10 +390,15 @@ object Signal:
             case 0 => initConst(Chunk.empty[A])
             case 1 => signals.head.map(Chunk(_))
             case n =>
-                val sigs = Chunk.from(signals, n)
-                initRaw(
-                    currentWith = [B, S] => f => Kyo.foreach(sigs)(_.current).map(f),
-                    nextWith = [B, S] => f => Async.foreachDiscard(sigs, sigs.size)(_.next).andThen(Kyo.foreach(sigs)(_.current).map(f))
+                val sigs                                     = Chunk.from(signals, n)
+                def armed(using Frame): Maybe[Change] < Sync = Kyo.foreach(sigs)(_.arm).map(Change.all)
+                _initArmed(
+                    [B, S] => f => Kyo.foreach(sigs)(_.current).map(f),
+                    [B, S] =>
+                        f =>
+                            armed.map(change => awaitChange(change)(Async.foreachDiscard(sigs, sigs.size)(_.next)))
+                                .andThen(Kyo.foreach(sigs)(_.current).map(f)),
+                    armed
                 )
 
     /** Zips a sequence of signals, emitting when any changes.
@@ -325,9 +417,10 @@ object Signal:
             case 1 => signals.head.map(Chunk(_))
             case n =>
                 val sigs = Chunk.from(signals, n)
-                initRaw(
-                    currentWith = [C, S] => g => Kyo.foreach(sigs)(_.current).map(g),
-                    nextWith = [C, S] => g => awaitAny(sigs).andThen(Kyo.foreach(sigs)(_.current).map(g))
+                _initArmed(
+                    [C, S] => g => Kyo.foreach(sigs)(_.current).map(g),
+                    [C, S] => g => awaitAny(sigs).andThen(Kyo.foreach(sigs)(_.current).map(g)),
+                    Kyo.foreach(sigs)(_.arm).map(Change.any)
                 )
 
     private inline val missingCanEqual =
@@ -400,11 +493,12 @@ object Signal:
         @implicitNotFound(missingCanEqual)
         canEqual: CanEqual[A, A]
     ): Signal[A] =
-        initRaw(
-            currentWith = [B, S] => f => f(value),
+        _initArmed(
+            [B, S] => f => f(value),
             // Completing this immediately would let a constant win every `awaitAny` arm, firing
             // `combineLatest(ref, const).next` with no change to report and spinning an enclosing `observe`.
-            nextWith = [B, S] => _ => Async.never
+            [B, S] => _ => Async.never,
+            Present(Change.Never)
         )
 
     /** Creates a new immutable signal with a constant value and applies a transformation function.
@@ -507,8 +601,32 @@ object Signal:
                 _currentWith(f)
             def nextWith[B, S](f: A => B < S)(using frame: Frame): B < (S & Async) =
                 _nextWith(f)
+            private[kyo] def arm(using frame: Frame): Maybe[Change] < Sync =
+                Absent
         end new
     end _initRaw
+
+    // A built-in signal: `arm` joins its sources' arms, which `initRaw` cannot offer, since a caller-supplied signal has no version
+    // to take before a read. `_nextWith` waits through `arm` too, so `next` called on it misses no write after the call.
+    @nowarn("msg=anonymous")
+    private[kyo] inline def _initArmed[A](
+        inline _currentWith: [B, S] => (A => B < S) => B < (S & Sync),
+        inline _nextWith: [B, S] => (A => B < S) => B < (S & Async),
+        inline _arm: Maybe[Change] < Sync
+    )(
+        using
+        frame: Frame,
+        canEqual: CanEqual[A, A]
+    ): Signal[A] =
+        new Signal[A]:
+            def currentWith[B, S](f: A => B < S)(using frame: Frame): B < (S & Sync) =
+                _currentWith(f)
+            def nextWith[B, S](f: A => B < S)(using frame: Frame): B < (S & Async) =
+                _nextWith(f)
+            private[kyo] def arm(using frame: Frame): Maybe[Change] < Sync =
+                _arm
+        end new
+    end _initArmed
 
     // Like _initRaw but also supplies `observe`, letting a structural combinator delegate observation to its source's
     // `observe` loop (applying its transform to each value) rather than running a second repair loop over its own
@@ -517,7 +635,8 @@ object Signal:
     private inline def _initRawF[A](
         inline _currentWith: [B, S] => (A => B < S) => B < (S & Sync),
         inline _nextWith: [B, S] => (A => B < S) => B < (S & Async),
-        inline _observe: [S] => (Duration, A => Unit < (S & Async & Scope)) => Unit < (S & Async)
+        inline _observe: [S] => (Duration, A => Unit < (S & Async & Scope)) => Unit < (S & Async),
+        inline _arm: Maybe[Change] < Sync
     )(
         using
         frame: Frame,
@@ -530,6 +649,8 @@ object Signal:
                 _nextWith(f)
             override def observe[S](repairInterval: Duration)(f: A => Unit < (S & Async & Scope))(using frame: Frame): Unit < (S & Async) =
                 _observe(repairInterval, f)
+            private[kyo] def arm(using frame: Frame): Maybe[Change] < Sync =
+                _arm
         end new
     end _initRawF
 
@@ -546,6 +667,11 @@ object Signal:
         def currentWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe.defer(f(unsafe.get()))
 
         def nextWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe.defer(unsafe.next().safe.use(f))
+
+        // Exact because a write stores the value before it swaps and completes the promise: a promise taken before a read is
+        // completed by every write the read did not see.
+        private[kyo] def arm(using Frame): Maybe[Signal.Change] < Sync =
+            Sync.Unsafe.defer(Present(Signal.Change.Of(unsafe.next().safe.lower)))
 
         // `observe` is intentionally NOT overridden here: `SignalRef` uses the trait's repairing `observe`.
         //
