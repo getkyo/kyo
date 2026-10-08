@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.internal.LeafContainers
+
 abstract class BasePodTest extends kyo.test.Test[Any]:
 
     /** Test infrastructure runs synchronously at registration time (`runBackends`/`runRuntimes` test-scope registration), so we provide a
@@ -72,14 +74,15 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     /** Runs `v` under its own `Scope` and returns its result with the containers the leaf may have left behind.
       *
       * The daemon is shared with other suites and other builds, so a before/after diff of its container set would count their containers
-      * too. Every container `v` causes kyo-pod to create carries this leaf's label instead, and only those are candidates.
+      * too. Every container `v` causes kyo-pod to create carries this leaf's label instead, and only those are candidates. The labels also
+      * name this process as the owner, so a later process removes them if this one dies before its `Scope` does.
       */
     private[kyo] def leafCandidates[A](v: A < (Async & Abort[Any] & Scope))(using
         Frame
     ): (A, Chunk[Container.Summary]) < (Async & Abort[Any]) =
-        Random.nextStringAlphanumeric(16).map { leaf =>
-            Container.ambientLabels.let(Dict(BasePodTest.leafLabel -> leaf))(Scope.run(v)).map { result =>
-                Container.list(all = true, filters = Dict("label" -> Chunk(s"${BasePodTest.leafLabel}=$leaf")))
+        LeafContainers.sweepOnce.andThen(Random.nextStringAlphanumeric(16)).map { leaf =>
+            Container.ambientLabels.let(LeafContainers.labels(leaf))(Scope.run(v)).map { result =>
+                Container.list(all = true, filters = Dict("label" -> Chunk(s"${LeafContainers.leafLabelKey}=$leaf")))
                     .map(candidates => (result, candidates))
             }
         }
@@ -108,9 +111,13 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       * this method registers leaves only for the pinned runtime; combined with sequential leaves, ≤1 in-flight container op per daemon.
       */
     def runBackends(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
+        runBackendsOf(_ => v)
+
+    /** [[runBackends]] whose body gets the runtime name, for a leaf whose expected outcome depends on which daemon it reaches. */
+    def runBackendsOf(v: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
         registerBackends(
-            (_, path) => Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v)),
-            runtime => Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
+            (runtime, path) => Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v(runtime))),
+            runtime => Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v(runtime)))
         )
 
     /** [[runBackends]] without the leak check around the body, for the leaves that test the leak check itself; the body gets the runtime
@@ -274,6 +281,3 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             cancel(s"the $runtime CLI is not available on this host, so the shell backend cannot run")
 
 end BasePodTest
-
-object BasePodTest:
-    private[kyo] val leafLabel = "kyo.pod.test.leaf"

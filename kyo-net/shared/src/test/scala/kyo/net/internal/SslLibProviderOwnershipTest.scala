@@ -112,15 +112,15 @@ class SslLibProviderOwnershipTest extends Test:
         def ctxLoadSystemCa(ctx: Long)(using AllowUnsafe): Int                             = fallible(0)(systemCaResult)
         def ctxSetMinMaxVersion(ctx: Long, min: Int, max: Int)(using AllowUnsafe): Int     = fallible(-1)(minMaxVersionResult)
 
-        def doHandshakeStep(ssl: Long)(using AllowUnsafe): Int                                   = 1
-        def feedCiphertext(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int       = len
-        def drainCiphertext(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int      = 0
-        def readPlain(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int            = 0
-        def writePlain(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int           = len
-        def pending(ssl: Long)(using AllowUnsafe): Int                                           = 0
-        def shutdownStep(ssl: Long)(using AllowUnsafe): Int                                      = 1
-        def peerCertSha256(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int = -1
-        def probeAvailable()(using AllowUnsafe): Boolean                                         = true
+        def doHandshakeStep(ssl: Long)(using AllowUnsafe): Int                                         = 1
+        def feedCiphertext(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int             = len
+        def drainCiphertext(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int            = 0
+        def readPlain(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int                  = 0
+        def writePlain(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int                 = len
+        def pending(ssl: Long)(using AllowUnsafe): Int                                                 = 0
+        def shutdownStep(ssl: Long)(using AllowUnsafe): Int                                            = 1
+        def peerCertEndPointHash(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int = -1
+        def probeAvailable()(using AllowUnsafe): Boolean                                               = true
     end StubBindings
 
     private class StubProvider(bindings: StubBindings) extends SslLibProvider:

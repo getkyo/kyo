@@ -20,6 +20,12 @@ import scalanativecrossproject.ScalaNativeCrossPlugin.autoImport.*
   * platforms links the wrong jar (JVM jar onto JS classpath)
   * (00-locked-decisions.md:126-128).
   *
+  * A module gets the runner's Compile classpath, never its Test one. The
+  * runner's own test suites would otherwise sit in every module's test
+  * binary: Scala.js and Scala Native link every suite's
+  * reflective-instantiation module, so a stale runner suite fails the link
+  * of an unrelated module.
+  *
   * Usage: one .withKyoTest call per module (the crossProject macro requires
   * a direct val binding, so zero-config is not achievable;
   * 00-locked-decisions.md:129-131).
@@ -39,7 +45,7 @@ object WithKyoTest {
                 if (cp.projects.contains(JVMPlatform))
                     cp.jvmSettings(
                         Test / unmanagedClasspath ++=
-                            (LocalProject("kyo-test-runnerJVM") / Test / fullClasspath).value,
+                            (LocalProject("kyo-test-runnerJVM") / Compile / fullClasspath).value,
                         Test / testFrameworks +=
                             new TestFramework("kyo.test.runner.SbtFramework")
                     )
@@ -48,7 +54,7 @@ object WithKyoTest {
                 if (cp.projects.contains(JSPlatform))
                     base.jsSettings(
                         Test / unmanagedClasspath ++=
-                            (LocalProject("kyo-test-runnerJS") / Test / fullClasspath).value,
+                            (LocalProject("kyo-test-runnerJS") / Compile / fullClasspath).value,
                         Test / testFrameworks +=
                             new TestFramework("kyo.test.runner.JsFramework")
                     )
@@ -57,7 +63,7 @@ object WithKyoTest {
                 if (cp.projects.contains(NativePlatform))
                     withJs.nativeSettings(
                         Test / unmanagedClasspath ++=
-                            (LocalProject("kyo-test-runnerNative") / Test / fullClasspath).value,
+                            (LocalProject("kyo-test-runnerNative") / Compile / fullClasspath).value,
                         Test / testFrameworks +=
                             new TestFramework("kyo.test.runner.NativeFramework")
                     )
@@ -66,7 +72,7 @@ object WithKyoTest {
             if (cp.projects.contains(WasmPlatform))
                 withNative.wasmSettings(
                     Test / unmanagedClasspath ++=
-                        (LocalProject("kyo-test-runnerWasm") / Test / fullClasspath).value,
+                        (LocalProject("kyo-test-runnerWasm") / Compile / fullClasspath).value,
                     Test / testFrameworks +=
                         new TestFramework("kyo.test.runner.JsFramework")
                 )

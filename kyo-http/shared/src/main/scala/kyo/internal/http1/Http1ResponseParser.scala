@@ -19,7 +19,7 @@ import scala.util.control.NoStackTrace
   */
 final private[kyo] class Http1ResponseParser(
     inbound: Channel.Unsafe[Span[Byte]],
-    maxHeaderSize: Int = 65536,
+    maxHeaderSize: Int = readBufferCapacity(HttpTransportConfig.default.maxHeaderSize),
     onResponseParsed: (ParsedResponse, Span[Byte]) => Unit = (_, _) => (),
     onFailure: Result.Error[Http1ClientConnection.ResponseFailure] => Unit = (_: Result.Error[Http1ClientConnection.ResponseFailure]) => ()
 )(using allow: AllowUnsafe, frame: Frame):

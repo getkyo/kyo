@@ -867,7 +867,7 @@ class WebApiTest extends kyo.test.Test[Any]:
                     HttpTimeoutException(5.seconds, "POST", url)                         -> (Kind.Timeout, Present(5.seconds), Absent),
                     HttpMalformedBodyException("bad chunk")                              -> (Kind.Protocol, Absent, Absent),
                     HttpProtocolException("bad status line")                             -> (Kind.Protocol, Absent, Absent),
-                    HttpPayloadTooLargeException(10, 5) -> (Kind.PayloadTooLarge(10.bytes, 5.bytes), Absent, Absent),
+                    HttpPayloadTooLargeException(10.bytes, 5.bytes) -> (Kind.PayloadTooLarge(10.bytes, 5.bytes), Absent, Absent),
                     HttpConnectionClosedException(HttpConnectionClosedException.Phase.BeforeHead) ->
                         (Kind.ConnectionClosed, Absent, Absent),
                     HttpConnectionClosedException(HttpConnectionClosedException.Phase.BodyTruncated) ->

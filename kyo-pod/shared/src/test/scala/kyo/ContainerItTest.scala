@@ -23,6 +23,23 @@ class ContainerItTest extends BasePodTest:
         attempt(5)
     end assertPingReachable
 
+    /** The platform architecture of a `uname -m` answer, which names it as the kernel does. */
+    private def unameArch(machine: String): String =
+        machine match
+            case "aarch64" => "arm64"
+            case "x86_64"  => "amd64"
+            case other     => other
+
+    /** Docker's classic image store holds one platform's copy per reference; its containerd store and podman hold one per platform. */
+    private def storeKeepsOneCopyPerReference(runtime: String)(using Frame): Boolean < (Async & Abort[Any]) =
+        if runtime != "docker" then false
+        else
+            ContainerRuntime.findSocket(runtime) match
+                case Some(socket) =>
+                    val authority = kyo.internal.PercentEncoding.encode(socket, kyo.internal.PercentEncoding.Mode.Component)
+                    HttpClient.getText(s"http+unix://$authority/v1.43/info").map(!_.contains("io.containerd.snapshotter"))
+                case None => Abort.fail(s"$runtime has no socket to read its image store from")
+
     // =========================================================================
     // Backend Selection
     // =========================================================================
@@ -364,6 +381,57 @@ class ContainerItTest extends BasePodTest:
                     fail(s"auto-pull failed — Container.init should pull missing images, got $e")
                 case other => fail(s"unexpected result: $other")
             end for
+        }
+
+        // Regression: a multi-architecture index pinned by digest, with only another platform's copy cached, was created from that copy
+        // and run under emulation. Docker's classic store holds one copy per reference, so there the host's copy cannot be pulled
+        // beside the foreign one and the outcome is a typed conflict that leaves the foreign copy in place.
+        "a platform runs that platform's copy when the cache holds only another platform's" - runBackendsOf { runtime =>
+            // busybox 1.37.0-musl's index, used by no other leaf, so removing it races nothing.
+            val img = ContainerImage(
+                "docker.io/library/busybox@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092"
+            )
+            for
+                oneCopy <- storeKeepsOneCopyPerReference(runtime)
+                host    <- Container.Platform.host
+                foreign = if host.arch == "amd64" then Container.Platform.LinuxArm64 else Container.Platform.LinuxAmd64
+                _      <- Abort.run[ContainerException](ContainerImage.remove(img, force = true))
+                _      <- ContainerImage.pull(img, platform = Present(foreign))
+                cached <- ContainerImage.inspect(img)
+                _ = assert(cached.architecture == foreign.arch, s"precondition: only the ${foreign.arch} copy is cached, got $cached")
+                machine <- Abort.run[ContainerException](Container.init(
+                    Container.Config(img).platform(host).command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")
+                        .stopTimeout(0.seconds)
+                ).map(_.exec("uname", "-m")))
+                after <- ContainerImage.inspect(img)
+            yield
+                if oneCopy then
+                    machine match
+                        case Result.Failure(e: ContainerImagePlatformConflictException) =>
+                            assert(e.platform == Present(host), s"the conflict names the requested platform: $e")
+                            assert(after.architecture == foreign.arch, s"the cached ${foreign.arch} copy is left in place, got $after")
+                        case other => fail(s"$runtime's store holds one copy per reference, expected a platform conflict, got $other")
+                else
+                    machine match
+                        case Result.Success(m) =>
+                            assert(unameArch(m.stdout.trim) == host.arch, s"host ${host.reference}, the container ran: $m")
+                        case other => fail(s"expected the ${host.arch} copy to run, got $other")
+            end for
+        }
+
+        "Platform.host is the daemon's platform, the same through either backend" - runRuntimes { runtime =>
+            requireRuntimeCli(runtime)
+            ContainerRuntime.findSocket(runtime) match
+                case Some(socketPath) =>
+                    for
+                        overHttp  <- Container.withBackendConfig(_.UnixSocket(Path(socketPath)))(Container.Platform.host)
+                        overShell <- Container.withBackendConfig(_.Shell(runtime))(Container.Platform.host)
+                    yield assert(
+                        overHttp == overShell && overHttp.os == "linux" && Set("amd64", "arm64").contains(overHttp.arch),
+                        s"http $overHttp, shell $overShell"
+                    )
+                case None => cancel(s"$runtime has no socket for the http backend")
+            end match
         }
 
         "fails with AlreadyExists when name is taken" - runBackends {

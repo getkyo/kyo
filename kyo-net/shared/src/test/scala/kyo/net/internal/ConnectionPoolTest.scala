@@ -66,6 +66,59 @@ class ConnectionPoolTest extends Test:
         }
     }
 
+    "limit" - {
+        "of one admits one connection and keeps one idle" in {
+            val discarded = new AtomicInteger(0)
+            val pool      = Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
+                1,
+                kyo.Duration.Infinity,
+                _ => true,
+                _ => discard(discarded.incrementAndGet())
+            ))
+            assert(pool.tryReserve(key1))
+            assert(!pool.tryReserve(key1))
+            pool.unreserve(key1)
+            pool.release(key1, "a")
+            pool.release(key1, "b")
+            assert(discarded.get() == 1)
+            assert(!pool.tryReserve(key1))
+            assert(pool.poll(key1) == Present("a"))
+            assert(pool.poll(key1) == Maybe.empty)
+        }
+
+        "of zero admits no connection and keeps none idle" in {
+            val discarded = new AtomicInteger(0)
+            val pool      = Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
+                0,
+                kyo.Duration.Infinity,
+                _ => true,
+                _ => discard(discarded.incrementAndGet())
+            ))
+            assert(!pool.tryReserve(key1))
+            pool.release(key1, "a")
+            assert(discarded.get() == 1)
+            assert(pool.poll(key1) == Maybe.empty)
+        }
+
+        "below zero admits no connection" in {
+            val pool = mkPool(-3)
+            assert(!pool.tryReserve(key1))
+        }
+    }
+
+    "idle timeout of zero discards a released connection at once" in {
+        val discarded = new AtomicInteger(0)
+        val pool      = Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
+            2,
+            kyo.Duration.Zero,
+            _ => true,
+            _ => discard(discarded.incrementAndGet())
+        ))
+        pool.release(key1, "a")
+        assert(discarded.get() == 1)
+        assert(pool.poll(key1) == Maybe.empty)
+    }
+
     "unreserve" - {
         // Releasing an in-flight slot frees capacity so a subsequent tryReserve succeeds again.
         "frees a reserved slot so tryReserve succeeds again" in {

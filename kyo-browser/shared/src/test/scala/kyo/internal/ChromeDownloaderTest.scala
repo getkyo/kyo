@@ -352,7 +352,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
                 dest   <- Path.run(Path.temp("kyo-cd-stream-", ".zip"))
                 url = s"http://${server.host}:${server.port}/chrome.zip"
                 // Force the buffered ceiling below the body size: getBinary would reject, the streamed path must not.
-                result <- HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                result <- HttpClient.withConfig(_.maxResponseLength(64.kib)) {
                     Abort.run[BrowserSetupException](ChromeDownloader.downloadZip(url, dest, 1.minute))
                 }
                 size <- Path.runReadOnly(dest.size)

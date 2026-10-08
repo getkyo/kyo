@@ -339,6 +339,10 @@ class ContainerTest extends BasePodTest:
             assert(ContainerAlreadyStoppedException(cid).getMessage.contains("c-123"))
             assert(ContainerPortConflictException(8080, "bind: address already in use").port == 8080)
             assert(ContainerPortConflictException(8080, "x").getMessage.contains("8080"))
+            val busybox = ContainerImage("busybox", "1.36")
+            assert(ContainerImagePlatformConflictException(busybox, Present(Container.Platform("linux", "arm64")), "x")
+                .getMessage.contains("linux/arm64"))
+            assert(ContainerImagePlatformConflictException(busybox, Absent, "x").getMessage.contains(busybox.reference))
             assert(ContainerAuthException("ghcr.io", "denied").registry == "ghcr.io")
             assert(ContainerAuthException("ghcr.io", "denied").getMessage.contains("ghcr.io"))
             // 2-arg call uses default cause = ""

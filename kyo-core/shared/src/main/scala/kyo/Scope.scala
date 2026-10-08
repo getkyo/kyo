@@ -387,6 +387,119 @@ object Scope:
                     private[kyo] def awaitIfClosed(using Frame): Unit < Async =
                         Sync.Unsafe.defer(if closing.get() then promise.get else Kyo.unit)
             end init
+
+            /** A finalizer whose releases run on the fiber that awaits it, for an owner that closes and then awaits right away.
+              *
+              * [[init]] releases on a fiber of its own, so each close costs a fiber, a scheduler round trip and a suspension of
+              * the owner, even when the releases are a few synchronous callbacks. Here `close` only seals the finalizer, and
+              * `await` runs the releases on the calling fiber (nested runs first, then the own tasks in reverse registration
+              * order, one after another) and completes it; a second `await` returns at once. An `await` already waiting when
+              * `close` runs is served by a fiber that `close` forks.
+              *
+              * If the fiber running the releases is interrupted, the releases it has not started run on a detached fiber, which
+              * then completes the finalizer, so no registered release is skipped and no awaiter is left waiting.
+              *
+              * WARNING: a close that is never awaited runs nothing, which is why [[Scope.run]] uses [[init]].
+              */
+            def initInline()(using frame: Frame, u: AllowUnsafe): Finalizer =
+                new Finalizer:
+                    type Task = Maybe[Error[Any]] => Any < (Async & Abort[Throwable])
+                    // Registered tasks and nested runs, newest first; `null` once taken by whoever runs them.
+                    private val tasks    = AtomicRef.Unsafe.init[List[Task]](Nil)
+                    private val children = AtomicRef.Unsafe.init[List[Finalizer]](Nil)
+                    private val promise  = Promise.Unsafe.init[Unit, Any]()
+                    // The close, with its error, once one happened; and whether any await has started, so a later close knows one may be waiting.
+                    @volatile private var closed: Maybe[Maybe[Error[Any]]] = Absent
+                    @volatile private var parked                           = false
+
+                    private def closedError(using Frame) =
+                        new Closed(
+                            "Finalizer",
+                            frame,
+                            "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Scope.run' call."
+                        )
+
+                    def ensure(v: Task)(using Frame): Unit < Sync =
+                        Sync.Unsafe.defer(ensureUnsafe(v))
+
+                    private[kyo] def ensureUnsafe(v: Task)(using frame: Frame, allow: AllowUnsafe): Unit =
+                        val added =
+                            if closed.isDefined then null
+                            else tasks.getAndUpdate(ts => if ts eq null then null else v :: ts)
+                        if added eq null then
+                            Log.live.unsafe.warn(
+                                s"Scope: a finalizer was registered on a closed scope at ${frame.position.show}, running it detached"
+                            )
+                            discard(Fiber.Unsafe.init {
+                                Abort.recoverError[Throwable](error =>
+                                    Log.error("Scope finalizer failed", error.exception)
+                                )(v(Present(Result.Panic(closedError))))
+                            })
+                            throw closedError
+                        end if
+                    end ensureUnsafe
+
+                    private[kyo] def addChild(child: Finalizer)(using Frame, AllowUnsafe): Unit =
+                        discard(children.getAndUpdate(cs => if cs eq null then null else child :: cs))
+
+                    private[kyo] val forked: Finalizer = new Forked(this)
+
+                    // Runs the backlog once: the runner that takes it completes the promise, everyone else waits on
+                    // it. An empty backlog completes on the spot with no suspension.
+                    private def drain(ex: Maybe[Error[Any]])(using Frame): Unit < Async =
+                        val pending = tasks.getAndSet(null)
+                        if pending eq null then promise.safe.get
+                        else
+                            val nested            = children.getAndSet(null)
+                            val steps: List[Task] =
+                                if nested eq null then pending
+                                else nested.map(child => (e: Maybe[Error[Any]]) => child.close(e).andThen(child.await)) ++ pending
+                            if steps.isEmpty then promise.completeUnitDiscard()
+                            else
+                                // The steps not yet started, so a release interrupted halfway can hand them to a fiber of their own.
+                                var left = steps
+
+                                def run(from: List[Task]): Unit < Async =
+                                    Loop(from) {
+                                        case Nil          => Loop.done
+                                        case step :: rest =>
+                                            left = rest
+                                            Abort.run[Throwable](step(ex))
+                                                .map(_.foldError(_ => (), e => Log.error("Scope finalizer failed", e.exception)))
+                                                .andThen(Loop.continue(rest))
+                                    }
+                                Sync.ensure {
+                                    Sync.Unsafe.defer {
+                                        if left.isEmpty then promise.completeUnitDiscard()
+                                        else
+                                            discard(Fiber.Unsafe.init(run(left).andThen(Sync.Unsafe.defer(promise.completeUnitDiscard()))))
+                                    }
+                                }(run(steps))
+                            end if
+                        end if
+                    end drain
+
+                    def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
+                        Sync.Unsafe.defer {
+                            if closed.isEmpty then
+                                closed = Present(ex)
+                                if parked then Fiber.initUnscoped[Nothing, Unit, Any, Any](drain(ex)).unit else ()
+                            else ()
+                        }
+
+                    def await(using Frame): Unit < Async =
+                        Sync.Unsafe.defer {
+                            // `drain` hands the backlog to exactly one runner, so the re-check after parking cannot
+                            // double-run a close that raced it.
+                            parked = true
+                            closed match
+                                case Present(ex) => drain(ex)
+                                case Absent      => promise.safe.get
+                        }
+
+                    private[kyo] def awaitIfClosed(using Frame): Unit < Async =
+                        Sync.Unsafe.defer(if closed.isDefined then await else Kyo.unit)
+            end initInline
         end Unsafe
 
     end Finalizer

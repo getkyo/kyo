@@ -1,0 +1,7 @@
+{
+  "name": "kyo-website-bundle-minify",
+  "private": true,
+  "dependencies": {
+    "terser": "5.51.2"
+  }
+}

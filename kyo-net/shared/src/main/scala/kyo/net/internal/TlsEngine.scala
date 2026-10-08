@@ -50,10 +50,10 @@ private[net] trait TlsEngine:
     /** Drain the buffered decrypted plaintext, or an empty span when there is none. */
     def readBuffered()(using AllowUnsafe): Span[Byte]
 
-    /** RFC 5929 tls-server-end-point: SHA-256 of the peer leaf certificate DER (the SCRAM channel-binding token). 32 bytes, or `Absent`
-      * when there is no peer certificate.
+    /** RFC 5929 tls-server-end-point, the SCRAM channel-binding token: the peer leaf certificate DER hashed with its signature algorithm's
+      * hash, SHA-256 when that is MD5 or SHA-1. `Absent` when there is no peer certificate or its signature has no single hash.
       */
-    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]]
+    def serverEndPointHash()(using AllowUnsafe): Maybe[Span[Byte]]
 
     /** Advance the TLS close handshake one step, emitting this side's close_notify alert (RFC 8446 6.1 / RFC 5246 7.2.1: each party MUST send
       * a close_notify before closing the write side). The produced alert record lands on the drain side; the caller [[drainCiphertext]]s it and

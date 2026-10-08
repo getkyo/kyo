@@ -372,7 +372,7 @@ Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-act
 
 ### Specialized tools
 
-Domain-shaped modules: parsing, character sets, MIME headers, durable workflows, container management, low-latency messaging, browser automation, web UIs, Slack, Telegram and WhatsApp bots, native C bindings, and TASTy reflection.
+Domain-shaped modules: parsing, character sets, MIME headers, durable workflows, container management, low-latency messaging, browser automation, web UIs, Slack, Telegram and WhatsApp bots, email, native C bindings, and TASTy reflection.
 
 | Module                                  | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | --------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
@@ -383,6 +383,7 @@ Domain-shaped modules: parsing, character sets, MIME headers, durable workflows,
 | [kyo-slack](kyo-slack/README.md)        | ✅  | ✅  | ✅     | ✅   | Slack Socket Mode bot client: structural acking, Web API, typed Block Kit + `dsl`, lossless reconnect      |
 | [kyo-telegram](kyo-telegram/README.md)  | ✅  | ✅  | ✅     | ✅   | Telegram Bot API client: long polling or webhook, typed updates and keyboards, failures typed per call     |
 | [kyo-whatsapp](kyo-whatsapp/README.md)  | ✅  | ✅  | ✅     | ✅   | WhatsApp Cloud API client: signed webhook handler, typed messages and media, failures typed per call       |
+| [kyo-email](kyo-email/README.md)        | ✅  | ✅  | ✅     | ✅   | IMAP receive loop and session verbs, SMTP submission, and a MIME message model that parses and renders     |
 | [kyo-browser](kyo-browser/README.md)†   | ✅  | ✅  | ✅     | ✅   | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown  |
 | [kyo-jsonrpc](kyo-jsonrpc/README.md)    | ✅  | ✅  | ✅     | ✅   | JSON-RPC 2.0 peers over pluggable transports with typed routes, calls, notifications, progress, and cancel |
 | [kyo-jsonrpc-http](kyo-jsonrpc/README.md#websocket-kyo-jsonrpc-http) | ✅ | ✅ | ✅ | ✅ | WebSocket transport for kyo-jsonrpc peers, `JsonRpcHttpTransport`, on kyo-http                    |

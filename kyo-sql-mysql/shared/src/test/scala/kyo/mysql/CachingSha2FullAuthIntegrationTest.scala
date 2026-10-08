@@ -24,7 +24,7 @@ class CachingSha2FullAuthIntegrationTest extends SqlContainerTest:
 
     // ─── Integration leaf: cache-miss full-auth via pure-Scala RSA-OAEP ──────────
 
-    "caching_sha2_password full-auth via pure-Scala RSA-OAEP succeeds against fresh MySQL container".tagged("kyo.OwnContainer") in {
+    "caching_sha2_password full-auth via pure-Scala RSA-OAEP succeeds against fresh MySQL container".tagged(OwnContainer.name) in {
         Scope.run {
             // Fresh container = cold auth cache → server will issue full-auth (AuthMoreData 0x04).
             // Through `TestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the

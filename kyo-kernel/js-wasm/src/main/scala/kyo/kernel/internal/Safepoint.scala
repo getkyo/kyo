@@ -123,10 +123,13 @@ object Safepoint:
     private[kyo] def stopped(slot: Slot): Boolean =
         stopRequested || expired()
 
+    // One reading answers both questions. Two let the deadline pass between them: the slice is not stopped, yet its deadline is
+    // cleared, so it can never be stopped again and a loop waiting on the event loop spins forever.
     private[kyo] def consumeStopped(slot: Slot): Boolean =
-        val pending = stopRequested || expired()
+        val due     = expired()
+        val pending = stopRequested || due
         stopRequested = false
-        if expired() then armedDeadline = Long.MaxValue
+        if due then armedDeadline = Long.MaxValue
         pending
     end consumeStopped
 

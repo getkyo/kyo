@@ -76,7 +76,7 @@ private[kyo] object Gateway:
     end run
 
     // Discord sends no frame near this size: a `GUILD_CREATE` for a guild at the member limit is the largest, a few MiB.
-    private inline val MaxFrameSize = 16 * 1024 * 1024
+    private val MaxFrameSize: ByteSize = 16.mib
 
     private def connection[A](
         discord: Discord,

@@ -1707,4 +1707,115 @@ class ScopeTest extends kyo.test.Test[Any]:
             yield assert(value == "handle" && n == 0, s"the enclosing scope released a handle it does not own: closes=$n")
         }
     }
+
+    "Finalizer.Unsafe.initInline" - {
+        import AllowUnsafe.embrace.danger
+
+        "close runs nothing, and await runs the releases newest first" in {
+            val fin = Scope.Finalizer.Unsafe.initInline()
+            AtomicRef.init(List.empty[Int]).map { order =>
+                for
+                    _           <- fin.ensure(_ => order.getAndUpdate(1 :: _).unit)
+                    _           <- fin.ensure(_ => order.getAndUpdate(2 :: _).unit)
+                    _           <- fin.close(Absent)
+                    beforeAwait <- order.get
+                    _           <- fin.await
+                    _           <- fin.await
+                    afterAwait  <- order.get
+                yield
+                    assert(beforeAwait.isEmpty)
+                    assert(afterAwait == List(1, 2))
+            }
+        }
+
+        "an await started before the close completes once the close runs" in {
+            val fin = Scope.Finalizer.Unsafe.initInline()
+            AtomicInt.init(0).map { runs =>
+                for
+                    _      <- fin.ensure(_ => runs.incrementAndGet.unit)
+                    waiter <- Fiber.initUnscoped(fin.await)
+                    _      <- fin.close(Absent)
+                    _      <- waiter.get
+                    _      <- fin.await
+                    n      <- runs.get
+                yield assert(n == 1)
+            }
+        }
+
+        "an interrupted release hands the releases it has not started to another fiber" in {
+            val fin = Scope.Finalizer.Unsafe.initInline()
+            for
+                runs    <- AtomicInt.init(0)
+                started <- Latch.init(1)
+                _       <- fin.ensure(_ => runs.incrementAndGet.unit)
+                _       <- fin.ensure(_ => started.release.andThen(Async.never[Unit]))
+                _       <- fin.close(Absent)
+                runner  <- Fiber.initUnscoped(fin.await)
+                _       <- started.await
+                _       <- runner.interrupt
+                _       <- fin.await
+                n       <- runs.get
+            yield assert(n == 1)
+            end for
+        }
+
+        "nested runs are released before the own tasks" in {
+            val parent = Scope.Finalizer.Unsafe.initInline()
+            val child  = Scope.Finalizer.Unsafe.initInline()
+            for
+                order <- AtomicRef.init(List.empty[String])
+                _     <- parent.ensure(_ => order.getAndUpdate("parent" :: _).unit)
+                _     <- child.ensure(_ => order.getAndUpdate("child" :: _).unit)
+                _     <- Sync.defer(parent.addChild(child))
+                _     <- parent.close(Absent)
+                _     <- parent.await
+                seen  <- order.get
+            yield assert(seen.reverse == List("child", "parent"))
+            end for
+        }
+
+        "ensure after close is rejected before any await" in {
+            val fin = Scope.Finalizer.Unsafe.initInline()
+            for
+                _ <- fin.close(Absent)
+                r <- Abort.run[Throwable](fin.ensure(_ => ()))
+                _ <- fin.await
+            yield assert(r.error.exists(_.exception.isInstanceOf[Closed]), s"inline: $r")
+            end for
+        }
+
+        "ensure after close is rejected like the queued finalizer" in {
+            def rejected(fin: Scope.Finalizer) =
+                for
+                    _ <- fin.close(Absent)
+                    _ <- fin.await
+                    r <- Abort.run[Throwable](fin.ensure(_ => ()))
+                yield r
+            for
+                queued <- Scope.Finalizer.init(1)
+                q      <- rejected(queued)
+                i      <- rejected(Scope.Finalizer.Unsafe.initInline())
+            yield
+                assert(q.error.exists(_.exception.isInstanceOf[Closed]), s"queued: $q")
+                assert(i.error.exists(_.exception.isInstanceOf[Closed]), s"inline: $i")
+                assert(i.isPanic == q.isPanic, s"inline $i, queued $q")
+            end for
+        }
+
+        "a failing finalizer does not stop the others" in {
+            val fin = Scope.Finalizer.Unsafe.initInline()
+            AtomicInt.init(0).map { runs =>
+                for
+                    _ <- fin.ensure(_ => runs.incrementAndGet.unit)
+                    _ <- fin.ensure(_ => Abort.fail(new Exception("boom")))
+                    _ <- fin.ensure(_ => runs.incrementAndGet.unit)
+                    _ <- fin.ensure(_ => Sync.defer(throw new Exception("panic")))
+                    _ <- fin.ensure(_ => runs.incrementAndGet.unit)
+                    _ <- fin.close(Absent)
+                    _ <- fin.await
+                    n <- runs.get
+                yield assert(n == 3)
+            }
+        }
+    }
 end ScopeTest

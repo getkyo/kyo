@@ -295,7 +295,7 @@ class HttpClientBackendResponseFailureTest extends kyo.BaseHttpTest:
             withPeer(conn =>
                 onRequest(conn)(discard(conn.outbound.offer(bytes(s"HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n$body"))))
             ) { port =>
-                HttpClient.init(transportConfig = HttpTransportConfig.default.readChunkSize(262144)).map { client =>
+                HttpClient.init(transportConfig = HttpTransportConfig.default.readChunkSize(256.kib)).map { client =>
                     HttpClient.let(client)(getText(port).map(_.map(_.length)))
                 }
             }.map(result => assertValue(result, Result.succeed(150000)))

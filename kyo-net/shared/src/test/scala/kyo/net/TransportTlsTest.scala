@@ -92,6 +92,40 @@ class TransportTlsTest extends Test:
         }
     }
 
+    "a TLS connect whose peer drops after the TCP accept fails the handshake" - eachBackendTls { (transport, _, clientTls) =>
+        transport.listen("127.0.0.1", 0, 16)(conn => conn.close()).safe.get.map { listener =>
+            Scope.ensure(Sync.defer(listener.close())).andThen {
+                Abort.run[NetException | Closed | Timeout](
+                    Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
+                ).map { outcome =>
+                    outcome.foreach(conn => conn.close())
+                    outcome match
+                        case Result.Failure(e: NetTlsHandshakeException) => assert(e.port == listener.port)
+                        case other                                       => fail(s"expected NetTlsHandshakeException, got $other")
+                    end match
+                }
+            }
+        }
+    }
+
+    "a TLS connect to a port nothing listens on fails the TCP connect, not the handshake" - eachBackendTls { (transport, _, clientTls) =>
+        transport.listen("127.0.0.1", 0, 16)(conn => conn.close()).safe.get.map { listener =>
+            val port = listener.port
+            listener.close()
+            // NIO defers the descriptor's close to the selector's next pass, and until then the kernel still completes connects into the
+            // backlog and resets them at the close. `released` is the signal that the port refuses.
+            listener.released.safe.get.andThen(Abort.run[NetException | Closed | Timeout](
+                Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", port, clientTls).safe.get)
+            )).map { outcome =>
+                outcome.foreach(conn => conn.close())
+                outcome match
+                    case Result.Failure(e: NetConnectException) => assert(e.port == port)
+                    case other                                  => fail(s"expected NetConnectException, got $other")
+                end match
+            }
+        }
+    }
+
     "pem fixture paths are unique under concurrent writes" in {
         // pins TlsTestCertShared.uniquePathTag: nanoTime alone can tie across concurrent callers
         // (its granularity is about 40ns on an aarch64 VM, and a suite start fans the whole cell

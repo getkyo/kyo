@@ -119,7 +119,7 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
         "copies the two connection-shape fields by name" in {
             val http = HttpTransportConfig.default
                 .channelCapacity(7)
-                .readChunkSize(2048)
+                .readChunkSize(2.kib)
             val result = NetConfigTranslation.toNetConfig(http)
             assert(result.channelCapacity == 7)
             assert(result.readChunkSize == 2.kib)
@@ -136,20 +136,20 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
 
         "does not map maxHeaderSize: kyo.net.NetConfig has no such field (HTTP-parser concern, kept in kyo-http)" in {
             // A custom maxHeaderSize must not leak into the net config, and must not perturb the mapped fields.
-            val http   = HttpTransportConfig.default.maxHeaderSize(4096)
+            val http   = HttpTransportConfig.default.maxHeaderSize(4.kib)
             val result = NetConfigTranslation.toNetConfig(http)
             assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
-            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize.bytes)
+            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
         }
 
         "default input maps the connection-shape fields from HttpTransportConfig.default" in {
             val result = NetConfigTranslation.toNetConfig(HttpTransportConfig.default)
             assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
-            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize.bytes)
+            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
         }
 
         "a zero channel capacity and a zero read chunk size are carried as given, for kyo-net to apply" in {
-            val result = NetConfigTranslation.toNetConfig(HttpTransportConfig.default.channelCapacity(0).readChunkSize(0))
+            val result = NetConfigTranslation.toNetConfig(HttpTransportConfig.default.channelCapacity(0).readChunkSize(ByteSize.Zero))
             assert((result.channelCapacity, result.readChunkSize) == (0, ByteSize.Zero))
         }
 

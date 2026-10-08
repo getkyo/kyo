@@ -309,7 +309,7 @@ private[kyo] object WebApi:
             case _: HttpConnectionClosedException     => leaf(Kind.ConnectionClosed)
             case _: HttpProtocolException             => leaf(Kind.Protocol)
             case _: HttpMalformedBodyException        => leaf(Kind.Protocol)
-            case p: HttpPayloadTooLargeException      => leaf(Kind.PayloadTooLarge(p.bodySize.bytes, p.maxSize.bytes))
+            case p: HttpPayloadTooLargeException      => leaf(Kind.PayloadTooLarge(p.bodySize, p.maxSize))
             case _: HttpWebSocketHandshakeException   => leaf(Kind.WebSocketHandshake)
             case _: HttpUrlParseException             => unreachable("HttpUrlParseException")
             case _: HttpNonAsciiException             => unreachable("HttpNonAsciiException")
@@ -327,6 +327,9 @@ private[kyo] object WebApi:
             case _: HttpUnsupportedMediaTypeException => unreachable("HttpUnsupportedMediaTypeException")
             case _: HttpStreamingDecodeException      => unreachable("HttpStreamingDecodeException")
             case _: HttpMissingBoundaryException      => unreachable("HttpMissingBoundaryException")
+            case _: HttpCookieException               => unreachable("HttpCookieException")
+            case _: HttpRouteException                => unreachable("HttpRouteException")
+            case _: HttpInvalidStatusException        => unreachable("HttpInvalidStatusException")
         end match
     end transportFailure
 

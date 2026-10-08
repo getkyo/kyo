@@ -49,7 +49,7 @@ class PostgresConfigSearchPathIntegrationTest extends SqlContainerTest:
     private def noteOnSimple(client: SqlClient)(using Frame): String < (Async & Abort[SqlException]) =
         client.simpleQuery("SELECT note FROM probe").map(_.head.decode[String](0))
 
-    "an unqualified read resolves against the configured schema on every pooled connection".tagged("kyo.OwnContainer") in {
+    "an unqualified read resolves against the configured schema on every pooled connection".tagged(OwnContainer.name) in {
         Scope.run {
             withServer { url =>
                 val config = SqlConfig.default
@@ -70,7 +70,7 @@ class PostgresConfigSearchPathIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "naming no search path leaves the server's own default standing".tagged("kyo.OwnContainer") in {
+    "naming no search path leaves the server's own default standing".tagged(OwnContainer.name) in {
         Scope.run {
             withServer { url =>
                 SqlClient.init(url, SqlConfig.default.maxConnections(2)).map { client =>
@@ -80,7 +80,7 @@ class PostgresConfigSearchPathIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "the configured search path survives a session reset".tagged("kyo.OwnContainer") in {
+    "the configured search path survives a session reset".tagged(OwnContainer.name) in {
         Scope.run {
             withServer { url =>
                 val config = SqlConfig.default.maxConnections(1).extension(PostgresConfig(searchPath = Chunk("app")))
@@ -106,7 +106,7 @@ class PostgresConfigSearchPathIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "a schema named in the statement wins over the configured search path".tagged("kyo.OwnContainer") in {
+    "a schema named in the statement wins over the configured search path".tagged(OwnContainer.name) in {
         Scope.run {
             withServer { url =>
                 val config = SqlConfig.default.maxConnections(2).extension(PostgresConfig(searchPath = Chunk("app")))
@@ -121,7 +121,7 @@ class PostgresConfigSearchPathIntegrationTest extends SqlContainerTest:
         }
     }
 
-    "two search paths on one client do not share pooled connections".tagged("kyo.OwnContainer") in {
+    "two search paths on one client do not share pooled connections".tagged(OwnContainer.name) in {
         Scope.run {
             withServer { url =>
                 val config = SqlConfig.default.maxConnections(4).extension(PostgresConfig(searchPath = Chunk("app")))

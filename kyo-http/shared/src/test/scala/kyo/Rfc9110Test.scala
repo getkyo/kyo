@@ -515,7 +515,7 @@ class Rfc9110Test extends BaseHttpTest:
         val route = HttpRoute.postRaw("upload").request(_.bodyText).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok("ok"))
         // Use small maxContentLength
-        val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(10)
+        val config = HttpServerConfig.default.port(0).host("127.0.0.1").maxContentLength(10.bytes)
         Scope.run {
             HttpServer.init(config)(ep).map { server =>
                 val bigBody   = "x" * 100 // exceeds 10-byte limit

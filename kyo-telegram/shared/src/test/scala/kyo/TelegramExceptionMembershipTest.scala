@@ -189,7 +189,7 @@ private object TelegramExceptionMembershipTest:
     def replyFor(kind: Kind): Reply =
         def answer(k: Kind): Reply =
             val (code, d) = answerOf(k)
-            Reply(HttpStatus(code), s"""{"ok":false,"error_code":$code,"description":"$d"}""")
+            Reply(HttpStatus.init(code).getOrThrow, s"""{"ok":false,"error_code":$code,"description":"$d"}""")
         kind match
             case Kind.UnexpectedStatus => Reply(HttpStatus(502), "<html>bad gateway</html>")
             case Kind.Decode           => Reply(HttpStatus.OK, """{"ok":true,"result":"not what the method returns"}""")
@@ -201,7 +201,7 @@ private object TelegramExceptionMembershipTest:
             case Kind.Migrated =>
                 val (code, d) = answerOf(kind)
                 Reply(
-                    HttpStatus(code),
+                    HttpStatus.init(code).getOrThrow,
                     s"""{"ok":false,"error_code":$code,"description":"$d","parameters":{"migrate_to_chat_id":$migratedTo}}"""
                 )
             case Kind.Unauthorized | Kind.Forbidden | Kind.Conflict | Kind.ChatNotFound | Kind.MessageNotFound | Kind.MessageNotModified |

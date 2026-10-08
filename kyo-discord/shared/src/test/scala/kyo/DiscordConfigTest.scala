@@ -70,22 +70,22 @@ class DiscordConfigTest extends kyo.test.Test[Any]:
             Result.succeed((url("http://127.0.0.1:8081/api"), 2999.millis, 1, 1.nano, 1.bytes)))
     }
 
-    private def heldAndNarrowed(bound: ByteSize): Result[DiscordInvalidConfigException, (ByteSize, Int)] =
+    private def heldAndPassed(bound: ByteSize): Result[DiscordInvalidConfigException, (ByteSize, ByteSize)] =
         DiscordConfig.init(token, Discord.Intents.Guilds, maxResponseLength = bound).map(c =>
             (c.maxResponseLength, internal.discord.Rest.requestConfig(c, c.requestTimeout).maxResponseLength)
         )
 
-    "a zero response bound is held as given and narrowed to one byte at the request config" in {
-        assert(heldAndNarrowed(ByteSize.Zero) == Result.succeed((ByteSize.Zero, 1)))
+    "a zero response bound is held as given and reaches the request config unchanged, for kyo-http to narrow" in {
+        assert(heldAndPassed(ByteSize.Zero) == Result.succeed((ByteSize.Zero, ByteSize.Zero)))
     }
 
     "a one-byte response bound is held and reaches the request config unchanged" in {
-        assert(heldAndNarrowed(1.bytes) == Result.succeed((1.bytes, 1)))
+        assert(heldAndPassed(1.bytes) == Result.succeed((1.bytes, 1.bytes)))
     }
 
-    "a response bound past Int.MaxValue bytes is held as given and narrowed to Int.MaxValue at the request config" in {
+    "a response bound past Int.MaxValue bytes is held as given and reaches the request config unchanged, for kyo-http to narrow" in {
         val over = (Int.MaxValue.toLong + 1).bytes
-        assert(heldAndNarrowed(over) == Result.succeed((over, Int.MaxValue)))
+        assert(heldAndPassed(over) == Result.succeed((over, over)))
     }
 
     "init fails with the setting and what is wrong" - {

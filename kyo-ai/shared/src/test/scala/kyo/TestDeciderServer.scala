@@ -45,7 +45,7 @@ object TestDeciderServer:
     end Scripted
 
     /** Binds the server on an ephemeral port within the enclosing `Scope` and runs `f` with the handle. */
-    def run[A, S](f: TestDeciderServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+    def run[A, S](f: TestDeciderServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         for
             scripts  <- AtomicRef.init(Chunk.empty[Scripted])
             received <- AtomicRef.init(Chunk.empty[String])
@@ -62,7 +62,10 @@ object TestDeciderServer:
             received.getAndUpdate(_.append(req.fields.body)).andThen {
                 popNext(scripts).map {
                     case Present(Scripted.Status(code, body, headers)) =>
-                        headers.foldLeft(HttpResponse(HttpStatus(code)))((r, h) => r.addHeader(h._1, h._2)).addField("body", body)
+                        headers.foldLeft(HttpResponse(HttpStatus.init(code).getOrThrow))((r, h) => r.addHeader(h._1, h._2)).addField(
+                            "body",
+                            body
+                        )
                     case Present(Scripted.Never)   => Latch.init(1).map(_.await).andThen(HttpResponse.ok(""))
                     case Present(Scripted.Body(b)) => HttpResponse.ok(b)
                     case Absent                    => defaultAnswer(req.fields.body)
