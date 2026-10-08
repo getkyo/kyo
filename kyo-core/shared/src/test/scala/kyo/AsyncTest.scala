@@ -2,6 +2,7 @@ package kyo
 
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
+import kyo.internal.Platform
 
 class AsyncTest extends kyo.test.Test[Any]:
 
@@ -260,6 +261,24 @@ class AsyncTest extends kyo.test.Test[Any]:
                 )
             Abort.run(race).map {
                 r => assert(r == Result.panic(ex1))
+            }
+        }
+        "a failure finishing alongside a success never takes its place" in {
+            // The window between the two completions is nanoseconds wide: a race that can lose a success loses it 4 to 7 times
+            // in 200000 on JVM, and not reliably in fewer. JS runs one thread, where the completions cannot interleave. On
+            // macOS Native 200000 races did not finish within the 2 minute leaf timeout, so Native runs 1000 as a smoke check.
+            val races = if Platform.isJVM then 200000 else 1000
+            Async.foreach(1 to races, 32) { _ =>
+                Latch.init(1).map { latch =>
+                    Fiber.initUnscoped(Abort.run[String](Async.race(
+                        latch.await.andThen(1),
+                        latch.await.andThen(Abort.fail("failure"))
+                    ))).map { fiber =>
+                        latch.release.andThen(fiber.get)
+                    }
+                }
+            }.map { results =>
+                assert(results.filter(_ != Result.succeed(1)) == Chunk.empty)
             }
         }
         "never" in {
