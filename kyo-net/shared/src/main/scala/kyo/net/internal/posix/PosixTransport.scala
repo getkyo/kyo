@@ -440,41 +440,45 @@ final private[net] class PosixTransport private[posix] (
     )(using allow: AllowUnsafe, frame: Frame): Unit =
         encoded match
             case Absent =>
-                promise.completeDiscard(Result.fail(connectFail(host, port, "")))
+                // Every TCP connect arrives encoded, so this is a Unix path too long for sun_path.
+                promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(PosixConstants.ENAMETOOLONG))))
             case Present((family, addr, len)) =>
                 val sockR = sockets.socket(family, PosixConstants.SOCK_STREAM, 0)
                 val fd    = sockR.value
                 if fd < 0 then
                     addr.close()
                     promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(sockR.errorCode))))
-                else if !prepareClientSocket(fd, nodelay, config) then
-                    addr.close()
-                    closeRawFd(fd)
-                    promise.completeDiscard(Result.fail(connectFail(host, port, "")))
                 else
-                    val driver = pool.next()
-                    // The handle carries the caller's read size for the rest of its life (PosixHandle.readBufferSize), so every later read on
-                    // this connection uses it without the config having to be reachable from the handle.
-                    val handle = PosixHandle.socket(
-                        fd,
-                        kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
-                        connectTarget = Present((addr, len)),
-                        createdAt = frame
-                    )
-                    handle.peerCloseGrace = config.peerCloseGrace.duration
-                    handle.closeFlushGrace = config.closeFlushGrace.duration
-                    handle.driver = driver
-                    // Arm the connect-deadline before either arm awaits, so the deadline races the OS connect on the same `promise` for both the
-                    // io_uring completion arm and the epoll/kqueue readiness arm. A deadline-fired close surfaces the typed
-                    // NetConnectTimeoutException; an OS-failure close surfaces NetConnectException through `connectFail`: the close cause is
-                    // discriminated by which arm completes `promise` first (completeDiscard, at most once).
-                    handle.connectDeadlineDisarm = Present(armConnectDeadline(promise, host, port, connectTimeout))
-                    if isCompletionConnect(driver) then
-                        // Completion arm (io_uring): the driver submits the connect SQE itself against `handle.connectTarget`.
-                        awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = false, config)
+                    val prepared = prepareClientSocket(fd, nodelay, config)
+                    if prepared != 0 then
+                        addr.close()
+                        closeRawFd(fd)
+                        promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(-prepared))))
                     else
-                        // Readiness arm (epoll/kqueue): issue the non-blocking connect, then wait for write-readiness + SO_ERROR.
-                        driveReadinessConnect(handle, addr, len, driver, target, host, port, tls, promise, config)
+                        val driver = pool.next()
+                        // The handle carries the caller's read size for the rest of its life (PosixHandle.readBufferSize), so every later read
+                        // on this connection uses it without the config having to be reachable from the handle.
+                        val handle = PosixHandle.socket(
+                            fd,
+                            kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                            connectTarget = Present((addr, len)),
+                            createdAt = frame
+                        )
+                        handle.peerCloseGrace = config.peerCloseGrace.duration
+                        handle.closeFlushGrace = config.closeFlushGrace.duration
+                        handle.driver = driver
+                        // Arm the connect-deadline before either arm awaits, so the deadline races the OS connect on the same `promise` for both
+                        // the io_uring completion arm and the epoll/kqueue readiness arm. A deadline-fired close surfaces the typed
+                        // NetConnectTimeoutException; an OS-failure close surfaces NetConnectException through `connectFail`: the close cause is
+                        // discriminated by which arm completes `promise` first (completeDiscard, at most once).
+                        handle.connectDeadlineDisarm = Present(armConnectDeadline(promise, host, port, connectTimeout))
+                        if isCompletionConnect(driver) then
+                            // Completion arm (io_uring): the driver submits the connect SQE itself against `handle.connectTarget`.
+                            awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = false, config)
+                        else
+                            // Readiness arm (epoll/kqueue): issue the non-blocking connect, then wait for write-readiness + SO_ERROR.
+                            driveReadinessConnect(handle, addr, len, driver, target, host, port, tls, promise, config)
+                        end if
                     end if
                 end if
         end match
@@ -964,7 +968,7 @@ final private[net] class PosixTransport private[posix] (
 
     /** Bind + listen on the encoded address, resolve the bound port (for TCP; -1 for Unix), build a [[PosixListener]], and launch the accept
       * loop. The listen socket is set non-blocking before arming the poller so accept never parks; `acceptNow` returns a fd or EAGAIN inline.
-      * On any setup failure the partially opened fd is closed and the promise fails `Closed`.
+      * On any setup failure the partially opened fd is closed and the promise fails `NetBindException` with the errno of the step that failed.
       */
     private def listenImpl(
         encoded: Maybe[(Int, Buffer[Byte], Int)],
@@ -980,7 +984,8 @@ final private[net] class PosixTransport private[posix] (
     )(using allow: AllowUnsafe, frame: Frame): Unit =
         encoded match
             case Absent =>
-                promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
+                // Every TCP listen arrives encoded, so this is a Unix path too long for sun_path.
+                promise.completeDiscard(Result.fail(NetBindException(host, port, new NetErrno(PosixConstants.ENAMETOOLONG))))
             case Present((family, addr, len)) =>
                 try
                     val sockR = sockets.socket(family, PosixConstants.SOCK_STREAM, 0)
@@ -1000,28 +1005,32 @@ final private[net] class PosixTransport private[posix] (
                                 closeRawFd(fd)
                                 promise.completeDiscard(Result.fail(NetBindException(host, port, new NetErrno(listenR.errorCode))))
                             else
-                                val (actualPort, address) = unixPath match
-                                    case Present(path) => (-1, NetAddress.Unix(path))
-                                    case Absent        =>
-                                        val resolved = resolvePort(fd, family)
-                                        (resolved, NetAddress.Tcp(host, resolved))
-                                val listener =
-                                    new PosixListener(
-                                        fd,
-                                        actualPort,
-                                        host,
-                                        address,
-                                        frame,
-                                        sockets,
-                                        AtomicBoolean.Unsafe.init(false)
-                                    )
-                                // Flip fd non-blocking BEFORE arming the poller (atomic with awaitAccept arming; no busy-spin window).
-                                if shim.kyo_posix_set_nonblocking(fd) != 0 then
-                                    Log.live.unsafe.warn(s"listen: failed to set listen fd non-blocking fd=$fd")
-                                startAcceptLoop(listener, handler, tls, config)
-                                if !promise.complete(Result.succeed(listener)) then
-                                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
-                                    listener.close()
+                                // Non-blocking before the accept loop arms the poller: a blocking listen fd would park its carrier in accept.
+                                val nonBlocking = shim.kyo_posix_set_nonblocking(fd)
+                                if nonBlocking != 0 then
+                                    closeRawFd(fd)
+                                    promise.completeDiscard(Result.fail(NetBindException(host, port, new NetErrno(-nonBlocking))))
+                                else
+                                    val (actualPort, address) = unixPath match
+                                        case Present(path) => (-1, NetAddress.Unix(path))
+                                        case Absent        =>
+                                            val resolved = resolvePort(fd, family)
+                                            (resolved, NetAddress.Tcp(host, resolved))
+                                    val listener =
+                                        new PosixListener(
+                                            fd,
+                                            actualPort,
+                                            host,
+                                            address,
+                                            frame,
+                                            sockets,
+                                            AtomicBoolean.Unsafe.init(false)
+                                        )
+                                    startAcceptLoop(listener, handler, tls, config)
+                                    if !promise.complete(Result.succeed(listener)) then
+                                        // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                                        listener.close()
+                                end if
                             end if
                         end if
                     end if
@@ -1185,7 +1194,7 @@ final private[net] class PosixTransport private[posix] (
         config: kyo.net.NetConfig,
         listener: PosixListener
     )(using AllowUnsafe, Frame): Unit =
-        if !prepareClientSocket(clientFd, nodelay = true, config) then closeRawFd(clientFd)
+        if prepareClientSocket(clientFd, nodelay = true, config) != 0 then closeRawFd(clientFd)
         else
             val driver = pool.next()
             val handle = PosixHandle.socket(
@@ -1416,16 +1425,18 @@ final private[net] class PosixTransport private[posix] (
     private def isCompletionConnect(driver: IoDriver[PosixHandle]): Boolean =
         driver.label == "IoUringDriver"
 
-    /** Set a client / accepted fd non-blocking, opt it out of SIGPIPE on macOS/BSD, and (when `nodelay`) disable Nagle. Returns false if the
-      * non-blocking shim fails; the `SO_NOSIGPIPE` / `TCP_NODELAY` options are best-effort (a failure there does not abort the connection).
+    /** Set a client / accepted fd non-blocking, opt it out of SIGPIPE on macOS/BSD, and (when `nodelay`) disable Nagle. Returns 0, or the
+      * negated errno when the non-blocking shim fails; the `SO_NOSIGPIPE` / `TCP_NODELAY` options are best-effort (a failure there does not
+      * abort the connection).
       *
       * `SO_NOSIGPIPE` is set on EVERY client fd on macOS/BSD regardless of `nodelay`: it is the per-socket SIGPIPE opt-out, not a performance
       * knob, and on macOS/BSD `MSG_NOSIGNAL` is the 0 sentinel so a `send` to a peer-closed socket relies entirely on `SO_NOSIGPIPE` to avoid a
       * SIGPIPE (process kill on Native). Gating it behind `nodelay` left `connectUnix` (which passes `nodelay = false`) exposed. `TCP_NODELAY`
       * stays gated on `nodelay`: disabling Nagle is a TCP-only performance choice and is meaningless on a Unix-domain socket.
       */
-    private def prepareClientSocket(fd: Int, nodelay: Boolean, config: kyo.net.NetConfig)(using AllowUnsafe): Boolean =
-        if shim.kyo_posix_set_nonblocking(fd) != 0 then false
+    private def prepareClientSocket(fd: Int, nodelay: Boolean, config: kyo.net.NetConfig)(using AllowUnsafe): Int =
+        val nonBlocking = shim.kyo_posix_set_nonblocking(fd)
+        if nonBlocking != 0 then nonBlocking
         else
             if PosixConstants.isMacOrBsd then
                 setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_NOSIGPIPE, 1)
@@ -1435,7 +1446,8 @@ final private[net] class PosixTransport private[posix] (
                     setIntOpt(fd, PosixConstants.IPPROTO_TCP, PosixConstants.TCP_QUICKACK, 1)
             end if
             applySocketBuffers(fd, config)
-            true
+            0
+        end if
     end prepareClientSocket
 
     /** Apply the configured SO_RCVBUF and SO_SNDBUF socket buffer sizes when Present. A kernel may silently clamp the value to a site-maximum

@@ -3,12 +3,17 @@ package kyo.net.internal
 import java.net.InetSocketAddress
 import java.net.StandardProtocolFamily
 import java.nio.ByteBuffer
+import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import kyo.*
+import kyo.net.NetAddress
+import kyo.net.NetBindException
 import kyo.net.NetConfig
+import kyo.net.NetConnectException
 import kyo.net.NetConnectionClosedException
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
+import kyo.net.NetUnixConnectException
 import kyo.net.Test
 import kyo.net.internal.TlsTestCert
 import kyo.net.internal.transport.*
@@ -316,9 +321,138 @@ class NioTransportTest extends Test:
         }
     }
 
+    "a listen its driver refuses is NetBindException carrying the driver's reason, plain and TLS" in {
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            transport.driver.close()
+            def refusal(listen: Fiber.Unsafe[kyo.net.Listener, Abort[NetException]]) =
+                listen.safe.getResult.map {
+                    case Result.Failure(e: NetBindException) =>
+                        assert(e.host == "127.0.0.1" && e.port == 0)
+                        assert(e.cause.isInstanceOf[java.nio.channels.ClosedSelectorException], s"cause: ${e.cause}")
+                        assert(e.getMessage.contains("bind/listen on 127.0.0.1:0 failed: java.nio.channels.ClosedSelectorException"))
+                    case other => fail(s"expected NetBindException, got $other")
+                }
+            refusal(transport.listen("127.0.0.1", 0, 50)(_ => ()))
+                .andThen(refusal(transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(_ => ())))
+        }
+    }
+
+    "a connect its driver refuses is NetConnectException carrying the driver's reason, plain and TLS" in {
+        // A loopback connect usually finishes inside connect or the first finishConnect, the paths that register the channel and hand the
+        // connection out at once, so a refusal there must fail the connect rather than return a connection on a closed driver.
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            val server = ServerSocketChannel.open()
+            server.bind(new InetSocketAddress("127.0.0.1", 0))
+            val port = server.socket().getLocalPort
+            transport.driver.close()
+            def refusal(connect: Fiber.Unsafe[kyo.net.Connection, Abort[NetException]]) =
+                connect.safe.getResult.map {
+                    case Result.Failure(e: NetConnectException) =>
+                        assert(e.cause.isInstanceOf[java.nio.channels.ClosedSelectorException], s"cause: ${e.cause}")
+                    case Result.Success(conn) =>
+                        conn.close()
+                        fail("a connect its driver refused must not hand out a connection")
+                    case other => fail(s"expected NetConnectException, got $other")
+                }
+            Sync.ensure(Sync.defer(server.close())) {
+                refusal(transport.connect("127.0.0.1", port))
+                    .andThen(refusal(transport.connectTls("127.0.0.1", port, NetTlsConfig(trustAll = true))))
+            }
+        }
+    }
+
+    "a Unix connect its driver refuses is NetUnixConnectException carrying the driver's reason" in {
+        given Frame      = Frame.internal
+        val udsSupported =
+            try
+                val ch = java.nio.channels.SocketChannel.open(StandardProtocolFamily.UNIX)
+                ch.close()
+                true
+            catch case _: Throwable => false
+        if !udsSupported then cancel("Java NIO Unix domain sockets unsupported on this host (needs Java 16+ on a Unix-like OS)")
+        mkTransport().map { transport =>
+            // A non-blocking AF_UNIX connect completes inside connect, the path that registers the channel and hands the connection out at once.
+            Scope.run(Path.run(Path.tempDir("kyo-nio-uds").map { dir =>
+                val path   = (dir / "s.sock").unsafe.show
+                val server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+                server.bind(java.net.UnixDomainSocketAddress.of(path))
+                transport.driver.close()
+                Sync.ensure(Sync.defer(server.close())) {
+                    transport.connectUnix(path).safe.getResult.map {
+                        case Result.Failure(e: NetUnixConnectException) =>
+                            assert(e.cause.isInstanceOf[java.nio.channels.ClosedSelectorException], s"cause: ${e.cause}")
+                        case Result.Success(conn) =>
+                            conn.close()
+                            fail("a Unix connect its driver refused must not hand out a connection")
+                        case other => fail(s"expected NetUnixConnectException, got $other")
+                    }
+                }
+            }))
+        }
+    }
+
+    "an accepted connection its driver refuses is closed, never handed to the handler, plain and TLS" in {
+        // The accept pass is driven directly: with the driver closed no accept readiness is ever dispatched, and a driver closing between the
+        // dispatch and the accepted channel's registration is the window this covers.
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            def refusedAccept(accept: (ServerSocketChannel, AtomicBoolean.Unsafe, NioListener) => Unit) =
+                val server = ServerSocketChannel.open()
+                server.configureBlocking(false)
+                server.bind(new InetSocketAddress("127.0.0.1", 0))
+                val port     = server.socket().getLocalPort
+                val listener =
+                    new NioListener(server, port, "127.0.0.1", transport.driver, NetAddress.Tcp("127.0.0.1", port), Frame.internal)
+                val client = SocketChannel.open(new InetSocketAddress("127.0.0.1", port))
+                client.configureBlocking(false)
+                val handled = AtomicBoolean.Unsafe.init(false)
+                Sync.ensure(Sync.defer { client.close(); server.close() }) {
+                    accept(server, handled, listener)
+                    awaitCondition(5.seconds)(client.read(ByteBuffer.allocate(1)) == -1).map { closed =>
+                        assert(!handled.get(), "the handler ran for a connection its driver refused")
+                        assert(closed, "the refused accepted connection was left open")
+                    }
+                }
+            end refusedAccept
+            transport.driver.close()
+            refusedAccept((server, handled, listener) =>
+                transport.acceptAllPending(server, _ => handled.set(true), listener, NetConfig.default)
+            ).andThen(refusedAccept((server, handled, listener) =>
+                transport.acceptAllPendingTls(server, _ => handled.set(true), listener, serverTlsConfig, NetConfig.default)
+            ))
+        }
+    }
+
     // -----------------------------------------------------------------------
     // listen Listener.close stops accepting
     // -----------------------------------------------------------------------
+
+    "an accept armed while the listener closes is released, not left armed" in {
+        // The accept loop checks that its listener is open, then arms, so an arm can land while `close` runs. `close` fails the pending
+        // accept inline, so that accept's callback runs inside `close` and arms from there.
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            transport.listen("127.0.0.1", 0, 50)(_ => ()).safe.get.map { l =>
+                val listener                                    = l.asInstanceOf[NioListener]
+                def arm(promise: IOPromise[Closed, Unit]): Unit =
+                    transport.driver.awaitAccept(
+                        listener.serverChannel,
+                        promise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]],
+                        listener.createdAt
+                    )
+                val pending = new IOPromise[Closed, Unit]
+                val armed   = new IOPromise[Closed, Unit]
+                pending.onComplete(_ => arm(armed))
+                arm(pending)
+                listener.close()
+                assert(pending.done(), "the pending accept was not failed by close")
+                assert(armed.done(), "an accept armed while its listener closed stays armed on the closed listener")
+                assert(armed.poll().exists(_.isFailure), s"expected the accept to fail with Closed, got ${armed.poll()}")
+            }
+        }
+    }
 
     "listener.close marks listener as closed" in {
         given Frame = Frame.internal
@@ -726,6 +860,115 @@ class NioTransportTest extends Test:
                 "NioTransport must thread peerCloseGrace so an abandoned backpressured accepted connection is reclaimed after the client FIN"
             )
             end for
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // connect: an in-flight connect that ends before the OS answers
+    // -----------------------------------------------------------------------
+
+    /** Starts `connect` on a fresh transport against RFC 5737 TEST-NET-1, where a TCP connect parks in SYN_SENT until the OS gives up (75s
+      * on macOS, about 127s on Linux), and hands the scenario the in-flight connect and the channel it registered. The channel is the only
+      * one on the transport's selector. A host that rejects the connect at once (no route to TEST-NET-1) cannot hold one in flight, so the
+      * leaf cancels.
+      */
+    private def withInFlightConnect(
+        connect: NioTransport => Fiber.Unsafe[kyo.net.Connection, Abort[NetException]]
+    )(
+        scenario: (Fiber.Unsafe[kyo.net.Connection, Abort[NetException]], java.nio.channels.SelectableChannel) => Unit <
+            (Async & Abort[Any])
+    )(using Frame): Unit < (Async & Abort[Any] & Scope) =
+        import scala.jdk.CollectionConverters.*
+        mkTransport().map { transport =>
+            val inFlight = connect(transport)
+            // The poll carrier registers the channel on its next cycle, so its key appears shortly after the connect starts. A scenario's
+            // connect deadline must leave this wait room to see it: one that fires first closes the channel and cancels the leaf.
+            awaitCondition(5.seconds)(!transport.driver.selector.keys().isEmpty || inFlight.done()).map { _ =>
+                transport.driver.selector.keys().asScala.headOption match
+                    case Some(key) => scenario(inFlight, key.channel())
+                    case None      =>
+                        throw new kyo.test.TestCancelled(s"the connect to 192.0.2.1 did not stay in flight: ${inFlight.poll()}")
+                end match
+            }
+        }
+    end withInFlightConnect
+
+    "a connect whose deadline fires before the OS answers closes its channel" in {
+        given Frame = Frame.internal
+        withInFlightConnect(_.connect("192.0.2.1", 80, 2.seconds)) { (inFlight, channel) =>
+            Abort.run[NetException](inFlight.safe.get).map { result =>
+                assert(
+                    result.failure.exists(_.isInstanceOf[kyo.net.NetConnectTimeoutException]),
+                    s"expected the connect deadline, got $result"
+                )
+                awaitCondition(30.seconds)(!channel.isOpen).map { closed =>
+                    assert(closed, "the channel of a connect its deadline failed stays open in SYN_SENT until the OS gives up")
+                }
+            }
+        }
+    }
+
+    "an interrupted in-flight connect closes its channel" in {
+        given Frame = Frame.internal
+        withInFlightConnect(_.connect("192.0.2.1", 80, 60.seconds)) { (inFlight, channel) =>
+            discard(inFlight.interruptDiscard(Result.Panic(Interrupted(Frame.internal, "caller gave up"))))
+            awaitCondition(30.seconds)(!channel.isOpen).map { closed =>
+                assert(closed, "the channel of an interrupted connect stays open in SYN_SENT until the OS gives up")
+            }
+        }
+    }
+
+    "a TLS connect whose deadline fires in the TCP phase closes its channel" in {
+        given Frame = Frame.internal
+        withInFlightConnect(_.connectTls("192.0.2.1", 443, NetTlsConfig(trustAll = true), 2.seconds)) { (inFlight, channel) =>
+            Abort.run[NetException](inFlight.safe.get).map { result =>
+                assert(
+                    result.failure.exists(_.isInstanceOf[kyo.net.NetConnectTimeoutException]),
+                    s"expected the connect deadline, got $result"
+                )
+                awaitCondition(30.seconds)(!channel.isOpen).map { closed =>
+                    assert(closed, "the channel of a TLS connect its deadline failed stays open in SYN_SENT until the OS gives up")
+                }
+            }
+        }
+    }
+
+    "a TLS connect whose TCP phase finishes late closes its channel when the handshake fails" in {
+        // A loopback connect normally finishes inline. With the listener's accept queue full the kernel drops the client's SYN, so the
+        // connect stays pending and completes on the retransmit once the queue is drained: the late path, which hands the handshake the
+        // connect's own handle. The peer then closes without speaking TLS, so the handshake fails.
+        given Frame = Frame.internal
+        import scala.jdk.CollectionConverters.*
+        mkTransport().map { transport =>
+            val server = ServerSocketChannel.open()
+            server.bind(new InetSocketAddress("127.0.0.1", 0), 1)
+            val address = server.getLocalAddress
+            val fillers = Chunk.fill(2)(SocketChannel.open(address))
+            server.configureBlocking(false)
+            val inFlight = transport.connectTls("127.0.0.1", server.socket().getLocalPort, NetTlsConfig(trustAll = true), 30.seconds)
+            Sync.ensure(Sync.defer { fillers.foreach(_.close()); server.close() }) {
+                awaitCondition(5.seconds)(!transport.driver.selector.keys().isEmpty || inFlight.done()).map { _ =>
+                    val channel = transport.driver.selector.keys().asScala.headOption.map(_.channel())
+                    val pending =
+                        channel.exists(ch => (transport.driver.interestOpsFor(ch) & java.nio.channels.SelectionKey.OP_CONNECT) != 0)
+                    if !pending then cancel(s"the connect finished inline, so the late path was not reached: ${inFlight.poll()}")
+                    // Drain the queue so the retransmitted SYN completes, then close the client's connection unanswered.
+                    var accepted = Chunk.empty[SocketChannel]
+                    awaitCondition(10.seconds) {
+                        Maybe(server.accept()).foreach(ch => accepted = accepted.append(ch))
+                        accepted.size > fillers.size
+                    }.map { reached =>
+                        accepted.foreach(_.close())
+                        assert(reached, "the pending connect never reached the listener")
+                        Abort.run[NetException](inFlight.safe.get).map { result =>
+                            assert(result.isFailure, s"a handshake whose peer closed must fail, got $result")
+                            awaitCondition(10.seconds)(!channel.get.isOpen).map { closed =>
+                                assert(closed, "the channel of a late-connected TLS connect stays open after its handshake failed")
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

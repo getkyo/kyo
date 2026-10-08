@@ -20,7 +20,8 @@ import kyo.ffi.Ffi
 private[net] trait PosixShimBindings extends Ffi:
 
     /** Set `O_NONBLOCK` on `fd` using `fcntl(fd, F_GETFL, 0)` + `fcntl(fd, F_SETFL, flags | O_NONBLOCK)`. Both calls are issued by the C
-      * shim, which compiles them as correct variadic calls on every architecture. Returns 0 on success, -1 on failure.
+      * shim, which compiles them as correct variadic calls on every architecture. Returns 0 on success, or the negated errno of the failed
+      * call.
       */
     def kyo_posix_set_nonblocking(fd: Int)(using AllowUnsafe): Int
 

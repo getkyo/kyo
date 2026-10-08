@@ -111,6 +111,8 @@ private[net] object PosixConstants:
     // connections sharing a host, e.g. a full test-suite run), not a broken ring; the io_uring reap loop treats it as a transient retry
     // condition, same as EBUSY/EAGAIN/EINTR, rather than tearing the whole ring (and every connection on it) down.
     val ENOMEM: Int = 12
+    // Reported for a Unix socket path longer than sun_path: no sockaddr_un can carry it, so the transport fails before any syscall.
+    val ENAMETOOLONG: Int = if isMacOrBsd then 63 else 36
 
     // --- epoll (Linux) ---
     val EPOLL_CTL_ADD: Int = 1

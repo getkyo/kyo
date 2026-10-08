@@ -97,7 +97,7 @@ class NioIoDriverTest extends Test:
             given Frame = Frame.internal
             discard(driver.start())
             val ssc = openServer()
-            assert(driver.registerServerChannel(ssc))
+            assert(driver.registerServerChannel(ssc).isSuccess)
             // No registration check here: the loop is running, so its next pass can deregister the cancelled key at any point after the
             // close.
             ssc.close()
@@ -113,7 +113,7 @@ class NioIoDriverTest extends Test:
             val driver  = NioIoDriver.init()
             given Frame = Frame.internal
             val ssc     = openServer()
-            assert(driver.registerServerChannel(ssc))
+            assert(driver.registerServerChannel(ssc).isSuccess)
             ssc.close()
             val released = Promise.Unsafe.init[Unit, Any]()
             driver.releaseListener(ssc, released)
@@ -129,7 +129,7 @@ class NioIoDriverTest extends Test:
             val driver  = NioIoDriver.init()
             given Frame = Frame.internal
             val ssc     = openServer()
-            assert(driver.registerServerChannel(ssc))
+            assert(driver.registerServerChannel(ssc).isSuccess)
             ssc.close()
             val released = Promise.Unsafe.init[Unit, Any]()
             driver.releaseListener(ssc, released)
@@ -143,7 +143,7 @@ class NioIoDriverTest extends Test:
             val driver  = NioIoDriver.init()
             given Frame = Frame.internal
             val ssc     = openServer()
-            assert(driver.registerServerChannel(ssc))
+            assert(driver.registerServerChannel(ssc).isSuccess)
             ssc.close()
             driver.close()
             val released = Promise.Unsafe.init[Unit, Any]()
@@ -178,14 +178,14 @@ class NioIoDriverTest extends Test:
     // registerChannel
     // -----------------------------------------------------------------------
 
-    "registerChannel returns true for open non-blocking channel" in {
+    "registerChannel succeeds for open non-blocking channel" in {
         val driver = NioIoDriver.init()
         val ch     = SocketChannel.open()
         ch.configureBlocking(false)
         try
             val handle = NioHandle.init(ch, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             val result = driver.registerChannel(handle)
-            assert(result)
+            assert(result.isSuccess)
             succeed
         finally
             ch.close()
@@ -194,7 +194,7 @@ class NioIoDriverTest extends Test:
         end try
     }
 
-    "registerChannel returns false after driver is closed" in {
+    "registerChannel after driver is closed fails with ClosedSelectorException" in {
         val driver  = NioIoDriver.init()
         given Frame = Frame.internal
         driver.close()
@@ -203,14 +203,14 @@ class NioIoDriverTest extends Test:
         try
             val handle = NioHandle.init(ch, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             val result = driver.registerChannel(handle)
-            assert(!result)
+            assert(result.failure.exists(_.isInstanceOf[java.nio.channels.ClosedSelectorException]), s"got $result")
             succeed
         finally
             ch.close()
         end try
     }
 
-    "registerChannel returns false for closed channel" in {
+    "registerChannel for closed channel fails with ClosedChannelException" in {
         val driver = NioIoDriver.init()
         val ch     = SocketChannel.open()
         ch.configureBlocking(false)
@@ -218,7 +218,7 @@ class NioIoDriverTest extends Test:
         try
             val handle = NioHandle.init(ch, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             val result = driver.registerChannel(handle)
-            assert(!result)
+            assert(result.failure.exists(_.isInstanceOf[java.nio.channels.ClosedChannelException]), s"got $result")
             succeed
         finally
             given Frame = Frame.internal
@@ -1254,7 +1254,7 @@ class NioIoDriverTest extends Test:
                 sv.close()
                 driver.close()
             }) {
-                assert(driver.registerChannel(handle), "the channel must register with the selector")
+                assert(driver.registerChannel(handle).isSuccess, "the channel must register with the selector")
                 // Gate until the selector has consumed the registration wakeup (wakeupPending cleared by a select() return) and re-parked idle
                 // with the channel registered, so the close below is the ONLY thing that can drive the deregistration pass.
                 awaitCondition(5.seconds)(!driver.wakeupPending.get() && client.isRegistered()).map { parked =>
@@ -1331,7 +1331,7 @@ class NioIoDriverTest extends Test:
     // registerServerChannel
     // -----------------------------------------------------------------------
 
-    "registerServerChannel returns true for open server channel" in {
+    "registerServerChannel succeeds for open server channel" in {
         given Frame       = Frame.internal
         val driver        = NioIoDriver.init()
         val serverChannel = ServerSocketChannel.open()
@@ -1339,7 +1339,7 @@ class NioIoDriverTest extends Test:
         serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
         try
             val result = driver.registerServerChannel(serverChannel)
-            assert(result)
+            assert(result.isSuccess)
             succeed
         finally
             serverChannel.close()
@@ -1347,7 +1347,7 @@ class NioIoDriverTest extends Test:
         end try
     }
 
-    "registerServerChannel returns false after driver is closed" in {
+    "registerServerChannel after driver is closed fails with ClosedSelectorException" in {
         given Frame       = Frame.internal
         val driver        = NioIoDriver.init()
         val serverChannel = ServerSocketChannel.open()
@@ -1355,10 +1355,105 @@ class NioIoDriverTest extends Test:
         driver.close()
         try
             val result = driver.registerServerChannel(serverChannel)
-            assert(!result)
+            assert(result.failure.exists(_.isInstanceOf[java.nio.channels.ClosedSelectorException]), s"got $result")
             succeed
         finally
             serverChannel.close()
+        end try
+    }
+
+    "registerServerChannel fails with the exception register would throw: closed channel, then blocking channel" in {
+        given Frame = Frame.internal
+        val driver  = NioIoDriver.init()
+        val closed  = ServerSocketChannel.open()
+        closed.configureBlocking(false)
+        closed.close()
+        val blocking = ServerSocketChannel.open()
+        try
+            val closedResult   = driver.registerServerChannel(closed)
+            val blockingResult = driver.registerServerChannel(blocking)
+            assert(closedResult.failure.exists(_.isInstanceOf[java.nio.channels.ClosedChannelException]), s"got $closedResult")
+            assert(blockingResult.failure.exists(_.isInstanceOf[java.nio.channels.IllegalBlockingModeException]), s"got $blockingResult")
+            succeed
+        finally
+            blocking.close()
+            driver.close()
+        end try
+    }
+
+    "a listen whose selector a rebuild has just closed still registers and accepts" in {
+        // The LineConnectionTest failure on windows-x64: a listen read the selector the poll carrier's rebuild had just closed, its
+        // registration was refused, and the listen failed with an empty-cause NetBindException although its bind had succeeded.
+        given Frame       = Frame.internal
+        val driver        = NioIoDriver.init()
+        val serverChannel = ServerSocketChannel.open()
+        serverChannel.configureBlocking(false)
+        serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
+        val port     = serverChannel.socket().getLocalPort
+        val accepted = new IOPromise[Closed, Unit]
+        Sync.ensure(Sync.defer { serverChannel.close(); driver.close() }) {
+            try driver.selector.close()
+            catch case _: java.io.IOException => ()
+            assert(driver.registerServerChannel(serverChannel).isSuccess, "a live driver must not refuse a listen across a rebuild")
+            driver.awaitAccept(serverChannel, accepted.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
+            assert(!accepted.done(), s"the accept armed during the rebuild window must stay pending, got ${accepted.poll()}")
+
+            // Finish the rebuild as the poll carrier does: the swap, then a rebuild's own wakeup reset, which a wakeup aimed at the closed
+            // selector depends on.
+            driver.selector = Selector.open()
+            driver.rebuildSelector()
+            discard(driver.start())
+            val client = SocketChannel.open(new InetSocketAddress("127.0.0.1", port))
+            accepted.asInstanceOf[Fiber.Unsafe[Unit, Abort[Closed]]].safe.get.map { _ =>
+                client.close()
+                succeed
+            }
+        }
+    }
+
+    "an accept armed after a rebuild closed its registered listener's selector stays pending and is delivered" in {
+        // The listener is registered when the rebuild closes the selector, so the accept finds its key cancelled rather than missing. Before
+        // start() the test owns the poll carrier's role: it registers the listener as drainServerRegistrations would, closes the selector as
+        // the rebuild does, and finishes the rebuild from a key set that holds the listener, as the rebuild's snapshot does.
+        given Frame       = Frame.internal
+        val driver        = NioIoDriver.init()
+        val serverChannel = openServer()
+        val client        = SocketChannel.open()
+        val accepted      = new IOPromise[Closed, Unit]
+        Sync.ensure(Sync.defer { client.close(); serverChannel.close(); driver.close() }) {
+            discard(serverChannel.register(driver.selector, 0))
+            try driver.selector.close()
+            catch case _: java.io.IOException => ()
+            driver.awaitAccept(serverChannel, accepted.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
+            val failedInWindow = accepted.done()
+            client.connect(new InetSocketAddress("127.0.0.1", serverChannel.socket().getLocalPort))
+            driver.selector = Selector.open()
+            discard(serverChannel.register(driver.selector, 0))
+            driver.rebuildSelector()
+            discard(driver.start())
+            Abort.run(accepted.asInstanceOf[Fiber.Unsafe[Unit, Abort[Closed]]].safe.get).map { result =>
+                assert(
+                    !failedInWindow,
+                    s"an accept armed on a listener whose key the rebuild cancelled must stay pending, got ${accepted.poll()}"
+                )
+                assert(result == Result.succeed(()))
+            }
+        }
+    }
+
+    "an accept on a closed server channel fails, so the accept loop ends for a closed listener" in {
+        given Frame       = Frame.internal
+        val driver        = NioIoDriver.init()
+        val serverChannel = ServerSocketChannel.open()
+        serverChannel.configureBlocking(false)
+        serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
+        val accepted = new IOPromise[Closed, Unit]
+        try
+            assert(driver.registerServerChannel(serverChannel).isSuccess)
+            serverChannel.close()
+            driver.awaitAccept(serverChannel, accepted.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
+            assert(accepted.poll().exists(_.isFailure), s"expected the accept to fail at once, got ${accepted.poll()}")
+        finally driver.close()
         end try
     }
 
@@ -1388,6 +1483,176 @@ class NioIoDriverTest extends Test:
             serverChannel.close()
             driver.close()
             succeed
+        }
+    }
+
+    "a listener registered and armed while the selector rebuilds still accepts" in {
+        given Frame = Frame.internal
+        val driver  = NioIoDriver.init()
+        val count   = 300
+        val done    = new java.util.concurrent.atomic.AtomicBoolean(false)
+        val armed   = new java.util.concurrent.ConcurrentLinkedQueue[(ServerSocketChannel, Boolean, IOPromise[Closed, Unit])]()
+        // Before start() the test fiber owns the poll carrier's role, so rebuilding here is the spin rebuild a running loop performs, racing
+        // listen calls on other carriers exactly as a real one does. A registration or an accept arm that lands mid-rebuild must survive it.
+        val rebuild = Sync.defer {
+            while !done.get() do driver.rebuildSelector()
+        }
+        val register = Sync.defer {
+            var i = 0
+            while i < count do
+                val ssc        = openServer()
+                val registered = driver.registerServerChannel(ssc).isSuccess
+                val p          = new IOPromise[Closed, Unit]
+                driver.awaitAccept(ssc, p.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
+                discard(armed.add((ssc, registered, p)))
+                i += 1
+            end while
+            done.set(true)
+        }
+        Async.zip(rebuild, register).andThen {
+            discard(driver.start())
+            import scala.jdk.CollectionConverters.*
+            val listeners = Chunk.from(armed.asScala)
+            val clients   = listeners.map { (ssc, _, _) =>
+                val client = SocketChannel.open()
+                client.configureBlocking(false)
+                discard(client.connect(ssc.getLocalAddress))
+                client
+            }
+            Sync.ensure(Sync.defer {
+                clients.foreach(_.close())
+                listeners.foreach((ssc, _, _) => ssc.close())
+                driver.close()
+            }) {
+                awaitCondition(10.seconds)(listeners.forall((_, _, p) => p.done())).map { _ =>
+                    val refused  = listeners.count((_, registered, _) => !registered)
+                    val failed   = listeners.count((_, _, p) => p.poll().exists(!_.isSuccess))
+                    val stranded = listeners.count((_, _, p) => !p.done())
+                    assert(
+                        refused == 0 && failed == 0 && stranded == 0,
+                        s"of $count listeners raced against selector rebuilds: $refused refused registration, $failed failed their accept, " +
+                            s"$stranded never saw their connection"
+                    )
+                }
+            }
+        }
+    }
+
+    "a connection registered and armed while the selector rebuilds still reads" in {
+        given Frame = Frame.internal
+        val count   = 300
+        Kyo.fill(count)(NioLoopbackPair.open()).map { opened =>
+            val pairs  = Chunk.from(opened)
+            val driver = NioIoDriver.init()
+            val done   = new java.util.concurrent.atomic.AtomicBoolean(false)
+            val armed  = new java.util.concurrent.ConcurrentLinkedQueue[(Boolean, IOPromise[Closed, ReadOutcome])]()
+            // Before start() the test fiber owns the poll carrier's role, so rebuilding here is the spin rebuild a running loop performs, racing
+            // the registrations an accept or connect burst makes on other carriers. A registration or a read arm that lands mid-rebuild must
+            // survive it.
+            val rebuild = Sync.defer {
+                while !done.get() do driver.rebuildSelector()
+            }
+            val register = Sync.defer {
+                pairs.foreach { (client, _) =>
+                    val handle     = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+                    val registered = driver.registerChannel(handle).isSuccess
+                    val p          = new IOPromise[Closed, ReadOutcome]
+                    driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                    discard(armed.add((registered, p)))
+                }
+                done.set(true)
+            }
+            Async.zip(rebuild, register).andThen {
+                discard(driver.start())
+                import scala.jdk.CollectionConverters.*
+                val reads = Chunk.from(armed.asScala)
+                Sync.ensure(Sync.defer {
+                    pairs.foreach { (client, sv) =>
+                        client.close()
+                        sv.close()
+                    }
+                    driver.close()
+                }) {
+                    pairs.foreach((_, sv) => discard(sv.write(java.nio.ByteBuffer.wrap(Array[Byte](1)))))
+                    awaitCondition(10.seconds)(reads.forall((_, p) => p.done())).map { _ =>
+                        val refused  = reads.count((registered, _) => !registered)
+                        val failed   = reads.count((_, p) => p.poll().exists(!_.isSuccess))
+                        val stranded = reads.count((_, p) => !p.done())
+                        assert(
+                            refused == 0 && failed == 0 && stranded == 0,
+                            s"of $count connections raced against selector rebuilds: $refused refused registration, $failed failed their read, " +
+                                s"$stranded never saw their byte"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    "an accept's continuation runs off the poll loop's dispatch" in {
+        given Frame       = Frame.internal
+        val driver        = NioIoDriver.init()
+        val serverChannel = ServerSocketChannel.open()
+        serverChannel.configureBlocking(false)
+        serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
+        val port = serverChannel.socket().getLocalPort
+        driver.registerServerChannel(serverChannel)
+        discard(driver.start())
+
+        // A listener's continuation accepts every pending connection, so where it runs decides what the poll loop waits on: inside
+        // dispatchReadyKeys, no other channel's readiness is served until those accepts and their setup finish.
+        val insideDispatch = Promise.Unsafe.init[Boolean, Any]()
+        val p              = new IOPromise[Closed, Unit]
+        p.onComplete { _ =>
+            insideDispatch.completeDiscard(Result.succeed(
+                Thread.currentThread().getStackTrace.exists(f =>
+                    f.getClassName == classOf[NioIoDriver].getName && f.getMethodName == "dispatchReadyKeys"
+                )
+            ))
+        }
+        driver.awaitAccept(serverChannel, p.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
+
+        val client = SocketChannel.open()
+        client.connect(new InetSocketAddress("127.0.0.1", port))
+
+        insideDispatch.safe.get.map { inside =>
+            client.close()
+            serverChannel.close()
+            driver.close()
+            assert(
+                !inside,
+                "the accept's continuation ran inside the poll loop's dispatch, holding every other channel's readiness behind it"
+            )
+        }
+    }
+
+    "a listener closed with a connection pending is released, and the driver keeps accepting on another listener" in {
+        given Frame = Frame.internal
+        val driver  = NioIoDriver.init()
+        val closing = openServer()
+        val other   = openServer()
+        driver.registerServerChannel(closing)
+        driver.registerServerChannel(other)
+        // Before start() the poll loop has not run, so the close lands between the connection becoming acceptable and its dispatch: the
+        // first pass selects a ready accept whose promise cleanupAccept already removed, the shape NioListener.close produces under churn.
+        val stale = new IOPromise[Closed, Unit]
+        driver.awaitAccept(closing, stale.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
+        val pendingClient = SocketChannel.open(closing.getLocalAddress)
+        driver.cleanupAccept(closing, Frame.internal)
+        discard(driver.start())
+        val accepted = new IOPromise[Closed, Unit]
+        driver.awaitAccept(other, accepted.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
+        val otherClient = SocketChannel.open(other.getLocalAddress)
+        closing.close()
+        val released = Promise.Unsafe.init[Unit, Any]()
+        driver.releaseListener(closing, released)
+        released.safe.get.andThen(accepted.asInstanceOf[Fiber.Unsafe[Unit, Abort[Closed]]].safe.get).map { _ =>
+            pendingClient.close()
+            otherClient.close()
+            other.close()
+            driver.close()
+            assert(stale.poll().exists(_.isFailure), s"cleanupAccept must fail the closing listener's accept: ${stale.poll()}")
+            assert(!closing.isRegistered)
         }
     }
 
@@ -1799,20 +2064,21 @@ class NioIoDriverTest extends Test:
     // -----------------------------------------------------------------------
 
     "registerChannelDeferredOnCancelledKey" in {
-        // Reproduce-first for the STARTTLS upgrade re-registration race. detachForUpgrade cancels the channel's SelectionKey; the
-        // cancelled key lingers in the selector's cancelled-key set until the poll carrier flushes it during select(). An immediate
-        // registerChannel on the same channel therefore throws CancelledKeyException. registerChannel routes that re-registration through the poll
-        // carrier (enqueue + wakeup + return success) instead of parking the calling carrier in a parkNanos retry loop.
+        // The STARTTLS upgrade re-registration race. detachForUpgrade cancels the channel's SelectionKey; the cancelled key lingers in the
+        // selector's cancelled-key set until the poll carrier flushes it during select(), and channel.register throws CancelledKeyException until
+        // then. registerChannel queues the re-registration for the poll carrier (enqueue + wakeup + return success) instead of parking the calling
+        // carrier, and the drain after the next select() registers it.
         //
         // Deterministic trigger: register a channel, cancel its key (mirrors detachForUpgrade's driver.cancel), then re-register before any
-        // select() has flushed the cancelled key. registerChannel must take the deferred path: return true and enqueue the handle (no park).
+        // select() has flushed the cancelled key. registerChannel must succeed and queue the handle (no park).
         given Frame = Frame.internal
         NioLoopbackPair.open().map { (client, sv) =>
             val driver = NioIoDriver.init()
             val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             try
-                // Initial registration creates a live key.
-                assert(driver.registerChannel(handle))
+                // Initial registration creates a live key once the poll carrier drains it; before start() the test plays that role.
+                assert(driver.registerChannel(handle).isSuccess)
+                driver.drainPendingRegistrations()
                 assert(driver.pendingRegistrationCount == 0)
 
                 // Cancel the key (as detachForUpgrade does). The cancelled key now lingers in the cancelled-key set: no select() has flushed it.
@@ -1822,7 +2088,7 @@ class NioIoDriverTest extends Test:
                 // take the deferred path. It returns success (the registration is guaranteed, just deferred) and enqueues the handle for the poll
                 // carrier. No parkNanos, no spin: the call returns immediately.
                 val deferred = driver.registerChannel(handle)
-                assert(deferred)
+                assert(deferred.isSuccess)
                 assert(driver.pendingRegistrationCount == 1)
 
                 // Arm a read during the deferred window (before the channel is registered): the interest is held in the pending-op map and applied
@@ -1893,17 +2159,15 @@ class NioIoDriverTest extends Test:
     }
 
     "registerChannelDeferredOnClosedSelectorDuringRebuild" in {
-        // Reproduce-first for the concurrent-connect-burst connect failure: a caller-carrier registerChannel races the poll carrier's
-        // rebuildSelector, which closes the old selector (NioIoDriver selector.close() then selector = newSelector). Under a connect burst the
-        // selector spins and rebuilds; a registerChannel reading the closed old selector throws ClosedSelectorException. Returning false on that
-        // would make NioTransport.awaitConnect fail the connect with an empty-cause NetConnectException. The driver routes that
-        // close (while the driver is still live, closedFlag false) through the same deferred path the CancelledKeyException race uses: enqueue +
-        // wakeup + return success, and drainPendingRegistrations re-registers on the live selector with interest reconstructed from the pending-op
-        // maps. The loopback connect is ALREADY complete here (NioLoopbackPair waits for finishConnect), so this also exercises the
+        // The concurrent-connect-burst connect failure: a caller-carrier registerChannel racing the poll carrier's rebuildSelector, which closes
+        // the old selector (NioIoDriver selector.close() then selector = newSelector). Refusing a registration that met the closed old selector
+        // would make NioTransport.awaitConnect fail the connect of a live driver. registerChannel never touches the selector: it queues the
+        // handle (enqueue + wakeup + return success), and drainPendingRegistrations registers on the live selector with interest reconstructed
+        // from the pending-op maps. The loopback connect is ALREADY complete here (NioLoopbackPair waits for finishConnect), so this also exercises the
         // deferred-connect-after-rebuild edge: a connect that completed during the deferral window must still complete, which needs the drain-time
         // dispatchConnect force-dispatch (the selector does not re-surface OP_CONNECT for an interest registered after the channel became ready).
         //
-        // Three assertions: registerChannel DEFERS (true; a non-deferring path would return false -> connect dropped), OP_CONNECT is
+        // Three assertions: registerChannel DEFERS (succeeds; a non-deferring path would refuse -> connect dropped), OP_CONNECT is
         // reconstructed on the restored selector (not interest 0), and the connect promise actually COMPLETES after the drain (without the drain-time
         // force-dispatch, OP_CONNECT would be armed but never dispatched -> the promise hangs = the deferred-connect-after-rebuild TIMEOUT).
         given Frame = Frame.internal
@@ -1912,17 +2176,19 @@ class NioIoDriverTest extends Test:
             val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             try
                 // Live registration + an armed connect, so OP_CONNECT is recorded in the pending-op map (the source of truth the deferred drain reads).
-                assert(driver.registerChannel(handle))
+                // Before start() the test drains the registration as the poll carrier would.
+                assert(driver.registerChannel(handle).isSuccess)
+                driver.drainPendingRegistrations()
                 val pc = new IOPromise[Closed, Unit]
                 driver.awaitConnect(handle, pc.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
                 assert((driver.interestOpsFor(client) & SelectionKey.OP_CONNECT) != 0)
 
                 // Reproduce the rebuild window: close the current selector (driver still live, closedFlag false), then re-register the channel as a
-                // caller carrier would mid-rebuild. This DEFERS (true + enqueue); a non-deferring path would return false (connect dropped).
+                // caller carrier would mid-rebuild. This queues (success + enqueue); a path that refused would drop the connect.
                 try driver.selector.close()
                 catch case _: java.io.IOException => ()
                 val deferred = driver.registerChannel(handle)
-                assert(deferred, "registerChannel must defer (not fail) when the selector is closed mid-rebuild on a live driver")
+                assert(deferred.isSuccess, "registerChannel must defer (not fail) when the selector is closed mid-rebuild on a live driver")
                 assert(driver.pendingRegistrationCount == 1)
 
                 // Restore the selector (the rebuild swap) and drain (the poll carrier's per-cycle drainPendingRegistrations): the deferred channel is
@@ -1963,12 +2229,16 @@ class NioIoDriverTest extends Test:
             }
             val promises = Array.fill(n)(new IOPromise[Closed, ReadOutcome])
             try
+                // Every channel gets a live key first: before start() the test drains the registrations as the poll carrier would. Draining
+                // between cancels would stop at the first lingering cancelled key, which only a select() flushes.
+                handles.foreach(handle => assert(driver.registerChannel(handle).isSuccess))
+                driver.drainPendingRegistrations()
+                assert(driver.pendingRegistrationCount == 0)
                 var i = 0
                 while i < n do
-                    assert(driver.registerChannel(handles(i)))
                     driver.cancel(handles(i))
                     // Deferred path: the cancelled key lingers (no select() has run), so re-register enqueues for the poll carrier.
-                    assert(driver.registerChannel(handles(i)))
+                    assert(driver.registerChannel(handles(i)).isSuccess)
                     driver.awaitRead(handles(i), promises(i).asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
                     i += 1
                 end while

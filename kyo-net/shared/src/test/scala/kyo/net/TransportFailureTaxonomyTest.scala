@@ -55,4 +55,29 @@ class TransportFailureTaxonomyTest extends Test:
         }
     }
 
+    // Longer than sun_path on every platform (104 bytes on macOS/BSD, 108 on Linux), so no backend can bind or connect it.
+    private def overlongSocketPath(): String = s"/tmp/kyo-net-${"x" * 200}-${TlsTestCertShared.uniquePathTag()}.sock"
+
+    "listenUnix on a path longer than sun_path fails NetBindException carrying why" - eachBackend { transport =>
+        Abort.run[NetException | Closed](transport.listenUnix(overlongSocketPath(), 16)(_ => ()).safe.get).map {
+            case Result.Failure(e: NetBindException) =>
+                assert(NetException.show(e.cause).nonEmpty, s"the failure must carry its cause: ${e.getMessage}")
+            case Result.Success(listener) =>
+                listener.close()
+                fail("a listen on a path longer than sun_path must fail")
+            case other => fail(s"expected NetBindException, got $other")
+        }
+    }
+
+    "connectUnix to a path longer than sun_path fails NetUnixConnectException carrying why" - eachBackend { transport =>
+        Abort.run[NetException | Closed](transport.connectUnix(overlongSocketPath()).safe.get).map {
+            case Result.Failure(e: NetUnixConnectException) =>
+                assert(NetException.show(e.cause).nonEmpty, s"the failure must carry its cause: ${e.getMessage}")
+            case Result.Success(conn) =>
+                conn.close()
+                fail("a connect to a path longer than sun_path must fail")
+            case other => fail(s"expected NetUnixConnectException, got $other")
+        }
+    }
+
 end TransportFailureTaxonomyTest

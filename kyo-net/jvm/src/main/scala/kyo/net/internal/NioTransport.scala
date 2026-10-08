@@ -239,8 +239,13 @@ final private[kyo] class NioTransport private (
                     config.closeFlushGrace.duration,
                     frame
                 )
-                discard(driver.registerChannel(handle))
-                completeConnect(handle, promise, config.channelCapacity)
+                driver.registerChannel(handle).failure match
+                    case Present(refusal) =>
+                        channel.close()
+                        promise.completeDiscard(Result.fail(connectFail(host, port, refusal)))
+                    case Absent =>
+                        completeConnect(handle, promise, config.channelCapacity)
+                end match
             else
                 // Connection in progress, wait for writable. The deadline armed above and the OS outcome race on the same `promise`
                 // (completeDiscard, at most once), so a deadline-fired close surfaces the timeout leaf and an OS-failure close surfaces
@@ -288,8 +293,13 @@ final private[kyo] class NioTransport private (
             try
                 if channel.finishConnect() then
                     val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, closeFlushGrace, frame)
-                    discard(driver.registerChannel(handle))
-                    completeConnect(handle, promise, channelCapacity)
+                    driver.registerChannel(handle).failure match
+                        case Present(refusal) =>
+                            channel.close()
+                            promise.completeDiscard(Result.fail(connectFail(host, port, refusal)))
+                        case Absent =>
+                            completeConnect(handle, promise, channelCapacity)
+                    end match
                     true
                 else false
             catch
@@ -302,32 +312,47 @@ final private[kyo] class NioTransport private (
         if !tryFinishConnect() then
             // Not yet connected: register and let the driver handle OP_CONNECT
             val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, closeFlushGrace, frame)
-            if !driver.registerChannel(handle) then
-                channel.close()
-                promise.completeDiscard(Result.fail(connectFail(host, port, "")))
-            else
-                val connectPromise = new IOPromise[Closed | NetException, Unit]
-                connectPromise.onComplete { result =>
-                    result match
-                        case Result.Success(_) =>
-                            Log.live.unsafe.debug(s"NioTransport connected channel=${channel.hashCode()}")
-                            completeConnect(handle, promise, channelCapacity)
-                        case Result.Failure(cause) =>
-                            channel.close()
-                            promise.completeDiscard(Result.fail(connectFail(host, port, cause)))
-                        case Result.Panic(e) =>
-                            channel.close()
-                            promise.completeDiscard(Result.panic(e))
-                }
-                // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
-                // plainly-constructed IOPromise[Closed | NetException, Unit], even though both erase to the same runtime object; the alias is
-                // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter
-                // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit
-                // values above (a driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
-                driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
-            end if
+            driver.registerChannel(handle).failure match
+                case Present(refusal) =>
+                    channel.close()
+                    promise.completeDiscard(Result.fail(connectFail(host, port, refusal)))
+                case Absent =>
+                    val connectPromise = new IOPromise[Closed | NetException, Unit]
+                    connectPromise.onComplete { result =>
+                        result match
+                            case Result.Success(_) =>
+                                Log.live.unsafe.debug(s"NioTransport connected channel=${channel.hashCode()}")
+                                completeConnect(handle, promise, channelCapacity)
+                            case Result.Failure(cause) =>
+                                driver.closeHandle(handle)
+                                promise.completeDiscard(Result.fail(connectFail(host, port, cause)))
+                            case Result.Panic(e) =>
+                                driver.closeHandle(handle)
+                                promise.completeDiscard(Result.panic(e))
+                    }
+                    // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+                    // plainly-constructed IOPromise[Closed | NetException, Unit], even though both erase to the same runtime object; the alias is
+                    // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter
+                    // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit
+                    // values above (a driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
+                    driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
+                    releaseOnEarlyEnd(promise, connectPromise)
+            end match
         end if
     end awaitConnect
+
+    /** Ends the OS connect when `promise` settles before it: the connect deadline or an interrupt of the caller's fiber. Nothing else ever
+      * completes `connectPromise` for a peer that never answers, so its channel would stay registered in SYN_SENT until the OS gives up
+      * (75s on macOS, about 127s on Linux). Failing it runs its own failure arm, whose `closeHandle` cancels the key, closes the channel and
+      * wakes the selector so the close is applied on an idle loop. A connect that already settled makes this a no-op.
+      */
+    private def releaseOnEarlyEnd(
+        promise: IOPromise[NetException, Connection[NioHandle]],
+        connectPromise: IOPromise[Closed | NetException, Unit]
+    )(using AllowUnsafe, Frame): Unit =
+        promise.onComplete { _ =>
+            connectPromise.completeDiscard(Result.panic(Interrupted(summon[Frame], "connect ended before the OS answered")))
+        }
 
     private def completeConnect(
         handle: NioHandle,
@@ -384,19 +409,21 @@ final private[kyo] class NioTransport private (
             applySocketBuffers(serverChannel, config, sendSupported = false)
             serverChannel.bind(new InetSocketAddress(host, port), backlog)
 
-            if !driver.registerServerChannel(serverChannel) then
-                serverChannel.close()
-                promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
-            else
-                val actualPort = serverChannel.socket().getLocalPort
-                val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
-                Log.live.unsafe.debug(s"NioTransport listen $host:$actualPort")
+            driver.registerServerChannel(serverChannel).failure match
+                case Present(refusal) =>
+                    serverChannel.close()
+                    promise.completeDiscard(Result.fail(NetBindException(host, port, refusal)))
+                case Absent =>
+                    val actualPort = serverChannel.socket().getLocalPort
+                    val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
+                    Log.live.unsafe.debug(s"NioTransport listen $host:$actualPort")
 
-                val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
-                startAcceptLoop(serverChannel, handler, listener, config)
-                if !promise.complete(Result.succeed(listener)) then
-                    listener.close()
-            end if
+                    val listener =
+                        new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
+                    startAcceptLoop(serverChannel, handler, listener, config)
+                    if !promise.complete(Result.succeed(listener)) then
+                        listener.close()
+            end match
         catch
             case e: UnresolvedAddressException =>
                 if serverChannel != null then closeQuietly(serverChannel)
@@ -460,7 +487,8 @@ final private[kyo] class NioTransport private (
         }
     end startAcceptLoop
 
-    private def acceptAllPending(
+    /** `private[net]` so a test can run one accept pass against a driver that refuses the accepted channel. */
+    private[net] def acceptAllPending(
         serverChannel: ServerSocketChannel,
         handler: NetConnection => Unit,
         listener: NioListener,
@@ -487,32 +515,38 @@ final private[kyo] class NioTransport private (
                         config.closeFlushGrace.duration,
                         listener.createdAt
                     )
-                    discard(driver.registerChannel(handle))
-                    val connection = initTracked(handle, config.channelCapacity)
-                    // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
-                    // isServerOrigin).
-                    connection.isServerOrigin = true
-                    connection.upgradeFn = Present { (tls, frame) =>
-                        given Frame = frame
-                        upgradeToTls(connection, tls, config.channelCapacity)
-                    }
-                    // Cache the cert hash once here (pre-start, engine quiescent); a live read would race the Selector's engine ops (see completeConnect).
-                    val cachedCertHash = NioTransport.serverCertificateHash(handle)
-                    connection.certHashFn = Present(() => if connection.isOpen then cachedCertHash else Absent)
-                    if connection.start() then
-                        // Spawn the handler in its own carrier fiber. The connection lifecycle is managed by its pumps;
-                        // the handler is fire-and-forget. A throw from the handler is logged and does not propagate here.
-                        discard(Fiber.Unsafe.init {
-                            // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort the process,
-                            // or stall the accept loop. Uniform with the posix and node backends.
-                            try handler(connection)
-                            catch case e: Throwable => Log.live.unsafe.error(s"Connection handler panic", e)
-                        })
-                    else
-                        // The connection raced to a terminal/Upgrading state before start (the transport's close swept it, or a detach won);
-                        // it is not usable, so the handler is never spawned.
-                        Log.live.unsafe.info(s"NioTransport accepted connection closed before start; handler not spawned")
-                    end if
+                    driver.registerChannel(handle).failure match
+                        case Present(refusal) =>
+                            closeQuietly(clientChannel)
+                            Log.live.unsafe.debug(s"NioTransport accepted connection refused by the driver, closed: $refusal")
+                        case Absent =>
+                            val connection = initTracked(handle, config.channelCapacity)
+                            // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls
+                            // reads isServerOrigin).
+                            connection.isServerOrigin = true
+                            connection.upgradeFn = Present { (tls, frame) =>
+                                given Frame = frame
+                                upgradeToTls(connection, tls, config.channelCapacity)
+                            }
+                            // Cache the cert hash once here (pre-start, engine quiescent); a live read would race the Selector's engine ops (see
+                            // completeConnect).
+                            val cachedCertHash = NioTransport.serverCertificateHash(handle)
+                            connection.certHashFn = Present(() => if connection.isOpen then cachedCertHash else Absent)
+                            if connection.start() then
+                                // Spawn the handler in its own carrier fiber. The connection lifecycle is managed by its pumps;
+                                // the handler is fire-and-forget. A throw from the handler is logged and does not propagate here.
+                                discard(Fiber.Unsafe.init {
+                                    // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort
+                                    // the process, or stall the accept loop. Uniform with the posix and node backends.
+                                    try handler(connection)
+                                    catch case e: Throwable => Log.live.unsafe.error(s"Connection handler panic", e)
+                                })
+                            else
+                                // The connection raced to a terminal/Upgrading state before start (the transport's close swept it, or a detach
+                                // won); it is not usable, so the handler is never spawned.
+                                Log.live.unsafe.info(s"NioTransport accepted connection closed before start; handler not spawned")
+                            end if
+                    end match
                     true   // accepted one, try again
                 else false // no more pending
                 end if
@@ -643,44 +677,52 @@ final private[kyo] class NioTransport private (
         if !tryFinishConnect() then
             // Not yet connected: register and let the driver handle OP_CONNECT
             val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, closeFlushGrace, frame)
-            if !driver.registerChannel(handle) then
-                channel.close()
-                promise.completeDiscard(Result.fail(NetConnectException(host, port, "")))
-            else
-                val connectPromise = new IOPromise[Closed | NetException, Unit]
-                connectPromise.onComplete { result =>
-                    result match
-                        case Result.Success(_) =>
-                            Log.live.unsafe.debug(s"NioTransport TCP connected, starting TLS handshake channel=${channel.hashCode()}")
-                            disarmConnectDeadline()
-                            startTlsHandshake(
-                                channel,
-                                host,
-                                port,
-                                tls,
-                                isServer = false,
-                                promise,
-                                Present(handle),
-                                preRead = Absent,
-                                channelCapacity,
-                                readChunkSize,
-                                handle.peerCloseGrace,
-                                handle.closeFlushGrace
-                            )
-                        case Result.Failure(cause) =>
-                            channel.close()
-                            promise.completeDiscard(Result.fail(NetConnectException(host, port, cause)))
-                        case Result.Panic(e) =>
-                            channel.close()
-                            promise.completeDiscard(Result.panic(e))
-                }
-                // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
-                // plainly-constructed IOPromise[Closed | NetException, Unit], even though both erase to the same runtime object; the alias is
-                // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter
-                // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit
-                // values above (a driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
-                driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
-            end if
+            driver.registerChannel(handle).failure match
+                case Present(refusal) =>
+                    channel.close()
+                    promise.completeDiscard(Result.fail(NetConnectException(host, port, refusal)))
+                case Absent =>
+                    val connectPromise = new IOPromise[Closed | NetException, Unit]
+                    connectPromise.onComplete { result =>
+                        result match
+                            case Result.Success(_) =>
+                                Log.live.unsafe.debug(s"NioTransport TCP connected, starting TLS handshake channel=${channel.hashCode()}")
+                                disarmConnectDeadline()
+                                // This connect owns the channel as the inline path does, but startTlsHandshake closes a failed handshake's
+                                // channel only for a handle it created, and this one is handed in.
+                                promise.onComplete {
+                                    case Result.Success(_) => ()
+                                    case _                 => driver.closeHandle(handle)
+                                }
+                                startTlsHandshake(
+                                    channel,
+                                    host,
+                                    port,
+                                    tls,
+                                    isServer = false,
+                                    promise,
+                                    Present(handle),
+                                    preRead = Absent,
+                                    channelCapacity,
+                                    readChunkSize,
+                                    handle.peerCloseGrace,
+                                    handle.closeFlushGrace
+                                )
+                            case Result.Failure(cause) =>
+                                driver.closeHandle(handle)
+                                promise.completeDiscard(Result.fail(NetConnectException(host, port, cause)))
+                            case Result.Panic(e) =>
+                                driver.closeHandle(handle)
+                                promise.completeDiscard(Result.panic(e))
+                    }
+                    // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+                    // plainly-constructed IOPromise[Closed | NetException, Unit], even though both erase to the same runtime object; the alias is
+                    // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter
+                    // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit
+                    // values above (a driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
+                    driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
+                    releaseOnEarlyEnd(promise, connectPromise)
+            end match
         end if
     end awaitConnectThenTls
 
@@ -778,50 +820,54 @@ final private[kyo] class NioTransport private (
 
             // Create handle in raw mode (tls = Absent) for handshake.
             // The driver reads raw ciphertext during handshake.
-            val handle = existingHandle.getOrElse {
-                val h = NioHandle.init(channel, readChunkSize, peerCloseGrace, closeFlushGrace, frame)
-                discard(driver.registerChannel(h))
-                h
-            }
+            val handle  = existingHandle.getOrElse(NioHandle.init(channel, readChunkSize, peerCloseGrace, closeFlushGrace, frame))
+            val refusal = if existingHandle.isEmpty then driver.registerChannel(handle).failure else Absent
+            refusal match
+                case Present(e) =>
+                    // A fresh client handle only: the connect's TCP phase finished, so the refusal is the connect's failure.
+                    connectPromise.completeDiscard(Result.fail(NetConnectException(host, port, e)))
+                case Absent =>
+                    // Create TLS state but don't attach yet: handshake uses raw I/O
+                    val session   = engine.getSession
+                    val netInBuf  = ByteBuffer.allocate(session.getPacketBufferSize)
+                    val netOutBuf = ByteBuffer.allocate(session.getPacketBufferSize)
+                    val appInBuf  = ByteBuffer.allocate(session.getApplicationBufferSize)
+                    val tlsState  = NioTlsState(engine, netInBuf, netOutBuf, appInBuf)
 
-            // Create TLS state but don't attach yet: handshake uses raw I/O
-            val session   = engine.getSession
-            val netInBuf  = ByteBuffer.allocate(session.getPacketBufferSize)
-            val netOutBuf = ByteBuffer.allocate(session.getPacketBufferSize)
-            val appInBuf  = ByteBuffer.allocate(session.getApplicationBufferSize)
-            val tlsState  = NioTlsState(engine, netInBuf, netOutBuf, appInBuf)
+                    // Replay any handshake ciphertext the plaintext ReadPump already pulled off the socket
+                    // (STARTTLS upgrade case). driveHandshake expects netInBuf in write mode at entry (its
+                    // first action is netInBuf.flip() to expose accumulated bytes for unwrap), and netInBuf
+                    // is freshly allocated at position 0 in write mode, so we simply put the pre-read bytes:
+                    // the handshake's buffered-unwrap path then consumes them before issuing any socket read.
+                    // Absent/empty preRead writes nothing, leaving behavior identical to a fresh handshake.
+                    preRead.foreach { spans =>
+                        spans.foreach { span =>
+                            if span.nonEmpty then discard(netInBuf.put(span.toArrayUnsafe))
+                        }
+                    }
+                    // STARTTLS handoff (upgrade path only): the handshake now takes over reading from the retiring plaintext pump. Set
+                    // handshakeReading so a dispatched read completes the handshake's read (rather than being salvaged), then feed any of the
+                    // peer's first flight the pump salvaged during the plaintext phase (e.g. the ClientHello) into the engine. The salvage
+                    // follows preRead in the byte stream (preRead is what the pump staged before the upgrade window opened; the salvage is what
+                    // it pulled off the socket during it). handshakeReading is set BEFORE the drain so the selector carrier completes rather
+                    // than re-salvages a read that lands while the drain runs.
+                    if existingHandle.isDefined then
+                        handle.handshakeReading = true
+                        val drained = driver.drainUpgradeSalvage(handle)
+                        drained.foreach(arr => discard(netInBuf.put(arr)))
+                        // The upgrade producer is armed ON DEMAND by the handshake itself: driveHandshake's NEED_UNWRAP park (below) calls
+                        // armUpgradeProducerRead for each read it needs, so the selector carrier reads exactly one peer flight per park and is
+                        // idle once the handshake stops parking at FINISHED. No standing self-re-arming producer is bootstrapped here: a
+                        // standing producer over-reads past FINISHED (it cannot know which read is the handshake's last) and races the FINISHED
+                        // hand-off to the upgraded connection's ReadPump, which under load corrupts the post-FINISHED record (the
+                        // dropped-upgrade regression). Every demand arm is selector-confined (armUpgradeProducerRead defers to the poll carrier
+                        // via pendingUpgradeArms with an unconditional wakeup, never a cross-carrier interestOps read-modify-write).
+                        // handshakeReading is set above so any read dispatched during the window routes to the producer path; the first park
+                        // installs the first producer arm.
+                    end if
 
-            // Replay any handshake ciphertext the plaintext ReadPump already pulled off the socket
-            // (STARTTLS upgrade case). driveHandshake expects netInBuf in write mode at entry (its
-            // first action is netInBuf.flip() to expose accumulated bytes for unwrap), and netInBuf
-            // is freshly allocated at position 0 in write mode, so we simply put the pre-read bytes:
-            // the handshake's buffered-unwrap path then consumes them before issuing any socket read.
-            // Absent/empty preRead writes nothing, leaving behavior identical to a fresh handshake.
-            preRead.foreach { spans =>
-                spans.foreach { span =>
-                    if span.nonEmpty then discard(netInBuf.put(span.toArrayUnsafe))
-                }
-            }
-            // STARTTLS handoff (upgrade path only): the handshake now takes over reading from the retiring plaintext pump. Set handshakeReading so a
-            // dispatched read completes the handshake's read (rather than being salvaged), then feed any of the peer's first flight the pump salvaged
-            // during the plaintext phase (e.g. the ClientHello) into the engine. The salvage follows preRead in the byte stream (preRead is what the
-            // pump staged before the upgrade window opened; the salvage is what it pulled off the socket during it). handshakeReading is set BEFORE the
-            // drain so the selector carrier completes rather than re-salvages a read that lands while the drain runs.
-            if existingHandle.isDefined then
-                handle.handshakeReading = true
-                val drained = driver.drainUpgradeSalvage(handle)
-                drained.foreach(arr => discard(netInBuf.put(arr)))
-                // The upgrade producer is armed ON DEMAND by the handshake itself: driveHandshake's NEED_UNWRAP park (below) calls
-                // armUpgradeProducerRead for each read it needs, so the selector carrier reads exactly one peer flight per park and is idle once the
-                // handshake stops parking at FINISHED. No standing self-re-arming producer is bootstrapped here: a standing producer over-reads past
-                // FINISHED (it cannot know which read is the handshake's last) and races the FINISHED hand-off to the upgraded connection's ReadPump,
-                // which under load corrupts the post-FINISHED record (the dropped-upgrade regression). Every demand arm is selector-confined
-                // (armUpgradeProducerRead defers to the poll carrier via pendingUpgradeArms with an unconditional wakeup, never a cross-carrier
-                // interestOps read-modify-write). handshakeReading is set above so any read dispatched during the window routes to the producer path;
-                // the first park installs the first producer arm.
-            end if
-
-            driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
+                    driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
+            end match
         catch
             case e: NetTlsException =>
                 connectPromise.completeDiscard(Result.fail(e))
@@ -1151,21 +1197,23 @@ final private[kyo] class NioTransport private (
             applySocketBuffers(serverChannel, config, sendSupported = false)
             serverChannel.bind(new InetSocketAddress(host, port), backlog)
 
-            if !driver.registerServerChannel(serverChannel) then
-                serverChannel.close()
-                promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
-            else
-                val actualPort = serverChannel.socket().getLocalPort
-                val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
-                Log.live.unsafe.debug(s"NioTransport TLS listen $host:$actualPort")
+            driver.registerServerChannel(serverChannel).failure match
+                case Present(refusal) =>
+                    serverChannel.close()
+                    promise.completeDiscard(Result.fail(NetBindException(host, port, refusal)))
+                case Absent =>
+                    val actualPort = serverChannel.socket().getLocalPort
+                    val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
+                    Log.live.unsafe.debug(s"NioTransport TLS listen $host:$actualPort")
 
-                val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
-                // Only the TLS listen path can have in-flight handshakes; a plaintext accept becomes a tracked Connection immediately.
-                listener.onClose(() => dischargeListenerHandshakes(listener))
-                startTlsAcceptLoop(serverChannel, handler, listener, tls, config)
-                if !promise.complete(Result.succeed(listener)) then
-                    listener.close()
-            end if
+                    val listener =
+                        new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
+                    // Only the TLS listen path can have in-flight handshakes; a plaintext accept becomes a tracked Connection immediately.
+                    listener.onClose(() => dischargeListenerHandshakes(listener))
+                    startTlsAcceptLoop(serverChannel, handler, listener, tls, config)
+                    if !promise.complete(Result.succeed(listener)) then
+                        listener.close()
+            end match
         catch
             case e: UnresolvedAddressException =>
                 if serverChannel != null then closeQuietly(serverChannel)
@@ -1194,7 +1242,8 @@ final private[kyo] class NioTransport private (
         }
     end startTlsAcceptLoop
 
-    private def acceptAllPendingTls(
+    /** `private[net]` so a test can run one accept pass against a driver that refuses the accepted channel. */
+    private[net] def acceptAllPendingTls(
         serverChannel: ServerSocketChannel,
         handler: NetConnection => Unit,
         listener: NioListener,
@@ -1223,70 +1272,75 @@ final private[kyo] class NioTransport private (
                         config.closeFlushGrace.duration,
                         listener.createdAt
                     )
-                    discard(driver.registerChannel(handle))
-
-                    // Create a per-connection promise for the TLS handshake result
-                    val connPromise = new IOPromise[NetException, Connection[NioHandle]]
-                    // Track it while it is in flight so a listener close can reclaim it; the handshake has no Connection yet, so nothing else
-                    // knows this channel and handle exist.
-                    val reclaimedAtRegistration = trackAcceptHandshake(listener, connPromise)
-                    connPromise.onComplete { result =>
-                        discard(pendingAcceptHandshakes.remove(connPromise))
-                        result match
-                            case Result.Success(connection) =>
-                                // Handshake complete: spawn the handler in its own carrier fiber. Fire-and-forget.
-                                discard(Fiber.Unsafe.init {
-                                    // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort
-                                    // the process, or stall the accept loop. Uniform with the posix and node backends.
-                                    try handler(connection: NetConnection)
-                                    catch
-                                        case e: Throwable =>
-                                            Log.live.unsafe.error(s"TLS connection handler panic", e)
-                                })
-                            case Result.Failure(closed) =>
-                                // An orderly listener-close reclaim arrives here as NetConnectionClosedException(Handshake), the failure
-                                // dischargeListenerHandshakes and the insertion recheck raise. Logging that at warn as a handshake failure
-                                // misattributes a routine server shutdown to the peer; posix and JS reclaim silently. A genuine handshake
-                                // failure still warns.
-                                closed match
-                                    case _: NetConnectionClosedException =>
-                                        Log.live.unsafe.debug(s"TLS handshake reclaimed by listener close: ${closed.getMessage}")
-                                    case _ =>
-                                        Log.live.unsafe.warn(s"TLS handshake failed for client: ${closed.getMessage}")
+                    driver.registerChannel(handle).failure match
+                        case Present(refusal) =>
+                            closeQuietly(clientChannel)
+                            Log.live.unsafe.debug(s"NioTransport TLS accepted connection refused by the driver, closed: $refusal")
+                        case Absent =>
+                            // Create a per-connection promise for the TLS handshake result
+                            val connPromise = new IOPromise[NetException, Connection[NioHandle]]
+                            // Track it while it is in flight so a listener close can reclaim it; the handshake has no Connection yet, so nothing
+                            // else knows this channel and handle exist.
+                            val reclaimedAtRegistration = trackAcceptHandshake(listener, connPromise)
+                            connPromise.onComplete { result =>
+                                discard(pendingAcceptHandshakes.remove(connPromise))
+                                result match
+                                    case Result.Success(connection) =>
+                                        // Handshake complete: spawn the handler in its own carrier fiber. Fire-and-forget.
+                                        discard(Fiber.Unsafe.init {
+                                            // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the
+                                            // carrier, abort the process, or stall the accept loop. Uniform with the posix and node backends.
+                                            try handler(connection: NetConnection)
+                                            catch
+                                                case e: Throwable =>
+                                                    Log.live.unsafe.error(s"TLS connection handler panic", e)
+                                        })
+                                    case Result.Failure(closed) =>
+                                        // An orderly listener-close reclaim arrives here as NetConnectionClosedException(Handshake), the
+                                        // failure dischargeListenerHandshakes and the insertion recheck raise. Logging that at warn as a
+                                        // handshake failure misattributes a routine server shutdown to the peer; posix and JS reclaim
+                                        // silently. A genuine handshake failure still warns.
+                                        closed match
+                                            case _: NetConnectionClosedException =>
+                                                Log.live.unsafe.debug(s"TLS handshake reclaimed by listener close: ${closed.getMessage}")
+                                            case _ =>
+                                                Log.live.unsafe.warn(s"TLS handshake failed for client: ${closed.getMessage}")
+                                        end match
+                                        // Reap the handle through the driver first (removes the pendingReads entry + fails the parked read),
+                                        // the same seam PosixTransport.teardown uses, then close the channel. Reached by both a handshake
+                                        // failure and the deadline arm.
+                                        driver.closeHandle(handle)
+                                        try clientChannel.close()
+                                        catch case _: IOException => ()
+                                    case Result.Panic(e) =>
+                                        Log.live.unsafe.error(s"TLS handshake panic", e)
+                                        driver.closeHandle(handle)
+                                        try clientChannel.close()
+                                        catch case _: IOException => ()
                                 end match
-                                // Reap the handle through the driver first (removes the pendingReads entry + fails the parked read), the same seam
-                                // PosixTransport.teardown uses, then close the channel. Reached by both a handshake failure and the deadline arm.
-                                driver.closeHandle(handle)
-                                try clientChannel.close()
-                                catch case _: IOException => ()
-                            case Result.Panic(e) =>
-                                Log.live.unsafe.error(s"TLS handshake panic", e)
-                                driver.closeHandle(handle)
-                                try clientChannel.close()
-                                catch case _: IOException => ()
-                        end match
-                    }
+                            }
 
-                    // `trackAcceptHandshake` above may have reclaimed this handshake already, when the listener closed inside the
-                    // registration window. Its discharge failed `connPromise`, whose onComplete arm (installed above) reaps the handle and
-                    // closes the channel, so there is nothing left to hand to a handshake.
-                    if reclaimedAtRegistration then ()
-                    else
-                        startTlsHandshake(
-                            clientChannel,
-                            listener.host,
-                            listener.port,
-                            tls,
-                            isServer = true,
-                            connPromise,
-                            existingHandle = Present(handle),
-                            preRead = Absent,
-                            config.channelCapacity,
-                            kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
-                            handle.peerCloseGrace,
-                            handle.closeFlushGrace
-                        )
-                    end if
+                            // `trackAcceptHandshake` above may have reclaimed this handshake already, when the listener closed inside the
+                            // registration window. Its discharge failed `connPromise`, whose onComplete arm (installed above) reaps the handle
+                            // and closes the channel, so there is nothing left to hand to a handshake.
+                            if reclaimedAtRegistration then ()
+                            else
+                                startTlsHandshake(
+                                    clientChannel,
+                                    listener.host,
+                                    listener.port,
+                                    tls,
+                                    isServer = true,
+                                    connPromise,
+                                    existingHandle = Present(handle),
+                                    preRead = Absent,
+                                    config.channelCapacity,
+                                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                                    handle.peerCloseGrace,
+                                    handle.closeFlushGrace
+                                )
+                            end if
+                    end match
                     true   // accepted one, try again
                 else false // no more pending
                 end if
@@ -1382,9 +1436,11 @@ final private[kyo] class NioTransport private (
         val disarmConnectDeadline = armConnectDeadline(promise, path, -1, connectTimeout)
         discard(disarmConnectDeadline)
 
+        // Hoisted so the catch can close it: connect throws (e.g. a path too long for sun_path) after the channel is open.
+        var channel: SocketChannel = null
         try
-            val addr    = java.net.UnixDomainSocketAddress.of(path)
-            val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
+            val addr = java.net.UnixDomainSocketAddress.of(path)
+            channel = SocketChannel.open(StandardProtocolFamily.UNIX)
             channel.configureBlocking(false)
             applySocketBuffers(channel, config, sendSupported = true)
             Log.live.unsafe.debug(s"NioTransport connectUnix $path channel=${channel.hashCode()}")
@@ -1399,8 +1455,13 @@ final private[kyo] class NioTransport private (
                     config.closeFlushGrace.duration,
                     frame
                 )
-                discard(driver.registerChannel(handle))
-                completeConnect(handle, promise, config.channelCapacity)
+                driver.registerChannel(handle).failure match
+                    case Present(refusal) =>
+                        closeQuietly(channel)
+                        promise.completeDiscard(Result.fail(NetUnixConnectException(path, refusal)))
+                    case Absent =>
+                        completeConnect(handle, promise, config.channelCapacity)
+                end match
             else
                 // port = -1 sentinel: a Unix socket has no port, so connectFail routes failures to NetUnixConnectException.
                 awaitConnect(
@@ -1416,6 +1477,7 @@ final private[kyo] class NioTransport private (
             end if
         catch
             case e: IOException =>
+                if channel != null then closeQuietly(channel)
                 promise.completeDiscard(Result.fail(NetUnixConnectException(path, e)))
         end try
 
@@ -1432,26 +1494,30 @@ final private[kyo] class NioTransport private (
     )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
 
+        // Hoisted so the catch can close it: bind throws (e.g. a path too long for sun_path) after the server channel is open.
+        var serverChannel: ServerSocketChannel = null
         try
-            val addr          = java.net.UnixDomainSocketAddress.of(path)
-            val serverChannel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+            val addr = java.net.UnixDomainSocketAddress.of(path)
+            serverChannel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
             serverChannel.configureBlocking(false)
             applySocketBuffers(serverChannel, config, sendSupported = false)
             serverChannel.bind(addr, backlog)
 
-            if !driver.registerServerChannel(serverChannel) then
-                serverChannel.close()
-                promise.completeDiscard(Result.fail(NetBindException(path, -1, "")))
-            else
-                Log.live.unsafe.debug(s"NioTransport listenUnix $path")
+            driver.registerServerChannel(serverChannel).failure match
+                case Present(refusal) =>
+                    serverChannel.close()
+                    promise.completeDiscard(Result.fail(NetBindException(path, -1, refusal)))
+                case Absent =>
+                    Log.live.unsafe.debug(s"NioTransport listenUnix $path")
 
-                val listener = new NioListener(serverChannel, -1, path, driver, NetAddress.Unix(path), frame)
-                startAcceptLoop(serverChannel, handler, listener, config)
-                if !promise.complete(Result.succeed(listener)) then
-                    listener.close()
-            end if
+                    val listener = new NioListener(serverChannel, -1, path, driver, NetAddress.Unix(path), frame)
+                    startAcceptLoop(serverChannel, handler, listener, config)
+                    if !promise.complete(Result.succeed(listener)) then
+                        listener.close()
+            end match
         catch
             case e: IOException =>
+                if serverChannel != null then closeQuietly(serverChannel)
                 promise.completeDiscard(Result.fail(NetBindException(path, -1, e)))
         end try
 
@@ -1574,30 +1640,33 @@ final private[kyo] class NioTransport private (
                             // call): nothing was detached and the close path owns the channel, so fail typed. The failure settlement runs the
                             // owner arm above, whose closeQuietly is idempotent against the close that won.
                             promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
-                        // Step 2: re-register the same channel (still open) with the driver for TLS handshake I/O.
-                        else if !driver.registerChannel(handle) then
-                            promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, "")))
                         else
-                            // Step 3: drive TLS handshake on the same SocketChannel.
-                            // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS
-                            // server, a connected one as the client (e.g. a Postgres client doing an SSLRequest upgrade). The origin is
-                            // authoritative: a config heuristic ("has a cert+key therefore server") would misclassify a mutual-TLS client that
-                            // presents its own client certificate.
-                            val isServer = nioConn.isServerOrigin
-                            startTlsHandshake(
-                                handle.channel,
-                                host,
-                                -1,
-                                tls,
-                                isServer = isServer,
-                                promise,
-                                Present(handle),
-                                preRead,
-                                channelCapacity,
-                                handle.readBufferSize,
-                                handle.peerCloseGrace,
-                                handle.closeFlushGrace
-                            )
+                            // Step 2: re-register the same channel (still open) with the driver for TLS handshake I/O.
+                            driver.registerChannel(handle).failure match
+                                case Present(refusal) =>
+                                    promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, refusal)))
+                                case Absent =>
+                                    // Step 3: drive TLS handshake on the same SocketChannel.
+                                    // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the
+                                    // TLS server, a connected one as the client (e.g. a Postgres client doing an SSLRequest upgrade). The origin
+                                    // is authoritative: a config heuristic ("has a cert+key therefore server") would misclassify a mutual-TLS
+                                    // client that presents its own client certificate.
+                                    val isServer = nioConn.isServerOrigin
+                                    startTlsHandshake(
+                                        handle.channel,
+                                        host,
+                                        -1,
+                                        tls,
+                                        isServer = isServer,
+                                        promise,
+                                        Present(handle),
+                                        preRead,
+                                        channelCapacity,
+                                        handle.readBufferSize,
+                                        handle.peerCloseGrace,
+                                        handle.closeFlushGrace
+                                    )
+                            end match
                         end if
                     catch
                         case e: Exception =>
@@ -1868,11 +1937,14 @@ final private[net] class NioListener(
             // Reclaim the handshakes this listener accepted before the accept teardown: they own channels and handles this close is the only
             // remaining chance to release, since the transport itself may never be closed.
             onCloseHook.foreach(_())
-            driver.cleanupAccept(serverChannel, createdAt)
             // serverChannel.close() cancels the channel's SelectionKey but defers the real fd close (kill()) to the selector's next
             // deregistration pass. The driver forces that pass and completes `released` once it has run.
             try serverChannel.close()
             catch case _: IOException => ()
+                // After the channel close, not before: an accept the loop arms concurrently either lands first and is failed here, or finds the
+                // channel closed and fails itself. Failed first, an arm landing before the close stays armed until the driver closes.
+            end try
+            driver.cleanupAccept(serverChannel, createdAt)
             driver.releaseListener(serverChannel, releasedPromise)
         end if
     end close

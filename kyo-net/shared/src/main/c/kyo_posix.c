@@ -19,19 +19,22 @@
 
 #if !defined(_WIN32)
 
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 
 /*
  * kyo_posix_set_nonblocking: read the current file-status flags with F_GETFL, then
- * write them back with O_NONBLOCK added via F_SETFL. Returns 0 on success, -1 on
- * failure. Uses two correct variadic calls to fcntl so no argument is passed in the
- * wrong register on any architecture.
+ * write them back with O_NONBLOCK added via F_SETFL. Returns 0 on success, or the
+ * negated errno of the fcntl call that failed: the Scala binding returns a plain int
+ * and captures no errno, so the shim hands it back. Uses two correct variadic calls
+ * to fcntl so no argument is passed in the wrong register on any architecture.
  */
 KYO_NET_API int kyo_posix_set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0) return -1;
-    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    if (flags < 0) return -errno;
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -errno;
+    return 0;
 }
 
 /*
