@@ -46,7 +46,7 @@ jobs:
           os: macos-arm64
           mode: restore
           browser: false
-      - uses: coursier/setup-action@v3.0.3
+      - uses: coursier/setup-action@v3.0.4
         with:
           jvm: corretto:25
           apps: sbt
@@ -143,7 +143,7 @@ jobs:
           os: linux-x64
           mode: restore
           browser: false
-      - uses: coursier/setup-action@v3.0.3
+      - uses: coursier/setup-action@v3.0.4
         with:
           jvm: corretto:25
           apps: sbt
@@ -270,7 +270,7 @@ jobs:
           os: linux-arm64
           mode: restore
           browser: false
-      - uses: coursier/setup-action@v3.0.3
+      - uses: coursier/setup-action@v3.0.4
         with:
           jvm: corretto:25
           apps: sbt
@@ -400,7 +400,7 @@ jobs:
           os: windows-x64
           mode: restore
           browser: false
-      - uses: coursier/setup-action@v3.0.3
+      - uses: coursier/setup-action@v3.0.4
         with:
           jvm: corretto:25
           apps: sbt

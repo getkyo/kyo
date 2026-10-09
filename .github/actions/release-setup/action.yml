@@ -66,7 +66,7 @@ runs:
       with:
         os-archs: ${{ steps.osarch.outputs.value }}
 
-    - uses: coursier/setup-action@v3.0.3
+    - uses: coursier/setup-action@v3.0.4
       with:
         jvm: corretto:25
         apps: sbt
