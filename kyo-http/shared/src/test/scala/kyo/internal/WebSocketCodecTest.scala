@@ -32,6 +32,36 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         def writtenString: String = new String(output.toByteArray, Utf8)
     end MockConn
 
+    /** A server peer whose reads are `answer` applied to the Sec-WebSocket-Key of the upgrade request written to it, so its 101 can carry
+      * the accept key of a client key generated at random.
+      */
+    class AnsweringPeer(answer: String => Seq[Array[Byte]]) extends TransportStream:
+        private val request = new java.io.ByteArrayOutputStream()
+
+        def read(using Frame): Stream[Span[Byte], Async] =
+            val key = "Sec-WebSocket-Key: (\\S+)\r\n".r.findFirstMatchIn(new String(request.toByteArray, Utf8)).map(_.group(1))
+            Stream.init(answer(key.getOrElse("")).map(Span.fromUnsafe(_)))
+
+        def write(data: Span[Byte])(using Frame): Unit < Async =
+            Sync.defer(request.write(data.toArrayUnsafe))
+    end AnsweringPeer
+
+    /** Reads `wire` as consecutive unmasked frames with payloads under 126 bytes, as "opcode N: payload", ending with what does not parse. */
+    private def unmaskedFrames(wire: Array[Byte]): Chunk[String] =
+        @scala.annotation.tailrec
+        def loop(at: Int, acc: Chunk[String]): Chunk[String] =
+            if at == wire.length then acc
+            else if wire.length - at < 2 then acc.append(s"a partial header at byte $at")
+            else
+                val opcode = wire(at) & 0x0f
+                val len    = wire(at + 1) & 0x7f
+                if (wire(at + 1) & 0x80) != 0 || len > 125 then acc.append(s"opcode $opcode with an unexpected length byte at byte $at")
+                else if at + 2 + len > wire.length then acc.append(s"opcode $opcode declaring $len bytes, ${wire.length - at - 2} left")
+                else loop(at + 2 + len, acc.append(s"opcode $opcode: ${new String(wire, at + 2, len, Utf8)}"))
+                end if
+        loop(0, Chunk.empty)
+    end unmaskedFrames
+
     /** Build an unmasked WebSocket frame (server-to-client direction).
       *
       * Layout:
@@ -244,30 +274,17 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
     // ── Fragmented messages (continuation frames) ──────────────
 
     "fragmented messages (continuation frames) reassemble into a single message" - {
-        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1".ignore(
-            "WebSocketCodec.readFrameWith does not yet reassemble multi-frame continuation messages; it delivers each frame raw (proper reassembly is a follow-up)"
+        // RFC 6455 section 5.4: a message may be sent as a first frame with FIN clear followed by continuation frames (opcode 0), the
+        // last with FIN set, and the receiver delivers their concatenated payloads as one message of the first frame's type.
+        "a text frame and two continuations are delivered as one text message".pendingUntilFixed(
+            "readFrameWith delivers the first fragment as a whole message and closes the session on the continuation (opcode 0)"
         ) in {
-            // Spec: a WebSocket message MAY be split across multiple frames per RFC 6455.
-            // The first frame carries the opcode (text or binary) with FIN=0; subsequent
-            // frames use opcode 0x0 (continuation) with FIN=0; the final frame uses
-            // opcode 0x0 with FIN=1. WebSocketCodec.readFrameWith should reassemble
-            // the concatenated payload and yield a single Payload value with the
-            // original text opcode.
-            //
-            // Current behavior: readFrameWith delivers each frame raw (opcode 0x1 for
-            // the first, 0x0 for the continuations), and maxFrameSize is checked per
-            // individual frame. The kyo-http 16 MiB default is a per-frame pragmatic
-            // ceiling; proper reassembly is the follow-up.
-            val frame1 = makeFrame(opcode = 0x1, fin = false, payload = "AAA".getBytes(Utf8))
-            val frame2 = makeFrame(opcode = 0x0, fin = false, payload = "BBB".getBytes(Utf8))
-            val frame3 = makeFrame(opcode = 0x0, fin = true, payload = "CCC".getBytes(Utf8))
+            val frame1 = makeMaskedFrame(opcode = 0x1, fin = false, payload = "AAA".getBytes(Utf8))
+            val frame2 = makeMaskedFrame(opcode = 0x0, fin = false, payload = "BBB".getBytes(Utf8))
+            val frame3 = makeMaskedFrame(opcode = 0x0, fin = true, payload = "CCC".getBytes(Utf8))
             val mock   = new MockConn(frame1 ++ frame2 ++ frame3)
-            WebSocketCodec.readFrameWith(mock.read, mock) { (payload, _) =>
-                payload match
-                    case HttpWebSocket.Payload.Text(s) =>
-                        assert(s == "AAABBBCCC")
-                    case other =>
-                        fail(s"expected Text payload with reassembled content, got $other")
+            Abort.run[Closed](WebSocketCodec.readFrameWith(mock.read, mock)((payload, _) => payload)).map { result =>
+                assert(result == Result.succeed(HttpWebSocket.Payload.Text("AAABBBCCC")), s"observed: $result")
             }
         }
     }
@@ -667,6 +684,52 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                     fail(s"Expected HttpInvalidFieldException for a non-token subprotocol, got $other")
             }
         }
+
+        // RFC 6455 section 4.1: the client fails the connection unless the Sec-WebSocket-Accept field's value is the expected key.
+        "a 101 is refused unless its Sec-WebSocket-Accept field is the expected key, wherever else that key appears".pendingUntilFixed(
+            "the 101 head is checked by a substring search for the expected key, so the key in any other header passes"
+        ) in {
+            def answers(accept: String): Chunk[String] = Chunk(
+                s"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: wrong\r\nX-Echo: $accept\r\n\r\n",
+                s"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nX-Echo: $accept\r\n\r\n"
+            )
+            Kyo.foreach(Chunk(0, 1)) { i =>
+                val peer = new AnsweringPeer(key => Seq(answers(WebSocketCodec.computeAcceptKey(key))(i).getBytes(Utf8)))
+                Abort.run[HttpException] {
+                    WebSocketCodec.requestUpgradeWith(peer, wsUrl(), HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
+                }
+            }.map { results =>
+                assert(
+                    results.map(_.failure.map(_.getClass.getSimpleName)) == Chunk.fill(2)(Present("HttpProtocolException")),
+                    s"a wrong Sec-WebSocket-Accept, then none at all, each with the expected key in X-Echo: $results"
+                )
+            }
+        }
+
+        "whether a 101 head fits the handshake limit does not depend on how its reads split the terminator".pendingUntilFixed(
+            "the limit is checked against the bytes accumulated so far, so a head is refused when a read ends inside its CRLFCRLF and accepted otherwise"
+        ) in {
+            val terminator                     = "\r\n\r\n".getBytes(Utf8)
+            def head(key: String): Array[Byte] =
+                val fields =
+                    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                        s"Sec-WebSocket-Accept: ${WebSocketCodec.computeAcceptKey(key)}\r\nX-Pad: "
+                (fields + "a" * (4096 - fields.length)).getBytes(Utf8)
+            end head
+            Kyo.foreach(Chunk.from(0 to terminator.length)) { split =>
+                val peer = new AnsweringPeer(key =>
+                    Seq(head(key) ++ terminator.take(split), terminator.drop(split)).filter(_.nonEmpty)
+                )
+                Abort.run[HttpException] {
+                    WebSocketCodec.requestUpgradeWith(peer, wsUrl(), HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
+                }.map(result => (split, result.isSuccess))
+            }.map { outcomes =>
+                assert(
+                    outcomes.map(_._2).distinct.size == 1,
+                    s"a 4096-byte head, as (bytes of the terminator in the first read, accepted): $outcomes"
+                )
+            }
+        }
     }
 
     // ── Ping/Pong handling ────────────────────────────────────
@@ -737,6 +800,39 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             case other =>
                 fail(s"Expected Text after Pong, got $other")
         }
+    }
+
+    // The writer and the reader's auto-Pong share one transport, and a write is free to suspend (a full outbound channel), so the
+    // writer stalls after its first write here while the reader answers a Ping on the same transport.
+    "a data frame and an auto-Pong written while it is mid-write each reach the wire whole".pendingUntilFixed(
+        "a frame is written as two writes, header then payload, so a Pong written between them lands inside the data frame"
+    ) in {
+        val ping = makeMaskedFrame(0x9, fin = true, "pingdata".getBytes(Utf8))
+        val text = makeMaskedFrame(0x1, fin = true, "after-ping".getBytes(Utf8))
+        for
+            writes       <- AtomicRef.init(Chunk.empty[Span[Byte]])
+            firstWritten <- Latch.init(1)
+            resume       <- Latch.init(1)
+            conn = new TransportStream:
+                def read(using Frame): Stream[Span[Byte], Async]       = Stream.init(Seq(Span.fromUnsafe(ping ++ text)))
+                def write(data: Span[Byte])(using Frame): Unit < Async =
+                    writes.updateAndGet(_.append(data)).map { all =>
+                        if all.size == 1 then firstWritten.release.andThen(resume.await) else Kyo.unit
+                    }
+            writer <- Fiber.initUnscoped(WebSocketCodec.writeFrame(conn, HttpWebSocket.Payload.Text("hello"), mask = false))
+            _      <- firstWritten.await
+            read   <- Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame))
+            _      <- resume.release
+            _      <- writer.get
+            spans  <- writes.get
+        yield
+            val wire = Span.concat(spans.toSeq*).toArray
+            assert(read == Result.succeed(HttpWebSocket.Payload.Text("after-ping")), s"observed: $read")
+            assert(
+                unmaskedFrames(wire) == Chunk("opcode 1: hello", "opcode 10: pingdata"),
+                s"wire: ${wire.map(b => f"${b & 0xff}%02x").mkString(" ")}, read as ${unmaskedFrames(wire)}"
+            )
+        end for
     }
 
     "unknown opcode causes Abort[Closed]" in {

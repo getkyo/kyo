@@ -5,8 +5,11 @@ import kyo.*
 import kyo.internal.client.*
 import kyo.internal.http1.*
 import kyo.internal.util.*
+import kyo.internal.websocket.WebSocketCodec
 import kyo.net.DeferredConnectTransport
+import kyo.net.OutboundKeepingConnection
 import kyo.net.RecordingConnection
+import kyo.net.TestChannelTransport
 import kyo.net.internal.transport.Connection as TransportConnection
 
 /** Integration and unit tests for HttpClientBackend.
@@ -1076,6 +1079,77 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // RFC 6455 section 7.4.1: an endpoint that fails the connection over what it received names the reason in its Close frame, 1009 for
+    // a message too big to process and 1002 for a protocol error.
+    "a WebSocket client that fails the connection over a frame it read sends the Close code for that failure" - {
+
+        val url = HttpUrl.parse("http://test.invalid/ws").getOrThrow
+
+        /** Runs a session against a peer that answers the upgrade with a valid 101 followed by `frame`, with a handler that takes once,
+          * and returns each frame the client wrote after its upgrade request, as "Close <code>" or "opcode <n>".
+          */
+        def framesSentAfter(frame: Array[Byte], config: HttpWebSocket.Config)(using Frame): Chunk[String] < (Async & Abort[Any]) =
+            val (clientConn, peer) = TransportConnection.inMemoryPair()
+            val backend = HttpClientBackend.init(new TestChannelTransport(Seq(new OutboundKeepingConnection(clientConn))), 2, 60.seconds)
+            def readHead(acc: String): String < (Async & Abort[Closed]) =
+                if acc.contains("\r\n\r\n") then acc
+                else peer.inbound.safe.take.map(span => readHead(acc + new String(span.toArray, StandardCharsets.ISO_8859_1)))
+            val answer = Fiber.initUnscoped(readHead("").map { head =>
+                val key      = "Sec-WebSocket-Key: (\\S+)\r\n".r.findFirstMatchIn(head).map(_.group(1)).getOrElse("")
+                val accept   = WebSocketCodec.computeAcceptKey(key)
+                val upgraded =
+                    s"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: $accept\r\n\r\n"
+                peer.outbound.safe.put(Span.fromUnsafe(upgraded.getBytes(StandardCharsets.US_ASCII) ++ frame))
+                    .andThen(head.substring(head.indexOf("\r\n\r\n") + 4).getBytes(StandardCharsets.ISO_8859_1))
+            })
+            answer.map { answering =>
+                Abort.run[HttpException](backend.connectWebSocket(url, HttpHeaders.empty, config)(ws => Abort.run[Closed](ws.take()).unit))
+                    .andThen(answering.get)
+                    .map { afterHead =>
+                        val written = Chunk.from(afterHead) ++
+                            peer.inbound.drain().getOrElse(Chunk.empty).flatMap(s => Chunk.from(s.toArray))
+                        backend.closeFiber(Duration.Zero).safe.get.andThen(maskedFrames(written.toArray))
+                    }
+            }
+        end framesSentAfter
+
+        def maskedFrames(wire: Array[Byte]): Chunk[String] =
+            @scala.annotation.tailrec
+            def loop(at: Int, acc: Chunk[String]): Chunk[String] =
+                if at == wire.length then acc
+                else if wire.length - at < 6 || (wire(at + 1) & 0x7f) > 125 || wire.length - at - 6 < (wire(at + 1) & 0x7f) then
+                    acc.append(s"${wire.length - at} bytes that are not a whole masked frame")
+                else
+                    val opcode = wire(at) & 0x0f
+                    val len    = wire(at + 1) & 0x7f
+                    val bytes  = Array.tabulate(len)(i => (wire(at + 6 + i) ^ wire(at + 2 + i % 4)).toByte)
+                    val shown  =
+                        if opcode == 0x8 && len >= 2 then s"Close ${((bytes(0) & 0xff) << 8) | (bytes(1) & 0xff)}" else s"opcode $opcode"
+                    loop(at + 6 + len, acc.append(shown))
+            loop(0, Chunk.empty)
+        end maskedFrames
+
+        "a frame over maxFrameSize is answered with Close 1009".pendingUntilFixed(
+            "the frame-size failure is mapped to Closed, the session records no close reason, and the client ends without a Close frame"
+        ) in {
+            val oversized = Array[Byte]((0x80 | 0x1).toByte, 5) ++ "hello".getBytes(StandardCharsets.US_ASCII)
+            framesSentAfter(oversized, HttpWebSocket.Config(maxFrameSize = 4.bytes)).map { frames =>
+                assert(frames == Chunk("Close 1009"), s"frames the client sent after a 5-byte frame over a 4-byte limit: $frames")
+            }
+        }
+
+        "a masked server frame is answered with Close 1002".pendingUntilFixed(
+            "the masking violation is mapped to Closed, the session records no close reason, and the client ends without a Close frame"
+        ) in {
+            val key    = Array[Byte](1, 2, 3, 4)
+            val masked = Array[Byte]((0x80 | 0x1).toByte, (0x80 | 5).toByte) ++ key ++
+                "hello".getBytes(StandardCharsets.US_ASCII).zipWithIndex.map((b, i) => (b ^ key(i % 4)).toByte)
+            framesSentAfter(masked, HttpWebSocket.Config()).map { frames =>
+                assert(frames == Chunk("Close 1002"), s"frames the client sent after a masked server frame: $frames")
             }
         }
     }
