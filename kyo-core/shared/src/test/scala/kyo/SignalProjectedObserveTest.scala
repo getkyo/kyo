@@ -3,10 +3,10 @@ package kyo
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
-/** The repairing loop of `Signal.observeProjected`, over a combinator source and on virtual time.
+/** The repairing loop of `Signal.observeProjected`, over a combinator behind a signal defined with `initRaw`, on virtual time.
   *
-  * A combinator cannot observe exactly, so its loop wakes on either `nextWith` or a repair timer and re-reads `current`. What a wakeup
-  * may do with that read is pinned here:
+  * A signal defined with `initRaw` cannot observe exactly, so its loop wakes on either `nextWith` or a repair timer and re-reads
+  * `current`. What a wakeup may do with that read is pinned here:
   *
   *   - **A wakeup with an unchanged source.** A wakeup that finds the source unchanged neither projects nor delivers. Images need not be `==` for equal
   *     sources: a rendered UI tree never is, so re-projecting on a tick repaints the region once per repair interval.

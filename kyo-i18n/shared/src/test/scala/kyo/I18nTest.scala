@@ -181,6 +181,64 @@ class I18nTest extends kyo.test.Test[Any]:
         }
     }
 
+    /** Observes `sig` with the clock frozen and runs `write` while `f` runs for the first value. Answers whether `f` then sees `expected`
+      * before the observation arms a repair timer: an exact observation needs none, a repairing one finds nothing until the timer fires.
+      */
+    private def seesWriteDuringF(sig: Signal[String], expected: String)(write: Unit < Sync)(using Frame): Boolean < Async =
+        Clock.withTimeControl { control =>
+            for
+                started   <- Latch.init(1)
+                gate      <- Latch.init(1)
+                delivered <- Latch.init(1)
+                fiber     <- Fiber.initUnscoped(sig.observe { v =>
+                    if v == expected then delivered.release else started.release.andThen(gate.await)
+                })
+                _  <- started.await
+                _  <- write
+                _  <- gate.release
+                ok <- Async.race(delivered.await.andThen(true), control.awaitPendingSleeper(Signal.defaultRepairInterval).andThen(false))
+                _  <- fiber.interrupt
+            yield ok
+        }
+
+    "observation" - {
+        "a leaf delivers a locale switch that lands while f runs, without repair" in {
+            for
+                ref <- Signal.initRef(en)
+                h   <- handleOver(ref)
+                ok  <- I18n.let(h)(seesWriteDuringF(I18n.t("hello"), "Hallo")(ref.set(de)))
+            yield assert(ok)
+        }
+        "a leaf delivers an argument write that lands while f runs, without repair" in {
+            for
+                ref  <- Signal.initRef(en)
+                h    <- handleOver(ref)
+                name <- Signal.initRef("Sam")
+                ok   <- I18n.let(h)(seesWriteDuringF(I18n.t("greet", Dict("name" -> name)), "Hello, Kim!")(name.set("Kim")))
+            yield assert(ok)
+        }
+        "the interpolator delivers a locale switch that lands while f runs, without repair" in {
+            for
+                ref <- Signal.initRef(en)
+                h   <- handleOver(ref)
+                ok  <- I18n.let(h) {
+                    val hello = I18n.t("hello")
+                    seesWriteDuringF(i18n"[$hello]", "[Hallo]")(ref.set(de))
+                }
+            yield assert(ok)
+        }
+        "a combination with the interpolator without signal arguments delivers a locale switch that lands while f runs, without repair" in {
+            for
+                ref <- Signal.initRef(en)
+                h   <- handleOver(ref)
+                ok  <- I18n.let(h) {
+                    val label = i18n"[label]".combineLatest(I18n.t("hello")).map((plain, hello) => s"$plain $hello")
+                    seesWriteDuringF(label, "[label] Hallo")(ref.set(de))
+                }
+            yield assert(ok)
+        }
+    }
+
     "parsing outside the supported subset" - {
         "keeps the messages it understands" in {
             for

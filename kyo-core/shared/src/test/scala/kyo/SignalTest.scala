@@ -1528,4 +1528,370 @@ class SignalTest extends kyo.test.Test[Any]:
         }
     }
 
+    /** Observes `sig` with the clock frozen and runs `write` while `f` runs for the first value. Answers whether `f` then sees `expected`
+      * before the observation arms a repair timer: an exact observation needs none, a repairing one finds nothing until the timer fires.
+      * The observation runs inside `observeIn` in its own fiber, for a binding that does not cross a fork.
+      */
+    private def seesWriteDuringF[A](sig: Signal[A], expected: A, observeIn: (Unit < Async) => Unit < Async = identity)(write: Unit < Sync)(
+        using
+        Frame,
+        CanEqual[A, A]
+    ): Boolean < Async =
+        Clock.withTimeControl { control =>
+            for
+                started   <- Latch.init(1)
+                gate      <- Latch.init(1)
+                delivered <- Latch.init(1)
+                fiber     <- Fiber.initUnscoped(observeIn(sig.observe { v =>
+                    if v == expected then delivered.release else started.release.andThen(gate.await)
+                }))
+                _  <- started.await
+                _  <- write
+                _  <- gate.release
+                ok <- Async.race(delivered.await.andThen(true), control.awaitPendingSleeper(Signal.defaultRepairInterval).andThen(false))
+                _  <- fiber.interrupt
+            yield ok
+        }
+
+    /** A view of `backing` defined with `initRaw`, which therefore does not observe exactly. Without `wakes` its `nextWith` never fires,
+      * so only a repair timer sees a write to `backing`.
+      */
+    private def rawView(backing: SignalRef[Int], wakes: Boolean = true)(using Frame): Signal[Int] =
+        Signal.initRaw[Int](
+            currentWith = [B, S] => f => backing.currentWith(f),
+            nextWith = [B, S] => f => if wakes then backing.nextWith(f) else Async.never[B]
+        )
+
+    /** Observes `sig` with the clock frozen and runs `write` once `f` ran for the first value. Waits until `expected` is delivered on the
+      * next repair tick, and answers whether it was not delivered before.
+      */
+    private def deliversOnlyOnRepairTick[A](sig: Signal[A], expected: A)(write: Unit < Sync)(using Frame, CanEqual[A, A]): Boolean < Async =
+        Clock.withTimeControl { control =>
+            for
+                first     <- Latch.init(1)
+                delivered <- Latch.init(1)
+                fiber     <- Fiber.initUnscoped(sig.observe(v => if v == expected then delivered.release else first.release))
+                _         <- first.await
+                _         <- write
+                _         <- control.awaitPendingSleeper(Signal.defaultRepairInterval)
+                early     <- delivered.pending
+                _         <- control.advance(Signal.defaultRepairInterval)
+                _         <- delivered.await
+                _         <- fiber.interrupt
+            yield early == 1
+        }
+
+    "exact observation of combinators" - {
+
+        "combineLatest delivers a write that lands while f runs, without repair" in {
+            for
+                a  <- Signal.initRef(0)
+                b  <- Signal.initRef(0)
+                ok <- seesWriteDuringF(a.combineLatest(b), (0, 1))(b.set(1))
+            yield assert(ok)
+        }
+
+        "zip delivers a write that lands while f runs, without repair" in {
+            for
+                a  <- Signal.initRef(0)
+                b  <- Signal.initRef(0)
+                ok <- seesWriteDuringF(a.zip(b), (1, 0))(a.set(1))
+            yield assert(ok)
+        }
+
+        "combineLatestAll delivers a write that lands while f runs, without repair" in {
+            for
+                a  <- Signal.initRef(0)
+                b  <- Signal.initRef(0)
+                c  <- Signal.initRef(0)
+                ok <- seesWriteDuringF(Signal.combineLatestAll(Seq(a, b.map(_ * 10), c)), Chunk(0, 0, 1))(c.set(1))
+            yield assert(ok)
+        }
+
+        "zipAll delivers a write that lands while f runs, without repair" in {
+            for
+                a  <- Signal.initRef(0)
+                b  <- Signal.initRef(0)
+                c  <- Signal.initRef(0)
+                ok <- seesWriteDuringF(Signal.zipAll(Seq(a, b, c)), Chunk(0, 1, 0))(b.set(1))
+            yield assert(ok)
+        }
+
+        "switchMap delivers a write to the inner signal that lands while f runs, without repair" in {
+            for
+                outer <- Signal.initRef(0)
+                inner <- Signal.initRef(10)
+                ok    <- seesWriteDuringF(outer.switchMap(_ => inner), 11)(inner.set(11))
+            yield assert(ok)
+        }
+
+        "switchMap delivers a switch of the outer signal that lands while f runs, without repair" in {
+            for
+                outer  <- Signal.initRef(0)
+                inner0 <- Signal.initRef(10)
+                inner1 <- Signal.initRef(20)
+                ok     <- seesWriteDuringF(outer.switchMap(v => if v == 0 then inner0 else inner1), 20)(outer.set(1))
+            yield assert(ok)
+        }
+
+        "after a switch, switchMap follows the new inner signal and no longer the old one" in {
+            for
+                outer  <- Signal.initRef(0)
+                inner0 <- Signal.initRef(10)
+                inner1 <- Signal.initRef(20)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(outer.switchMap(v => if v == 0 then inner0 else inner1).observe(recordValue(seen, _)))
+                _      <- assertEventually(inner0.waiters.map(_ == 1))
+                _      <- outer.set(1)
+                _      <- assertEventually(Kyo.zip(seen.get, inner0.waiters, inner1.waiters).map((s, w0, w1) =>
+                    s.size == 2 && w0 == 0 && w1 == 1
+                ))
+                _      <- inner0.set(11)
+                _      <- inner1.set(21)
+                _      <- assertEventually(seen.get.map(_.size == 3))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(result == Chunk(10, 20, 21))
+        }
+
+        "an idle observer of a combinator re-reads nothing across repair intervals" in {
+            val intervals      = 3
+            val wallClockDelay = 20.millis
+            Clock.withTimeControl { control =>
+                for
+                    reads <- AtomicInt.init
+                    a     <- Signal.initRef(0)
+                    b     <- Signal.initRef(0)
+                    first <- Latch.init(1)
+                    counted = a.map { v =>
+                        import AllowUnsafe.embrace.danger
+                        discard(reads.unsafe.incrementAndGet())
+                        v
+                    }
+                    fiber <- Fiber.initUnscoped(counted.combineLatest(b).observe(_ => first.release))
+                    _     <- first.await
+                    r0    <- reads.get
+                    _     <- Kyo.foreachDiscard(1 to intervals)(_ => control.advance(Signal.defaultRepairInterval, wallClockDelay))
+                    idle  <- reads.get
+                    _     <- fiber.interrupt
+                yield assert(
+                    idle == r0,
+                    s"an idle observer read its sources ${idle - r0} more times over $intervals repair intervals, expected none"
+                )
+                end for
+            }
+        }
+
+        "an idle observer of a combinator holds one waiter per source, and none once interrupted" in {
+            val writes = 50
+            for
+                a     <- Signal.initRef(0)
+                b     <- Signal.initRef(0)
+                seen  <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                fiber <- Fiber.initUnscoped(a.combineLatest(b).observe(recordValue(seen, _)))
+                _     <- assertEventually(Kyo.zip(a.waiters, b.waiters).map((wa, wb) => wa == 1 && wb == 1))
+                _ <- Kyo.foreachDiscard(1 to writes)(i => a.set(i).andThen(assertEventually(seen.get.map(_.lastMaybe.exists(_ == (i, 0))))))
+                _ <- assertEventually(Kyo.zip(a.waiters, b.waiters).map((wa, wb) => wa == 1 && wb == 1))
+                _ <- fiber.interrupt
+                _ <- fiber.getResult
+                after <- Kyo.zip(a.waiters, b.waiters)
+            yield assert(after == (0, 0), s"waiters after interrupt: $after")
+            end for
+        }
+
+        "an interrupt while a change is in flight leaves no waiter" in {
+            val rounds = 200
+            Kyo.foreachDiscard(1 to rounds) { i =>
+                for
+                    a     <- Signal.initRef(0)
+                    b     <- Signal.initRef(0)
+                    first <- Latch.init(1)
+                    fiber <- Fiber.initUnscoped(a.combineLatest(b).observe(_ => first.release))
+                    _     <- first.await
+                    _     <- assertEventually(Kyo.zip(a.waiters, b.waiters).map((wa, wb) => wa == 1 && wb == 1))
+                    write <- Fiber.initUnscoped(if i % 2 == 0 then a.set(1) else b.set(1))
+                    _     <- fiber.interrupt
+                    _     <- fiber.getResult
+                    after <- Kyo.zip(a.waiters, b.waiters)
+                    _     <- write.get
+                yield assert(after == (0, 0), s"round $i: waiters after interrupt: $after")
+            }.andThen(succeed)
+        }
+
+        "combineLatest of a source with itself holds a registration per read, released by a change and by an interrupt" in {
+            val writes = 20
+            for
+                a     <- Signal.initRef(0)
+                seen  <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                fiber <- Fiber.initUnscoped(a.combineLatest(a).observe(recordValue(seen, _)))
+                _     <- assertEventually(a.waiters.map(_ == 2))
+                _     <- Kyo.foreachDiscard(1 to writes)(a.set(_))
+                _     <- assertEventually(seen.get.map(_.lastMaybe.exists(_ == (writes, writes))))
+                _     <- assertEventually(a.waiters.map(_ == 2))
+                _     <- fiber.interrupt.andThen(fiber.getResult)
+                after <- a.waiters
+            yield assert(after == 0, s"waiters after interrupt: $after")
+            end for
+        }
+
+        "combineLatestAll over a source and a map of it holds a registration per read, released by a change and by an interrupt" in {
+            val writes = 20
+            for
+                b     <- Signal.initRef(0)
+                seen  <- AtomicRef.init(Chunk.empty[Chunk[Int]])
+                fiber <- Fiber.initUnscoped(Signal.combineLatestAll(Seq(b, b.map(_ * 10))).observe(recordValue(seen, _)))
+                _     <- assertEventually(b.waiters.map(_ == 2))
+                _     <- Kyo.foreachDiscard(1 to writes)(b.set(_))
+                _     <- assertEventually(seen.get.map(_.lastMaybe.exists(_ == Chunk(writes, writes * 10))))
+                _     <- assertEventually(b.waiters.map(_ == 2))
+                _     <- fiber.interrupt.andThen(fiber.getResult)
+                after <- b.waiters
+            yield assert(after == 0, s"waiters after interrupt: $after")
+            end for
+        }
+
+        "switchMap keeps delivering when its inner signal switches between a ref and one defined by initRaw" in {
+            for
+                outer   <- Signal.initRef(0)
+                inner   <- Signal.initRef(10)
+                backing <- Signal.initRef(20)
+                raw = rawView(backing)
+                seen  <- AtomicRef.init(Chunk.empty[Int])
+                fiber <- Fiber.initUnscoped(outer.switchMap(v => if v == 0 then inner else raw).observe(recordValue(seen, _)))
+                _     <- assertEventually(inner.waiters.map(_ == 1))
+                _     <- inner.set(11)
+                _     <- assertEventually(seen.get.map(_.lastMaybe.exists(_ == 11)))
+                _     <- outer.set(1)
+                _     <- assertEventually(seen.get.map(_.lastMaybe.exists(_ == 20)))
+                _     <- assertEventually(backing.waiters.map(_ == 1))
+                _     <- backing.set(21)
+                _     <- assertEventually(seen.get.map(_.lastMaybe.exists(_ == 21)))
+                _     <- outer.set(0)
+                _     <- assertEventually(seen.get.map(_.lastMaybe.exists(_ == 11)))
+                _     <- assertEventually(inner.waiters.map(_ == 1))
+                _     <- inner.set(12)
+                _     <- assertEventually(seen.get.map(_.lastMaybe.exists(_ == 12)))
+                _     <- fiber.interrupt
+                _     <- fiber.getResult
+                // The repairing loop's `Async.race` may release its waiters only after the observer's result is set.
+                _      <- assertEventually(Kyo.zip(outer.waiters, inner.waiters, backing.waiters).map(_ == (0, 0, 0)))
+                result <- seen.get
+            yield assert(result == Chunk(10, 11, 20, 21, 11, 12), s"seen $result")
+        }
+
+        "a combinator with a source defined by initRaw still reconciles on the repair timer" in {
+            for
+                a       <- Signal.initRef(0)
+                backing <- Signal.initRef(0)
+                ok      <- deliversOnlyOnRepairTick(a.combineLatest(rawView(backing, wakes = false)), (0, 1))(backing.set(1))
+            yield assert(ok, "delivered before the repair tick")
+        }
+
+        "streamChanges on a combineLatest emits a write that lands while an element is processed" in {
+            for
+                a         <- Signal.initRef(0)
+                b         <- Signal.initRef(0)
+                started   <- Latch.init(1)
+                gate      <- Latch.init(1)
+                delivered <- Latch.init(1)
+                fiber     <- Fiber.initUnscoped(a.combineLatest(b).streamChanges.foreach { v =>
+                    if v == (0, 0) then started.release.andThen(gate.await) else delivered.release
+                })
+                _       <- started.await
+                _       <- a.set(1)
+                _       <- gate.release
+                _       <- assertEventually(b.waiters.map(_ > 0))
+                pending <- delivered.pending
+                _       <- fiber.interrupt
+            yield assert(pending == 0, "the write was not emitted: the stream waits on the next change")
+        }
+
+        "streamChanges on a zip still waits for both inputs to change" in {
+            for
+                a      <- Signal.initRef(0)
+                b      <- Signal.initRef(0)
+                seen   <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                fiber  <- Fiber.initUnscoped(a.zip(b).streamChanges.foreach(recordValue(seen, _)))
+                _      <- assertEventually(Kyo.zip(seen.get, a.waiters, b.waiters).map((s, wa, wb) => s.nonEmpty && wa == 1 && wb == 1))
+                _      <- a.set(1)
+                _      <- assertEventually(Kyo.zip(a.waiters, b.waiters).map(_ == (0, 1)))
+                early  <- seen.get
+                _      <- b.set(1)
+                _      <- assertEventually(seen.get.map(_.size > 1))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(early == Chunk((0, 0)) && result == Chunk((0, 0), (1, 1)), s"emitted $early, then $result")
+        }
+    }
+
+    "withLocal" - {
+
+        val chosen = Local.init[Signal[Int]](Signal.initConst(-1))
+
+        "reads the signal chosen by the local where it is read" in {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef(2)
+                sig = Signal.withLocal(chosen)(identity)
+                outside <- sig.current
+                underA  <- chosen.let(a)(sig.current)
+                underB  <- chosen.let(b)(sig.current)
+            yield assert((outside, underA, underB) == (-1, 1, 2))
+        }
+
+        "over a ref delivers a write that lands while f runs, without repair" in {
+            for
+                a  <- Signal.initRef(0)
+                ok <- chosen.let(a)(seesWriteDuringF(Signal.withLocal(chosen)(_.map(_ + 1)), 2)(a.set(1)))
+            yield assert(ok)
+        }
+
+        "inside a combinator delivers a write that lands while f runs, without repair" in {
+            for
+                a  <- Signal.initRef(1)
+                b  <- Signal.initRef(0)
+                ok <- chosen.let(a)(seesWriteDuringF(Signal.withLocal(chosen)(identity).combineLatest(b), (1, 1))(b.set(1)))
+            yield assert(ok)
+        }
+
+        "an observation holds a waiter only on the signal its own local chose" in {
+            for
+                a     <- Signal.initRef(0)
+                b     <- Signal.initRef(0)
+                seenA <- AtomicRef.init(Chunk.empty[Int])
+                seenB <- AtomicRef.init(Chunk.empty[Int])
+                sig = Signal.withLocal(chosen)(identity)
+                fa    <- Fiber.initUnscoped(chosen.let(a)(sig.observe(recordValue(seenA, _))))
+                _     <- assertEventually(Kyo.zip(a.waiters, b.waiters).map(_ == (1, 0)))
+                fb    <- Fiber.initUnscoped(chosen.let(b)(sig.observe(recordValue(seenB, _))))
+                _     <- assertEventually(Kyo.zip(a.waiters, b.waiters).map(_ == (1, 1)))
+                _     <- a.set(1)
+                _     <- b.set(2)
+                _     <- assertEventually(Kyo.zip(seenA.get, seenB.get).map(_ == (Chunk(0, 1), Chunk(0, 2))))
+                _     <- fa.interrupt.andThen(fa.getResult)
+                _     <- fb.interrupt.andThen(fb.getResult)
+                after <- Kyo.zip(a.waiters, b.waiters)
+            yield assert(after == (0, 0), s"waiters after interrupt: $after")
+        }
+
+        "over a non-inheritable local bound in the observing fiber delivers a write that lands while f runs, without repair" in {
+            val pinned = Local.initNoninheritable[Signal[Int]](Signal.initConst(-1))
+            for
+                a  <- Signal.initRef(0)
+                ok <- seesWriteDuringF(Signal.withLocal(pinned)(identity), 1, pinned.let(a)(_))(a.set(1))
+            yield assert(ok)
+            end for
+        }
+
+        "over a signal defined by initRaw still reconciles on the repair timer" in {
+            for
+                backing <- Signal.initRef(0)
+                ok      <- chosen.let(rawView(backing, wakes = false))(deliversOnlyOnRepairTick(
+                    Signal.withLocal(chosen)(identity),
+                    1
+                )(backing.set(1)))
+            yield assert(ok, "delivered before the repair tick")
+        }
+    }
+
 end SignalTest
