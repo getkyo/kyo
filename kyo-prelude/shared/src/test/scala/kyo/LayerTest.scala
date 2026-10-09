@@ -67,32 +67,39 @@ class LayerTest extends kyo.test.Test[Any]:
 
         }
 
-        "provide should not allow circular deps".pendingUntilFixed("circular layer dependencies are not yet detected") in {
-            trait Dummy
-            case class Guppy(name: String)
-            case class Shark(belly: Guppy, dummy: Dummy)
+        "Layer.init rejects a dependency cycle" in {
+            case class Egg(hen: Hen)
+            case class Hen(egg: Egg)
 
-            val guppyLayer: Layer[Guppy, Any]                = Layer(Guppy("Tiny Guppy"))
-            val sharkLayer: Layer[Shark, Env[Guppy & Dummy]] = Layer.from(Shark.apply)
+            val eggLayer = Layer.from((hen: Hen) => Egg(hen))
+            val henLayer = Layer.from((egg: Egg) => Hen(egg))
+            discard(eggLayer, henLayer)
 
-            discard(typeCheckFailure("""sharkLayer provide guppyLayer""")("circular"))
+            typeCheckFailure("""Layer.init[Egg](eggLayer, henLayer)""")("Circular dependencies found")
         }
 
-        "from 2".pendingUntilFixed(
-            "Layer.from with an intersection-type Env (String & Int) does not yet resolve the combined TypeMap value"
-        ) in:
+        // An annotated environment must not decide the inputs: the inputs come from the function, and the annotation only
+        // declares what the layer requires.
+        "from 2" in:
             case class R2(a: String, b: Int)
 
-            // adding a type annotation to layer here is creating the issue
             val layer: Layer[R2, Env[String & Int]] = Layer.from(R2.apply)
 
             val v: TypeMap[R2] < (Env[String & Int] & Memo) = layer.run
 
             val r2: R2 = v.handle(Env.run(1), Env.run("abc"), Memo.run, _.eval, _.get[R2])
 
-            // fatal: kyo.TypeMap of contents [TypeMap(java.lang.String -> abc, scala.Int -> 1)] missing value of type: [(scala.Int & java.lang.String)].
             assert(r2.a == "abc")
             assert(r2.b == 1)
+
+        "from 1 under a wider declared environment" in:
+            case class Name(value: String) derives CanEqual
+
+            val layer: Layer[Name, Env[String & Int]] = Layer.from((s: String) => Name(s))
+
+            val name: Name = layer.run.handle(Env.run(1), Env.run("abc"), Memo.run, _.eval, _.get[Name])
+
+            assert(name == Name("abc"))
 
         "In =:= Out" in {
             trait Value:
