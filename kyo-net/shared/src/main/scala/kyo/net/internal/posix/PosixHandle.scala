@@ -58,6 +58,21 @@ final private[net] class PosixHandle private (
     // change worker's `rc < 0` failure path is unchanged: the deposit happens-before the `changeQueue.offer` that follows it. Multiple
     // carriers write during the upgrade window, which is exactly why this is an atomic reference and not a plain volatile field.
     val pendingReadPromise: AtomicRef.Unsafe[Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]]],
+    // The pending writable promise for this fd, held on the handle beside the poll-fiber-confined `pendingWritables` entry so the cancel and
+    // close paths can fail it synchronously on their own carrier. Deposited by `armSocketWritable`; taken with `getAndSet` by every close
+    // sweep and cleared by a `compareAndSet` on the delivered promise in `dispatchWritable`. The WritePump re-parks on the poll carrier the
+    // moment a writable resolves, while `Connection.releaseHandle` closes the handle from another carrier: a fail-then-clear there would
+    // clear the new deposit without failing it, and the pump would wait on it forever. The arming handle's id is `id` itself, so the stale-fd
+    // guard reads `handle.id` rather than a separately-stored copy.
+    val pendingWritablePromise: AtomicRef.Unsafe[Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]]],
+    // The WritePump's writable promise parked because the write-backpressure tail reached WriteTailHighWater: the driver returned TailPartial and
+    // the pump entered WriteState.Backpressured. The tail bound, not the socket, stopped the write, so the promise is held here and completed by
+    // the drain path (the engine FIFO worker) once the tail drops below WriteTailLowWater. Deposit and drain are serialized through the tail-size
+    // check: a registration racing a drain either sees the tail still high (the next drain completes it) or is completed by awaitWritable's own
+    // re-check on the FIFO. The handle is the bridge because the FIFO worker cannot reach the pump's WriteState cell. Every taker uses
+    // `getAndSet`: the pump re-parks the moment a waiter completes, so a fail-then-clear on the close path would clear that new waiter
+    // without failing it.
+    val backpressurePromise: AtomicRef.Unsafe[Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]]],
     // The most recent plaintext chunk the driver read off this fd, kept only so a STARTTLS upgrade can recover the peer's first handshake
     // flight when it arrived coalesced with the upgrade signal in a single `recv` and the application consumed (and discarded) the whole
     // chunk. A one-shot claim, not a plain snapshot: feedCoalescedHandshake and the upgrade-handoff salvage hooks (PollerIoDriver /
@@ -434,20 +449,6 @@ final private[net] class PosixHandle private (
       */
     @volatile var sendInFlight: Boolean = false
 
-    /** The WritePump's writable promise parked because the write-backpressure tail reached [[PosixHandle.WriteTailHighWater]]: the driver returned
-      * `WriteResult.TailPartial` and the pump entered [[WriteState.Backpressured]], suspended on `awaitWritable`. The kernel send buffer alone is
-      * not the readiness signal here (the tail bound, not the socket, stopped the write), so the promise is held on the handle and completed by the
-      * drain path when the tail drops below [[PosixHandle.WriteTailLowWater]]. Written by `awaitWritable` (the WritePump's carrier) and read/cleared
-      * by the drain path (the engine FIFO worker), causally serialized through the tail-size check: the waiter is registered only when the tail is
-      * over the low-water mark, and the drain completes-and-clears it only after advancing the sent pointer below the mark, so a registration that
-      * races a drain either sees the tail still high (and the next drain completes it) or is itself completed immediately by `awaitWritable`'s own
-      * below-mark fast path. The `@volatile` carries the cross-carrier visibility. The close path fails any parked waiter via `cancel` / the driver
-      * teardown, so a slow peer never strands the pump. The slot is retained here (rather than carrying the promise inside
-      * [[WriteState.Backpressured]]) because the drain path runs on the engine FIFO worker and cannot reach the WritePump's WriteState atomic cell
-      * directly; the handle is the shared bridge between the two carriers.
-      */
-    @volatile var backpressurePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
-
     /** Whether the last recv on this fd filled the read buffer exactly (n == readBufferSize). When true, the kernel may still hold residual
       * bytes that an edge-triggered backend will never re-signal (epoll fires once per empty->ready transition; a filled buffer leaves data in
       * the kernel with no new edge). On the next awaitRead registration the driver immediately re-dispatches the fd rather than waiting for an
@@ -503,15 +504,6 @@ final private[net] class PosixHandle private (
       * this field, and at most one accept is in flight per handle.
       */
     @volatile var pendingAcceptPromise: Maybe[Promise.Unsafe[Int, Abort[Closed | NetException]]] = Absent
-
-    /** The pending writable promise for this fd, stored directly on the handle alongside the poll-fiber-confined `pendingWritables` map entry.
-      * The map entry routes the readiness event to the right waiter on the poll fiber; this field lets the cancel/close paths fail the promise
-      * SYNCHRONOUSLY on their own carrier (the map removal itself is deferred to the poll fiber, so the close path must not touch the non-thread-safe
-      * map). Written by `armSocketWritable` (the WritePump / connect / flush re-arm carrier) before its change command; read and cleared by the poll
-      * fiber on `dispatchWritable` and by the cancel/close paths. At most one writable is armed per handle at a time. The arming handle's id is
-      * `id` itself, so the stale-fd guard reads `handle.id` rather than a separately-stored copy.
-      */
-    @volatile var pendingWritablePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
 
     /** Latch: the peer has closed its write side (a FIN) or the connection hit a hard error (RST). Written only by the poll carrier at the FIN/error
       * edges its standing registration delivers, even while the ReadPump is backpressured with no read armed. `@volatile` because the grace timer
@@ -636,10 +628,7 @@ final private[net] class PosixHandle private (
       */
     private[posix] def releaseBackpressureWaiter()(using AllowUnsafe): Unit =
         if unsentTailBytes < PosixHandle.WriteTailLowWater then
-            backpressurePromise.foreach { p =>
-                backpressurePromise = Absent
-                p.completeDiscard(Result.succeed(()))
-            }
+            backpressurePromise.getAndSet(Absent).foreach(_.completeDiscard(Result.succeed(())))
     end releaseBackpressureWaiter
 
     /** Request close of the shared resources. If no op holds them (holder count 0), they are freed immediately. If a read or write is in flight,
@@ -748,6 +737,8 @@ private[net] object PosixHandle:
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
+            pendingWritablePromise = AtomicRef.Unsafe.init(Absent),
+            backpressurePromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
             queuedWriteBytes = AtomicInt.Unsafe.init(0),
             createdAt = createdAt
@@ -770,6 +761,8 @@ private[net] object PosixHandle:
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
+            pendingWritablePromise = AtomicRef.Unsafe.init(Absent),
+            backpressurePromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
             queuedWriteBytes = AtomicInt.Unsafe.init(0),
             createdAt = createdAt
@@ -838,7 +831,7 @@ private[net] object PosixHandle:
         // promise never resolves and the WritePump fiber that parked on it hangs forever. Completing it with Closed here releases that fiber. The
         // free runs exactly once (guard CAS to its terminal value), and completeDiscard is idempotent, so a double-fail (here and in cancel or
         // awaitWritable's close-race check) is harmless.
-        h.backpressurePromise.foreach { bp =>
+        h.backpressurePromise.getAndSet(Absent).foreach { bp =>
             given Frame = Frame.internal
             bp.completeDiscard(
                 Result.fail(kyo.Closed(
@@ -848,7 +841,6 @@ private[net] object PosixHandle:
                 ))
             )
         }
-        h.backpressurePromise = Absent
         // Fail (not merely clear) a STARTTLS handshake parked on the stale-recv handoff: if the handle closes mid-upgrade (a deadline reap or a
         // peer reset) the stale recv may never deliver, so completing the parked waiter Closed lets the handshake tear down instead of hanging on
         // it. Swing the one handoff slot to Idle and, if it held a parked Waiter, fail that promise with the frame captured when it parked. A
@@ -881,7 +873,8 @@ private[net] object PosixHandle:
         // Clear promise fields: these are on-heap references with no native close needed; setting to Absent drops the reference.
         h.pendingReadPromise.set(Absent)
         h.pendingAcceptPromise = Absent
-        h.pendingWritablePromise = Absent
+        // pendingWritablePromise stays: a writable re-armed during the close is still queued for a registration that fails it Closed once it
+        // finds the handle no longer owns its fd, and clearing it here would leave that registration nothing to fail.
         // Run the deferred real close(fd) LAST: this method is the exactly-once, zero-holders point that just freed the engine and buffers
         // above, so the fd number inherits the same guarantee (see fdCloseSink). A non-Absent deferredHolder names which holder was still
         // active when the close was requested: "read"/"write" is a genuine concurrent I/O op that raced the close; "deferred-close" is
