@@ -1471,6 +1471,11 @@ final private[kyo] class HttpContainerBackend(
       * The caller is responsible for providing a context that absorbs those effects (e.g. the outer `Stream {}` block).
       * `consumeNdjsonStream` itself does NOT mention `Emit` in its effect row — it is transparent to the callback's extra effects.
       *
+      * The request runs with no client deadline. Podman's compat pull withholds the response status until the first layer event or an
+      * error, so a deadline on the headers bounds the whole registry lookup: one throttled registry attempt measured about 32 seconds,
+      * past both the client's 5 second default and the 30 second daemon floor. The progress stream is the
+      * liveness signal, the daemon bounds its own registry retries, and a caller that wants a bound interrupts or wraps a timeout.
+      *
       * @param byteStream
       *   Raw byte chunks from the HTTP response.
       * @param processLine
@@ -1489,11 +1494,13 @@ final private[kyo] class HttpContainerBackend(
         onPanic: Throwable => Unit < (Sync & Abort[ContainerException])
     )(using Frame): Unit < (Async & Abort[ContainerException] & S) =
         Abort.runWith[HttpException](
-            byteStream
-                .into(LineAssembler.pipe)
-                .foreachChunk { lines =>
-                    Kyo.foreachDiscard(lines.toSeq.filter(_.trim.nonEmpty))(processLine)
-                }
+            HttpClient.withConfig(_.timeout(Duration.Infinity)) {
+                byteStream
+                    .into(LineAssembler.pipe)
+                    .foreachChunk { lines =>
+                        Kyo.foreachDiscard(lines.toSeq.filter(_.trim.nonEmpty))(processLine)
+                    }
+            }
         ) {
             case Result.Success(_) => ()
             case Result.Failure(e) => onHttpFailure(e).unit

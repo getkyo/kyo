@@ -42,8 +42,6 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     // (init, exec, stats) under load — every test request would fail with HttpTimeoutException.
     // Tests get a 60s client request timeout to match the per-test budget; production users
     // still see the 5s default until they set their own via withConfig.
-    // For tests that explicitly need a longer timeout (e.g. image pulls), use runBackendsLong /
-    // runBackendLong which scope an even longer 5-minute timeout inside the test body.
     override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
         HttpClient.withConfig(_.timeout(60.seconds))(body)
 
@@ -162,21 +160,6 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
         }
     end registerBackends
 
-    /** Like [[runBackends]] but raises the HTTP client's per-request timeout to 5 minutes for the http arm. Use for integration tests that
-      * pull or build large images (e.g. mongo:7, mysql:8, postgres) where the default 5-second `HttpClientConfig` timeout is too short for
-      * streaming `/images/create` responses on a cold cache.
-      *
-      * The shell arm is unaffected — it delegates to the container CLI which uses its own process timeout.
-      */
-    def runBackendsLong(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        registerBackends(
-            (_, path) =>
-                Container.withBackendConfig(_.UnixSocket(Path(path))) {
-                    HttpClient.withConfig(_.timeout(5.minutes))(checkingContainerLeak(v))
-                },
-            runtime => Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
-        )
-
     /** Register one leaf test per available container runtime (docker, podman). The test body receives the runtime name as a parameter —
       * use this when the test logic needs to construct a backend config explicitly or branch on runtime identity. The body picks its own
       * backend (HTTP or Shell); no outer `withBackendConfig` is applied.
@@ -200,16 +183,6 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       */
     def runBackend(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
         registerSingleLeg(path => Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v)))
-
-    /** Like [[runBackend]] but raises the HTTP client's per-request timeout to 5 minutes. Use for single-leaf integration tests that pull
-      * or build large images on a cold cache (e.g. predef DB tests).
-      */
-    def runBackendLong(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        registerSingleLeg { path =>
-            Container.withBackendConfig(_.UnixSocket(Path(path))) {
-                HttpClient.withConfig(_.timeout(5.minutes))(checkingContainerLeak(v))
-            }
-        }
 
     /** The `http` leaf of [[runBackend]] over the first runnable runtime's socket, or that leaf cancelled with the reason when no runtime
       * this process answers for has one, for the same reason [[registerBackends]] registers cancelled twins.

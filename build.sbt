@@ -3706,7 +3706,7 @@ lazy val `kyo-pod` =
         .jvmSettings(
             mimaCheck(false),
             // Each suite is forked once by default; suites that exercise a container runtime via
-            // `runBackends` / `runBackendsLong` / `runRuntimes` are forked once per runtime instead
+            // `runBackends` / `runRuntimes` are forked once per runtime instead
             // (KYO_POD_RUNTIME pinned in each fork) so each fork hits a single daemon and the two
             // daemons run concurrently up to the global ForkedTestGroup cap. We auto-detect which
             // suites need the per-runtime split by instantiating each suite at config time and
@@ -3736,7 +3736,7 @@ lazy val `kyo-pod` =
                 // `runBackends` (ContainerOrchestrationItTest points readers at ContainerItTest) while the suite
                 // itself never touches a daemon.
                 val daemonHelperCall =
-                    """\b(runBackendsLong|runBackendsOf|runBackendsUnchecked|runBackends|runBackendLong|runBackend|runRuntimes)\s*[{(]""".r
+                    """\b(runBackendsOf|runBackendsUnchecked|runBackends|runBackend|runRuntimes)\s*[{(]""".r
                 val (daemonTests, plainTests) = (Test / definedTests).value.partition { test =>
                     val simpleName = test.name.split('.').last
                     val srcOpt     = testSrcDirs.flatMap(d => (d ** s"$simpleName.scala").get).headOption
@@ -3746,9 +3746,9 @@ lazy val `kyo-pod` =
                 // per-leaf container-leak check in BasePodTest diffs the daemon's whole container list, so it cannot
                 // tell a container another fork created inside its window from one the leaf leaked, and fails the
                 // leaf for it. One fork per daemon puts all those leaves in a single process, where BasePodTest's
-                // `globallySequential` orders them into one stream and no two ever overlap. The single-leg helpers
-                // (`runBackend`, `runBackendLong`) are matched too: they register no `[runtime]` marker, but they
-                // reach the daemon, which is what decides this. A fork pinned to a runtime that cannot run here
+                // `globallySequential` orders them into one stream and no two ever overlap. The single-leg helper
+                // `runBackend` is matched too: it registers no `[runtime]` marker, but it
+                // reaches the daemon, which is what decides this. A fork pinned to a runtime that cannot run here
                 // (absent, or a duplicate of another daemon) registers its container leaves cancelled with the
                 // reason (see ContainerRuntimeBase.assigned), so it costs a short JVM and never runs an empty selection.
                 val daemonGroups =

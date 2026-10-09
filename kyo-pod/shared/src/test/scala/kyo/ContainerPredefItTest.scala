@@ -14,7 +14,7 @@ class ContainerPredefItTest extends BasePodTest:
 
     "connection URL and container identity" - {
 
-        "Postgres url reaches the live container and names the host itself" - runBackendLong {
+        "Postgres url reaches the live container and names the host itself" - runBackend {
             // The accessor has to be verified against a live container, not a format string: it is the mapped
             // host port and the container's own host that make it usable, and both are only known at runtime.
             Postgres.initWith(Postgres.Config.default.username("e1").password("pw").database("e1db")) { pg =>
@@ -33,7 +33,7 @@ class ContainerPredefItTest extends BasePodTest:
             }
         }
 
-        "MySQL url reaches the live container and names the host itself" - runBackendLong {
+        "MySQL url reaches the live container and names the host itself" - runBackend {
             MySQL.initWith(MySQL.Config.default.username("e1").password("pw").database("e1db")) { my =>
                 for
                     url  <- my.url
@@ -45,7 +45,7 @@ class ContainerPredefItTest extends BasePodTest:
             }
         }
 
-        "a named, labelled Postgres fixture is findable by its label, not by its image" - runBackendLong {
+        "a named, labelled Postgres fixture is findable by its label, not by its image" - runBackend {
             // The hazard this closes: an image-filtered teardown on a shared daemon reaches every other
             // postgres:16-alpine, including another process's database. A label filter matches exactly one.
             val label = "kyo-pod-it-" + java.util.UUID.randomUUID().toString.take(8)
@@ -60,7 +60,7 @@ class ContainerPredefItTest extends BasePodTest:
             }
         }
 
-        "a label-scoped teardown removes its own container and leaves an identical sibling running" - runBackendLong {
+        "a label-scoped teardown removes its own container and leaves an identical sibling running" - runBackend {
             // The leaf above asserts a label filter matches one container, but on a daemon holding only that
             // container it would pass just as well if the filter were matching the IMAGE instead. The scenario
             // only discriminates once a SECOND postgres:16-alpine is running, and the half that costs somebody
@@ -106,7 +106,7 @@ class ContainerPredefItTest extends BasePodTest:
     }
 
     "Postgres" - {
-        "psql SELECT 1 returns 1" - runBackendLong {
+        "psql SELECT 1 returns 1" - runBackend {
             Postgres.initWith(Postgres.Config.default) { pg =>
                 pg.psql("SELECT 1").map { result =>
                     assert(result.exitCode.toInt == 0, s"psql exited ${result.exitCode}, stderr=${result.stderr}")
@@ -115,7 +115,7 @@ class ContainerPredefItTest extends BasePodTest:
             }
         }
 
-        "custom credentials work" - runBackendLong {
+        "custom credentials work" - runBackend {
             val cfg = Postgres.Config.default.username("admin").database("mydb")
             Postgres.initWith(cfg) { pg =>
                 pg.psql("SELECT current_user").map { result =>
@@ -125,7 +125,7 @@ class ContainerPredefItTest extends BasePodTest:
             }
         }
 
-        "create + insert + select round-trip" - runBackendLong {
+        "create + insert + select round-trip" - runBackend {
             Postgres.initWith(Postgres.Config.default) { pg =>
                 for
                     _    <- pg.psql("CREATE TABLE t (id int, name text)")
@@ -139,7 +139,7 @@ class ContainerPredefItTest extends BasePodTest:
     }
 
     "MySQL" - {
-        "mysql SELECT 1 returns 1" - runBackendLong {
+        "mysql SELECT 1 returns 1" - runBackend {
             MySQL.initWith(MySQL.Config.default) { my =>
                 my.mysql("SELECT 1").map { result =>
                     assert(result.exitCode.toInt == 0, s"mysql exited ${result.exitCode}, stderr=${result.stderr}")
@@ -148,7 +148,7 @@ class ContainerPredefItTest extends BasePodTest:
             }
         }
 
-        "custom credentials work" - runBackendLong {
+        "custom credentials work" - runBackend {
             val cfg = MySQL.Config.default.username("admin").database("mydb")
             MySQL.initWith(cfg) { my =>
                 my.mysql("SELECT current_user()").map { result =>
@@ -161,7 +161,7 @@ class ContainerPredefItTest extends BasePodTest:
             }
         }
 
-        "create + insert + select round-trip" - runBackendLong {
+        "create + insert + select round-trip" - runBackend {
             MySQL.initWith(MySQL.Config.default) { db =>
                 for
                     _    <- db.mysql("CREATE TABLE t (id INT, name VARCHAR(32))")
@@ -175,7 +175,7 @@ class ContainerPredefItTest extends BasePodTest:
     }
 
     "MongoDB" - {
-        "mongosh ping returns 1" - runBackendLong {
+        "mongosh ping returns 1" - runBackend {
             MongoDB.initWith(MongoDB.Config.default) { mg =>
                 mg.mongosh("db.adminCommand('ping').ok").map { result =>
                     assert(result.exitCode.toInt == 0, s"mongosh exited ${result.exitCode}, stderr=${result.stderr}")
@@ -184,7 +184,7 @@ class ContainerPredefItTest extends BasePodTest:
             }
         }
 
-        "insert + count round-trip" - runBackendLong {
+        "insert + count round-trip" - runBackend {
             MongoDB.initWith(MongoDB.Config.default) { mg =>
                 mg.mongosh("db.kyo.insertOne({hello: 'world'}); db.kyo.countDocuments()").map { result =>
                     assert(result.exitCode.toInt == 0, s"mongosh exited ${result.exitCode}, stderr=${result.stderr}")
@@ -196,7 +196,7 @@ class ContainerPredefItTest extends BasePodTest:
             }
         }
 
-        "find returns the inserted document" - runBackendLong {
+        "find returns the inserted document" - runBackend {
             MongoDB.initWith(MongoDB.Config.default) { mg =>
                 for
                     _     <- mg.mongosh("db.kyo.insertOne({name: 'kyo', id: 1})")
