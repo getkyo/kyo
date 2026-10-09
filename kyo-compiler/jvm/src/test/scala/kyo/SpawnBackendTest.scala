@@ -65,6 +65,35 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
     ): SpawnBackend < (Async & Abort[CompilerException] & Scope) =
         Scope.acquireRelease(SpawnBackend.init(config, driver, streamIdBase))(b => Abort.run[Throwable](b.close).unit)
 
+    /** An in-memory Exchange standing in for the aeron session: each sent request id lands on `sentCh`,
+      * and every frame put on `respCh` is routed back as a reply.
+      */
+    private def channelExchange(sentCh: Channel[Int], respCh: Channel[Envelope])(using
+        Frame
+    ): Exchange[Request, Response, Nothing, TransportError] < Sync =
+        Exchange.initUnscoped[Request, Response, Envelope, Nothing, TransportError](
+            encode = (id, req) => Envelope.Req(id, req),
+            send = (frame: Envelope) =>
+                frame match
+                    case Envelope.Req(id, _) => Abort.run[Closed](sentCh.put(id)).unit
+                    case _                   => (),
+            receive = Stream(respCh.streamUntilClosed().emit),
+            decode = (frame: Envelope) =>
+                frame match
+                    case Envelope.Resp(id, response) => Exchange.Message.Response(id, response)
+                    case _                           => Exchange.Message.Skip
+        )
+
+    /** A real Process handle for a leaf that drives `run` over [[channelExchange]], where the aeron
+      * client is unused (passed null) and teardown is `exchange.close` plus a direct process kill.
+      */
+    private def throwawayProcess(using Frame): Process < Sync =
+        Abort.run[CommandException](Command(javaBin, "-version").spawnUnscoped).map {
+            case Result.Success(p) => p
+            case Result.Failure(e) => Abort.panic(e)
+            case Result.Panic(t)   => Abort.panic(t)
+        }
+
     /** Scope-binds an in-process backend so its pc shuts down on every exit path. */
     private def scopedLocal(config: Compiler.Config)(using
         Frame
@@ -116,27 +145,12 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
                 for
                     sentCh   <- Channel.initUnscoped[Int](16)
                     respCh   <- Channel.initUnscoped[Envelope](16)
-                    exchange <- Exchange.initUnscoped[Request, Response, Envelope, Nothing, TransportError](
-                        encode = (id, req) => Envelope.Req(id, req),
-                        send = (frame: Envelope) =>
-                            frame match
-                                case Envelope.Req(id, _) => Abort.run[Closed](sentCh.put(id)).unit
-                                case _                   => (),
-                        receive = Stream(respCh.streamUntilClosed().emit),
-                        decode = (frame: Envelope) =>
-                            frame match
-                                case Envelope.Resp(id, response) => Exchange.Message.Response(id, response)
-                                case _                           => Exchange.Message.Skip
-                    )
-                    // A throwaway child process supplies a real Process handle; this leaf drives `run`
-                    // through a controlled in-memory Exchange (not a real aeron session), so aeron is
-                    // unused (passed null) and teardown is exchange.close plus a direct process kill.
-                    proc <- Abort.run[CommandException](Command(javaBin, "-version").spawnUnscoped).map {
-                        case Result.Success(p) => p
-                        case Result.Failure(e) => Abort.panic(e)
-                        case Result.Panic(t)   => Abort.panic(t)
-                    }
-                    backend = new SpawnBackend(proc, null.asInstanceOf[AeronClient], exchange)
+                    exchange <- channelExchange(sentCh, respCh)
+                    proc     <- throwawayProcess
+                    // The exit never completes: this leaf is about the exchange, and op1's interrupt must not reach it.
+                    exit   <- Promise.init[Process.ExitCode, Any]
+                    exited <- exit.uninterruptible
+                    backend = new SpawnBackend(proc, exited, null.asInstanceOf[AeronClient], exchange)
                     uri     = Compiler.Uri("Interrupt.scala")
 
                     // op1 registers (id 0) and parks: no response for id 0 is ever fed.
@@ -166,6 +180,84 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
                 case Result.Success(_)   => ()
                 case Result.Failure(c)   => Abort.panic(new RuntimeException(s"unexpected channel close: $c"))
                 case Result.Panic(error) => Abort.panic(error)
+            }
+        }
+    }
+
+    "a worker that exits mid-session fails the in-flight op and every later op with its exit code" in {
+        Scope.run {
+            Abort.run[Closed] {
+                for
+                    sentCh   <- Channel.initUnscoped[Int](16)
+                    respCh   <- Channel.initUnscoped[Envelope](16)
+                    exchange <- channelExchange(sentCh, respCh)
+                    proc     <- throwawayProcess
+                    exit     <- Promise.init[Process.ExitCode, Any]
+                    exited   <- exit.uninterruptible
+                    backend = new SpawnBackend(proc, exited, null.asInstanceOf[AeronClient], exchange)
+                    uri     = Compiler.Uri("Exit.scala")
+
+                    // A completed op interrupts its losing exit branch; the exit must still be observed afterwards.
+                    first   <- Fiber.initUnscoped(Abort.run[CompilerException](backend.run(Request.DidClose(uri))))
+                    firstId <- sentCh.take
+                    _       <- respCh.put(Envelope.Resp(firstId, Response.Closed))
+                    _       <- first.get.map(r => assert(r == Result.Success(Response.Closed), s"expected the fed reply, got $r"))
+
+                    // The op is sent and parked on its reply, which never comes: only the exit can end it.
+                    fiber    <- Fiber.initUnscoped(Abort.run[CompilerException](backend.run(Request.Compile(uri, "object A"))))
+                    _        <- sentCh.take
+                    _        <- exit.complete(Result.succeed(Process.ExitCode.Failure(3)))
+                    inFlight <- fiber.get
+                    later    <- Abort.run[CompilerException](backend.run(Request.DidClose(uri)))
+
+                    _ <- exchange.close
+                    _ <- backend.process.destroyForcibly
+                yield
+                    val expected = "worker process exited with ExitCode.Failure(3)"
+                    Chunk(inFlight, later).foreach {
+                        case Result.Failure(CompilerTransportException(cause: String)) => assert(cause == expected)
+                        case other => assert(false, s"expected CompilerTransportException($expected), got $other")
+                    }
+            }.map {
+                case Result.Success(_)   => ()
+                case Result.Failure(c)   => Abort.panic(new RuntimeException(s"unexpected channel close: $c"))
+                case Result.Panic(error) => Abort.panic(error)
+            }
+        }
+    }
+
+    "a worker that exits before signalling ready fails init with its exit code, not the ready timeout" in {
+        withDriver { driver =>
+            // With no classpath the worker JVM cannot load its main class and exits at once.
+            val config = spawnConfig().copy(toolchain = Compiler.Toolchain(CompilerPool.ownVersion, Chunk.empty), classpath = Chunk.empty)
+            val readyTimeout = 1.hour
+            Clock.withTimeControl { control =>
+                for
+                    spawned <- Promise.init[Process, Any]
+                    fiber   <- Fiber.initUnscoped(Abort.run[CompilerException](SpawnBackend.init(
+                        config,
+                        driver,
+                        900,
+                        p =>
+                            // Unsafe: onSpawn is a plain callback, so the barrier promise is completed directly.
+                            import AllowUnsafe.embrace.danger
+                            spawned.unsafe.completeDiscard(Result.succeed(p))
+                        ,
+                        readyTimeout
+                    )))
+                    process <- spawned.get
+                    code    <- process.waitFor
+                    // The worker is dead, so this advance fires the ready timeout if init is still waiting on it.
+                    _      <- control.advance(readyTimeout)
+                    result <- fiber.get
+                yield result match
+                    case Result.Failure(CompilerWorkerExitedException(version, exitCode)) =>
+                        assert(version == CompilerPool.ownVersion)
+                        assert(exitCode == code)
+                        assert(!exitCode.isSuccess, s"a worker that cannot load its main class must exit non-zero, got $exitCode")
+                    case other =>
+                        assert(false, s"expected CompilerWorkerExitedException, got $other")
+                end for
             }
         }
     }
