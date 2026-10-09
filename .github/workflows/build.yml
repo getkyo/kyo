@@ -153,6 +153,7 @@ jobs:
         with:
           os: ${{ inputs.os }}
           mode: save
+          apt-set: ${{ matrix.target }}
 
       # A JVM that dies in native code writes its diagnosis next to the forked test process and the runner
       # discards it with the workspace, so the only trace left in the log is a task failure carrying no test

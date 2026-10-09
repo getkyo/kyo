@@ -1,7 +1,8 @@
 name: caches
 description: >-
-  Restore or save the dependency cache (coursier, sbt, ivy) and the kyo-browser cache under
-  the deps-<os>- and kyo-browser-<os>- namespaces. Every job restores; only a push to main
+  Restore or save the dependency cache (coursier, sbt, ivy), the kyo-browser cache and, on Linux,
+  the apt .deb cache under the deps-<os>-, kyo-browser-<os>- and apt-<os>-<target>- namespaces.
+  Every job restores; only a push to main
   saves. A cache written on any other ref is scoped to that ref, readable by nothing else, and
   each such entry is about 1 GB against GitHub's 10 GB per-repo budget: pull requests saving
   their own copies is what evicted main's entries, including the class-name index the PR
@@ -17,6 +18,12 @@ inputs:
     description: "Whether to include the kyo-browser cache. Jobs that never launch Chrome pass false."
     required: false
     default: "true"
+  apt-set:
+    description: >-
+      Which job's apt packages the .deb cache holds: the target (JVM, JS, Native or Wasm) of a setup
+      job, whose apt lists the target decides. Empty skips the apt cache.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -41,6 +48,13 @@ runs:
           echo "browser-key=kyo-browser-${{ inputs.os }}-$(bash scripts/chrome-preload.sh version)-${{ hashFiles('scripts/chrome-preload.sh', 'scripts/fetch-lib.sh') }}"
           echo "browser-prefix=kyo-browser-${{ inputs.os }}-"
           echo "browser-paths=~/.cache/kyo-browser"
+          # The image decides which .debs an install downloads (it skips what the image ships), so a new image writes a new
+          # entry; the files hashed are the ones that name apt packages. The prefixes let a new image or list start from the
+          # last entry, whose per-list directories still serve every list that did not change.
+          echo "apt-key=apt-${{ inputs.os }}-${{ inputs.apt-set }}-${ImageOS:-image}-${ImageVersion:-unknown}-${{ hashFiles('scripts/apt-install.sh', '.github/actions/setup/action.yml', '.github/actions/stage-natives/action.yml') }}"
+          echo "apt-image-prefix=apt-${{ inputs.os }}-${{ inputs.apt-set }}-${ImageOS:-image}-${ImageVersion:-unknown}-"
+          echo "apt-prefix=apt-${{ inputs.os }}-${{ inputs.apt-set }}-"
+          echo "apt-paths=~/.cache/kyo-apt"
         } >> "$GITHUB_OUTPUT"
 
     - id: restore-deps
@@ -76,6 +90,23 @@ runs:
         echo "KYO_BROWSER_CACHE=$native_root" >> "$GITHUB_ENV"
         bash scripts/chrome-preload.sh install "${{ inputs.os }}" "$root"
 
+    - id: restore-apt
+      if: ${{ inputs.mode == 'restore' && inputs.apt-set != '' && startsWith(inputs.os, 'linux-') }}
+      uses: actions/cache/restore@v6
+      env:
+        FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      with:
+        path: ${{ steps.spec.outputs.apt-paths }}
+        key: ${{ steps.spec.outputs.apt-key }}
+        restore-keys: |
+          ${{ steps.spec.outputs.apt-image-prefix }}
+          ${{ steps.spec.outputs.apt-prefix }}
+
+    # scripts/apt-install.sh reads and fills the directory the entry lists.
+    - if: ${{ inputs.mode == 'restore' && inputs.apt-set != '' && startsWith(inputs.os, 'linux-') }}
+      shell: bash
+      run: echo "KYO_APT_CACHE=$HOME/.cache/kyo-apt" >> "$GITHUB_ENV"
+
     # Carries the exact-hit flags to the save call later in the job. actions/cache/save builds the whole
     # archive before it learns the key exists, so without them every main leg on an unchanged build would
     # tar about 1.4 GB and discard it. A restore-keys prefix hit leaves the flag false, so a new key saves.
@@ -84,6 +115,7 @@ runs:
       run: |
         echo "KYO_CACHE_DEPS_HIT=${{ steps.restore-deps.outputs.cache-hit == 'true' }}" >> "$GITHUB_ENV"
         echo "KYO_CACHE_BROWSER_HIT=${{ steps.restore-browser.outputs.cache-hit == 'true' }}" >> "$GITHUB_ENV"
+        echo "KYO_CACHE_APT_HIT=${{ steps.restore-apt.outputs.cache-hit == 'true' }}" >> "$GITHUB_ENV"
 
     # push, not just the ref: an issue_comment /release and a dispatch both run under refs/heads/main while
     # building another tree, and a key is immutable once written, so a thinner tree would own that hash.
@@ -102,3 +134,11 @@ runs:
       with:
         path: ${{ steps.spec.outputs.browser-paths }}
         key: ${{ steps.spec.outputs.browser-key }}
+
+    - if: ${{ !cancelled() && inputs.mode == 'save' && inputs.apt-set != '' && startsWith(inputs.os, 'linux-') && github.event_name == 'push' && github.ref == 'refs/heads/main' && env.KYO_CACHE_APT_HIT != 'true' }}
+      uses: actions/cache/save@v6
+      env:
+        FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      with:
+        path: ${{ steps.spec.outputs.apt-paths }}
+        key: ${{ steps.spec.outputs.apt-key }}

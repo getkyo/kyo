@@ -3,8 +3,8 @@ name: ci
 # suite, a pull request runs testDiff.
 #
 # One call to build.yml per pole, each matrixing that pole's targets internally. The Linux poles
-# run JVM/JS/Native/Wasm; windows-x64 runs JVM/JS (the Native target's libcurl/libh2o/openssl
-# toolchain is provisioned via apt and has no Windows port, and Scala.js's Wasm backend does not
+# run JVM/JS/Native/Wasm; windows-x64 runs JVM/JS (kyo-net's Native transport has only posix
+# backends, io_uring, epoll and kqueue, so there is no Windows one, and Scala.js's Wasm backend does not
 # instantiate on Windows: every module, with or without native code, dies at startup on an
 # emitted import whose module name is empty).
 #

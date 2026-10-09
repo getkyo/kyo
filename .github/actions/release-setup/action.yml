@@ -37,6 +37,7 @@ runs:
         os: ${{ steps.pole.outputs.value }}
         mode: restore
         browser: false
+        apt-set: Native
 
     # The staged trees below are per-architecture, and the two callers do not share one: publish
     # runs on x64, the probe on arm64. Resolve it from the runner rather than pinning a value that
@@ -51,11 +52,12 @@ runs:
           *) echo "release-setup: no os-arch mapping for '$(uname -m)'." >&2; exit 1 ;;
         esac
 
-    # liburing rides along with the other native build deps: the kyo-net io_uring shim
-    # (kyo_uring.c) statically links -luring, and publishing compiles it like any other build.
-    - name: Install Dependencies
+    # The kyo-net io_uring shim (kyo_uring.c) statically links -luring, and publishing compiles it like any
+    # other build. The call matches the Native ci leg's word for word: the .deb cache is per package list, so
+    # it installs from the list that leg cached.
+    - name: Install liburing
       shell: bash
-      run: bash scripts/apt-install.sh libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3 liburing-dev
+      run: bash scripts/apt-install.sh liburing-dev
 
     # Every vendored tree an FFI module links, staged for this probe's os-arch and cached per pin.
     # BoringSSL must be staged before any build: without the tree build.sbt silently compiles the

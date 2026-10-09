@@ -264,10 +264,8 @@ chmod +x /usr/local/bin/podman'
         # so the CI setup action never lists them; a bare container needs them explicitly
         # (scala-native drives clang, kyo-ffi-it's bundled lib builds with cc, and the
         # openssl-linked modules need -lssl -lcrypto).
-        Native|all) native_pkgs="clang build-essential libssl-dev libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3 libgc-dev"
-                    # No libh2o on Alpine; the Native leg is not a musl target, and the musl legs the
-                    # release actually runs are JVM-only native staging.
-                    apk_native_pkgs="clang build-base openssl-dev curl-dev libidn2-dev gc-dev" ;;
+        Native|all) native_pkgs="clang build-essential libssl-dev"
+                    apk_native_pkgs="clang build-base openssl-dev" ;;
     esac
     # Node 24, matching the workflow's setup-node pin. noble's apt `nodejs` is 18, and jsdom@30 declares
     # engines >= 22, so a DOM-backed suite installs and then fails to load it, reporting "jsdom is not
@@ -290,8 +288,8 @@ fi'
     fi
     # BoringSSL build toolchain (cmake + Go + a C toolchain), only when STAGE_BORINGSSL=1 builds the vendored BoringSSL so kyo-net's
     # TLS tests run against real libssl/libcrypto instead of cancelling. Heavy, so off by default.
-    [ "${STAGE_BORINGSSL:-}" = 1 ] && bssl_pkgs="cmake golang-go build-essential git clang libunwind-dev"
-    [ "${STAGE_BORINGSSL:-}" = 1 ] && apk_bssl_pkgs="cmake go build-base git clang libunwind-dev linux-headers perl"
+    [ "${STAGE_BORINGSSL:-}" = 1 ] && bssl_pkgs="cmake golang-go build-essential git"
+    [ "${STAGE_BORINGSSL:-}" = 1 ] && apk_bssl_pkgs="cmake go build-base git linux-headers perl"
     # SQLite staging fetches and unpacks one source zip, so it needs only curl + unzip, neither of which every base
     # image carries. Far lighter than the two above, but opt-in for the same reason: only a command touching
     # kyo-sql-sqlite needs it, and that module's ffiLibraries hard-errors without it rather than degrading.
