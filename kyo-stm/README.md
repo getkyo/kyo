@@ -299,6 +299,8 @@ After `bargeThreshold` polite retries (default 4) a writer ignores the `readTick
 
 Barging is opacity-neutral: correctness is enforced by `validate` in `TRef.lock`, not by the `readTick` yield that barging drops. The barging writer still acquires only an unheld lock; it never steals a lock another transaction physically holds.
 
+The protection runs one way. The `readTick` yield only defers a writer that started before the reader, and each retry starts with a fresh tick, so no transaction, reader or writer, gains priority by having retried. A transaction that reads a ref another fiber commits continuously can lose every attempt and fail with `FailedTransaction` once its schedule is exhausted. When a transaction must eventually commit against such a writer, give it an unbounded schedule such as `STM.defaultRetrySchedule.forever`, or pace the writer.
+
 ## Low-level escape hatches
 
 ### TRef.Unsafe.init: allocate outside any orchestration

@@ -382,7 +382,7 @@ class TMapTest extends kyo.test.Test[Any]:
     "Concurrency" - {
         val repeats = 50
 
-        "concurrent modifications".notJs in {
+        "concurrent modifications" in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             (for
                 size     <- Choice.eval(1, 10, 100)
@@ -397,7 +397,7 @@ class TMapTest extends kyo.test.Test[Any]:
                 .unit
         }
 
-        "concurrent reads and writes".notJs in {
+        "concurrent reads and writes" in {
             (for
                 size  <- Choice.eval(1, 10, 100)
                 map   <- STM.run(TMap.init[Int, Int]())
@@ -432,7 +432,7 @@ class TMapTest extends kyo.test.Test[Any]:
                 .unit
         }
 
-        "concurrent updates".notJs in {
+        "concurrent updates" in {
             (for
                 size <- Choice.eval(1, 10, 50)
                 map  <- STM.run(TMap.init[Int, Int]())
@@ -455,7 +455,7 @@ class TMapTest extends kyo.test.Test[Any]:
                 .unit
         }
 
-        "concurrent removals".notJs in {
+        "concurrent removals" in {
             (for
                 size <- Choice.eval(1, 10, 100)
                 map  <- STM.run(TMap.init[Int, Int]())
@@ -471,7 +471,7 @@ class TMapTest extends kyo.test.Test[Any]:
                 .unit
         }
 
-        "concurrent bulk operations".notJs in {
+        "concurrent bulk operations" in {
             val retries = STM.defaultRetrySchedule.forever
             (for
                 size <- Choice.eval(1, 10, 100)
