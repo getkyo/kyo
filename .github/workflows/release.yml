@@ -181,6 +181,9 @@ jobs:
           os-archs: linux-musl-x86_64
           sqlite: 'false'
           stage: 'false'
+      - uses: ./.github/actions/registry-mirror
+        with:
+          images: eclipse-temurin:25-jdk-alpine
       # The container resolves against the mounted cache, so it is exposed even on a run where the host
       # cache was warm. A reset here is what failed release 35440372541 at sbt project load.
       - name: Build linux-musl-x86_64 natives (Alpine)
@@ -308,6 +311,9 @@ jobs:
           os-archs: linux-musl-aarch64
           sqlite: 'false'
           stage: 'false'
+      - uses: ./.github/actions/registry-mirror
+        with:
+          images: eclipse-temurin:25-jdk-alpine
       - name: Build linux-musl-aarch64 natives (Alpine)
         uses: nick-fields/retry@v4
         with:

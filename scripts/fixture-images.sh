@@ -2,7 +2,10 @@
 set -uo pipefail
 #
 # fixture-images.sh - provides the container images the selected test modules start, so no test
-# leaf downloads one.
+# leaf downloads one. The exceptions are the kyo-pod leaves whose subject is the pull itself: they
+# pull or remove their image on purpose, and the registry mirror the setup action configures is
+# what keeps those off Docker Hub's per-IP limit. A docker pull here names the mirror explicitly
+# (`registry-mirror.sh pull`), and a docker build passes it as the Containerfiles' HUB argument.
 #
 # Usage: fixture-images.sh <plan-file> | --all
 #        fixture-images.sh --self-test
@@ -12,12 +15,16 @@ set -uo pipefail
 # platform; --all provides every entry. ci-test.sh runs this between compiling and testing, with
 # the plan its own compile or planning pass wrote, so a job builds only what its tests will start.
 #
-# A `pull` entry pulls an image pinned by digest. A `build` entry builds a Containerfile in the
-# repository under a local tag, for an image no registry serves; the tag carries the version the
-# build installs, and the fixture that starts it names the same tag. Every fixture inspects its
-# image first and fails with the pull or build command when it is missing, so a miss here is a loud
-# test failure, never a download from inside a leaf. That is also why a failure here only warns:
-# the leaves that need the image fail with the fix, and the other suites of the job still run.
+# A `pull` entry pulls an image under the exact reference its fixture starts: the digest where the
+# fixture pins one, otherwise the tag it names, since an image pulled by digest is not found under
+# its tag. A `build` entry builds a Containerfile in the repository under a local tag, for an image
+# no registry serves; the tag carries the version the build installs, and the fixture that starts
+# it names the same tag. The live-service fixtures inspect their image first and fail with the pull
+# or build command when it is missing; the kyo-pod and ContainerPredef ones pull a missing image
+# themselves, so a miss here costs a leaf a download rather than failing it. Either way a failure
+# here only warns, and the other suites of the job still run.
+#
+# postgres:16-alpine and mysql:8.0 are not listed: container-check.sh pulls them on every Linux job.
 #
 # Images go into every runtime that answers `version` (podman, docker), as kyo-pod may select
 # either. KYO_POD_RUNTIME narrows that to one runtime, and `none` provides nothing.
@@ -29,10 +36,19 @@ pull  kyo-email    docker.io/mailserver/docker-mailserver@sha256:d0fe7668defe157
 build kyo-teams    localhost/kyo-teams-playground:0.2.28   kyo-teams/shared/src/test/playground
 build kyo-discord  localhost/kyo-discord-spacebar:0eb6f04f6d-4 kyo-discord/shared/src/test/spacebar
 build kyo-slack    localhost/kyo-slack-simulator:87373b8855-1  kyo-slack/shared/src/test/slack-simulator
+pull  kyo-sql-tests docker.io/dolthub/dolt-sql-server:2.3.4
+pull  kyo-pod      docker.io/library/alpine:latest
+pull  kyo-pod      docker.io/library/alpine:3.19
+pull  kyo-pod      docker.io/library/alpine:3
+pull  kyo-pod      docker.io/library/busybox:latest
+pull  kyo-pod      docker.io/library/nginx:alpine
+pull  kyo-pod      docker.io/library/redis:7-alpine
+pull  kyo-pod      docker.io/library/mongo:7
 '
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RETRY_DELAY="${RETRY_DELAY:-10}"
+export MIRROR="${MIRROR:-mirror.gcr.io}"
 
 # Three attempts: a registry or npm hiccup on a fresh runner is the usual cause.
 retry3() {
@@ -64,8 +80,26 @@ selects() {
     grep -qxE "${module}(JVM|JS|Native|Wasm)?" "$plan"
 }
 
+# docker resolves a FROM on its own, past the daemon's registry mirror, so its build names the
+# mirror through the Containerfiles' HUB argument and falls back to Docker Hub only when that
+# build fails. A podman build already goes through the registries.conf.d mirror.
+# shellcheck disable=SC2329 # invoked through retry3
+build_image() {
+    local rt="$1" image="$2" context="$3"
+    local args=(build -q)
+    # A buildx builder other than the docker driver keeps the result in its cache unless told to
+    # load it; podman builds into its store and has no such flag.
+    [ "$rt" = docker ] && args+=(--load)
+    args+=(-t "$image")
+    local files=(-f "$REPO_ROOT/$context/Containerfile" "$REPO_ROOT/$context")
+    if [ "$rt" = docker ] && "$rt" "${args[@]}" --build-arg "HUB=$MIRROR" "${files[@]}"; then
+        return 0
+    fi
+    "$rt" "${args[@]}" "${files[@]}"
+}
+
 provide() {
-    local plan="$1" rt kind module image context load
+    local plan="$1" rt kind module image context
     local found; found=$(runtimes)
     if [ -z "$found" ]; then
         echo "fixture-images: no container runtime answers; nothing to provide"
@@ -80,19 +114,14 @@ provide() {
         for rt in $found; do
             case "$kind" in
                 pull)
-                    if retry3 "$rt" pull -q "$image"; then
+                    if retry3 bash "$REPO_ROOT/scripts/registry-mirror.sh" pull "$rt" "$image"; then
                         echo "fixture-images: $rt pulled $image"
                     else
                         echo "::warning title=fixture image pull failed::$rt could not pull $image; the $module leaves that start it will fail."
                     fi
                     ;;
                 build)
-                    # A buildx builder other than the docker driver keeps the result in its cache
-                    # unless told to load it; podman builds into its store and has no such flag.
-                    load=()
-                    [ "$rt" = docker ] && load=(--load)
-                    if retry3 "$rt" build -q ${load[@]+"${load[@]}"} -t "$image" -f "$REPO_ROOT/$context/Containerfile" "$REPO_ROOT/$context" \
-                        && "$rt" image inspect "$image" >/dev/null 2>&1; then
+                    if retry3 build_image "$rt" "$image" "$context" && "$rt" image inspect "$image" >/dev/null 2>&1; then
                         echo "fixture-images: $rt built $image"
                     else
                         echo "::warning title=fixture image build failed::$rt could not build $image from $context; the $module leaves that start it will fail."
@@ -112,11 +141,11 @@ self_test() {
     trap 'rm -rf "$SELF_TEST_DIR"' EXIT
     local dir="$SELF_TEST_DIR" pass=0 fail=0
     for rt in podman docker; do
-        printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" %s "$*" >> "%s/calls"\n[ -f "%s/%s-down" ] && exit 1\n[ "$1 ${2:-}" = "pull -q" ] && [ -f "%s/pull-fails" ] && exit 1\nexit 0\n' \
-            "$rt" "$dir" "$dir" "$rt" "$dir" > "$dir/$rt"
+        printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" %s "$*" >> "%s/calls"\n[ -f "%s/%s-down" ] && exit 1\n[ "$1 ${2:-}" = "pull -q" ] && [ -f "%s/pull-fails" ] && exit 1\n[ "$1" = build ] && [ -f "%s/mirror-build-fails" ] && [[ "$*" == *HUB=* ]] && exit 1\nexit 0\n' \
+            "$rt" "$dir" "$dir" "$rt" "$dir" "$dir" > "$dir/$rt"
         chmod +x "$dir/$rt"
     done
-    run() { : > "$dir/calls"; env -u KYO_POD_RUNTIME PATH="$dir:$PATH" RETRY_DELAY=0 "$@" bash "${BASH_SOURCE[0]}" "$plan" > "$dir/out" 2>&1; }
+    run() { : > "$dir/calls"; env -u KYO_POD_RUNTIME PATH="$dir:$PATH" RETRY_DELAY=0 MIRROR=mirror.example "$@" bash "${BASH_SOURCE[0]}" "$plan" > "$dir/out" 2>&1; }
     check() {
         if eval "$2"; then echo "  PASS: $1"; pass=$((pass + 1)); else echo "  FAIL: $1"; fail=$((fail + 1)); sed 's/^/    /' "$dir/calls" "$dir/out"; fi
     }
@@ -135,6 +164,27 @@ self_test() {
     run
     check "a plan provides only its modules' images, into both runtimes" \
         '[ "$(calls "build -q -t localhost/kyo-teams-playground:0.2.28")" = 1 ] && [ "$(calls "build -q --load -t localhost/kyo-teams-playground:0.2.28")" = 1 ] && [ "$(calls "pull -q docker.io/dgadelha/whaloc")" = 2 ] && [ "$(calls "spacebar|slack-simulator|telegram")" = 0 ]'
+
+    printf 'kyo-sqlJVM\nkyo-sql-testsNative\n' > "$plan"
+    run
+    check "kyo-sql-tests pulls Dolt, and kyo-sql alone selects nothing" \
+        '[ "$(calls "^podman pull -q docker.io/dolthub/dolt-sql-server:2.3.4$")" = 1 ] && [ "$(calls "^docker pull -q mirror.example/dolthub/dolt-sql-server:2.3.4$")" = 1 ] && [ "$(calls "^docker tag mirror.example/dolthub/dolt-sql-server:2.3.4 docker.io/dolthub/dolt-sql-server:2.3.4$")" = 1 ] && [ "$(calls " pull ")" = 2 ] && [ "$(calls " build ")" = 0 ]'
+
+    printf 'kyo-podJVM\n' > "$plan"
+    run
+    check "kyo-pod pulls its leaves' images by the tags they name, docker's by the mirror name, and nothing else" \
+        '[ "$(calls "^podman pull -q docker.io/library/(alpine:latest|alpine:3.19|alpine:3|busybox:latest|nginx:alpine|redis:7-alpine|mongo:7)$")" = 7 ] && [ "$(calls "^docker tag mirror.example/library/(alpine:latest|alpine:3.19|alpine:3|busybox:latest|nginx:alpine|redis:7-alpine|mongo:7) docker.io/library/")" = 7 ] && [ "$(calls " pull ")" = 14 ] && [ "$(calls " build ")" = 0 ]'
+
+    printf 'kyo-slackJVM\n' > "$plan"
+    run
+    check "a docker build names the mirror as HUB, a podman build does not" \
+        '[ "$(calls "^docker build .*--build-arg HUB=mirror.example")" = 1 ] && [ "$(calls "^docker build")" = 1 ] && [ "$(calls "^podman build .*HUB=")" = 0 ]'
+
+    touch "$dir/mirror-build-fails"
+    run
+    check "a docker build the mirror fails is rebuilt from Docker Hub" \
+        '[ "$(calls "^docker build")" = 2 ] && [ "$(calls "^docker build .*HUB=")" = 1 ] && ! grep -q "::warning" "$dir/out"'
+    rm -f "$dir/mirror-build-fails"
 
     plan=--all
     run

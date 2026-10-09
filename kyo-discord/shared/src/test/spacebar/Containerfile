@@ -1,4 +1,6 @@
-FROM docker.io/library/node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6 AS build
+# HUB is the Docker Hub host; scripts/fixture-images.sh names its mirror for a docker build. The digests pin the content either way.
+ARG HUB=docker.io
+FROM ${HUB}/library/node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6 AS build
 WORKDIR /app
 RUN node -e "fetch('https://codeload.github.com/spacebarchat/server/tar.gz/0eb6f04f6d8055dba0194d10c47c33e074a8a281').then(r => r.arrayBuffer()).then(b => require('fs').writeFileSync('/tmp/src.tgz', Buffer.from(b)))" \
  && echo "72a195a37f60720550c51072e8b040284364e1b7563c3f3f730f757134a49428  /tmp/src.tgz" | sha256sum -c - \
@@ -12,7 +14,7 @@ RUN sed -i 's#^\( *\)message.embeds = body.data.embeds || \[\];$#&\n\1if (body.d
  && grep -q 'message.content = body.data.content;' 'src/api/routes/interactions/#interaction_id/#interaction_token/callback.ts'
 RUN HUSKY=0 npm ci --no-audit --no-fund && npm run build
 
-FROM docker.io/library/postgres:17-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
+FROM ${HUB}/library/postgres:17-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
 COPY --from=build /usr/lib/*-linux-gnu/libatomic.so.1* /usr/local/lib/
 RUN ldconfig && node --version

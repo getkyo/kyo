@@ -1,0 +1,34 @@
+name: registry-mirror
+description: >-
+  Send the runner's Docker Hub pulls, for both podman and the docker daemon, to a pull-through
+  mirror first and to Docker Hub only when the mirror fails (scripts/registry-mirror.sh). Every job
+  that pulls an image, directly or through a test, calls this before its first pull: an
+  unauthenticated runner shares Docker Hub's per-IP pull limit with other tenants. A no-op off Linux.
+inputs:
+  images:
+    description: >-
+      Space-separated images a later step starts with `docker run`. Each is pulled into docker by
+      its mirror name and tagged with the name given, because the daemon's registry-mirrors setting
+      does not keep docker's implicit pull off Docker Hub.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Pull Docker Hub images through a mirror
+      if: ${{ runner.os == 'Linux' }}
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+      run: |
+        bash scripts/registry-mirror.sh
+        for image in $IMAGES; do
+          for attempt in 1 2 3; do
+            bash scripts/registry-mirror.sh pull docker "$image" && { echo "docker has $image"; break; }
+            if [ "$attempt" = 3 ]; then
+              echo "::warning title=image not provided::docker could not pull $image; the step that runs it will pull it itself."
+            else
+              sleep 10
+            fi
+          done
+        done

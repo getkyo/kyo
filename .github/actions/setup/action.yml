@@ -99,6 +99,10 @@ runs:
         # --if-missing normally installs nothing.
         bash scripts/apt-install.sh --if-missing runc
 
+    # Before "Start podman": the API service has to start with the mirror drop-in in place, and the
+    # health gate's probe pull and pre-pulls are the job's first Docker Hub requests.
+    - uses: ./.github/actions/registry-mirror
+
     - name: Start podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash

@@ -118,6 +118,7 @@ jobs:
         run: |
           scripts/ci-test.sh --self-test
           scripts/fixture-images.sh --self-test
+          scripts/registry-mirror.sh --self-test
           scripts/build-selftest.sh
           scripts/ci-monitor-selftest.sh
 
