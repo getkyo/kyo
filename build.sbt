@@ -3752,7 +3752,9 @@ lazy val `kyo-pod` =
                 // them into one stream and no two ever overlap. The single-leg helpers
                 // (`runBackend`, `runBackendLong`) are matched too: they register no `[runtime]` marker, but they
                 // reach the daemon, which is what decides this. Every leaf not bound to a runtime, these included,
-                // runs in one of the two forks only (ContainerRuntime.runsHostLeaves). A fork pinned to a runtime that
+                // runs in one of the two forks only (ContainerRuntime.runsHostLeaves), and KYO_POD_FORK is what marks
+                // these two: every fork inherits a KYO_POD_RUNTIME set outside the build (CI sets `none` on Windows),
+                // so the pin cannot tell them from the other forks. A fork pinned to a runtime that
                 // cannot run here (absent, or a duplicate of another daemon) registers its container leaves cancelled with the
                 // reason (see ContainerRuntimeBase.assigned), so it costs a short JVM and never runs an empty selection.
                 val daemonGroups =
@@ -3762,7 +3764,7 @@ lazy val `kyo-pod` =
                             Tests.Group(
                                 name = s"container#$runtime",
                                 tests = daemonTests,
-                                runPolicy = Tests.SubProcess(baseFork(Map("KYO_POD_RUNTIME" -> runtime))),
+                                runPolicy = Tests.SubProcess(baseFork(Map("KYO_POD_RUNTIME" -> runtime, "KYO_POD_FORK" -> runtime))),
                                 tags = Seq(PodRuntimeForkTag -> 1)
                             )
                         }

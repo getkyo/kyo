@@ -155,7 +155,7 @@ private[kyo] trait ContainerRuntimeBase:
       */
     lazy val singleLeg: Either[String, String] =
         import AllowUnsafe.embrace.danger
-        singleLegOwner(unpinnedAssignment, assigned, getEnv("KYO_POD_RUNTIME"), rt => findSocket(rt).isDefined)
+        singleLegOwner(unpinnedAssignment, assigned, splitFork, rt => findSocket(rt).isDefined)
             .flatMap(rt => findSocket(rt).toRight(s"$rt exposes no socket for the http backend"))
     end singleLeg
 
@@ -167,12 +167,24 @@ private[kyo] trait ContainerRuntimeBase:
       */
     lazy val runsHostLeaves: Boolean =
         import AllowUnsafe.embrace.danger
-        hostLeavesHere(owner(unpinnedAssignment, rt => findSocket(rt).isDefined), getEnv("KYO_POD_RUNTIME"))
+        hostLeavesHere(owner(unpinnedAssignment, rt => findSocket(rt).isDefined), splitFork)
     end runsHostLeaves
 
-    /** [[runsHostLeaves]] from the host's owner runtime and the pin. An unpinned process runs every leaf. */
-    private[kyo] def hostLeavesHere(owner: Maybe[String], pin: Maybe[String]): Boolean =
-        pin.forall(_ == owner.getOrElse("podman"))
+    /** The runtime of the build's per-runtime fork this process is, or `Absent` outside those forks.
+      *
+      * A variable of its own rather than the `KYO_POD_RUNTIME` pin: the pin is also set by hand and job-wide by CI (`none` on Windows), and
+      * every fork inherits it, so reading the pin as the split makes each suite outside the two forks drop every leaf it has.
+      */
+    private lazy val splitFork: Maybe[String] =
+        import AllowUnsafe.embrace.danger
+        getEnv("KYO_POD_FORK")
+    end splitFork
+
+    /** [[runsHostLeaves]] from the host's owner runtime and the per-runtime fork this process is. A process outside those forks runs every
+      * leaf.
+      */
+    private[kyo] def hostLeavesHere(owner: Maybe[String], fork: Maybe[String]): Boolean =
+        fork.forall(_ == owner.getOrElse("podman"))
 
     /** The assignment this host would get with no pin: every runtime, runnable or with its reason. */
     private lazy val unpinnedAssignment: Seq[(String, Maybe[String])] =
@@ -181,24 +193,29 @@ private[kyo] trait ContainerRuntimeBase:
         assignment(kyo.internal.Platform.isWindows, reachable, distinctDaemons(reachable.collect { case (n, true) => n }), Absent)
     end unpinnedAssignment
 
-    /** The first runtime of the unpinned assignment that can run here and exposes a socket. */
-    private[kyo] def owner(unpinned: Seq[(String, Maybe[String])], hasSocket: String => Boolean): Maybe[String] =
-        Maybe.fromOption(unpinned.collectFirst { case (rt, Absent) if hasSocket(rt) => rt })
+    /** The first runtime of an assignment that can run here and exposes a socket. */
+    private[kyo] def owner(assignment: Seq[(String, Maybe[String])], hasSocket: String => Boolean): Maybe[String] =
+        Maybe.fromOption(assignment.collectFirst { case (rt, Absent) if hasSocket(rt) => rt })
 
-    /** [[singleLeg]]'s runtime from its inputs: the host's unpinned assignment, this process's assignment, the pin, and which runtimes
-      * expose a socket.
+    /** [[singleLeg]]'s runtime from its inputs: the host's unpinned assignment, this process's assignment, the per-runtime fork this
+      * process is, and which runtimes expose a socket.
+      *
+      * A fork decides against the host's unpinned assignment, because its sibling fork must reach the same answer. A process outside the
+      * forks decides against its own assignment, which honours the `KYO_POD_RUNTIME` pin.
       */
     private[kyo] def singleLegOwner(
         unpinned: Seq[(String, Maybe[String])],
         assigned: Seq[(String, Maybe[String])],
-        pin: Maybe[String],
+        fork: Maybe[String],
         hasSocket: String => Boolean
     ): Either[String, String] =
-        owner(unpinned, hasSocket) match
-            case Present(rt) if pin.forall(_ == rt)      => Right(rt)
-            case Present(rt)                             => Left(s"a single-leg leaf runs once per host, in the $rt fork")
-            case Absent if unpinned.exists(_._2.isEmpty) => Left("no runtime that can run here exposes a socket for the http backend")
-            case Absent                                  => Left(assigned.flatMap(_._2.toOption).mkString("; "))
+        val candidates = if fork.isDefined then unpinned else assigned
+        owner(candidates, hasSocket) match
+            case Present(rt) if fork.forall(_ == rt)       => Right(rt)
+            case Present(rt)                               => Left(s"a single-leg leaf runs once per host, in the $rt fork")
+            case Absent if candidates.exists(_._2.isEmpty) => Left("no runtime that can run here exposes a socket for the http backend")
+            case Absent                                    => Left(assigned.flatMap(_._2.toOption).mkString("; "))
+        end match
     end singleLegOwner
 
     /** Drops a runtime whose socket is the same file as one already kept, keeping the first.

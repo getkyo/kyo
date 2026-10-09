@@ -133,8 +133,8 @@ class ContainerRuntimeBaseTest extends BasePodTest:
     "singleLegOwner" - {
 
         val both = Seq("podman" -> Absent, "docker" -> Absent)
-        def owner(pin: Maybe[String], unpinned: Seq[(String, Maybe[String])] = both, sockets: Set[String] = Set("podman", "docker")) =
-            ContainerRuntime.singleLegOwner(unpinned, pin.fold(unpinned)(p => unpinned.filter(_._1 == p)), pin, sockets.contains)
+        def owner(fork: Maybe[String], unpinned: Seq[(String, Maybe[String])] = both, sockets: Set[String] = Set("podman", "docker")) =
+            ContainerRuntime.singleLegOwner(unpinned, fork.fold(unpinned)(p => unpinned.filter(_._1 == p)), fork, sockets.contains)
 
         "with both runtimes runnable, exactly one of the two per-runtime forks runs the leaf" in {
             // The build puts every daemon-touching suite in a podman fork and a docker fork, so a leaf each fork
@@ -157,6 +157,18 @@ class ContainerRuntimeBaseTest extends BasePodTest:
 
         "unpinned, the process runs the leaf on the owner" in {
             assert(owner(Absent) == Right("podman"))
+        }
+
+        "outside the per-runtime forks, a process pinned to a runtime runs the leaf on that runtime" in {
+            // KYO_POD_RUNTIME is also set by hand and by CI for the whole job, so a pin alone does not mean the build split the suite.
+            assert(ContainerRuntime.singleLegOwner(both, Seq("docker" -> Absent), Absent, Set("podman", "docker").contains) ==
+                Right("docker"))
+        }
+
+        "outside the per-runtime forks, a process pinned to a runtime that cannot run here carries the pin's reason" in {
+            val pinnedToNone = Seq("none" -> Present("none is not reachable on this host"))
+            assert(ContainerRuntime.singleLegOwner(both, pinnedToNone, Absent, Set("podman", "docker").contains) ==
+                Left("none is not reachable on this host"))
         }
 
         "with no runtime runnable the leaf carries this process's reasons" in {
@@ -185,7 +197,7 @@ class ContainerRuntimeBaseTest extends BasePodTest:
             assert(runs == Seq("podman"), s"expected only the podman fork, got $runs")
         }
 
-        "an unpinned process runs every leaf" in {
+        "a process outside the per-runtime forks runs every leaf" in {
             assert(ContainerRuntime.hostLeavesHere(Present("docker"), Absent))
             assert(ContainerRuntime.hostLeavesHere(Absent, Absent))
         }
