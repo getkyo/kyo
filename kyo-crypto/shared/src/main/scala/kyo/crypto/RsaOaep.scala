@@ -17,7 +17,7 @@ import kyo.internal.crypto.Bytes
   *
   * SHA-1 here is a hash of the empty label and the expansion function inside MGF1, neither a commitment to attacker-chosen data, so
   * SHA-1's broken collision resistance does not bear on it. Nothing here is constant time: the seed and the plaintext go through the
-  * same arithmetic whatever their values, but no claim is made about `BigInt.modPow`.
+  * same arithmetic whatever their values, but no claim is made about the modular exponentiation.
   *
   * @see
   *   [[Rsa.EncryptionKey]], the key it encrypts to, and [[Rsa.encryptionKeyFromPem]], which reads one

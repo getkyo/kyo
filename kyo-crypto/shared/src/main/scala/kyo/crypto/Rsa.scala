@@ -1,6 +1,7 @@
 package kyo.crypto
 
 import kyo.*
+import kyo.internal.crypto.Exponentiation
 
 /** RSA public keys, built only through checks that bound what an exponentiation may cost and refuse what RFC 8017 rules out.
   *
@@ -220,19 +221,19 @@ object Rsa:
       * length or its value is not below the modulus. No argument is modified.
       */
     private[kyo] def publicOperation(key: VerificationKey, input: Array[Byte]): Maybe[Array[Byte]] =
-        publicOperation(key.modulus, key.exponent, input)
+        publicOperation(key, key.modulus, input)
 
     /** RSAEP of RFC 8017 section 5.1.1 over a peer's key, the same computation as the verification form. */
     private[kyo] def publicOperation(key: EncryptionKey, input: Array[Byte]): Maybe[Array[Byte]] =
-        publicOperation(key.modulus, key.exponent, input)
+        publicOperation(key, key.modulus, input)
 
-    private def publicOperation(modulus: BigInt, exponent: BigInt, input: Array[Byte]): Maybe[Array[Byte]] =
+    private def publicOperation(key: VerificationKey | EncryptionKey, modulus: BigInt, input: Array[Byte]): Maybe[Array[Byte]] =
         val k = sizeInBytes(modulus)
         if input.length != k then Absent
         else
             val m = BigInt(1, input)
             if m >= modulus then Absent
-            else Present(bigEndian(m.modPow(exponent, modulus), k))
+            else Present(bigEndian(Exponentiation.publicOperation(m, key), k))
         end if
     end publicOperation
 

@@ -91,6 +91,13 @@ class RsaTest extends kyo.test.Test[Any]:
             assert(Rsa.verificationKeyFromJwk(jwk(oddOfBits(2048)), jwk(oddOfBits(65))) ==
                 boundsFailure(BoundsFailure.ExponentTooLarge(65, 64)))
         }
+
+        "an exponent the size of the modulus, as a private exponent is, never becomes a key" in {
+            val modulus = oddOfBits(2048)
+            val secret  = modulus - 2
+            assert(Rsa.VerificationKey(modulus, secret) == boundsFailure(BoundsFailure.ExponentTooLarge(2047, 64)))
+            assert(Rsa.verificationKeyFromJwk(jwk(modulus), jwk(secret)) == boundsFailure(BoundsFailure.ExponentTooLarge(2047, 64)))
+        }
     }
 
     "parity and range" - {
