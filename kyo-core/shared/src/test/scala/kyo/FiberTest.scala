@@ -802,21 +802,19 @@ class FiberTest extends kyo.test.Test[Any]:
                     "the kernel's effect trace does not carry the spawning chain's frames into a child fiber"
                 ) in {
                     // The spawn follows at least one user-framed effect step, since only those steps push frames;
-                    // a spawn at the very start of the body would see an empty trace.
+                    // a spawn at the very start of the body would see an empty trace. The throw sits on a line of its
+                    // own, so only the snapshotted trace, never the carrier's physical stack, can put the spawn line
+                    // into the failure.
+                    def failing: Int = throw new RuntimeException("trace-test")
                     Sync.defer(1).map(_ => 2).map { _ =>
-                        Fiber.Unsafe.init { throw new RuntimeException("trace-test") }: Fiber.Unsafe[Int, Any]
-                    }.map { carrier =>
+                        val spawnLine                       = summon[Frame].position.lineNumber + 1
+                        val carrier: Fiber.Unsafe[Int, Any] = Fiber.Unsafe.init(failing)
                         Abort.run[Any](carrier.safe.get).map {
                             case Result.Panic(ex) =>
                                 val frames = ex.getStackTrace
-                                assert(frames.nonEmpty)
-                                // Kyo frames use the format "snippet @ className" in the declaring-class field
-                                // (from Trace.Owner.enrich); their presence proves Trace.saved() captured the
-                                // running chain's frames.
-                                val hasKyoFrame = frames.exists(_.getClassName.contains("@"))
                                 assert(
-                                    hasKyoFrame,
-                                    s"Expected enriched Kyo frames in stack trace but found: ${frames.take(3).mkString(", ")}"
+                                    frames.exists(f => f.getFileName == "FiberTest.scala" && f.getLineNumber == spawnLine),
+                                    s"expected the spawn site FiberTest.scala:$spawnLine in the failure, found: ${frames.mkString("\n")}"
                                 )
                             case other =>
                                 fail(s"expected Panic, got $other")

@@ -1258,6 +1258,48 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
+        // Correct only if the peel's custody goes to the fiber that installed the rest; if the peeling scope's exit
+        // owns the release, the refusal leaf further down is the specified outcome and this leaf is deleted. The
+        // gate opens only once the consumer is parked on it (one waiter) or has ended, so the exit always lands while
+        // the consumer is inside the rest's extent.
+        "a rest from splitAt installed in another fiber before the peeling scope exits stays held until that fiber completes it".pendingUntilFixed(
+            "the peeling scope's exit releases the rest's bracket under the consumer fiber that installed it"
+        ) in {
+            AtomicRef.init(Chunk.empty[Maybe[Result.Error[Any]]]).map { seen =>
+                Latch.init(1).map { entered =>
+                    Promise.init[Unit, Any].map { gate =>
+                        Promise.init[Stream[Int, Async], Any].map { handoff =>
+                            val stream: Stream[Int, Async] = Stream:
+                                Sync.ensure(o => seen.updateAndGet(_.append(o))):
+                                    Emit.valueWith(Chunk(1))(entered.release.andThen(gate.get).andThen(Emit.value(Chunk(2))))
+                            for
+                                peeler <- Fiber.initUnscoped {
+                                    Env.run(0) {
+                                        stream.splitAt(1).map { (head, rest) =>
+                                            handoff.complete(Result.succeed(rest)).andThen(entered.await).andThen(head)
+                                        }
+                                    }
+                                }
+                                consumer <- Fiber.initUnscoped(handoff.get.map(_.run))
+                                _        <- entered.await
+                                head     <- peeler.get
+                                atExit   <- seen.get
+                                _        <- assertEventually(Kyo.zip(gate.waiters, consumer.done).map((w, d) => w == 1 || d))
+                                _        <- gate.completeUnitDiscard
+                                res      <- consumer.getResult
+                                outcomes <- seen.get
+                            yield
+                                assert(head == Chunk(1))
+                                assert(atExit.isEmpty, s"the peeling scope released under the consumer: $atExit")
+                                assert(res == Result.succeed(Chunk(2)), res.toString)
+                                assert(outcomes == Chunk(Maybe.empty), s"released $outcomes")
+                            end for
+                        }
+                    }
+                }
+            }
+        }
+
         // A stream combinator that spawns fibers ends the stream's extent without ending them. A fiber parked
         // anywhere other than a channel put, which the channel's close wakes, keeps what it holds open after
         // the consumer stopped. In each leaf below the gate is never opened, so only the stream's end
@@ -1405,6 +1447,58 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                         }
                     }
                 }
+            }
+        }
+
+        // The consumer is inside the rest and running, not parked, when the peeling scope exits: it spins on a flag
+        // the test sets only after the peeler has ended, so its next step runs strictly after that exit. The leaf holds
+        // whether that exit releases (the consumer must then be stopped before the step) or the consumer keeps the
+        // resource; the consumer's ensure opens `entered` so a refusal at install cannot strand the peeler. On macOS JVM
+        // 292 of 300 single runs and 14 of 20 reached the resource after its release, so 20 runs fail near certainly.
+        "a rest from splitAt running in another fiber never reaches its resource after the release".pendingUntilFixed(
+            "the refusal runs only where a parked remainder is reinstalled, so a consumer that reaches its next step without parking runs it after the peeling scope's exit released the resource"
+        ) in {
+            val runs                                                  = 20
+            def once: (Int, Boolean, Result[Any, Chunk[Int]]) < Async =
+                AtomicInt.init(0).map { released =>
+                    AtomicBoolean.init(false).map { reachedAfterRelease =>
+                        AtomicBoolean.init(false).map { peelerEnded =>
+                            Latch.init(1).map { entered =>
+                                Promise.init[Stream[Int, Async], Any].map { handoff =>
+                                    val spin: Unit < Sync          = Loop.whileTrue(peelerEnded.get.map(!_))(())
+                                    val use: Unit < Sync           = released.get.map(r => reachedAfterRelease.set(r > 0))
+                                    val stream: Stream[Int, Async] = Stream:
+                                        Sync.ensure(released.incrementAndGet.unit):
+                                            Emit.valueWith(Chunk(1))(
+                                                entered.release.andThen(spin).andThen(use).andThen(Emit.value(Chunk(2)))
+                                            )
+                                    for
+                                        peeler <- Fiber.initUnscoped {
+                                            Env.run(0) {
+                                                stream.splitAt(1).map { (head, rest) =>
+                                                    handoff.complete(Result.succeed(rest)).andThen(entered.await).andThen(head)
+                                                }
+                                            }
+                                        }
+                                        consumer <- Fiber.initUnscoped(Sync.ensure(entered.release)(handoff.get.map(_.run)))
+                                        _        <- entered.await
+                                        _        <- peeler.get
+                                        _        <- peelerEnded.set(true)
+                                        res      <- consumer.getResult
+                                        total    <- released.get
+                                        late     <- reachedAfterRelease.get
+                                    yield (total, late, res)
+                                    end for
+                                }
+                            }
+                        }
+                    }
+                }
+            Kyo.fill(runs)(once).map { results =>
+                val late = results.filter(_._2)
+                assert(results.forall(_._1 == 1), s"releases per run: ${results.map(_._1)}")
+                assert(results.forall(r => r._3.isPanic || r._3 == Result.succeed(Chunk(2))), s"${results.map(_._3).distinct}")
+                assert(late.isEmpty, s"${late.size} of $runs runs reached the resource after its release: ${late.map(_._3).distinct}")
             }
         }
 
