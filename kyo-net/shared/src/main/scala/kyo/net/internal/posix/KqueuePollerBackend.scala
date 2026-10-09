@@ -186,18 +186,18 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                 data.nChanges = slot + 1
                 // changelistBuf is NOT closed here: it is the per-driver reused buffer, freed via PollScratch.close.
                 0
-            case Absent =>
-                val changelist  = Buffer.alloc[Byte](KEvent.size)
-                val emptyEvents = Buffer.alloc[Byte](0)
-                try
-                    KEvent.encodeChange(changelist, 0, fd, filter, flags, udata)
-                    kq.keventNow(pollerFd, changelist, 1, emptyEvents, 0, ZeroTimeout).value
-                finally
-                    changelist.close()
-                    emptyEvents.close()
-                end try
+            case Absent => changeOnce(pollerFd, fd, filter, flags, udata)
         end match
     end change
+
+    /** Submit one change through a thread-confined one-slot changelist, for callers without a [[KqueuePollData]]. The changelist doubles as the
+      * eventlist with nevents=0, which kevent(2) permits and leaves unwritten.
+      */
+    private def changeOnce(pollerFd: Int, fd: Int, filter: Short, flags: Short, udata: Long)(using AllowUnsafe): Int =
+        Buffer.confinedUse[Byte, Int](KEvent.size) { changelist =>
+            KEvent.encodeChange(changelist, 0, fd, filter, flags, udata)
+            kq.keventNow(pollerFd, changelist, 1, changelist, 0, ZeroTimeout).value
+        }
 
     /** Submit the full changelist mid-drain and start a fresh batch, recording any entry the kernel rejected.
       *
@@ -270,21 +270,10 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     ): Int =
         kqData match
             case Present(data) =>
+                // armBuf is also the eventlist (nevents=0 leaves it unwritten), so a deregister allocates nothing.
                 KEvent.encodeChange(data.armBuf, 0, fd, filter, flags, udata)
-                val emptyEvents = Buffer.alloc[Byte](0)
-                val rc          = kq.keventNow(pollerFd, data.armBuf, 1, emptyEvents, 0, ZeroTimeout).value
-                emptyEvents.close()
-                rc
-            case Absent =>
-                val changelist  = Buffer.alloc[Byte](KEvent.size)
-                val emptyEvents = Buffer.alloc[Byte](0)
-                try
-                    KEvent.encodeChange(changelist, 0, fd, filter, flags, udata)
-                    kq.keventNow(pollerFd, changelist, 1, emptyEvents, 0, ZeroTimeout).value
-                finally
-                    changelist.close()
-                    emptyEvents.close()
-                end try
+                kq.keventNow(pollerFd, data.armBuf, 1, data.armBuf, 0, ZeroTimeout).value
+            case Absent => changeOnce(pollerFd, fd, filter, flags, udata)
         end match
     end changeNow
 

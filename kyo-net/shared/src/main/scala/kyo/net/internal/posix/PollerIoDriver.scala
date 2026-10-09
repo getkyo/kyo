@@ -1746,8 +1746,8 @@ final private[net] class PollerIoDriver private[posix] (
       * little-endian (every supported target is LE), mirroring `PosixTransport.soError`, the connect path's post-writable confirmation.
       */
     private def soError(fd: Int)(using AllowUnsafe): Int =
-        val opt = Buffer.alloc[Byte](4)
-        val len = Buffer.alloc[Int](1)
+        val opt = Buffer.allocConfined[Byte](4)
+        val len = Buffer.allocConfined[Int](1)
         len.set(0, 4)
         try
             if sockets.getsockopt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_ERROR, opt, len).value != 0 then -1

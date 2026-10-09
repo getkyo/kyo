@@ -8,14 +8,14 @@ import kyo.net.internal.transport.ReadOutcome
 /** One submitted-but-not-yet-reaped io_uring operation, keyed by a dense `user_data` value.
   *
   * Each variant pins the off-heap memory the kernel owns for the duration of the operation, which is the heart of the UAF invariant: the
-  * memory MUST stay alive until the operation's CQE is reaped. A [[PendingOp.Read]] pins the handle's reused `readBuffer`; a [[PendingOp.Write]] pins a
-  * per-write `Buffer` that is closed only when its send CQE arrives and additionally carries the payload `offset` of its first byte and the
+  * memory MUST stay alive until the operation's CQE is reaped. A [[PendingOp.Read]] pins the handle's reused `readBuffer`; a [[PendingOp.Write]] pins
+  * the handle's reused raw send mirror and additionally carries the payload `offset` of its first byte and the
   * requested send `len`, so a partial send (`res < len`) can re-submit the unsent `[offset + res, offset + len)` tail; a [[PendingOp.TlsWrite]] pins
   * the per-send ciphertext `Buffer` the same way and carries the requested send length so a partial send can be re-submitted; a [[PendingOp.Connect]]
-  * carries only the promise to complete (its `sockaddr` is pinned by the handle's `connectTarget`); an [[PendingOp.Accept]] pins the addr/addrlen
-  * placeholder buffers that `kyo_uring_prep_accept` requires to stay alive until the single-shot accept CQE is reaped.
+  * carries only the promise to complete (its `sockaddr` is pinned by the handle's `connectTarget`); an [[PendingOp.Accept]] likewise carries
+  * only its promise (the addr/addrlen placeholders are the listen handle's `acceptPlaceholders`, freed with the handle once every CQE reaped).
   * Each accepted connection uses one SQE and one CQE; the accept loop calls [[IoUringDriver.awaitAccept]] with a fresh promise
-  * after each CQE to arm the next connection. The buffers are released via `releaseBuffer` when the CQE is processed.
+  * after each CQE to arm the next connection.
   *
   * Every variant carries its [[handle]] so [[IoUringDriver.cancel]] can find every in-flight op for a handle, and the per-handle
   * in-flight count can be decremented when the CQE is reaped.
@@ -48,10 +48,11 @@ private[net] enum PendingOp(val handle: PosixHandle):
         armedForStaging: Boolean
     ) extends PendingOp(h)
 
-    /** A plaintext send: pins the per-write `buf` for the kernel for the duration of the send SQE. `offset` is the index of `buf`'s first byte
-      * in the original payload span and `len` is the number of bytes this SQE was asked to send, so the reap can detect a partial send
-      * (`res < len`) and re-submit the unsent `[offset + res, offset + len)` tail on a fresh per-write buffer (raw sends are held single-in-flight
-      * per handle, so the remainder is sent before any later write). The buffer is per-write and IS closed on reap (unlike the TlsWrite mirror).
+    /** A plaintext send: pins the handle's reused raw send mirror `buf` for the kernel for the duration of the send SQE. `offset` is the index
+      * of `buf`'s first byte in the original payload span and `len` is the number of bytes this SQE was asked to send, so the reap can detect a
+      * partial send (`res < len`) and re-submit the unsent `[offset + res, offset + len)` tail (raw sends are held single-in-flight per handle,
+      * so the remainder is sent before any later write). Like the TlsWrite mirror, the buffer must NOT be closed on reap: it is freed only in
+      * `freeResources`.
       */
     case Write(h: PosixHandle, buf: Buffer[Byte], offset: Int, len: Int) extends PendingOp(h)
 
@@ -61,12 +62,7 @@ private[net] enum PendingOp(val handle: PosixHandle):
       */
     case TlsWrite(h: PosixHandle, buf: Buffer[Byte], len: Int)                                extends PendingOp(h)
     case Connect(promise: Promise.Unsafe[Unit, Abort[Closed | NetException]], h: PosixHandle) extends PendingOp(h)
-    case Accept(
-        promise: Promise.Unsafe[Int, Abort[Closed | NetException]],
-        h: PosixHandle,
-        noAddr: Buffer[Byte],
-        noLen: Buffer[Int]
-    ) extends PendingOp(h)
+    case Accept(promise: Promise.Unsafe[Int, Abort[Closed | NetException]], h: PosixHandle)   extends PendingOp(h)
 
     /** Fail the promise this op carries with `closed`. A [[PendingOp.Write]] op carries no promise (its failure is surfaced on the write pump), so
       * this is a no-op for it.
@@ -75,22 +71,9 @@ private[net] enum PendingOp(val handle: PosixHandle):
         this match
             case Read(promise, _, _, _, _, _) => promise.completeDiscard(Result.fail(closed))
             case Connect(promise, _)          => promise.completeDiscard(Result.fail(closed))
-            case Accept(promise, _, _, _)     => promise.completeDiscard(Result.fail(closed))
+            case Accept(promise, _)           => promise.completeDiscard(Result.fail(closed))
             case Write(_, _, _, _)            => ()
             case TlsWrite(_, _, _)            => ()
         end match
     end failPromise
-
-    /** Release the off-heap memory this op pinned for the kernel. Safe to call only after the op's CQE has been reaped.
-      *
-      * [[PendingOp.Write]] and [[PendingOp.Accept]] own per-op buffers and close them here. [[PendingOp.TlsWrite]] pins the per-handle reused flush mirror (owned by the
-      * handle, freed only in `freeResources`); closing it here would be a use-after-free because the next flush refills the same buffer.
-      * So [[PendingOp.TlsWrite]] is intentionally a no-op: the mirror survives the reap and is reused by the next flush.
-      */
-    def releaseBuffer()(using AllowUnsafe): Unit =
-        this match
-            case Write(_, buf, _, _)     => buf.close()
-            case TlsWrite(_, _, _)       => () // per-handle reused mirror; freed only in freeResources, never on reap
-            case Accept(_, _, addr, len) => addr.close(); len.close()
-            case _                       => ()
 end PendingOp

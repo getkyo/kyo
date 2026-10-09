@@ -44,17 +44,18 @@ import kyo.scheduler.Task
   * A buffer submitted to io_uring is kernel-owned until its CQE arrives: the kernel may write into a read buffer or read from a send
   * buffer at any time before completion. So `cancel`/`closeHandle` must NOT free that memory while an SQE is in flight. The handshake:
   *
-  *   - Every in-flight op increments a per-handle in-flight count; reaping its CQE decrements it and releases the op's pinned memory
-  *     (`PendingOp.releaseBuffer`).
+  *   - Every memory region an SQE points the kernel at is owned by its handle (the read buffer, the recv staging buffer, the send mirrors,
+  *     the accept placeholders, the connect target), so freeing the handle frees it. Every in-flight op increments a per-handle in-flight
+  *     count and reaping its CQE decrements it.
   *   - `cancel(h)` fails every pending promise for `h` immediately (the caller stops waiting), but does NOT remove the pending entries
-  *     and does NOT free any buffer: the kernel still owns them. The entries stay so their CQEs are still reaped and their memory
-  *     released in order.
-  *   - `closeHandle(h)` calls `cancel(h)`, then defers `PosixHandle.close(h)` (which frees the handle's `readBuffer`) until the
+  *     and does NOT free any buffer: the kernel still owns them. The entries stay so their CQEs are still reaped.
+  *   - `closeHandle(h)` calls `cancel(h)`, then defers `PosixHandle.close(h)` (which frees the handle's buffers) until the
   *     handle's in-flight count reaches zero. If there is nothing in flight it closes immediately; otherwise the close runs when the
   *     last CQE for the handle is reaped.
   *
-  * Buffers use the shared arena (`Buffer.alloc` / `Buffer.fromArray`), never `allocConfined`: submission and reaping run on different
-  * scheduler carriers, so a confined arena would throw on the cross-carrier reap.
+  * SQE-pinned buffers use a shared arena (`Buffer.alloc`), never `allocConfined`: submission and reaping run on different scheduler
+  * carriers, so a confined arena would throw on the cross-carrier reap. Closing a shared arena forces a handshake with every platform
+  * thread, which is why they are per handle and reused rather than allocated per operation.
   */
 final private[net] class IoUringDriver private[posix] (
     uring: IoUringBindings,
@@ -512,59 +513,61 @@ final private[net] class IoUringDriver private[posix] (
     end submitConnect
 
     /** Submit a single-shot `IORING_OP_ACCEPT` SQE for the given listen handle. When the CQE arrives, the reap loop completes `promise`
-      * with the accepted client fd (>= 0) or a [[Closed]] wrapping the negative errno. The addr/addrlen placeholder buffers are stored
-      * in the [[PendingOp.Accept]] entry so they stay alive until the CQE is reaped, then released via `releaseBuffer`. If the SQ is
-      * full the accept parks in [[stalledSubmits]] (keeping its buffers) and is re-armed once a slot frees, never failed (a failed accept
-      * would wedge the accept loop, whose `onComplete` reads Failure as "listener closed" and stops re-arming).
+      * with the accepted client fd (>= 0) or a [[Closed]] wrapping the negative errno. The addr/addrlen placeholder buffers are the listen
+      * handle's [[PosixHandle.acceptPlaceholders]], pinned in the [[PendingOp.Accept]] entry until the CQE is reaped and freed with the handle.
+      * If the SQ is full the accept parks in [[stalledSubmits]] (keeping its buffers) and is re-armed once a slot frees, never failed (a failed
+      * accept would wedge the accept loop, whose `onComplete` reads Failure as "listener closed" and stops re-arming).
       */
     def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
-        // Placeholder buffers that kyo_uring_prep_accept requires; the kernel may write the peer address into addr, which we discard.
-        // The accepted fd comes from the CQE res field. These must stay alive until the CQE is reaped (kept in PendingOp.Accept) and across a
-        // park+re-arm, so they are allocated here once and threaded through submitAccept rather than re-allocated per re-arm.
-        val noAddr = Buffer.alloc[Byte](SockAddr.inet6Size)
-        val noLen  = Buffer.alloc[Int](1)
-        noLen.set(0, SockAddr.inet6Size)
         // Arm the accept on the reap carrier (single get_sqe producer); see [[submitEngineOp]].
-        submitEngineOp(() => submitAccept(promise, handle, noAddr, noLen))
+        submitEngineOp(() => submitAccept(promise, handle))
     end awaitAccept
 
-    /** Submit one accept SQE for `promise` over the supplied (already-allocated) addr/len placeholder buffers. The public [[awaitAccept]]
-      * enters via the engine queue; [[reArmStalledSubmits]] re-enters here directly on the next reap turn, after submit freed a slot. On a full SQ the accept
-      * parks in [[stalledSubmits]] keeping its buffers (re-armed later), never failed, so a transient SQ-full cannot wedge the listener's
-      * accept loop.
+    /** The listen handle's accept placeholders, allocated on first use. They are kernel-written while an accept SQE is in flight and freed on
+      * whichever carrier runs the handle's deferred close, so they need a shared arena; allocating them once per listener instead of once per
+      * accept keeps that arena's close (a handshake with every platform thread) off the accept path.
       */
-    private def submitAccept(
-        promise: Promise.Unsafe[Int, Abort[Closed | NetException]],
-        handle: PosixHandle,
-        noAddr: Buffer[Byte],
-        noLen: Buffer[Int]
-    )(using AllowUnsafe, Frame): Unit =
+    private def acceptPlaceholdersFor(handle: PosixHandle)(using AllowUnsafe): (Buffer[Byte], Buffer[Int]) =
+        handle.acceptPlaceholders match
+            case Present(placeholders) => placeholders
+            case Absent                =>
+                val placeholders = (Buffer.alloc[Byte](SockAddr.inet6Size), Buffer.alloc[Int](1))
+                handle.acceptPlaceholders = Present(placeholders)
+                placeholders
+    end acceptPlaceholdersFor
+
+    /** Submit one accept SQE for `promise` over the listen handle's placeholder buffers. The public [[awaitAccept]] enters via the engine
+      * queue; [[reArmStalledSubmits]] re-enters here directly on the next reap turn, after submit freed a slot. On a full SQ the accept parks in
+      * [[stalledSubmits]] (re-armed later), never failed, so a transient SQ-full cannot wedge the listener's accept loop.
+      */
+    private def submitAccept(promise: Promise.Unsafe[Int, Abort[Closed | NetException]], handle: PosixHandle)(using
+        AllowUnsafe,
+        Frame
+    ): Unit =
         val key = keyGen.getAndIncrement()
-        register(key, PendingOp.Accept(promise, handle, noAddr, noLen))
+        register(key, PendingOp.Accept(promise, handle))
         if closedFlag.get() then
             unregister(key)
-            noAddr.close()
-            noLen.close()
             promise.completeDiscard(Result.fail(Closed(label, Frame.internal, "driver closed")))
         else if !handle.ownsFd() then
             // The listener was torn down (closeListener ran on this carrier before this arm drained): its fd is closed and the number may
             // already name a different socket, so arming would accept on that socket and steal its connections. Reject instead.
             unregister(key)
-            noAddr.close()
-            noLen.close()
             promise.completeDiscard(Result.fail(Closed(s"listener ${handleLabel(handle)}", handle.createdAt, "listener closed")))
         else
             uring.kyo_uring_get_sqe(ring) match
                 case Present(sqe) =>
+                    val (noAddr, noLen) = acceptPlaceholdersFor(handle)
+                    // The previous accept's kernel write-back replaced the in/out length, so restore the full capacity before each arm.
+                    noLen.set(0, SockAddr.inet6Size)
                     uring.kyo_uring_prep_accept(sqe, handle.readFd, noAddr, noLen, 0) // single-shot; flags=0
                     uring.kyo_uring_sqe_set_data64(sqe, key)
                     submitBatched()
                 case Absent =>
-                    // SQ full: park the accept (keeping its buffers) and re-arm on the next reap turn (reArmStalledSubmits) instead
-                    // of failing it, which the accept loop would misread as "listener closed" and stop re-arming. unregister first: the key is
-                    // re-assigned on re-submit.
+                    // SQ full: park the accept and re-arm on the next reap turn (reArmStalledSubmits) instead of failing it, which the
+                    // accept loop would misread as "listener closed" and stop re-arming. unregister first: the key is re-assigned on re-submit.
                     unregister(key)
-                    discard(stalledSubmits.add(PendingOp.Accept(promise, handle, noAddr, noLen)))
+                    discard(stalledSubmits.add(PendingOp.Accept(promise, handle)))
             end match
         end if
     end submitAccept
@@ -646,9 +649,10 @@ final private[net] class IoUringDriver private[posix] (
     /** Submit one send SQE for the unsent region `[rawPendingSent, size)` of the handle's pending raw tail, holding AT MOST ONE raw send SQE in
       * flight per handle ([[PosixHandle.rawSendInFlight]]). Engine-FIFO-worker-only. The raw twin of [[flushTls]].
       *
-      * Unlike the TLS flush mirror (a per-handle reused buffer not closed on reap), the unsent region is copied into a FRESH per-write Buffer
-      * pinned in [[PendingOp.Write]] and closed on reap: a raw send buffer is per-write so it can be released the moment its CQE reaps, and a
-      * reused mirror would be overwritten by the next flush while the kernel is still reading it. If a send is already in flight this returns
+      * The unsent region is copied into the handle's reused [[PosixHandle.sendMirror]], pinned in [[PendingOp.Write]] and never closed on reap,
+      * like the TLS flush mirror. Refilling it is safe because the single-in-flight guard keeps the next flush from running until this send's
+      * CQE reaps. It is not a fresh buffer per write because that buffer is allocated on the engine FIFO worker and freed on the reap carrier,
+      * so it needs a shared JVM arena, and every shared-arena close forces a handshake with every platform thread. If a send is already in flight this returns
       * WITHOUT submitting; the bytes a concurrent write appended stay in the tail and the in-flight send's [[onRawSendComplete]] re-flushes them.
       * If the SQ is full no SQE was submitted; the guard stays clear and the remainder stays pending for the reap loop to re-flush when a slot
       * frees ([[reflushStalledRaw]]).
@@ -669,11 +673,8 @@ final private[net] class IoUringDriver private[posix] (
                         buf.reset()
                         handle.rawPendingSent = 0
                     else
-                        // Copy the unsent region into a fresh per-write Buffer (closed on reap), then send it from offset 0. The send is
-                        // single-in-flight per handle (rawSendInFlight guard), so the next flush does not run until this send's CQE reaps.
-                        val sendBuf = Buffer.fromArray[Byte](
-                            java.util.Arrays.copyOfRange(buf.array, handle.rawPendingSent, buf.size)
-                        )
+                        val sendBuf = rawMirrorFor(handle, unsentLen)
+                        sendBuf.copyFromArray(buf.array, handle.rawPendingSent, 0, unsentLen)
                         val key = keyGen.getAndIncrement()
                         register(key, PendingOp.Write(handle, sendBuf, handle.rawPendingSent, unsentLen))
                         uring.kyo_uring_get_sqe(ring) match
@@ -681,8 +682,8 @@ final private[net] class IoUringDriver private[posix] (
                                 // Non-negativity guard at the C trust boundary (CWE-190/195/805): a negative send length wraps to a huge size_t at the
                                 // C cast and becomes an out-of-bounds kernel read. The unsentLen > 0 guard above already keeps a negative length out of
                                 // this branch today, so the shim return is 0 here; the check is the defensive boundary for a future signedness bug. On a
-                                // non-zero return the SQE was NOT prepared, so leave the guard clear, release the per-write buffer, and re-queue the
-                                // handle for a later flush (the same not-submitted handling as SQ-full): no silent SQE drop, no byte loss.
+                                // non-zero return the SQE was NOT prepared, so leave the guard clear and re-queue the handle for a later flush (the
+                                // same not-submitted handling as SQ-full): no silent SQE drop, no byte loss.
                                 if uring.kyo_uring_prep_send(
                                         sqe,
                                         handle.writeFd,
@@ -693,7 +694,6 @@ final private[net] class IoUringDriver private[posix] (
                                 then
                                     discardSqe(sqe)
                                     unregister(key)
-                                    sendBuf.close()
                                     discard(stalledSends.add(handle))
                                 else
                                     uring.kyo_uring_sqe_set_data64(sqe, key)
@@ -701,11 +701,10 @@ final private[net] class IoUringDriver private[posix] (
                                     handle.rawSendInFlight = true
                                     submitBatched()
                             case Absent =>
-                                // SQ full: nothing was submitted; the kernel never owned sendBuf. Release it and leave the remainder pending with
-                                // the guard clear. The reap loop re-flushes this handle once a CQE frees a SQ slot (reflushStalledRaw), so the
-                                // pump never busy-spins and no byte is dropped.
+                                // SQ full: nothing was submitted; the kernel never owned sendBuf. Leave the remainder pending with the guard
+                                // clear. The reap loop re-flushes this handle once a CQE frees a SQ slot (reflushStalledRaw), so the pump never
+                                // busy-spins and no byte is dropped.
                                 unregister(key)
-                                sendBuf.close()
                                 discard(stalledSends.add(handle))
                         end match
                     end if
@@ -813,7 +812,7 @@ final private[net] class IoUringDriver private[posix] (
                         // Copy the unsent region element-wise into the per-handle reused flush mirror (grown on demand), then send from
                         // offset 0 of the mirror. The send is single-in-flight per handle (sendInFlight guard), so the mirror is not
                         // refilled until the prior send CQE reaps. The mirror is owned by the engine FIFO worker and freed only in
-                        // freeResources; it must NOT be closed on reap (TlsWrite.releaseBuffer is a no-op for that reason).
+                        // freeResources; it must NOT be closed on reap.
                         val mirror = flushMirrorFor(handle, unsentLen)
                         var mi     = 0
                         while mi < unsentLen do
@@ -1283,7 +1282,7 @@ final private[net] class IoUringDriver private[posix] (
         discard(stalledSends.remove(handle))
         // Drop any recv/accept/connect this handle parked on a full SQ: a parked op left in stalledSubmits is re-armed by the next
         // reArmStalledSubmits turn, which would submit an SQE on this now-closed fd (EBADF, or worse a recv on the fd's recycled successor). Fail
-        // each parked op's promise Closed and release its pinned buffers before the fd close. closeNow runs on the reap carrier, the sole producer
+        // each parked op's promise Closed before the fd close. closeNow runs on the reap carrier, the sole producer
         // and consumer of stalledSubmits, so iterating + removing here is race-free without a lock. Identity is by HandleId, so a stale op from an
         // earlier handle that reused this fd number is left for its own close.
         val parkedClosed = Closed(handleLabel(handle), handle.createdAt, "closed with parked operations")
@@ -1293,7 +1292,6 @@ final private[net] class IoUringDriver private[posix] (
             if op.handle.id.packed == handle.id.packed then
                 stalledIt.remove()
                 op.failPromise(parkedClosed)
-                op.releaseBuffer()
             end if
         end while
         // Drop the handle's send-EINTR retry count so the map does not retain an entry for a closed handle.
@@ -1437,18 +1435,16 @@ final private[net] class IoUringDriver private[posix] (
         end while
     end drainAfterReapExit
 
-    /** Tear the ring down exactly once: fail every pending op's promise, release the per-write buffers still held, drop the bookkeeping,
-      * exit the kernel ring, and free the cqePtr scratch. Reached only through `tryTeardown`, which fires it from whichever of the reap-loop
+    /** Tear the ring down exactly once: fail every pending op's promise, drop the bookkeeping, exit the kernel ring, and free the cqePtr
+      * scratch. Reached only through `tryTeardown`, which fires it from whichever of the reap-loop
       * exit, the engine-FIFO worker draining to idle, or `close()` observes last that no carrier can still touch the ring. The `teardownDone`
-      * CAS makes it exactly-once across those callers, so the kernel ring and the cqePtr/per-write buffers are freed once and only after the
+      * CAS makes it exactly-once across those callers, so the kernel ring and the cqePtr scratch are freed once and only after the
       * last carrier has left every ring op.
       */
     private def teardownRing()(using AllowUnsafe, Frame): Unit =
         if teardownDone.compareAndSet(false, true) then
             val closed = Closed(label, Frame.internal, "driver closed")
             pending.forEach((_, op) => op.failPromise(closed))
-            // The ring teardown reclaims any kernel-owned buffers; release every per-write buffer we still hold so none leaks.
-            pending.forEach((_, op) => op.releaseBuffer())
             // Close any accepted fd whose Accept CQE the reap loop never reaped (a peer connected in the window between the loop's final
             // drainReady and here): io_uring_queue_exit below would abandon that kernel-created fd, leaking an established handler-less
             // connection. Runs while `pending` still resolves the CQE's key to its Accept op; see closeOrphanedAcceptCqes.
@@ -1457,13 +1453,9 @@ final private[net] class IoUringDriver private[posix] (
             inFlight.clear()
             stalledSends.clear()
             // Fail any recv/accept/connect that parked on a full SQ and was never re-armed: the reap carrier has exited (a tryTeardown precondition),
-            // so no batch will re-arm it and its promise would otherwise hang. Release each parked op's pinned buffers too (a parked Accept still
-            // holds its addr/len placeholders). The deque is quiescent here (its only producers, the submit helpers and reArmStalledSubmits, run on
-            // the now-exited reap carrier), so draining it from the teardown carrier is race-free.
-            stalledSubmits.forEach { op =>
-                op.failPromise(closed)
-                op.releaseBuffer()
-            }
+            // so no batch will re-arm it and its promise would otherwise hang. The deque is quiescent here (its only producers, the submit helpers
+            // and reArmStalledSubmits, run on the now-exited reap carrier), so draining it from the teardown carrier is race-free.
+            stalledSubmits.forEach(op => op.failPromise(closed))
             stalledSubmits.clear()
             sendEintrRetries.clear()
             // Close the wake eventfd before exiting the ring, guarded so it is closed EXACTLY once and only when no in-flight wakeReapLoop write
@@ -1976,7 +1968,7 @@ final private[net] class IoUringDriver private[posix] (
                 batch.poll() match
                     case PendingOp.Read(promise, h, eintrRetries, handshakeOwned, armedPostUpgrade, _) =>
                         submitRecv(h, promise, eintrRetries, handshakeOwned, armedPostUpgrade)
-                    case PendingOp.Accept(promise, h, noAddr, noLen)               => submitAccept(promise, h, noAddr, noLen)
+                    case PendingOp.Accept(promise, h)                              => submitAccept(promise, h)
                     case PendingOp.Connect(promise, h)                             => submitConnect(promise, h)
                     case PendingOp.Write(_, _, _, _) | PendingOp.TlsWrite(_, _, _) =>
                         () // sends park in stalledSends / the in-flight send tail, never here
@@ -2017,9 +2009,6 @@ final private[net] class IoUringDriver private[posix] (
                 // touching the engine / buffers. Decrementing inline at CQE-reap time drops the count to zero and lets a deferred close free those
                 // resources before the queued op runs (the BoringSSL feedCiphertext MemorySession-alreadyClosed use-after-free).
                 var deferredDecrement = false
-                // Set when a transient accept errno re-arms the accept: the addr/len buffers are threaded to the re-armed op, so the old op's
-                // releaseBuffer must be skipped (they are not this op's to free anymore).
-                var reArmedTransientAccept = false
                 // Set when the re-arm is DEFERRED behind the resource backoff (EMFILE/ENFILE): the old op's in-flight decrement is deferred into
                 // the backoff callback (which re-registers via submitAccept, then decrements), so it must be skipped here to keep the count from
                 // dipping to zero during the backoff and triggering a spurious deferred close.
@@ -2322,15 +2311,14 @@ final private[net] class IoUringDriver private[posix] (
                     case PendingOp.Write(h, _, _, len) =>
                         deferredDecrement = true
                         // The raw-send CQE was reaped: account for it (advance the pending tail, re-submit the remainder on a partial send or any
-                        // coalesced bytes) on the engine FIFO worker so rawPending stays single-owner, mirroring the TlsWrite path. The pinned
-                        // per-write send buffer is released below via releaseBuffer(); onRawSendComplete re-flushes from the handle's tail, not
-                        // from that buffer, so it is safe to close on reap. `res` is clamped to the submitted len (the kernel never reports more).
+                        // coalesced bytes) on the engine FIFO worker so rawPending stays single-owner, mirroring the TlsWrite path. `res` is
+                        // clamped to the submitted len (the kernel never reports more).
                         val sent = if res < 0 then res else math.min(res, len)
                         submitEngineOp { () => onRawSendComplete(h, sent) }
                     case PendingOp.TlsWrite(h, _, len) =>
                         deferredDecrement = true
                         // The TLS-send CQE was reaped: account for it (advance the tail, re-submit the remainder on a partial send) on the engine
-                        // FIFO worker so pendingCipher stays single-owner. The pinned send buffer is released below via releaseBuffer().
+                        // FIFO worker so pendingCipher stays single-owner.
                         val sent = if res < 0 then res else math.min(res, len)
                         submitEngineOp { () => onTlsSendComplete(h, sent) }
                     case PendingOp.Connect(promise, h) =>
@@ -2341,7 +2329,7 @@ final private[net] class IoUringDriver private[posix] (
                                 NetConnectionIoException.Operation.Connect,
                                 new NetErrno(-res)
                             )(using h.createdAt)))
-                    case PendingOp.Accept(promise, h, noAddr, noLen) =>
+                    case PendingOp.Accept(promise, h) =>
                         if res >= 0 then
                             // The accept SQE produced a connected fd. If the accept promise was already completed -- the listener's close
                             // cancel() failed it while this accept was in flight (the closeListener teardown) -- nobody will wrap or dispatch
@@ -2352,27 +2340,23 @@ final private[net] class IoUringDriver private[posix] (
                         else if -res == PosixConstants.EINTR || -res == PosixConstants.ECONNABORTED then
                             // Transient accept errno with no fd cost: the call was interrupted (EINTR) or the peer aborted before accept returned
                             // (ECONNABORTED). accept settled no connection AND left nothing pending that a re-arm would immediately re-reap, so
-                            // re-arm the accept SQE now on the SAME promise (reusing the threaded addr/len buffers) instead of failing it. Failing
-                            // would reach the transport accept loop, whose onComplete reads any Failure as "listener closed" and stops re-arming,
-                            // permanently wedging the listener on a one-off transient errno. The buffers are threaded to the re-armed op, so the
-                            // old op's releaseBuffer is skipped below.
-                            reArmedTransientAccept = true
-                            submitAccept(promise, h, noAddr, noLen)
+                            // re-arm the accept SQE now on the SAME promise instead of failing it. Failing would reach the transport accept loop,
+                            // whose onComplete reads any Failure as "listener closed" and stops re-arming, permanently wedging the listener on a
+                            // one-off transient errno.
+                            submitAccept(promise, h)
                         else if -res == PosixConstants.EMFILE || -res == PosixConstants.ENFILE then
                             // File-descriptor exhaustion: the process (EMFILE) or system (ENFILE) fd table was full. Unlike EINTR/ECONNABORTED,
                             // accept did NOT dequeue the pending connection, so it stays in the backlog and an IMMEDIATE re-arm would reap the same
                             // errno at once, spinning this reap carrier at 100% CPU (libuv #690, asyncio Tulip #78). Defer the re-arm by the
                             // resource backoff instead, matching PollerIoDriver/PosixTransport: sleep on the clock (NOT this carrier, which stays
-                            // free to serve other connections), then re-arm on the reap carrier via submitEngineOp. The threaded buffers are kept
-                            // (releaseBuffer skipped) and this accept stays counted in-flight across the backoff (its decrement is deferred into
-                            // the callback, after submitAccept re-registers), so the count never dips to zero and triggers a spurious close. If the
-                            // driver or listener closed during the backoff, submitAccept's closedFlag/isClosing guards fail the promise Closed and
-                            // free the buffers.
-                            reArmedTransientAccept = true
+                            // free to serve other connections), then re-arm on the reap carrier via submitEngineOp. This accept stays counted
+                            // in-flight across the backoff (its decrement is deferred into the callback, after submitAccept re-registers), so the
+                            // count never dips to zero and triggers a spurious close. If the driver or listener closed during the backoff,
+                            // submitAccept's closedFlag/isClosing guards fail the promise Closed.
                             backoffReArmAccept = true
                             Clock.live.unsafe.sleep(kyo.net.acceptResourceBackoff().millis).onComplete { _ =>
                                 submitEngineOp { () =>
-                                    submitAccept(promise, h, noAddr, noLen)
+                                    submitAccept(promise, h)
                                     decrementInFlight(h)
                                 }
                             }
@@ -2383,9 +2367,6 @@ final private[net] class IoUringDriver private[posix] (
                                 new NetErrno(-res)
                             )(using h.createdAt)))
                 end match
-                // Skip when a transient accept re-armed: the addr/len buffers were threaded to the re-armed op, so this old op no longer owns them.
-                if !reArmedTransientAccept then
-                    op.releaseBuffer() // release per-op buffers (Write send buf, Accept addr/len) now that the CQE is reaped
                 // For ops whose resource use was handed to a deferred engine op above, queue the decrement BEHIND that op (FIFO order on the
                 // engine queue) so the in-flight count stays non-zero until the deferred op has finished with the engine / buffers; otherwise
                 // decrement inline now. drainEngineOps catches a throwing op and continues, so the queued decrement always runs (no leaked count).
@@ -2502,8 +2483,9 @@ final private[net] class IoUringDriver private[posix] (
                 submitEngineOp { () =>
                     handle.tls match
                         case Present(engine) =>
-                            val cipherBuf = Buffer.fromArray[Byte](arr)
+                            val cipherBuf = Buffer.allocConfined[Byte](arr.length)
                             try
+                                cipherBuf.copyFromArray(arr, 0, 0, arr.length)
                                 var fatalRecord = false
                                 val plain       = feedAndDecrypt(
                                     engine,
@@ -2719,6 +2701,18 @@ final private[net] class IoUringDriver private[posix] (
                 handle.flushMirror.foreach(_.close())
                 val buf = Buffer.alloc[Byte](size)
                 handle.flushMirror = Present(buf)
+                buf
+
+    /** The handle's [[PosixHandle.sendMirror]], grown to at least `size` bytes. The raw twin of [[flushMirrorFor]], with the same ownership:
+      * filled on the engine FIFO worker only while no raw send is in flight (rawSendInFlight guard), freed exactly once in `freeResources`.
+      */
+    private def rawMirrorFor(handle: PosixHandle, size: Int)(using AllowUnsafe): Buffer[Byte] =
+        handle.sendMirror match
+            case Present(buf) if buf.size >= size => buf
+            case _                                =>
+                handle.sendMirror.foreach(_.close())
+                val buf = Buffer.alloc[Byte](size)
+                handle.sendMirror = Present(buf)
                 buf
 
 end IoUringDriver

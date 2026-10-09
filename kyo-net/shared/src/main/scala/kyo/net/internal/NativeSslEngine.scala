@@ -86,7 +86,7 @@ final private[net] class NativeSslEngine[B <: SslLibBindings](lib: B, ssl: Long)
             val pending = lib.pending(ssl)
             if pending <= 0 then Span.empty[Byte]
             else
-                Buffer.use[Byte, Span[Byte]](pending) { out =>
+                Buffer.confinedUse[Byte, Span[Byte]](pending) { out =>
                     val n = lib.readPlain(ssl, out, pending)
                     if n > 0 then Span.fromUnsafe(Buffer.copyToArray[Byte](out, 0, n))
                     else Span.empty[Byte]
@@ -101,7 +101,7 @@ final private[net] class NativeSslEngine[B <: SslLibBindings](lib: B, ssl: Long)
             Absent
         else
             // 64 bytes is EVP_MAX_MD_SIZE, the SHA-512 digest, the longest hash RFC 5929 can select.
-            Buffer.use[Byte, Maybe[Span[Byte]]](64) { out =>
+            Buffer.confinedUse[Byte, Maybe[Span[Byte]]](64) { out =>
                 val n = lib.peerCertEndPointHash(ssl, out, 64)
                 if n > 0 then Present(Span.fromUnsafe(Buffer.copyToArray[Byte](out, 0, n))) else Absent
             }
