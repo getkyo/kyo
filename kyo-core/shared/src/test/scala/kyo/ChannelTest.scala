@@ -623,7 +623,9 @@ class ChannelTest extends kyo.test.Test[Any]:
         // A zero-capacity channel pairs a parked producer with a parked taker only under its transfer claim, and a flush that
         // loses the claim returns at once. A close landing while a transfer holds the claim therefore finds both parked, and
         // its closing drain fails the producer without first handing its value to the taker that is waiting for it. The
-        // leaf holds the claim itself, which is the only deterministic way to have both parked when the close runs.
+        // leaf holds the claim itself, which is the only deterministic way to have both parked when the close runs, and
+        // releases it the way every holder does: the flush after the release runs whatever waited on the claim. A further
+        // take is what runs that flush here, and it is the one waiter with no counterpart.
         "a close that finds a producer and a taker both parked on a zero-capacity channel".pendingUntilFixed(
             "the closing drain fails the parked put and the parked take without pairing them"
         ) in {
@@ -636,6 +638,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                         val take = z.takeFiber()
                         discard(z.close())
                         z.batchInProgress.set(false)
+                        discard(z.takeFiber())
                         for
                             delivered <- take.safe.getResult
                             accepted  <- put.safe.getResult
@@ -2540,6 +2543,332 @@ class ChannelTest extends kyo.test.Test[Any]:
                     yield
                         assert(settled.isSuccess, s"round $i: the element was delivered to the taker and never released")
                         assert((rel == 1 && left == 0) || (rel == 0 && left == 1), s"round $i: released=$rel left=$left")
+                        Loop.continue
+            }
+        }
+    }
+
+    // What a take received, read without waiting: absent while it is still parked, and once it failed.
+    private def received(take: Fiber.Unsafe[Int, Abort[Closed]])(using AllowUnsafe): Maybe[Int] =
+        take.poll().flatMap(_.toMaybe).map(_.eval)
+
+    // A flush that serves a parked take polls the oldest buffered value, and a take whose fiber was interrupted while parked
+    // refuses it. The refused value is still the oldest one the channel holds, so it keeps its place. Each leaf parks a take on
+    // an empty channel and interrupts it, the state a timed-out take leaves behind.
+    "a value refused by an interrupted parked take" - {
+        def withRefusingTake(f: Channel[Int] => Unit < (Async & Abort[Closed]))(using Frame, kyo.test.AssertScope) =
+            for
+                c <- Channel.initUnscoped[Int](8)
+                t <- Fiber.initUnscoped(c.take)
+                _ <- assertEventually(c.pendingTakes.map(_ == 1))
+                _ <- t.interrupt
+                _ <- t.getResult
+                _ <- f(c)
+            yield ()
+        "stays ahead of the rest of its batch and of a later batch".pendingUntilFixed(
+            "the flush offers the refused value back at the tail of the ring"
+        ) in withRefusingTake { c =>
+            for
+                _       <- c.putBatch(Seq(1, 2, 3))
+                _       <- c.putBatch(Seq(4, 5))
+                drained <- c.drain
+            yield assert(drained == Chunk(1, 2, 3, 4, 5), s"drained $drained")
+        }
+        "leads a close's backlog".pendingUntilFixed(
+            "the flush offers the refused value back at the tail of the ring"
+        ) in withRefusingTake { c =>
+            for
+                _       <- c.putBatch(Seq(1, 2, 3))
+                backlog <- c.close
+            yield assert(backlog.map(_.toList) == Present(List(1, 2, 3)), s"the backlog was $backlog")
+        }
+        // The refusal happens after a closeAwaitEmpty, whose ring rejects the value offered back. The value reaches the ring
+        // through the queue directly, which is a producer's offer that committed before its own flush ran.
+        "stays in the channel while a closeAwaitEmpty drains it".pendingUntilFixed(
+            "the closing ring rejects the refused value, the flush forfeits it with no other take parked, and the await settles empty"
+        ) in {
+            Sync.Unsafe.defer {
+                Channel.Unsafe.init[Int](8) match
+                    case n: Channel.Unsafe.NonZeroCapacityUnsafe[Int] @unchecked =>
+                        discard(n.takeFiber().interrupt())
+                        discard(n.queue.offer(1))
+                        val closing = n.closeAwaitEmpty()
+                        // A put refused by the closing channel runs the flush that serves the interrupted take.
+                        discard(n.putFiber(2))
+                        val early = closing.done()
+                        (early, n.poll(), closing.safe)
+                    case other => fail(s"a bounded channel is a NonZeroCapacityUnsafe, not $other")
+            }.map { (early, polled, closing) =>
+                closing.get.map { closed =>
+                    assert(!early && polled == Result.succeed(Present(1)) && closed, s"early=$early polled=$polled closed=$closed")
+                }
+            }
+        }
+    }
+
+    // An interrupted putBatch may have delivered a prefix of its values, and never a value past the one in flight when the
+    // interrupt landed.
+    "an interrupted putBatch" - {
+        "delivers nothing when interrupted before its first value moves on a bounded channel".pendingUntilFixed(
+            "pollNextLive skips only interrupted single-value puts, and the batch loop never checks its put"
+        ) in {
+            for
+                c    <- Channel.init[Int](2)
+                _    <- c.put(1)
+                _    <- c.put(2)
+                f    <- Fiber.initUnscoped(c.putBatch(Seq(3, 4)))
+                _    <- assertEventually(c.pendingPuts.map(_ == 1))
+                _    <- f.interrupt
+                _    <- f.getResult
+                a    <- c.take
+                b    <- c.take
+                rest <- c.drain
+            yield assert(a == 1 && b == 2 && rest.isEmpty, s"took $a and $b, then drained $rest")
+        }
+        "delivers nothing when interrupted before its first value moves on a zero-capacity channel".pendingUntilFixed(
+            "pollNextLive skips only interrupted single-value puts, and the batch loop never checks its put"
+        ) in {
+            for
+                c   <- Channel.init[Int](0)
+                f   <- Fiber.initUnscoped(c.putBatch(Seq(1, 2)))
+                _   <- assertEventually(c.pendingPuts.map(_ == 1))
+                _   <- f.interrupt
+                _   <- f.getResult
+                got <- Sync.Unsafe.defer {
+                    val take = c.unsafe.takeFiber()
+                    val got  = received(take)
+                    discard(take.interrupt())
+                    got
+                }
+            yield assert(got.isEmpty, s"the take received $got")
+        }
+        // The batch parks behind the held transfer claim so the interrupt can be armed on the take that receives its third value;
+        // a take's completion runs inside the transfer, between two values of the batch.
+        "delivers no value past the one in flight at the interrupt on a zero-capacity channel".pendingUntilFixed(
+            "the batch loop never checks its put"
+        ) in {
+            Sync.Unsafe.defer {
+                Channel.Unsafe.init[Int](0) match
+                    case z: Channel.Unsafe.ZeroCapacityUnsafe[Int] @unchecked =>
+                        val takes = Chunk.fill(5)(z.takeFiber())
+                        z.batchInProgress.set(true)
+                        val parked = z.putBatchFiber(Seq(1, 2, 3, 4, 5))
+                        takes(2).onComplete(_ => discard(parked.interrupt()))
+                        z.batchInProgress.set(false)
+                        // A further take runs the flush that moves the batch to the takes parked first.
+                        discard(z.takeFiber())
+                        val got = takes.flatMap(t => Chunk.from(received(t).toList))
+                        discard(z.close())
+                        (parked, got)
+                    case other => fail(s"a zero-capacity channel is a ZeroCapacityUnsafe, not $other")
+            }.map { (parked, got) =>
+                parked.safe.getResult.map { result =>
+                    assert(result.isPanic && got == Chunk(1, 2, 3), s"the put reported $result and the takes got $got")
+                }
+            }
+        }
+        "leaves the rest of a batch a take partly consumed undelivered on a zero-capacity channel".pendingUntilFixed(
+            "the remainder held as the pending batch is moved without checking its put"
+        ) in {
+            Sync.Unsafe.defer {
+                val c      = Channel.Unsafe.init[Int](0)
+                val parked = c.putBatchFiber(Seq(1, 2, 3))
+                val first  = received(c.takeFiber())
+                discard(parked.interrupt())
+                val second = c.takeFiber()
+                val got    = received(second)
+                discard(c.close())
+                (first, got)
+            }.map { (first, second) =>
+                assert(first == Present(1) && second.isEmpty, s"the first take got $first and the second $second")
+            }
+        }
+    }
+
+    // A put's value reaches a consumer exactly when the put reports success: a producer that sees its put interrupted and
+    // puts again must not deliver the value twice.
+    "a put interrupted while the channel hands its value over" - {
+        // The take's completion runs inside the hand-off, after the delivery and before the put completes, which is where a
+        // concurrent interrupt of the producer can land.
+        "is delivered exactly when the put reports success on a zero-capacity channel".pendingUntilFixed(
+            "the hand-off completes the take before the put, and an interrupt between the two leaves the value delivered"
+        ) in {
+            Sync.Unsafe.defer {
+                val c    = Channel.Unsafe.init[Int](0)
+                val put  = c.putFiber(1)
+                val take = Promise.Unsafe.init[Int, Abort[Closed]]()
+                take.onComplete(_ => discard(put.interrupt()))
+                c.reuseTake(take)
+                discard(c.close())
+                (put, received(take))
+            }.map { (put, got) =>
+                put.safe.getResult.map { result =>
+                    assert(result.isSuccess == (got == Present(1)), s"the put reported $result and the take got $got")
+                }
+            }
+        }
+    }
+
+    // A zero-capacity hand-off that completed has delivered its value, so its result reports the delivery even when a close
+    // lands right after it. Each leaf closes the channel from the other party's completion, which runs inside the hand-off.
+    "a zero-capacity hand-off that a close follows" - {
+        "reports the delivery to offer".pendingUntilFixed(
+            "offer checks for a close after the hand-off and reports Closed"
+        ) in {
+            Sync.Unsafe.defer {
+                val c    = Channel.Unsafe.init[Int](0)
+                val take = Promise.Unsafe.init[Int, Abort[Closed]]()
+                take.onComplete(_ => discard(c.close()))
+                c.reuseTake(take)
+                (c.offer(1), received(take))
+            }.map { (offered, got) =>
+                assert(got == Present(1) && offered == Result.succeed(true), s"offer reported $offered and the take got $got")
+            }
+        }
+        "reports the delivery to offerAll".pendingUntilFixed(
+            "offerAll checks for a close after the hand-off and reports Closed"
+        ) in {
+            Sync.Unsafe.defer {
+                val c    = Channel.Unsafe.init[Int](0)
+                val take = Promise.Unsafe.init[Int, Abort[Closed]]()
+                take.onComplete(_ => discard(c.close()))
+                c.reuseTake(take)
+                (c.offerAll(Seq(1)), received(take))
+            }.map { (left, got) =>
+                assert(got == Present(1) && left == Result.succeed(Chunk.empty), s"offerAll reported $left and the take got $got")
+            }
+        }
+        "returns the value to poll".pendingUntilFixed(
+            "poll completes the producer, then checks for a close and reports Closed"
+        ) in {
+            Sync.Unsafe.defer {
+                val c   = Channel.Unsafe.init[Int](0)
+                val put = c.putFiber(1)
+                put.onComplete(_ => discard(c.close()))
+                (c.poll(), put)
+            }.map { (polled, put) =>
+                put.safe.getResult.map { result =>
+                    assert(
+                        result.isSuccess && polled == Result.succeed(Present(1)),
+                        s"the put reported $result and poll returned $polled"
+                    )
+                }
+            }
+        }
+    }
+
+    // takeExactly removes elements from the channel as they arrive and holds them until it has all of them, so a takeExactly
+    // that ends without completing must not take the ones it holds with it.
+    "a takeExactly that does not complete" - {
+        "leaves the elements it took in the channel when interrupted".pendingUntilFixed(
+            "the elements already drained live only in the interrupted fiber"
+        ) in {
+            for
+                c       <- Channel.init[Int](4)
+                _       <- c.put(1)
+                _       <- c.put(2)
+                f       <- Fiber.initUnscoped(c.takeExactly(3))
+                _       <- assertEventually(c.pendingTakes.map(_ == 1))
+                _       <- f.interrupt
+                _       <- f.getResult
+                drained <- c.drain
+            yield assert(drained == Chunk(1, 2), s"drained $drained")
+        }
+        "leaves the elements it took in a close's backlog".pendingUntilFixed(
+            "the elements already drained live only in the failed takeExactly"
+        ) in {
+            for
+                c       <- Channel.init[Int](4)
+                _       <- c.put(1)
+                _       <- c.put(2)
+                f       <- Fiber.initUnscoped(c.takeExactly(3))
+                _       <- assertEventually(c.pendingTakes.map(_ == 1))
+                backlog <- c.close
+                result  <- f.getResult
+            yield assert(
+                result.isFailure && backlog.map(_.toList) == Present(List(1, 2)),
+                s"takeExactly ended with $result and the backlog was $backlog"
+            )
+        }
+    }
+
+    // A read on a bounded channel must not hold its thread while a batch transfer holds the transfer claim. The leaf holds the
+    // claim, so a read that waits for it never returns until the leaf releases it, and the release has to come from the leaf
+    // itself: a reader spinning on a thread cannot be interrupted. JS has one thread, where no transfer can be in progress
+    // beside a read and a spinning reader would hold the thread the release needs.
+    "a read on a bounded channel during a batch transfer" - {
+        def returnsWhileClaimHeld(read: Channel[Int] => Any < (Abort[Closed] & Sync))(using Frame, kyo.test.AssertScope) =
+            Sync.Unsafe.defer {
+                Channel.Unsafe.init[Int](2) match
+                    case n: Channel.Unsafe.NonZeroCapacityUnsafe[Int] @unchecked =>
+                        n.batchInProgress.set(true)
+                        n
+                    case other => fail(s"a bounded channel is a NonZeroCapacityUnsafe, not $other")
+            }.map { n =>
+                for
+                    reader <- Fiber.initUnscoped(read(n.safe))
+                    // deviation: a reader spinning on its thread ignores interrupts and the per-leaf timeout, so the leaf bounds the
+                    // wait itself and then releases the claim; a reader that returns at once settles the wait without the bound.
+                    returned <- Sync.ensure(Sync.Unsafe.defer(n.batchInProgress.set(false))) {
+                        Abort.run[Timeout](Async.timeout(5.seconds)(reader.get))
+                    }
+                    _ <- reader.getResult
+                yield assert(returned.isSuccess, s"the read had not returned while the claim was held: $returned")
+            }
+        "poll returns without waiting for it".notJs.pendingUntilFixed(
+            "poll spins on the transfer claim"
+        ) in returnsWhileClaimHeld(_.poll)
+        "drainUpTo returns without waiting for it".notJs.pendingUntilFixed(
+            "drainUpTo spins on the transfer claim"
+        ) in returnsWhileClaimHeld(_.drainUpTo(4))
+    }
+
+    // A flush runs on whichever thread called it. With takes abandoned beside the consumer, a producer's flush polls the ring to
+    // serve one, a second consumer beside the real one, and the consumer's flush offers the refused value back, a second producer
+    // beside the real one. A single thread cannot open that window, so the leaf does not run on JS. With the access set to
+    // MultiProducerMultiConsumer the same body passes all 20 rounds.
+    "on a single-producer single-consumer channel" - {
+        "every value reaches the consumer exactly once while flushes serve abandoned takes".notJs.ignore(
+            "the ring is single-producer single-consumer while flushes poll and offer it from the other side's thread; the body hangs " +
+                "with scheduler workers spinning in flush, which the leak check then reports against the whole suite"
+        ) in {
+            val rounds    = 20
+            val abandoned = 20000
+            val items     = 5000
+            Loop.indexed { round =>
+                if round >= rounds then Loop.done
+                else
+                    for
+                        c        <- Channel.initUnscoped[Int](64, Access.SingleProducerSingleConsumer)
+                        _        <- Sync.Unsafe.defer((1 to abandoned).foreach(_ => discard(c.unsafe.takeFiber().interrupt())))
+                        finished <- AtomicBoolean.init(false)
+                        running  <- Latch.init(2)
+                        producer <- Fiber.initUnscoped(
+                            running.release.andThen(running.await)
+                                .andThen(Kyo.foreachDiscard(1 to items)(c.put)).andThen(finished.set(true))
+                        )
+                        // Once the producer finished, every flush it ran has returned, so an empty poll after that ends the read.
+                        consumer <- Fiber.initUnscoped(
+                            running.release.andThen(running.await).andThen {
+                                Loop(Chunk.empty[Int]) { got =>
+                                    finished.get.map { done =>
+                                        c.poll.map {
+                                            case Present(v) => Loop.continue(got.append(v))
+                                            case Absent     => if done then Loop.done(got) else Loop.continue(got)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                        _   <- producer.get
+                        got <- consumer.get
+                        _   <- c.closeDiscard
+                    yield
+                        val sorted = got.toSeq.sorted
+                        assert(
+                            sorted == (1 to items),
+                            s"round $round: ${got.size} values, duplicated ${got.diff(got.distinct).take(5)}, lost ${(1 to items).diff(sorted).take(5)}"
+                        )
                         Loop.continue
             }
         }
