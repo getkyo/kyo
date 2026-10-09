@@ -380,6 +380,110 @@ class HttpContainerBackendTest extends BasePodTest:
         }
     }
 
+    /** Podman's compat pull withholds the response status until the first layer event or an error, so the wait for headers spans the
+      * whole registry lookup. A slow registry must not fail a pull or a build on the client's request timeout before the daemon has
+      * answered anything.
+      */
+    "a streaming image call waits for the daemon's headers past the client's request timeout" - {
+
+        /** Runs `call` under a controlled clock and the client's default request timeout against a fake daemon on a unix socket, passing
+          * it a build context holding a Dockerfile. The daemon's `endpoint` holds its response headers until the clock has advanced a
+          * minute past the request, then streams its progress lines.
+          */
+        def overHeldDaemon[A](endpoint: (Latch, Latch) => HttpHandler[?, ?, ?])(
+            call: (HttpContainerBackend, Path) => A < (Async & Abort[ContainerException])
+        )(using
+            Frame
+        ): Result[ContainerException, A] < (Async & Scope & Abort[FileSystemException | HttpBindException | HttpRouteException]) =
+            Sync.defer {
+                if !TestUnixSockets.supported then throw kyo.test.TestCancelled("this host cannot bind a Unix socket for the fake daemon")
+            }.andThen(Path.run(Path.tempDir("kyo-pod-held-").map { dir =>
+                val socket  = (dir / "d.sock").toString
+                val context = dir / "context"
+                for
+                    _        <- context.mkDir
+                    _        <- (context / "Dockerfile").write("FROM scratch\n")
+                    received <- Latch.init(1)
+                    release  <- Latch.init(1)
+                    _        <- HttpServer.init(HttpServerConfig.default.unixSocket(socket))(endpoint(received, release))
+                    result   <- Clock.withTimeControl { clock =>
+                        HttpClient.withConfig(_.timeout(HttpClientConfig().timeout)) {
+                            Fiber.initUnscoped(Abort.run[ContainerException](call(new HttpContainerBackend(socket), context))).map {
+                                pending =>
+                                    received.await
+                                        .andThen(clock.advance(1.minute))
+                                        .andThen(release.release)
+                                        .andThen(pending.get)
+                            }
+                        }
+                    }
+                yield result
+                end for
+            }))
+
+        def ndjson(lines: String*)(using Frame): Stream[Span[Byte], Async & Abort[HttpException]] =
+            Stream.init(lines.map(line => Span.fromUnsafe(s"$line\n".getBytes("UTF-8"))))
+
+        "a pull" in {
+            val image = ContainerImage("redis", "7-alpine")
+            overHeldDaemon { (received, release) =>
+                HttpRoute.postRaw("v1.43" / "images" / "create").response(_.bodyStream).handler { _ =>
+                    received.release.andThen(release.await).andThen {
+                        HttpResponse.ok.addField(
+                            "body",
+                            ndjson("""{"status":"Pulling fs layer","id":"a1"}""", """{"status":"Pull complete","id":"a1"}""")
+                        )
+                    }
+                }
+            } { (backend, _) =>
+                backend.imagePullWithProgress(image, Absent, Absent).run
+            }.map { result =>
+                assert(
+                    result == Result.Success(Chunk(
+                        ContainerImage.PullProgress(Present("a1"), "Pulling fs layer", Absent, Absent),
+                        ContainerImage.PullProgress(Present("a1"), "Pull complete", Absent, Absent)
+                    )),
+                    s"expected the daemon's two progress events, got $result"
+                )
+            }
+        }
+
+        "a build" in {
+            overHeldDaemon { (received, release) =>
+                HttpRoute.postRaw("v1.43" / "build").request(_.bodyBinary).response(_.bodyStream).handler { _ =>
+                    received.release.andThen(release.await).andThen {
+                        HttpResponse.ok.addField(
+                            "body",
+                            ndjson("""{"stream":"Step 1/1 : FROM scratch\n"}""", """{"aux":{"ID":"sha256:b1"}}""")
+                        )
+                    }
+                }
+            } { (backend, context) =>
+                backend.imageBuildFromPath(
+                    context,
+                    "Dockerfile",
+                    Chunk.empty,
+                    Dict.empty,
+                    Dict.empty,
+                    noCache = false,
+                    pull = false,
+                    forceRm = false,
+                    Absent,
+                    Absent,
+                    Absent
+                ).run
+            }.map { result =>
+                assert(
+                    result == Result.Success(Chunk(
+                        ContainerImage.BuildProgress(Present("Step 1/1 : FROM scratch\n"), Absent, Absent, Absent, Absent),
+                        ContainerImage.BuildProgress(Absent, Absent, Absent, Absent, Present("sha256:b1"))
+                    )),
+                    s"expected the daemon's two build events, got $result"
+                )
+            }
+        }
+    }
+
     /** A failing registry must not be reported as a missing image.
       *
       * The pull path deliberately collapses every no-credentials failure into
