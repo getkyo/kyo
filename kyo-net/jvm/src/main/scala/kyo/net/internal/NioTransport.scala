@@ -7,7 +7,6 @@ import java.net.StandardSocketOptions
 import java.nio.ByteBuffer
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
-import java.nio.channels.UnresolvedAddressException
 import java.security.cert.X509Certificate
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLEngine
@@ -197,6 +196,46 @@ final private[kyo] class NioTransport private (
     private def connectFail(host: String, port: Int, cause: String | Throwable)(using Frame): NetException =
         if port < 0 then NetUnixConnectException(host, cause) else NetConnectException(host, port, cause)
 
+    /** `host:port` as a socket address, built without a lookup on the calling carrier. A numeric literal, or a loopback name mapped by
+      * [[posix.SockAddr.resolveLoopbackName]] as the posix transport maps it, is built inline; any other name goes through
+      * [[posix.HostResolver]], whose system lookup runs on its own fiber. `new InetSocketAddress(host, port)` instead resolves on the caller's
+      * carrier and holds it for the whole lookup, which a slow resolver stretches to seconds.
+      */
+    private def resolveInet(host: String, port: Int)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[InetSocketAddress, Abort[NetDnsResolutionException]] =
+        val name = posix.SockAddr.resolveLoopbackName(host)
+        posix.SockAddr.parseIpv4(name).orElse(posix.SockAddr.parseIpv6(name)).fold {
+            val familyHint = if host.contains(':') then posix.PosixConstants.AF_INET6 else posix.PosixConstants.AF_INET
+            val out        = Promise.Unsafe.init[InetSocketAddress, Abort[NetDnsResolutionException]]()
+            posix.HostResolver.resolve(host, familyHint).onComplete {
+                case Result.Success(pending) =>
+                    val resolved = pending.eval
+                    out.completeDiscard(Result.succeed(new InetSocketAddress(java.net.InetAddress.getByAddress(host, resolved.addr), port)))
+                case Result.Failure(e) => out.completeDiscard(Result.fail(e))
+                case Result.Panic(e)   => out.completeDiscard(Result.panic(e))
+            }
+            out: Fiber.Unsafe[InetSocketAddress, Abort[NetDnsResolutionException]]
+        } { bytes =>
+            Fiber.Unsafe.fromResult(Result.succeed(new InetSocketAddress(java.net.InetAddress.getByAddress(bytes), port)))
+        }
+    end resolveInet
+
+    /** Runs `body` with the resolved address of `host:port`, or fails `promise` with the resolution failure. A promise already completed
+      * when the address arrives (a connect deadline that fired during the lookup) skips `body`, so no channel is opened for it. A literal or
+      * loopback host resolves inline, so `body` runs before this returns, as it did when the address was built synchronously.
+      */
+    private def whenResolved[A](host: String, port: Int, promise: IOPromise[NetException, A])(body: InetSocketAddress => Unit)(using
+        AllowUnsafe,
+        Frame
+    ): Unit =
+        resolveInet(host, port).onComplete {
+            case Result.Success(address) => if !promise.done() then body(address.eval)
+            case Result.Failure(e)       => promise.completeDiscard(Result.fail(e))
+            case Result.Panic(e)         => promise.completeDiscard(Result.panic(e))
+        }
+
     /** Close a channel on a failure path, swallowing any close exception: the failure leaf is already being reported, so a secondary close error
       * must not mask it. Used where a channel was opened but no [[NioHandle]]/[[Connection]] took ownership of it yet (a connect or handshake that
       * fails before registration), so the fd would otherwise leak.
@@ -217,53 +256,51 @@ final private[kyo] class NioTransport private (
         // inside armConnectDeadline disarms it, and completeConnect closes a connection whose promise the deadline already failed.
         discard(armConnectDeadline(promise, host, port, connectTimeout))
 
-        // Hoisted so the catch can close it: channel.connect throws UnresolvedAddressException (DNS failure) / IOException AFTER the channel is
-        // open, and the failure paths inside the try (awaitConnect, registerChannel) already close it, so only this synchronous catch was leaking
-        // the just-opened channel fd.
-        var channel: SocketChannel = null
-        try
-            channel = SocketChannel.open()
-            channel.configureBlocking(false)
-            channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
-            applySocketBuffers(channel, config, sendSupported = true)
-            Log.live.unsafe.debug(s"NioTransport connect $host:$port channel=${channel.hashCode()}")
+        whenResolved(host, port, promise) { address =>
+            // Hoisted so the catch can close it: channel.connect throws IOException AFTER the channel is open, and the failure paths inside
+            // the try (awaitConnect, registerChannel) already close it, so only this synchronous catch would leak the just-opened channel fd.
+            var channel: SocketChannel = null
+            try
+                channel = SocketChannel.open()
+                channel.configureBlocking(false)
+                channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
+                applySocketBuffers(channel, config, sendSupported = true)
+                Log.live.unsafe.debug(s"NioTransport connect $host:$port channel=${channel.hashCode()}")
 
-            val connected = channel.connect(new InetSocketAddress(host, port))
-            Log.live.unsafe.debug(s"NioTransport connect immediate=$connected channel=${channel.hashCode()}")
-            if connected then
-                // Immediate connection (localhost)
-                val handle = NioHandle.init(
-                    channel,
-                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
-                    config.peerCloseGrace.duration,
-                    config.closeFlushGrace.duration,
-                    frame
-                )
-                discard(driver.registerChannel(handle))
-                completeConnect(handle, promise, config.channelCapacity)
-            else
-                // Connection in progress, wait for writable. The deadline armed above and the OS outcome race on the same `promise`
-                // (completeDiscard, at most once), so a deadline-fired close surfaces the timeout leaf and an OS-failure close surfaces
-                // NetConnectException: the close cause is discriminated by which arm completes `promise` first.
-                awaitConnect(
-                    channel,
-                    host,
-                    port,
-                    promise,
-                    config.channelCapacity,
-                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
-                    config.peerCloseGrace.duration,
-                    config.closeFlushGrace.duration
-                )
-            end if
-        catch
-            case e: UnresolvedAddressException =>
-                if channel != null then closeQuietly(channel)
-                promise.completeDiscard(Result.fail(NetDnsResolutionException(host, e)))
-            case e: IOException =>
-                if channel != null then closeQuietly(channel)
-                promise.completeDiscard(Result.fail(connectFail(host, port, e)))
-        end try
+                val connected = channel.connect(address)
+                Log.live.unsafe.debug(s"NioTransport connect immediate=$connected channel=${channel.hashCode()}")
+                if connected then
+                    // Immediate connection (localhost)
+                    val handle = NioHandle.init(
+                        channel,
+                        kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                        config.peerCloseGrace.duration,
+                        config.closeFlushGrace.duration,
+                        frame
+                    )
+                    discard(driver.registerChannel(handle))
+                    completeConnect(handle, promise, config.channelCapacity)
+                else
+                    // Connection in progress, wait for writable. The deadline armed above and the OS outcome race on the same `promise`
+                    // (completeDiscard, at most once), so a deadline-fired close surfaces the timeout leaf and an OS-failure close surfaces
+                    // NetConnectException: the close cause is discriminated by which arm completes `promise` first.
+                    awaitConnect(
+                        channel,
+                        host,
+                        port,
+                        promise,
+                        config.channelCapacity,
+                        kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                        config.peerCloseGrace.duration,
+                        config.closeFlushGrace.duration
+                    )
+                end if
+            catch
+                case e: IOException =>
+                    if channel != null then closeQuietly(channel)
+                    promise.completeDiscard(Result.fail(connectFail(host, port, e)))
+            end try
+        }
 
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed, invariant IOPromise[NetException, Connection[NioHandle]], even though both erase to the same runtime object;
@@ -325,9 +362,21 @@ final private[kyo] class NioTransport private (
                 // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit
                 // values above (a driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
                 driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
+                releaseIfAbandoned(handle, promise, connectPromise)
             end if
         end if
     end awaitConnect
+
+    /** Closes a connect's handle when `promise` settles, by its deadline or an interrupt, while the channel still waits for OP_CONNECT. The
+      * driver then fails `connectPromise`, whose callback closes the channel. Without it the socket stays in SYN_SENT, registered, until the
+      * kernel gives up on the SYN, about 2 minutes against an unanswered address.
+      */
+    private def releaseIfAbandoned(
+        handle: NioHandle,
+        promise: IOPromise[NetException, Connection[NioHandle]],
+        connectPromise: IOPromise[Closed | NetException, Unit]
+    )(using AllowUnsafe, Frame): Unit =
+        promise.onComplete(_ => if !connectPromise.done() then driver.closeHandle(handle))
 
     private def completeConnect(
         handle: NioHandle,
@@ -374,37 +423,37 @@ final private[kyo] class NioTransport private (
     )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
 
-        // Hoisted so the catch can close it: bind throws (e.g. address-already-in-use) after the server channel is open, and that catch otherwise
-        // leaked the listen fd.
-        var serverChannel: ServerSocketChannel = null
-        try
-            serverChannel = ServerSocketChannel.open()
-            serverChannel.configureBlocking(false)
-            serverChannel.setOption(StandardSocketOptions.SO_REUSEADDR, java.lang.Boolean.TRUE)
-            applySocketBuffers(serverChannel, config, sendSupported = false)
-            serverChannel.bind(new InetSocketAddress(host, port), backlog)
+        whenResolved(host, port, promise) { address =>
+            // Hoisted so the catch can close it: bind throws (e.g. address-already-in-use) after the server channel is open, and that catch
+            // otherwise leaked the listen fd.
+            var serverChannel: ServerSocketChannel = null
+            try
+                serverChannel = ServerSocketChannel.open()
+                serverChannel.configureBlocking(false)
+                serverChannel.setOption(StandardSocketOptions.SO_REUSEADDR, java.lang.Boolean.TRUE)
+                applySocketBuffers(serverChannel, config, sendSupported = false)
+                serverChannel.bind(address, backlog)
 
-            if !driver.registerServerChannel(serverChannel) then
-                serverChannel.close()
-                promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
-            else
-                val actualPort = serverChannel.socket().getLocalPort
-                val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
-                Log.live.unsafe.debug(s"NioTransport listen $host:$actualPort")
+                if !driver.registerServerChannel(serverChannel) then
+                    serverChannel.close()
+                    promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
+                else
+                    val actualPort = serverChannel.socket().getLocalPort
+                    val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
+                    Log.live.unsafe.debug(s"NioTransport listen $host:$actualPort")
 
-                val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
-                startAcceptLoop(serverChannel, handler, listener, config)
-                if !promise.complete(Result.succeed(listener)) then
-                    listener.close()
-            end if
-        catch
-            case e: UnresolvedAddressException =>
-                if serverChannel != null then closeQuietly(serverChannel)
-                promise.completeDiscard(Result.fail(NetDnsResolutionException(host, e)))
-            case e: IOException =>
-                if serverChannel != null then closeQuietly(serverChannel)
-                promise.completeDiscard(Result.fail(NetBindException(host, port, e)))
-        end try
+                    val listener =
+                        new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
+                    startAcceptLoop(serverChannel, handler, listener, config)
+                    if !promise.complete(Result.succeed(listener)) then
+                        listener.close()
+                end if
+            catch
+                case e: IOException =>
+                    if serverChannel != null then closeQuietly(serverChannel)
+                    promise.completeDiscard(Result.fail(NetBindException(host, port, e)))
+            end try
+        }
 
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed, invariant IOPromise[NetException, NetListener], even though both erase to the same runtime object; the alias
@@ -540,56 +589,55 @@ final private[kyo] class NioTransport private (
         // timeout leaf from a NetConnectException. The handshake phase that follows is bounded separately by tls.handshakeTimeout.
         val disarmConnectDeadline = armConnectDeadline(promise, host, port, connectTimeout)
 
-        // Hoisted so the catch can close it (same as the plaintext connect): channel.connect throws after the channel is open, and the failure
-        // paths inside the try already close it, so only this synchronous catch was leaking the just-opened channel fd.
-        var channel: SocketChannel = null
-        try
-            channel = SocketChannel.open()
-            channel.configureBlocking(false)
-            channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
-            applySocketBuffers(channel, config, sendSupported = true)
-            Log.live.unsafe.debug(s"NioTransport TLS connect $host:$port channel=${channel.hashCode()}")
+        whenResolved(host, port, promise) { address =>
+            // Hoisted so the catch can close it (same as the plaintext connect): channel.connect throws after the channel is open, and the
+            // failure paths inside the try already close it, so only this synchronous catch would leak the just-opened channel fd.
+            var channel: SocketChannel = null
+            try
+                channel = SocketChannel.open()
+                channel.configureBlocking(false)
+                channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
+                applySocketBuffers(channel, config, sendSupported = true)
+                Log.live.unsafe.debug(s"NioTransport TLS connect $host:$port channel=${channel.hashCode()}")
 
-            val connected = channel.connect(new InetSocketAddress(host, port))
-            if connected then
-                // TCP phase established: hand the deadline off to the handshake, which is bounded by tls.handshakeTimeout.
-                disarmConnectDeadline()
-                startTlsHandshake(
-                    channel,
-                    host,
-                    port,
-                    tls,
-                    isServer = false,
-                    promise,
-                    existingHandle = Absent,
-                    preRead = Absent,
-                    config.channelCapacity,
-                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
-                    config.peerCloseGrace.duration,
-                    config.closeFlushGrace.duration
-                )
-            else
-                awaitConnectThenTls(
-                    channel,
-                    host,
-                    port,
-                    tls,
-                    promise,
-                    config.channelCapacity,
-                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
-                    config.peerCloseGrace.duration,
-                    config.closeFlushGrace.duration,
-                    disarmConnectDeadline
-                )
-            end if
-        catch
-            case e: UnresolvedAddressException =>
-                if channel != null then closeQuietly(channel)
-                promise.completeDiscard(Result.fail(NetDnsResolutionException(host, e)))
-            case e: IOException =>
-                if channel != null then closeQuietly(channel)
-                promise.completeDiscard(Result.fail(NetConnectException(host, port, e)))
-        end try
+                val connected = channel.connect(address)
+                if connected then
+                    // TCP phase established: hand the deadline off to the handshake, which is bounded by tls.handshakeTimeout.
+                    disarmConnectDeadline()
+                    startTlsHandshake(
+                        channel,
+                        host,
+                        port,
+                        tls,
+                        isServer = false,
+                        promise,
+                        existingHandle = Absent,
+                        preRead = Absent,
+                        config.channelCapacity,
+                        kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                        config.peerCloseGrace.duration,
+                        config.closeFlushGrace.duration
+                    )
+                else
+                    awaitConnectThenTls(
+                        channel,
+                        host,
+                        port,
+                        tls,
+                        promise,
+                        config.channelCapacity,
+                        kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                        config.peerCloseGrace.duration,
+                        config.closeFlushGrace.duration,
+                        disarmConnectDeadline
+                    )
+                end if
+            catch
+                case e: IOException =>
+                    if channel != null then closeQuietly(channel)
+                    promise.completeDiscard(Result.fail(NetConnectException(host, port, e)))
+            end try
+        }
 
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed, invariant IOPromise[NetException, Connection[NioHandle]], even though both erase to the same runtime object;
@@ -680,6 +728,7 @@ final private[kyo] class NioTransport private (
                 // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit
                 // values above (a driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
                 driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
+                releaseIfAbandoned(handle, promise, connectPromise)
             end if
         end if
     end awaitConnectThenTls
@@ -1141,39 +1190,39 @@ final private[kyo] class NioTransport private (
     )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
 
-        // Hoisted so the catch can close it: bind throws (e.g. address-already-in-use) after the server channel is open, and that catch otherwise
-        // leaked the listen fd.
-        var serverChannel: ServerSocketChannel = null
-        try
-            serverChannel = ServerSocketChannel.open()
-            serverChannel.configureBlocking(false)
-            serverChannel.setOption(StandardSocketOptions.SO_REUSEADDR, java.lang.Boolean.TRUE)
-            applySocketBuffers(serverChannel, config, sendSupported = false)
-            serverChannel.bind(new InetSocketAddress(host, port), backlog)
+        whenResolved(host, port, promise) { address =>
+            // Hoisted so the catch can close it: bind throws (e.g. address-already-in-use) after the server channel is open, and that catch
+            // otherwise leaked the listen fd.
+            var serverChannel: ServerSocketChannel = null
+            try
+                serverChannel = ServerSocketChannel.open()
+                serverChannel.configureBlocking(false)
+                serverChannel.setOption(StandardSocketOptions.SO_REUSEADDR, java.lang.Boolean.TRUE)
+                applySocketBuffers(serverChannel, config, sendSupported = false)
+                serverChannel.bind(address, backlog)
 
-            if !driver.registerServerChannel(serverChannel) then
-                serverChannel.close()
-                promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
-            else
-                val actualPort = serverChannel.socket().getLocalPort
-                val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
-                Log.live.unsafe.debug(s"NioTransport TLS listen $host:$actualPort")
+                if !driver.registerServerChannel(serverChannel) then
+                    serverChannel.close()
+                    promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
+                else
+                    val actualPort = serverChannel.socket().getLocalPort
+                    val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
+                    Log.live.unsafe.debug(s"NioTransport TLS listen $host:$actualPort")
 
-                val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
-                // Only the TLS listen path can have in-flight handshakes; a plaintext accept becomes a tracked Connection immediately.
-                listener.onClose(() => dischargeListenerHandshakes(listener))
-                startTlsAcceptLoop(serverChannel, handler, listener, tls, config)
-                if !promise.complete(Result.succeed(listener)) then
-                    listener.close()
-            end if
-        catch
-            case e: UnresolvedAddressException =>
-                if serverChannel != null then closeQuietly(serverChannel)
-                promise.completeDiscard(Result.fail(NetDnsResolutionException(host, e)))
-            case e: IOException =>
-                if serverChannel != null then closeQuietly(serverChannel)
-                promise.completeDiscard(Result.fail(NetBindException(host, port, e)))
-        end try
+                    val listener =
+                        new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
+                    // Only the TLS listen path can have in-flight handshakes; a plaintext accept becomes a tracked Connection immediately.
+                    listener.onClose(() => dischargeListenerHandshakes(listener))
+                    startTlsAcceptLoop(serverChannel, handler, listener, tls, config)
+                    if !promise.complete(Result.succeed(listener)) then
+                        listener.close()
+                end if
+            catch
+                case e: IOException =>
+                    if serverChannel != null then closeQuietly(serverChannel)
+                    promise.completeDiscard(Result.fail(NetBindException(host, port, e)))
+            end try
+        }
 
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed, invariant IOPromise[NetException, NetListener], even though both erase to the same runtime object; the alias
