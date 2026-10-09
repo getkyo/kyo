@@ -197,7 +197,8 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                             cLocal   <- pool.compiler(localCfg)
                             resLocal <- Abort.run[CompilerException](cLocal.compile(Compiler.Uri("l.scala"), "object L"))
                             _ = resLocal match
-                                case Result.Failure(_: CompilerWorkerSpawnException) | Result.Failure(_: CompilerWorkerReadyException) =>
+                                case Result.Failure(_: CompilerWorkerSpawnException) | Result.Failure(_: CompilerWorkerReadyException) |
+                                    Result.Failure(_: CompilerWorkerExitedException) =>
                                     assert(false, "own-version + isolate=false wrongly routed to SpawnBackend")
                                 case _ =>
                                     ()

@@ -22,20 +22,32 @@ import kyo.*
   */
 final private[kyo] class SpawnBackend(
     private[kyo] val process: Process,
+    // Must refuse interrupts: every op's race interrupts its losing branch, and that interrupt reaching a shared
+    // exit fiber would complete it as interrupted and fail every later op.
+    exited: Fiber[Process.ExitCode, Any],
     aeron: AeronClient,
     exchange: Exchange[Request, Response, Nothing, TransportError]
 ) extends Backend:
 
+    /** Races the exchange against the worker's exit. A dead worker never replies, and a request to it can sit in the
+      * publish retry loop rather than on its reply promise, so closing the session on exit would not release it; only
+      * the race ends such an op.
+      */
     def run(request: Request)(using Frame): Response < (Async & Abort[CompilerException]) =
-        exchange(request)
-            .handle(Abort.run[TransportError | Closed])
-            .map {
-                case Result.Success(Response.Failed(error)) => Abort.fail(error)
-                case Result.Success(response)               => response
-                case Result.Failure(TransportError(m))      => Abort.fail(CompilerTransportException(m))
-                case Result.Failure(_)                      => Abort.fail(CompilerTransportException("worker session closed"))
-                case Result.Panic(err)                      => Abort.fail(CompilerTransportException(err))
-            }
+        val reply: Response < (Async & Abort[CompilerException]) =
+            exchange(request)
+                .handle(Abort.run[TransportError | Closed])
+                .map {
+                    case Result.Success(Response.Failed(error)) => Abort.fail(error)
+                    case Result.Success(response)               => response
+                    case Result.Failure(TransportError(m))      => Abort.fail(CompilerTransportException(m))
+                    case Result.Failure(_)                      => Abort.fail(CompilerTransportException("worker session closed"))
+                    case Result.Panic(err)                      => Abort.fail(CompilerTransportException(err))
+                }
+        val exit: Response < (Async & Abort[CompilerException]) =
+            exited.get.map(code => Abort.fail(CompilerTransportException(s"worker process exited with ${Render.asString(code)}")))
+        Async.raceFirst(reply, exit)
+    end run
 
     def close(using Frame): Unit < (Async & Abort[Throwable]) =
         exchange.close
@@ -98,19 +110,23 @@ private[kyo] object SpawnBackend:
                             started.get.map(ok => if ok then () else Sync.Unsafe.defer(aeron.unsafe.close()))
                         } { aeron =>
                             connect(aeron, reqStreamId, respStreamId).map { exchange =>
-                                val backend = new SpawnBackend(process, aeron, exchange)
-                                // onSpawn fires with the kill armed, so a test observing the process knows the
-                                // kill-on-interrupt path is live before it interrupts.
-                                Sync.defer(onSpawn(process))
-                                    .andThen(ready(backend, config.toolchain.scalaVersion, readyTimeout))
-                                    .andThen(started.set(true).andThen(backend))
+                                Fiber.initUnscoped(process.waitFor).map(_.uninterruptible).map { exited =>
+                                    val backend = new SpawnBackend(process, exited, aeron, exchange)
+                                    // onSpawn fires with the kill armed, so a test observing the process knows the
+                                    // kill-on-interrupt path is live before it interrupts.
+                                    Sync.defer(onSpawn(process))
+                                        .andThen(ready(backend, config.toolchain.scalaVersion, readyTimeout))
+                                        .andThen(started.set(true).andThen(backend))
+                                }
                             }
                         }
                     }
                 }
             }
         }.map {
-            case Result.Success(value) => value
+            case Result.Success(value)                => value
+            case Result.Failure(e: CompilerException) =>
+                Log.error("worker backend failed to initialize", e).andThen(Abort.fail(e))
             // Log the failure; CompilerWorkerSpawnException carries the Scala version and the cause.
             case Result.Failure(t) =>
                 Log.error("worker backend failed to initialize", t)
@@ -125,7 +141,9 @@ private[kyo] object SpawnBackend:
       * publication never sees a subscriber and would otherwise retry forever) or hangs surfaces as
       * InitializationFailed here, not as a forever-retrying publish on the caller's first real op. A
       * `DidClose` probe is cheap and idempotent on the worker; if no reply arrives within the bound the
-      * worker is taken as failed to start.
+      * worker is taken as failed to start. A worker that exits ends the probe at once through `run`'s exit race and
+      * fails as CompilerWorkerExitedException. The exit is read from the process rather than from which branch won, so
+      * a dead worker reports its exit even when the timeout fires first.
       */
     private def ready(backend: SpawnBackend, scalaVersion: String, readyTimeout: Duration)(using
         Frame
@@ -133,7 +151,11 @@ private[kyo] object SpawnBackend:
         val probe = backend.run(Request.DidClose(Compiler.Uri("kyo-compiler-readiness-probe.scala")))
         Abort.run[CompilerException | Timeout](Async.timeout(readyTimeout)(probe)).map {
             case Result.Success(_) => ()
-            case _                 => Abort.fail(CompilerWorkerReadyException(scalaVersion, readyTimeout))
+            case _                 =>
+                backend.process.exitCode.map {
+                    case Present(code) => Abort.fail(CompilerWorkerExitedException(scalaVersion, code))
+                    case Absent        => Abort.fail(CompilerWorkerReadyException(scalaVersion, readyTimeout))
+                }
         }
     end ready
 

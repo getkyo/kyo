@@ -79,6 +79,10 @@ class CompilerTest extends kyo.test.Test[Any]:
         // A field-only leaf (no Throwable) round-trips to an equal value.
         val errReady: CompilerException = CompilerWorkerReadyException("3.0.0", 30.seconds)
         assert(roundTrip(errReady) == errReady)
+        val errExited: CompilerException = CompilerWorkerExitedException("3.0.0", Process.ExitCode.Failure(1))
+        assert(roundTrip(errExited) == errExited)
+        val errKilled: CompilerException = CompilerWorkerExitedException("3.0.0", Process.ExitCode.SIGKILL)
+        assert(roundTrip(errKilled) == errKilled)
 
         // A Throwable-carrying leaf round-trips to the same type with the cause preserved as text
         // (a live Throwable cannot cross the wire), so assert the type and the rendered cause.

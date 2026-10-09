@@ -39,6 +39,13 @@ final case class CompilerWorkerReadyException(scalaVersion: String, timeout: Dur
     extends CompilerException(s"worker JVM for Scala $scalaVersion did not become ready within ${timeout.show}")
     with CompilerInitializationFailure
 
+/** The worker JVM launched but exited before passing its readiness probe. */
+final case class CompilerWorkerExitedException(scalaVersion: String, exitCode: Process.ExitCode)(using Frame)
+    extends CompilerException(
+        s"worker JVM for Scala $scalaVersion exited with ${Render.asString(exitCode)} before becoming ready"
+    )
+    with CompilerInitializationFailure
+
 /** The presentation compiler raised while running the request. */
 final case class CompilerExecutionException(cause: Throwable)(using Frame)
     extends CompilerException("presentation compiler raised while running the request", cause)
@@ -76,6 +83,8 @@ object CompilerException:
             case ("spawn", scalaVersion, cause, _) => CompilerWorkerSpawnException(scalaVersion, restore(cause))(using Frame.internal)
             case ("ready", scalaVersion, _, nanos) =>
                 CompilerWorkerReadyException(scalaVersion, Duration.fromNanos(nanos))(using Frame.internal)
+            case ("exited", scalaVersion, _, code) =>
+                CompilerWorkerExitedException(scalaVersion, Process.ExitCode(code.toInt))(using Frame.internal)
             case ("exec", _, cause, _)         => CompilerExecutionException(restore(cause))(using Frame.internal)
             case ("transport", _, cause, _)    => CompilerTransportException(restore(cause))(using Frame.internal)
             case ("unresponsive", _, _, nanos) => CompilerUnresponsiveException(Duration.fromNanos(nanos))(using Frame.internal)
@@ -84,6 +93,7 @@ object CompilerException:
             case CompilerStartException(scalaVersion, cause)         => ("start", scalaVersion, renderCause(cause), 0L)
             case CompilerWorkerSpawnException(scalaVersion, cause)   => ("spawn", scalaVersion, renderCause(cause), 0L)
             case CompilerWorkerReadyException(scalaVersion, timeout) => ("ready", scalaVersion, "", timeout.toNanos)
+            case CompilerWorkerExitedException(scalaVersion, code)   => ("exited", scalaVersion, "", code.toInt.toLong)
             case CompilerExecutionException(cause)                   => ("exec", "", renderCause(cause), 0L)
             case CompilerTransportException(cause)                   => ("transport", "", renderCause(cause), 0L)
             case CompilerUnresponsiveException(timeout)              => ("unresponsive", "", "", timeout.toNanos)

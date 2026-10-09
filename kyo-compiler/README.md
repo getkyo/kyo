@@ -277,9 +277,10 @@ There is one instance per distinct `Config`. Once live instances exceed `maxLive
     - `CompilerStartException(scalaVersion, cause)`: the in-process pc failed to instantiate for that version.
     - `CompilerWorkerSpawnException(scalaVersion, cause)`: the forked worker JVM failed to launch or its IPC client to connect.
     - `CompilerWorkerReadyException(scalaVersion, timeout)`: the worker launched but did not pass its readiness probe within `Settings.readyTimeout`.
+    - `CompilerWorkerExitedException(scalaVersion, exitCode)`: the worker launched but exited before passing its readiness probe. It fails as soon as the process exits, without waiting out `Settings.readyTimeout`.
 - `CompilerOperationFailure`: a request against a live compiler failed. Leaves:
     - `CompilerExecutionException(cause)`: the pc raised while running the request. (This is the one operation leaf that crosses the worker IPC wire; on the far side its `cause` is rebuilt as a plain `RuntimeException` from the rendered stack.)
-    - `CompilerTransportException(cause)`: the worker IPC session broke mid-request.
+    - `CompilerTransportException(cause)`: the worker IPC session broke mid-request, or the worker process exited (the cause names its exit code).
     - `CompilerUnresponsiveException(timeout)`: the request outran `Settings.stuckTimeout` and the worker was reclaimed.
     - `CompilerClosedException()`: the pool was closed while the request was in flight.
 
@@ -301,7 +302,7 @@ val described: String < Async =
     }
 ```
 
-A version-mismatched config whose worker cannot start surfaces as a `CompilerInitializationFailure` leaf (such as `CompilerWorkerSpawnException` or `CompilerWorkerReadyException`). A pc that throws mid-op surfaces as `CompilerExecutionException` (a `CompilerOperationFailure`), never an escaped throw.
+A version-mismatched config whose worker cannot start surfaces as a `CompilerInitializationFailure` leaf (such as `CompilerWorkerSpawnException`, `CompilerWorkerExitedException` or `CompilerWorkerReadyException`). A pc that throws mid-op surfaces as `CompilerExecutionException` (a `CompilerOperationFailure`), never an escaped throw.
 
 ## Putting it together
 
