@@ -11,7 +11,7 @@
 //     from inside a forked test JVM.
 //
 // Matrix shape: Future + Kyo (both support all 3 platforms) across
-// JVM + JS + Native = 6 cells. Single Scala 3.3.4. Per-platform setting
+// JVM + JS + Native = 6 cells. Single Scala version, the outer build's. Per-platform setting
 // discrimination is observed by enumerating each cell's Project ref
 // (myLib.future.jvm, myLib.future.js, ...) directly, matching the
 // pattern used by the cross-platform scripted test.
@@ -23,7 +23,11 @@
 // cells. We publishLocal empty stubs so resolution succeeds without hitting
 // any real backend artifacts. Same pattern as publish/.
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 
 // Custom marker keys default to "" on ThisBuild. Per-cell .settings /
@@ -64,7 +68,7 @@ def fakeCompat(backend: String, platform: String): Project = {
         organization := "io.getkyo",
         moduleName   := s"kyo-compat-$backend",
         version      := "STUB-FOR-SCRIPTED-TEST",
-        scalaVersion := "3.3.4"
+        scalaVersion := prop("kyo.scalaVersion")
     )
     platform match {
         case "jvm"    => base
@@ -111,14 +115,14 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         // sources are compiled across every cell, so the dep must be
         // available on JVM/JS/Native; checkForkTest only RUNS Test/test
         // on the JVM cells.
-        libraryDependencies   += "org.scalatest" %%% "scalatest" % "3.2.19" % Test
+        libraryDependencies   += "org.scalatest" %%% "scalatest" % prop("scalatest.version") % Test
     )
     // Scenarios 5/6/7: per-platform settings via the kyo-compat plugin's
     // `.jvmSettings` / `.jsSettings` / `.nativeSettings` extension methods on
     // `ProjectMatrix`. These mirror sbt-crossproject's per-platform setters
     // and apply AFTER the receiver's `.settings(...)` so per-platform values
     // win on conflicts.
-    .compatLibrary(KyoLib)(VirtualAxis.jvm, VirtualAxis.js, VirtualAxis.native)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm, VirtualAxis.js, VirtualAxis.native)(Seq(prop("kyo.scalaVersion")))
     .jvmSettings(jvmSettingMarker       := "jvm-value")
     .jsSettings(jsSettingMarker         := "js-value")
     .nativeSettings(nativeSettingMarker := "native-value")

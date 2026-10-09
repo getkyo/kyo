@@ -5,7 +5,11 @@
 // to a stub version so the test does not have to resolve real artifacts;
 // we only assert on project graph shape, not on `compile`.
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 
 lazy val myLib = (projectMatrix in file("my-lib"))
@@ -13,7 +17,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         organization := "com.example",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary(KyoLib, ZioLib, OxLib, TwitterFutureLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib, ZioLib, OxLib, TwitterFutureLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
 
 // Cross-backend aggregator. Should fan to all 5 backends' JVM cells.
 lazy val myLibAll = myLib.aggregate("my-lib-all")

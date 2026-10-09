@@ -1,0 +1,138 @@
+name: deps-cache
+# The only writer of each os pole's dependency cache (deps-<os>-<hash of the build files>). A key is
+# write-once, so with one writer per target leg the first leg to finish owns the entry and the other legs'
+# dependencies are never cached; on windows-x64 the JS leg usually finishes first, leaving the JVM leg to
+# download its test dependencies from Maven Central on every run. This job resolves every target the pole
+# builds, so the one entry covers all of them.
+#
+# A separate workflow rather than a job in ci.yml: a job whose condition is false still reports as a
+# Skipped check on every pull request, and this one must run only on a push to main, the only ref whose
+# caches every other ref can read. It runs beside the builds on its own runners and the builds never wait
+# for it, since they only restore.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# One writer at a time: a run that queues behind another for the same build files finds the key the first
+# one wrote and stops at the lookup. cancel-in-progress false spares only the running one: a newer run
+# cancels an older run still pending in the group, so an intermediate commit's hash may never get an entry.
+# That costs nothing a restore needs, since every consumer restores the newest entry by prefix.
+concurrency:
+  group: deps-cache
+  cancel-in-progress: false
+
+jobs:
+  # The poles and their targets, read from ci.yml so a pole or target added there is cached here without a
+  # second list to keep in step.
+  poles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      poles: ${{ steps.read.outputs.poles }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/workflows/ci.yml
+          sparse-checkout-cone-mode: false
+      - id: read
+        shell: bash
+        run: |
+          poles=$(yq -o=json -I=0 '.jobs.build.strategy.matrix.pole' .github/workflows/ci.yml)
+          echo "poles: $poles"
+          [ "$(jq 'length' <<< "$poles")" -gt 0 ] || { echo "no poles in ci.yml's build matrix" >&2; exit 1; }
+          echo "poles=$poles" >> "$GITHUB_OUTPUT"
+
+  deps-cache:
+    needs: poles
+    name: deps-cache (${{ matrix.pole.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        pole: ${{ fromJSON(needs.poles.outputs.poles) }}
+    runs-on: ${{ matrix.pole.image }}
+    # A cold resolution measured about 6 minutes for JVM and 4 for JS on a laptop; this leaves room for a
+    # slower runner, a Native and a Wasm pass, and the retries' backoff, while a hung resolution frees the slot.
+    timeout-minutes: 90
+    env:
+      # The boot socket and server switches ci-test.sh gives every sbt it starts: without them the windows-arm64
+      # sbt driver can die at startup building its named pipe (see the JAVA_OPTS export in ci-test.sh).
+      JAVA_OPTS: "-Dsbt.ipcsocket.jni=true -Dsbt.server.forcestart=true -Dsbt.server.autostart=false"
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+
+      # Downloads nothing: on a build-file hash that already has its entry, the rest of the job is skipped.
+      - uses: ./.github/actions/caches
+        with:
+          os: ${{ matrix.pole.os }}
+          mode: lookup
+          browser: false
+
+      # Rewrites KYO_CACHE_DEPS_HIT, which the save step reads: a prefix hit sets it false, so the save writes the
+      # new key. That holds only while nothing can write the exact key between the lookup and here, which the
+      # concurrency group guarantees.
+      - if: ${{ env.KYO_CACHE_DEPS_HIT != 'true' }}
+        uses: ./.github/actions/caches
+        with:
+          os: ${{ matrix.pole.os }}
+          mode: restore
+          browser: false
+
+      - if: ${{ env.KYO_CACHE_DEPS_HIT != 'true' }}
+        uses: ./.github/actions/setup-sbt
+        with:
+          os: ${{ matrix.pole.os }}
+
+      # A prefix-restored entry can carry markers, and each would fail a target's first resolution and cost it a
+      # retry with its backoff.
+      - name: purge inherited Coursier error markers
+        if: ${{ env.KYO_CACHE_DEPS_HIT != 'true' }}
+        shell: bash
+        run: |
+          . scripts/resolve-retry-lib.sh
+          purge_coursier_error_markers
+
+      # The update phase selects the modules and Scala versions the build legs compile and test, one sbt
+      # process per target as ci-test.sh runs them, under the same retry and marker purge as the legs. The
+      # Windows poles resolve no Native target even though the JVM legs' scripted sub-builds publish Native
+      # cells on Linux: every scripted plugin skips its suite on Windows (sbt#6777), so no Windows leg runs one.
+      - name: resolve every target's dependencies (${{ matrix.pole.os }})
+        if: ${{ env.KYO_CACHE_DEPS_HIT != 'true' }}
+        shell: bash
+        env:
+          TARGETS: ${{ matrix.pole.targets }}
+        run: |
+          . scripts/resolve-retry-lib.sh
+          # TARGETS is ci.yml's JSON array of plain names; tr rather than jq, which the Windows images may lack.
+          for target in $(tr -d '[]" ' <<< "$TARGETS" | tr ',' ' '); do
+            resolve_retry 5 "$target dependency-resolution" resolve_transient_failure resolve_tee \
+              scripts/sbt.sh tool "testKyo --phase update --all $target"
+          done
+
+      # A Maven Central 404 burst during the resolution above would otherwise ship a marker for a file Central
+      # holds, and every job restoring the entry would fail on that file without asking again.
+      - name: purge Coursier error markers
+        if: ${{ env.KYO_CACHE_DEPS_HIT != 'true' }}
+        shell: bash
+        run: |
+          . scripts/resolve-retry-lib.sh
+          purge_coursier_error_markers
+          while IFS= read -r dir; do
+            left=$(find "$dir" -type f -name '.*.error' -print -quit)
+            if [ -n "$left" ]; then echo "Coursier error marker left after the purge: $left" >&2; exit 1; fi
+          done < <(coursier_cache_dirs)
+
+      # Saves only after every target resolved: a failed resolution leaves a partial tree, and a key is
+      # immutable once written, so that tree would own the whole generation. The next push to main retries.
+      - if: ${{ env.KYO_CACHE_DEPS_HIT != 'true' }}
+        uses: ./.github/actions/caches
+        with:
+          os: ${{ matrix.pole.os }}
+          mode: save
+          browser: false

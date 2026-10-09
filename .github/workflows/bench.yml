@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      # Restore only, from the deps-linux-x64- namespace the ci legs write, not coursier/cache-action, which
+      # Restore only, from the deps-linux-x64- namespace deps-cache.yml writes, not coursier/cache-action, which
       # saves its own ~1.6 GB entry per job name.
       - uses: ./.github/actions/caches
         with:

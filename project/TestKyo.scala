@@ -28,6 +28,7 @@ import scala.sys.process.*
   *   - `testKyo --only kyo-schema-tests --all Native` only that cross-project
   *   - `testKyo --quick --all JVM` re-run only what sbt has not recorded as passing
   *   - `testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-coreNative Native` link exactly those modules
+  *   - `testKyo --phase update --all JS` resolve every dependency a full JS run downloads, compiling nothing
   *   - `testKyo --dry-run --plan-file /tmp/p Native` write the selected modules to /tmp/p, run nothing
   *   - `testKyo origin/feature JVM` diff vs a specific ref
   *   - `testKyo --dry-run JVM` show what would run without executing
@@ -49,7 +50,7 @@ object TestKyo {
     // and full-run paths both exclude them and treat any change scoped to one as "run all".
     private val aggregateProjects = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
 
-    private val phases = Seq("compile-main", "compile-test", "link", "test", "doctest", "scaladoc", "publish")
+    private val phases = Seq("compile-main", "compile-test", "link", "test", "update", "doctest", "scaladoc", "publish")
 
     /** Phases that validate documentation or artifacts rather than run tests. Each runs every selected
       * project at its own Scala version in one pass, and selects by what reaches a project's doctests or
@@ -76,21 +77,51 @@ object TestKyo {
       * (default) runs the tests, as `testQuick` under `--quick` so a re-invocation re-runs only the
       * tests sbt did not record as passing. Running the phases as separate sbt processes keeps the
       * driver from holding a full compile heap while test forks run, which is what over-commits the
-      * memory-constrained CI runners.
+      * memory-constrained CI runners. update resolves, without compiling the project, what the other
+      * phases download: `update` covers every configuration, and each pass ends with [[bridgeCommand]].
       */
     private def taskFor(phase: String, name: String, quick: Boolean): String = phase match {
         case "compile-main" => s"$name/Compile/compile"
         case "compile-test" => s"$name/Test/compile"
         case "link"         => s"$name/Test/nativeLink"
+        case "update"       => s"$name/update"
         case _              => if (quick) s"$name/testQuick" else s"$name/test"
+    }
+
+    private val bridgeCommandName = "testKyoBridge"
+
+    /** Provisions the compiler bridge each named module compiles with, at the Scala version it is at when the
+      * command runs. The bridge lives outside every `update`: Scala 3 and 2.13 publish it as a binary jar that
+      * sbt resolves on its own, and for 2.12 sbt resolves the bridge sources and compiles them into its zinc
+      * component directory under ~/.sbt. Resolving `compilers` fetches the binary jar; asking its provider for
+      * the compiled bridge does the 2.12 compile, which otherwise first happens in the build's first compile.
+      */
+    def bridgeCommand: Command = Command.args(bridgeCommandName, "<module>*") { (state, modules) =>
+        modules.foldLeft(state) { (s, name) =>
+            val extracted   = Project.extract(s)
+            val ref         = ProjectRef(extracted.structure.root, name)
+            val (next, all) = extracted.runTask(ref / compilers, s)
+            all.scalac match {
+                case analyzing: sbt.internal.inc.AnalyzingCompiler =>
+                    analyzing.provider.fetchCompiledBridge(analyzing.scalaInstance, next.log)
+                case _ => ()
+            }
+            next
+        }
     }
 
     private def phaseLabel(phase: String): String = phase match {
         case "compile-main" => "compiling main for"
         case "compile-test" => "compiling test for"
         case "link"         => "linking"
+        case "update"       => "resolving dependencies for"
         case _              => "testing"
     }
+
+    /** Resolved once per build rather than per module: the Scala.js linker that links the JS and Wasm test
+      * binaries, which sbt-scalajs fetches at link time outside any project's `update`.
+      */
+    private val scalaJSLinkerResolution = "Zero / scalaJSLinkerImpl / fullClasspath"
 
     final private case class Args(
         isAll: Boolean,
@@ -756,7 +787,8 @@ object TestKyo {
                 log("completed")
             } else {
                 val switch = if (version == current) Nil else Seq(s"++$version")
-                val parts  = (switch ++ modules.map(taskFor(a.phase, _, a.isQuick))) :+ doneCommandName
+                val bridge = if (a.phase == "update") Seq(s"$bridgeCommandName ${modules.mkString(" ")}") else Nil
+                val parts  = (switch ++ modules.map(taskFor(a.phase, _, a.isQuick)) ++ bridge) :+ doneCommandName
                 current = version
                 log(s"Scala $version, ${phaseLabel(a.phase)} ${modules.size} modules: ${modules.mkString(", ")}")
                 log(s"pass: ${parts.mkString("; ")}")
@@ -766,6 +798,10 @@ object TestKyo {
         if (current != scala3) {
             log(s"restoring Scala $scala3 after the last pass")
             chain += s"++$scala3"
+        }
+        if (a.phase == "update" && a.platform.forall(p => p == "JS" || p == "Wasm")) {
+            log(s"resolving the Scala.js linker: $scalaJSLinkerResolution")
+            chain += scalaJSLinkerResolution
         }
         if (chain.isEmpty || a.isDryRun) state
         else Command.process(chain.mkString("; "), state, msg => state.log.error(msg))

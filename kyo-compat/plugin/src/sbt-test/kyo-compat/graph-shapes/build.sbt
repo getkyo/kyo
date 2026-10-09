@@ -2,20 +2,24 @@
 //
 // Exercises three matrix-shape scenarios in one scripted test:
 //
-//   1. multi-scala  -- compatLibrary(KyoLib)(JVM)(Seq("3.3.4", "3.4.0")) ->
-//                      4 cells: myMultiFuture3_3_4, myMultiFuture3_4_0,
-//                      myMultiKyo3_3_4, myMultiKyo3_4_0.
-//   2. future-only  -- compatLibrary()(JVM)(Seq("3.3.4")) ->
+//   1. multi-scala  -- compatLibrary(KyoLib)(JVM)(Seq(<outer Scala>, "3.4.0")) ->
+//                      4 cells: myMultiFuture<v>, myMultiFuture3_4_0,
+//                      myMultiKyo<v>, myMultiKyo3_4_0.
+//   2. future-only  -- compatLibrary()(JVM)(Seq(<outer Scala>)) ->
 //                      1 cell: myFutureOnlyFuture (Future is the implicit
 //                      anchor; empty extras = Future-only).
-//   3. single-cell  -- compatLibrary(KyoLib)(JVM)(Seq("3.3.4")) ->
+//   3. single-cell  -- compatLibrary(KyoLib)(JVM)(Seq(<outer Scala>)) ->
 //                      2 cells: mySingleFuture, mySingleKyo.
 //
 // JVM-only to keep scripted-test runtime down. Fake-stub kyo-compat-{future,kyo}
 // jars are published to ivy-cache so resolution succeeds even though no
 // real compile or update will happen during the check tasks.
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 
 // Pin ivy paths to a known location inside the test dir, mirroring the
@@ -44,7 +48,7 @@ def fakeCompat(backend: String): Project = {
         organization := "io.getkyo",
         moduleName   := s"kyo-compat-$backend",
         version      := "STUB-FOR-SCRIPTED-TEST",
-        scalaVersion := "3.3.4"
+        scalaVersion := prop("kyo.scalaVersion")
     )
 }
 
@@ -69,7 +73,7 @@ lazy val myMulti = (projectMatrix in file("my-multi"))
         name         := "my-multi",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4", "3.4.0"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion"), "3.4.0"))
 
 // future-only. compatLibrary() with empty extras => only the
 // implicit Future anchor. 1 backend * 1 platform * 1 scala = 1 cell.
@@ -80,7 +84,7 @@ lazy val myFutureOnly = (projectMatrix in file("my-future-only"))
         name         := "my-future-only",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary()(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary()(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
 
 // single-cell. Future + Kyo, JVM only, single scala => 2 cells.
 lazy val mySingle = (projectMatrix in file("my-single"))
@@ -90,7 +94,7 @@ lazy val mySingle = (projectMatrix in file("my-single"))
         name         := "my-single",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
 
 // --------------------------------------------------------------------
 // Check tasks. Each enumerates the matrix's projectRefs, prints the
@@ -116,10 +120,11 @@ def projectIdsUnder(s: State, matrixDir: File): Set[String] = {
 
 checkMultiScala := {
     val actual   = projectIdsUnder(Keys.state.value, file("my-multi"))
+    val primary  = prop("kyo.scalaVersion").replace('.', '_')
     val expected = Set(
-        "myMultiFuture3_3_4",
+        s"myMultiFuture$primary",
         "myMultiFuture3_4_0",
-        "myMultiKyo3_3_4",
+        s"myMultiKyo$primary",
         "myMultiKyo3_4_0"
     )
     println(s"checkMultiScala: actual project ids = ${actual.toSeq.sorted.mkString(", ")}")

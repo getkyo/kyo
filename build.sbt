@@ -27,6 +27,44 @@ val catsVersion      = "3.7.1"
 val oxVersion        = "1.0.7"
 val scalaTestVersion = "3.2.20"
 
+// The sbt-projectmatrix and crossproject versions the meta-build loaded, read from the Implementation-Version of
+// the jar each plugin's class came from: those plugins expose no version constant, and the classpath is the one
+// source that cannot disagree with what sbt resolved (parsing project/plugins.sbt would also read commented-out
+// lines). kyo-compat-plugin depends on them and the scripted sub-builds receive them, so neither resolves a second
+// copy of either plugin.
+def loadedPluginVersion(pluginClass: Class[?]): String = {
+    val jar = new File(pluginClass.getProtectionDomain.getCodeSource.getLocation.toURI)
+    val in  = new java.util.jar.JarFile(jar)
+    try
+        Option(in.getManifest).flatMap(m => Option(m.getMainAttributes.getValue("Implementation-Version")))
+            .getOrElse(sys.error(s"no Implementation-Version in $jar, which ${pluginClass.getName} loaded from"))
+    finally in.close()
+}
+val projectMatrixVersion = loadedPluginVersion(sbtprojectmatrix.ProjectMatrixPlugin.getClass)
+val crossProjectVersion  = {
+    val js     = loadedPluginVersion(scalajscrossproject.ScalaJSCrossPlugin.getClass)
+    val native = loadedPluginVersion(scalanativecrossproject.ScalaNativeCrossPlugin.getClass)
+    if (js != native)
+        sys.error(s"the meta-build loaded sbt-scalajs-crossproject $js and sbt-scala-native-crossproject $native; they must match")
+    js
+}
+
+// The versions every scripted sub-build compiles and links with, which are this build's own. A sub-build on
+// any other Scala, Scala.js, Scala Native or scalatest release downloads a second toolchain at test time, one
+// the dependency cache (resolved from this build) never holds. It also breaks against the artifacts this build
+// publishes locally for it: a stale Scala cannot read the artifacts' TASTy and, against the doctest runner's
+// classpath, fails with a NoSuchMethodError once the two standard libraries disagree; a stale sbt-scala-native
+// fails at nativeLink on an undefined runtime symbol; a stale sbt-scalajs fails at fastLinkJS on an IR version
+// it cannot read.
+lazy val scriptedToolchainOpts = Seq(
+    "-Dkyo.scalaVersion=" + scala39Version,
+    "-Dscalajs.version=" + scalaJSVersion,
+    "-Dscalanative.version=" + nativeVersion,
+    "-Dprojectmatrix.version=" + projectMatrixVersion,
+    "-Dcrossproject.version=" + crossProjectVersion,
+    "-Dscalatest.version=" + scalaTestVersion
+)
+
 val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
 
 val compilerOptions = Set(
@@ -67,6 +105,7 @@ inThisBuild(ClassNameCheck.settings)
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 Global / commands += TestKyo.doneCommand
+Global / commands += TestKyo.bridgeCommand
 
 // Cap concurrent scaladoc runs. Each one is a forked JVM holding a whole module's TASTy graph
 // (see `Compile / doc` in kyo-settings), so a handful in parallel is enough to exhaust a 16GB
@@ -2006,17 +2045,8 @@ lazy val `kyo-ffi-plugin` =
                     Seq(
                         "-Xmx1024M",
                         "-Dplugin.version=" + version.value,
-                        "-Dkyo.version=" + version.value,
-                        // The sub-builds link against kyo artifacts this build publishLocal'd, so their
-                        // Scala version and their Scala.js and Scala Native plugins must be the ones
-                        // those artifacts were built with. Pinning them here rather than in each
-                        // fixture keeps the two from drifting: a stale Scala cannot read the artifacts'
-                        // TASTy, a stale sbt-scala-native fails at nativeLink on an undefined runtime
-                        // symbol, a stale sbt-scalajs at fastLinkJS on an IR version it cannot read.
-                        "-Dkyo.scalaVersion=" + scala39Version,
-                        "-Dscalajs.version=" + scalaJSVersion,
-                        "-Dscalanative.version=" + nativeVersion
-                    )
+                        "-Dkyo.version=" + version.value
+                    ) ++ scriptedToolchainOpts
             },
             scriptedBufferLog                      := false,
             libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.20" % Test,
@@ -4648,12 +4678,8 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
             "-Xmx1024M",
             "-Dplugin.version=" + version.value,
             // Path to the runner-classpath file written by scriptedDependencies below.
-            "-Dkyo.doctest.runnerCpFile=" + (target.value / "doctest-runner-cp.txt").getAbsolutePath,
-            // The sub-builds compile against the same Scala the runner classpath was built with.
-            // Pinning it here rather than in each build.sbt keeps the two from drifting apart, which
-            // breaks with a NoSuchMethodError once the two versions disagree on the standard library.
-            "-Dkyo.scalaVersion=" + scala39Version
-        ),
+            "-Dkyo.doctest.runnerCpFile=" + (target.value / "doctest-runner-cp.txt").getAbsolutePath
+        ) ++ scriptedToolchainOpts,
         scriptedBufferLog := false,
         // Provide the kyo-doctest runner's built classpath to the scripted forks without ivy
         // resolution (mirrors how kyo-settings injects it into the main build's doctest fork). The
@@ -4696,6 +4722,14 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
         scalaVersion       := "2.12.21",
         crossScalaVersions := Seq("2.12.21"),
         sbtPlugin          := true,
+        // `.compatConformance`'s default scalatest, stamped from this build's so the conformance rows resolve
+        // the scalatest the dependency cache holds. A resource rather than generated source because the
+        // meta-build compiles this plugin's sources too (project/build.sbt), without this project's generators.
+        Compile / resourceGenerators += Def.task {
+            val file = (Compile / resourceManaged).value / "kyo-compat-plugin" / "scalatest-version.txt"
+            IO.write(file, scalaTestVersion)
+            Seq(file)
+        }.taskValue,
         // Plugin code adds rows to a `ProjectMatrix` programmatically, so
         // it compiles against sbt-projectmatrix; it also references the
         // %%% macro from sbt-scalajs-crossproject / sbt-scala-native-crossproject's
@@ -4709,15 +4743,15 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
         // to the sbt and Typesafe ivy repos, never to Maven Central. Without these
         // pins winning conflict resolution, resolving this project reaches those two
         // hosts, and any runner that cannot reach them fails the build.
-        addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.11.0"),
-        addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.4.0"),
-        addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.4.0"),
-        addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.22.0"),
-        addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % "0.5.12"),
+        addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % projectMatrixVersion),
+        addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % crossProjectVersion),
+        addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % crossProjectVersion),
+        addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % scalaJSVersion),
+        addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % nativeVersion),
         scriptedLaunchOpts := Seq(
             "-Xmx1024M",
             "-Dplugin.version=" + version.value
-        ),
+        ) ++ scriptedToolchainOpts,
         scriptedBufferLog := false,
         // Run the scripted suite as part of the plugin's regular test task (matches
         // kyo-doctest-plugin) so the testKyo 2.12 pass gates it; no bespoke CI step.
@@ -4934,9 +4968,8 @@ lazy val `kyo-test-sbt-publish` =
                 // The native sub-build links a real binary in this JVM; 1G (enough for the other
                 // three) OOMs inside nativeLink.
                 "-Xmx4G",
-                "-Dplugin.version=" + version.value,
-                "-Dkyo.scalaVersion=" + scala39Version
-            ),
+                "-Dplugin.version=" + version.value
+            ) ++ scriptedToolchainOpts,
             scriptedBufferLog := false,
             // The sub-builds resolve kyo-test-runner from ivy-local, and publishLocal is not
             // transitive, so the whole classpath closure has to be published first. Derived from the

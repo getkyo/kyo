@@ -8,7 +8,7 @@
 // dir and asserts the exact expected set is present.
 //
 // Matrix: 2 backends (Future + Kyo) × 1 platform (JVM only to keep
-// scripted-test runtime down) × 1 Scala (3.3.4). Result: 2 cells.
+// scripted-test runtime down) × 1 Scala (the outer build's). Result: 2 cells.
 //
 // Why fake-compat stubs: the auto-injected
 // `libraryDependencies += "io.getkyo" %%% s"kyo-compat-<backend>" % compatKyoVersion.value`
@@ -16,7 +16,11 @@
 // environment, so this build publishes empty stubs to the test-local ivy
 // before myLib's tests run. The stubs only exist to satisfy resolution.
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 
 // Pin ivy paths to a known location inside the test dir, mirroring
@@ -41,7 +45,7 @@ def fakeCompat(backend: String): Project = {
         organization := "io.getkyo",
         moduleName   := s"kyo-compat-$backend",
         version      := "STUB-FOR-SCRIPTED-TEST",
-        scalaVersion := "3.3.4"
+        scalaVersion := prop("kyo.scalaVersion")
     )
 }
 
@@ -77,9 +81,9 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         // sentinel filename. `name` itself is `"my-lib"` for every cell.
         Test / javaOptions    += s"-Dcell.name=${moduleName.value}",
         Test / javaOptions    += s"-Dsentinel.dir=${sentinelsDir.getAbsolutePath}",
-        libraryDependencies   += "org.scalatest" %% "scalatest" % "3.2.19" % Test
+        libraryDependencies   += "org.scalatest" %% "scalatest" % prop("scalatest.version") % Test
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
 
 // Cross-backend aggregator. Project id = "my-lib-all".
 lazy val myLibAll = myLib.aggregate("my-lib-all")

@@ -136,8 +136,8 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Restore only: the ci legs on this pole write. A producer resolves a JVM-only tree, and a key is
-      # immutable once written, so saving here would lock out ci's fuller tree for the hash.
+      # Restore only: deps-cache.yml writes this pole. A producer resolves a JVM-only tree, and a key is
+      # immutable once written, so saving here would lock out the fuller tree for the hash.
       - uses: ./.github/actions/caches
         with:
           os: linux-x64
@@ -264,7 +264,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Restore only: the ci legs on this pole write.
+      # Restore only: deps-cache.yml writes this pole.
       - uses: ./.github/actions/caches
         with:
           os: linux-arm64
@@ -394,7 +394,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Restore only: the ci legs on this pole write.
+      # Restore only: deps-cache.yml writes this pole.
       - uses: ./.github/actions/caches
         with:
           os: windows-x64
@@ -442,7 +442,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Restore only: the ci legs on this pole write.
+      # Restore only: deps-cache.yml writes this pole.
       - uses: ./.github/actions/caches
         with:
           os: windows-arm64

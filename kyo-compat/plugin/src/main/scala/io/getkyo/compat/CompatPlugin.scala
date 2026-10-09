@@ -135,7 +135,7 @@ object CompatPlugin extends AutoPlugin {
               * @param scalatestVersion
               *   scalatest version to add to each row's Test scope; defaults to the version the bundled suite is written against.
               */
-            def compatConformance(scalatestVersion: String = "3.2.20"): ProjectMatrix = {
+            def compatConformance(scalatestVersion: String = CompatConformance.scalatestVersion): ProjectMatrix = {
                 CompatLibrary.enableConformance(m.id, scalatestVersion)
                 m
             }

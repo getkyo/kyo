@@ -24,7 +24,11 @@
 // 2 cells. JVM-only and a single Scala version keep this test under the
 // 2-minute budget.
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 
 // Pin ivy paths inside the test dir, mirroring publish/ and source-overrides/.
@@ -50,7 +54,7 @@ def fakeCompat(backend: String): Project = {
         organization := "io.getkyo",
         moduleName   := s"kyo-compat-$backend",
         version      := "STUB-FOR-SCRIPTED-TEST",
-        scalaVersion := "3.3.4"
+        scalaVersion := prop("kyo.scalaVersion")
     )
 }
 
@@ -79,7 +83,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         name         := "my-lib",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
 
 // --------------------------------------------------------------------
 // Helpers + check tasks.

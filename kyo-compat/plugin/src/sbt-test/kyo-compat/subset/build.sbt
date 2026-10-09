@@ -11,7 +11,11 @@
 // Ox / TwitterFuture were NOT opted in via compatLibrary(...). Accessing
 // myLib.ox / myLib.twitterFuture throws NoSuchBackendException at evaluation time.
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 
 lazy val myLib = (projectMatrix in file("my-lib"))
@@ -19,7 +23,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         organization := "com.example",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary(ZioLib, KyoLib)(VirtualAxis.jvm, VirtualAxis.js)(Seq("3.3.4"))
+    .compatLibrary(ZioLib, KyoLib)(VirtualAxis.jvm, VirtualAxis.js)(Seq(prop("kyo.scalaVersion")))
 
 // --------------------------------------------------------------------
 // Assertion task keys

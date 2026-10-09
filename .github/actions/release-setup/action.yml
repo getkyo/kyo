@@ -30,8 +30,8 @@ runs:
         esac
 
     # restore, not the full cache action: a key is immutable once written, so whichever job saves first
-    # owns it for that hash. Releases are infrequent and the ci legs on these poles are not, so ci writes
-    # and both callers here restore.
+    # owns it for that hash. deps-cache.yml writes it with every target's dependencies, and both callers
+    # here restore.
     - uses: ./.github/actions/caches
       with:
         os: ${{ steps.pole.outputs.value }}

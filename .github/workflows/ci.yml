@@ -41,6 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # deps-cache.yml reads this list by its path (.jobs.build.strategy.matrix.pole) to cache every pole's targets.
         pole:
           - { os: linux-x64,   image: ubuntu-latest,    targets: '["JVM","JS","Native","Wasm"]' }
           - { os: linux-arm64, image: ubuntu-24.04-arm, targets: '["JVM","JS","Native","Wasm"]' }

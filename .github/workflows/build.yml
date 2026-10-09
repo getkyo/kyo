@@ -142,10 +142,12 @@ jobs:
           action="${{ inputs.mode == 'diff' && 'testDiff' || 'test' }}"
           ./scripts/ci-test.sh "${{ matrix.target }}" "$action"
 
-      # Saves only on a push to main (the action's own guard). Gated on the test step having run to a
-      # conclusion: a failed test leaves dependencies worth keeping, while a failed setup or relink guard
-      # leaves a partial tree, and a key is immutable once written, so that tree would own the whole
-      # generation. continue-on-error because a cache problem must never turn a main leg red.
+      # The browser cache only. The dependency cache is written by deps-cache.yml alone: a key is immutable
+      # once written, so if the target legs saved it, whichever finished first would own the entry and the
+      # dependencies only the other legs use would never be cached. The browser entry holds what
+      # chrome-preload.sh installs, the same on every leg. Saves only on a push to main (the action's own
+      # guard), once the test step ran to a conclusion; continue-on-error because a cache problem must never
+      # turn a main leg red.
       - name: save caches (${{ inputs.os }})
         if: ${{ !cancelled() && (steps.test.outcome == 'success' || steps.test.outcome == 'failure') }}
         continue-on-error: true
@@ -153,6 +155,7 @@ jobs:
         with:
           os: ${{ inputs.os }}
           mode: save
+          deps: false
 
       # A JVM that dies in native code writes its diagnosis next to the forked test process and the runner
       # discards it with the workspace, so the only trace left in the log is a task failure carrying no test

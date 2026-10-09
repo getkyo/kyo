@@ -11,8 +11,16 @@ inputs:
     description: "Cache pole: linux-x64, linux-arm64, windows-x64, windows-arm64 or macos-arm64."
     required: true
   mode:
-    description: "restore or save. save is a no-op unless the run is a push to main."
+    description: >-
+      restore, save, or lookup. save is a no-op unless the run is a push to main. lookup downloads
+      nothing and only sets KYO_CACHE_DEPS_HIT to whether the exact dependency key exists.
     required: true
+  deps:
+    description: >-
+      Whether to include the dependency cache. A pole whose dependency cache .github/workflows/deps-cache.yml
+      writes passes false to save, so that workflow stays its only writer.
+    required: false
+    default: "true"
   browser:
     description: "Whether to include the kyo-browser cache. Jobs that never launch Chrome pass false."
     required: false
@@ -28,7 +36,7 @@ runs:
       shell: bash
       run: |
         {
-          echo "deps-key=deps-${{ inputs.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}"
+          echo "deps-key=deps-${{ inputs.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/*.sbt', 'project/*.scala', '.scalafmt.conf') }}"
           echo "deps-prefix=deps-${{ inputs.os }}-"
           echo "deps-paths<<KYO_CACHE_PATHS"
           echo "~/.cache/coursier"
@@ -43,8 +51,22 @@ runs:
           echo "browser-paths=~/.cache/kyo-browser"
         } >> "$GITHUB_OUTPUT"
 
+    - id: lookup-deps
+      if: ${{ inputs.mode == 'lookup' }}
+      uses: actions/cache/restore@v6
+      env:
+        FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      with:
+        path: ${{ steps.spec.outputs.deps-paths }}
+        key: ${{ steps.spec.outputs.deps-key }}
+        lookup-only: true
+
+    - if: ${{ inputs.mode == 'lookup' }}
+      shell: bash
+      run: echo "KYO_CACHE_DEPS_HIT=${{ steps.lookup-deps.outputs.cache-hit == 'true' }}" >> "$GITHUB_ENV"
+
     - id: restore-deps
-      if: ${{ inputs.mode == 'restore' }}
+      if: ${{ inputs.mode == 'restore' && inputs.deps == 'true' }}
       uses: actions/cache/restore@v6
       env:
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -89,7 +111,7 @@ runs:
     # building another tree, and a key is immutable once written, so a thinner tree would own that hash.
     # !cancelled() because status functions here see this action's steps, and the caller saves after a
     # failed test step on purpose.
-    - if: ${{ !cancelled() && inputs.mode == 'save' && github.event_name == 'push' && github.ref == 'refs/heads/main' && env.KYO_CACHE_DEPS_HIT != 'true' }}
+    - if: ${{ !cancelled() && inputs.mode == 'save' && inputs.deps == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && env.KYO_CACHE_DEPS_HIT != 'true' }}
       uses: actions/cache/save@v6
       env:
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

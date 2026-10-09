@@ -1,0 +1,77 @@
+name: setup-sbt
+description: >-
+  Provision a JDK 25 and an sbt that Git Bash resolves, on any os pole. The setup action provisions a
+  build leg through this, and a job that only runs sbt (the dependency cache writer) uses it alone.
+  Checkout is the caller's responsibility.
+inputs:
+  os:
+    description: 'Target os/arch identifier (e.g. linux-x64, windows-arm64).'
+    required: true
+runs:
+  using: composite
+  steps:
+    # scripts/setup-coursier.sh runs the pinned Coursier setup bundle under Node 24, and every build target
+    # needs Node too: JS and Wasm run their tests in it, and JVM runs the kyo-test-sbt-publish scripted
+    # suite's real Scala.js test binary. This is the build legs' only setup-node.
+    # package-manager-cache off: setup-node saves an npm cache on its own once a package.json names a
+    # package manager, and only .github/actions/caches may write caches.
+    - uses: actions/setup-node@v7.0.0
+      with:
+        node-version: '24'
+        package-manager-cache: false
+
+    # Fetch the pinned coursier/setup-action bundle at step execution time so both download and
+    # setup failures get four attempts with 30-second backoffs. Runner-level `uses:` downloads
+    # have shorter retries that a GitHub rate-limit window can outlast.
+    # Amazon ships no Corretto for Windows on ARM: its platform list is Linux x64/aarch64, Windows
+    # x64 ONLY, macOS x64/aarch64 and Alpine x64/aarch64, and coursier's JVM index agrees (corretto
+    # is absent from windows/arm64 entirely). Temurin is in that index for windows/arm64 but tops out
+    # well below 25, so it is not the escape either. Microsoft's build owns the platform and is
+    # current there, so windows-arm64 alone takes it; every other pole stays on Corretto so the
+    # exception remains visible rather than becoming the norm.
+    #
+    # This is load-bearing, not cosmetic: hostOsArch comes from the RUNNING JVM's os.arch, so an
+    # emulated x64 JDK on an arm64 runner would name every artifact windows-x86_64.
+    # Windows on ARM takes setup-java, not coursier: coursier publishes no aarch64-pc-win32 launcher, so
+    # setup-action 404s trying to install itself there. sbt is preinstalled on that image, and the JDK it
+    # ships is 21, so only the JDK needs replacing. Microsoft's build is used for the same reason it is
+    # elsewhere: Amazon ships no Corretto for Windows on ARM.
+    - name: Set up JDK (Windows arm64)
+      if: ${{ inputs.os == 'windows-arm64' }}
+      uses: actions/setup-java@v6
+      with:
+        distribution: microsoft
+        java-version: '25'
+
+    - name: Verify Coursier setup retries
+      if: ${{ inputs.os != 'windows-arm64' }}
+      shell: bash
+      run: bash scripts/setup-coursier-test.sh
+
+    - name: Set up JDK + sbt (coursier)
+      if: ${{ inputs.os != 'windows-arm64' }}
+      shell: bash
+      run: bash scripts/setup-coursier.sh
+
+    - name: Verify sbt resolves in bash (Windows)
+      if: ${{ contains(inputs.os, 'windows') }}
+      shell: bash
+      run: |
+        # Build steps run under Git Bash (`shell: bash`), which resolves `sbt` and
+        # `sbt.exe` from PATH but not `sbt.bat`. If coursier installed only the .bat
+        # launcher, bridge it with a wrapper script on PATH.
+        if command -v sbt >/dev/null 2>&1; then
+          echo "sbt resolves: $(command -v sbt)"
+          exit 0
+        fi
+        sbt_bat=$(command -v sbt.bat || true)
+        if [ -z "$sbt_bat" ]; then
+          echo "no sbt or sbt.bat on PATH after coursier setup" >&2
+          exit 1
+        fi
+        shim_dir="$RUNNER_TEMP/kyo-shims"
+        mkdir -p "$shim_dir"
+        printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$sbt_bat" > "$shim_dir/sbt"
+        chmod +x "$shim_dir/sbt"
+        echo "$shim_dir" >> "$GITHUB_PATH"
+        echo "sbt shim: $shim_dir/sbt -> $sbt_bat"

@@ -6,7 +6,11 @@
 // CompatBackendAxis.external(...). Built-in backends in the same matrix keep
 // pulling io.getkyo:kyo-compat-<name> % compatKyoVersion.
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-COMPAT-VERSION"
 
 // An externally-published backend: custom org, artifact, and version.
@@ -26,7 +30,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         organization := "com.example",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary(AcmeLib, KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(AcmeLib, KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
 
 // --------------------------------------------------------------------
 // Assertion task keys

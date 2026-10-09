@@ -9,7 +9,7 @@ lazy val root = (project in file("."))
     .enablePlugins(KyoDoctestPlugin)
     .settings(
         name := "classpath-test",
-        libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test,
+        libraryDependencies += "org.scalatest" %% "scalatest" % sys.props("scalatest.version") % Test,
         doctestSources := Seq(baseDirectory.value / "README.md"),
         doctestScalacOptions := Seq("-release", "17")
     )

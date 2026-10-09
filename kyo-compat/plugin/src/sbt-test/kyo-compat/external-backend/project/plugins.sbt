@@ -1,9 +1,10 @@
-sys.props.get("plugin.version") match {
-    case Some(x) => addSbtPlugin("io.getkyo" % "kyo-compat-plugin" % x)
-    case _       => sys.error("plugin.version not set")
-}
-addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.10.1")
-addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.3.2")
-addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.20.2")
-addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % "0.5.10")
-addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.3.2")
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+addSbtPlugin("io.getkyo"          % "kyo-compat-plugin"             % prop("plugin.version"))
+addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % prop("projectmatrix.version"))
+addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % prop("crossproject.version"))
+addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % prop("scalajs.version"))
+addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % prop("scalanative.version"))
+addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % prop("crossproject.version"))

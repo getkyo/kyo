@@ -17,7 +17,11 @@
 // before myLib's publishLocal runs. The jars only exist to satisfy
 // resolution; the test deliberately inspects POM metadata, not bytecode.
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 
 // Pin ivy paths inside the test dir so publishLocal lands in a known
@@ -50,7 +54,7 @@ def fakeCompat(backend: String, platform: String, ver: String = "STUB-FOR-SCRIPT
         organization := "io.getkyo",
         moduleName   := s"kyo-compat-$backend",
         version      := ver,
-        scalaVersion := "3.3.4"
+        scalaVersion := prop("kyo.scalaVersion")
     )
     platform match {
         case "jvm"    => base
@@ -103,7 +107,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
     )
     .compatLibrary(KyoLib, ZioLib)(
         VirtualAxis.jvm, VirtualAxis.js, VirtualAxis.native
-    )(Seq("3.3.4"))
+    )(Seq(prop("kyo.scalaVersion")))
 
 lazy val `my-lib-all` = myLib.aggregate("my-lib-all")
 
@@ -125,7 +129,7 @@ lazy val myOverride = (projectMatrix in file("my-override"))
         version          := "0.1.0-SNAPSHOT",
         compatKyoVersion := "9.9.9"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
 
 // --------------------------------------------------------------------
 // Assertions on the published artifacts

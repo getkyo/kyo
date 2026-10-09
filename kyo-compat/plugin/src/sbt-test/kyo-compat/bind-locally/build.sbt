@@ -5,7 +5,11 @@
 // project-level `dependsOn` on a local Project — used by in-tree
 // consumers (see the kyo-compat-example block in the kyo root build.sbt).
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 
 // A fake "local kyo-compat-future" stand-in. Project (not projectMatrix)
@@ -23,7 +27,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         organization := "com.example",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary()(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary()(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
     .bindLocally(FutureLib, fakeCompatFuture)
 
 // --------------------------------------------------------------------
@@ -81,7 +85,7 @@ lazy val myPartial = (projectMatrix in file("my-partial"))
         organization := "com.example",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
     .bindLocally(FutureLib, fakeCompatFuture)
 
 val checkPartialFutureLocal = taskKey[Unit](
@@ -190,7 +194,7 @@ lazy val myLocal = (projectMatrix in file("my-local"))
         organization := "com.example",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary(AcmeLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(AcmeLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
     .bindLocally(AcmeLib, fakeLocalAcme)
 
 val checkLocalAxisDep = taskKey[Unit](
@@ -238,7 +242,7 @@ checkUnboundLocalErrors := {
     val caught: Option[Throwable] =
         try {
             val m = sbt.internal.ProjectMatrix("unboundLocalLib", file("unbound-local-lib"))
-                .compatLibrary(CompatBackendAxis.local("acme", "Acme", "-acme", Set("jvm")))(VirtualAxis.jvm)(Seq("3.3.4"))
+                .compatLibrary(CompatBackendAxis.local("acme", "Acme", "-acme", Set("jvm")))(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
             val _ = m.componentProjects // force materialization so the guard fires
             None
         } catch {

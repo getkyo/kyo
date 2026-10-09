@@ -29,7 +29,11 @@
 // auto-injected `libraryDependencies +=` in every cell resolves at
 // publishLocal time.
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 
 // Pin ivy paths to a known location inside the test dir, mirroring
@@ -52,7 +56,7 @@ def fakeCompat(backend: String): Project = {
         organization := "io.getkyo",
         moduleName   := s"kyo-compat-$backend",
         version      := "STUB-FOR-SCRIPTED-TEST",
-        scalaVersion := "3.3.4"
+        scalaVersion := prop("kyo.scalaVersion")
     )
 }
 
@@ -79,7 +83,7 @@ lazy val myFetcher = (projectMatrix in file("my-fetcher"))
         name         := "my-fetcher",
         version      := "0.1.0-SNAPSHOT"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
 
 lazy val myHttp = (projectMatrix in file("my-http"))
     .settings(
@@ -88,7 +92,7 @@ lazy val myHttp = (projectMatrix in file("my-http"))
         name         := "my-http",
         version      := "0.1.0-SNAPSHOT"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
     .dependsOn(myFetcher)
 
 // --------------------------------------------------------------------
@@ -105,7 +109,7 @@ lazy val plainCommon = project
         organization := "com.example",
         name         := "plain-common",
         version      := "0.1.0-SNAPSHOT",
-        scalaVersion := "3.3.4"
+        scalaVersion := prop("kyo.scalaVersion")
     )
 
 lazy val myThing = (projectMatrix in file("my-thing"))
@@ -115,7 +119,7 @@ lazy val myThing = (projectMatrix in file("my-thing"))
         name         := "my-thing",
         version      := "0.1.0-SNAPSHOT"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
     .dependsOn(plainCommon)
 
 // --------------------------------------------------------------------
@@ -129,7 +133,7 @@ lazy val myC = (projectMatrix in file("my-c"))
         name         := "my-c",
         version      := "0.1.0-SNAPSHOT"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
 
 lazy val myB = (projectMatrix in file("my-b"))
     .settings(
@@ -138,7 +142,7 @@ lazy val myB = (projectMatrix in file("my-b"))
         name         := "my-b",
         version      := "0.1.0-SNAPSHOT"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
     .dependsOn(myC)
 
 lazy val myA = (projectMatrix in file("my-a"))
@@ -148,7 +152,7 @@ lazy val myA = (projectMatrix in file("my-a"))
         name         := "my-a",
         version      := "0.1.0-SNAPSHOT"
     )
-    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion")))
     .dependsOn(myB)
 
 // --------------------------------------------------------------------

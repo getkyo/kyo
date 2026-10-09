@@ -1,6 +1,7 @@
 // JVM-only matrix; no JS/Native plugins needed (keeps per-test cost down).
-sys.props.get("plugin.version") match {
-    case Some(x) => addSbtPlugin("io.getkyo" % "kyo-compat-plugin" % x)
-    case _       => sys.error("plugin.version not set")
-}
-addSbtPlugin("com.eed3si9n" % "sbt-projectmatrix" % "0.10.1")
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+addSbtPlugin("io.getkyo"    % "kyo-compat-plugin" % prop("plugin.version"))
+addSbtPlugin("com.eed3si9n" % "sbt-projectmatrix" % prop("projectmatrix.version"))

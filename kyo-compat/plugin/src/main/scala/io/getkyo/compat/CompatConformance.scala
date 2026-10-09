@@ -16,6 +16,16 @@ private[compat] object CompatConformance {
 
     private val ResourceRoot = "kyo-compat-testkit"
 
+    /** The scalatest the bundled suite is written against: the kyo build's own, stamped into the plugin jar when it is built. */
+    lazy val scalatestVersion: String = {
+        val path   = "kyo-compat-plugin/scalatest-version.txt"
+        val stream = getClass.getClassLoader.getResourceAsStream(path)
+        if (stream == null)
+            sys.error(s"kyo-compat: $path is not on the plugin classpath. This is a packaging bug in kyo-compat-plugin.")
+        try scala.io.Source.fromInputStream(stream, "UTF-8").mkString.trim
+        finally stream.close()
+    }
+
     /** INDEX entries as `(scope, relpath)`, read from the plugin jar on the classpath. */
     private def index(): Seq[(String, String)] = {
         val stream = getClass.getClassLoader.getResourceAsStream(s"$ResourceRoot/INDEX")

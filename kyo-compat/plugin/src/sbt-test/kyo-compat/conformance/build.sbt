@@ -13,7 +13,11 @@
 // as publish/ and source-overrides/) so the auto-injected backend dependency
 // resolves when the checks read the row's settings.
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-COMPAT-VERSION"
 
 // Pin ivy paths inside the test dir (ThisBuild / ivyPaths is shadowed by sbt's
@@ -28,7 +32,7 @@ lazy val fakeFutureJVM = Project("fakeFutureJVM", file("fake-compat/future/jvm")
     organization := "io.getkyo",
     moduleName   := "kyo-compat-future",
     version      := "STUB-COMPAT-VERSION",
-    scalaVersion := "3.3.4"
+    scalaVersion := prop("kyo.scalaVersion")
 )
 
 lazy val publishFakes = taskKey[Unit]("publishLocal the fake kyo-compat-future stub")
@@ -40,7 +44,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         organization := "com.example",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary()(VirtualAxis.jvm)(Seq("3.3.4")) // Future backend (implicit), JVM only
+    .compatLibrary()(VirtualAxis.jvm)(Seq(prop("kyo.scalaVersion"))) // Future backend (implicit), JVM only
     .compatConformance()
 
 // --------------------------------------------------------------------
@@ -82,12 +86,14 @@ checkConformanceSources := {
 
 checkConformanceWiring := {
     val deps = (myLib.future.jvm / Keys.libraryDependencies).value
-    if (!deps.exists(m => m.organization == "org.scalatest" && m.name == "scalatest" && m.revision == "3.2.20"))
-        sys.error(s"scalatest 3.2.20 not added to the row. libraryDependencies: $deps")
+    // The plugin's default is stamped from the outer build's scalatest, which scriptedLaunchOpts also passes here.
+    val scalatest = prop("scalatest.version")
+    if (!deps.exists(m => m.organization == "org.scalatest" && m.name == "scalatest" && m.revision == scalatest))
+        sys.error(s"scalatest $scalatest not added to the row. libraryDependencies: $deps")
     val opts = (myLib.future.jvm / Test / scalacOptions).value
     if (!opts.contains("-Xmax-inlines:1024"))
         sys.error(s"-Xmax-inlines:1024 not in Test scalacOptions: $opts")
-    println("checkConformanceWiring OK; scalatest 3.2.20 + -Xmax-inlines:1024 present")
+    println(s"checkConformanceWiring OK; scalatest $scalatest + -Xmax-inlines:1024 present")
 }
 
 checkByteIdentity := {

@@ -94,8 +94,8 @@ jobs:
       #
       # restore, not the full cache action: a key is immutable once written, so a job that saves first owns
       # it. This job resolves scalafmt, actionlint and the doctest set, which is not the whole dependency
-      # tree a ci leg on this pole pulls, and minting the key from it would lock out the fuller save for
-      # that hash. The ci legs are the writers; every consumer here restores.
+      # tree the build legs on this pole pull, and minting the key from it would lock out the fuller save
+      # for that hash. deps-cache.yml is the writer; every consumer here restores.
       - uses: ./.github/actions/caches
         with:
           os: linux-arm64

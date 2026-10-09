@@ -38,7 +38,7 @@ jobs:
       # entries out. ubuntu-latest is the linux-x64 pole.
       #
       # restore, not the full cache action: a key is immutable once written, so a consumer with a thinner
-      # tree than a ci leg must not be the one that mints it. The ci legs write; this restores.
+      # tree than the build legs must not be the one that mints it. deps-cache.yml writes; this restores.
       - uses: ./.github/actions/caches
         with:
           os: linux-x64

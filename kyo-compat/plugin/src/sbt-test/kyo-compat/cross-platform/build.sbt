@@ -4,7 +4,11 @@
 //   Kyo / Zio    : JVM + JS + Native
 //   Future / Ox  : JVM              (JS + Native skipped)
 
-ThisBuild / scalaVersion     := "3.3.4"
+// The outer build's scriptedLaunchOpts set every property this fixture reads.
+def prop(name: String): String =
+    sys.props.getOrElse(name, sys.error(s"$name is not set: run this fixture through kyo-compat-plugin/scripted"))
+
+ThisBuild / scalaVersion     := prop("kyo.scalaVersion")
 ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 
 lazy val myLib = (projectMatrix in file("my-lib"))
@@ -14,7 +18,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
     )
     .compatLibrary(KyoLib, ZioLib, OxLib)(
         VirtualAxis.jvm, VirtualAxis.js, VirtualAxis.native
-    )(Seq("3.3.4"))
+    )(Seq(prop("kyo.scalaVersion")))
 
 // --------------------------------------------------------------------
 // Assertion task keys
