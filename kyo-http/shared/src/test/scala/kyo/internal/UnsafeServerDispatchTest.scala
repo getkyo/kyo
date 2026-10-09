@@ -1572,6 +1572,55 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
+        /** Serves an upgrade whose read also carries the frame "first", with the read carrying "second" already queued behind it, and
+          * returns the echoes in arrival order. A first echo other than "first" ends the read, since what is lost never arrives.
+          */
+        def echoesOfFramesSentWithTheUpgrade(inbound: Channel.Unsafe[Span[Byte]])(queueSecond: Span[Byte] => Unit)(using
+            Frame,
+            kyo.test.AssertScope
+        ): Chunk[String] < Async =
+            val router   = routerOf(Seq(HttpHandler.webSocket("ws")(wsEcho)), Absent)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            val upgrade  = wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII) ++ encodeClientTextFrame("first")
+            discard(inbound.offer(Span.fromUnsafe(upgrade)))
+            queueSecond(Span.fromUnsafe(encodeClientTextFrame("second")))
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            collectWsUpgradeResponse(outbound).map { response =>
+                assert(response.contains("101"), s"Expected 101, got: $response")
+                readWsFrame(outbound).map { echoed =>
+                    val first = decodeServerTextFrame(echoed)
+                    if first != "first" then Chunk(first)
+                    else readWsFrame(outbound).map(second => Chunk(first, decodeServerTextFrame(second)))
+                }
+            }
+        end echoesOfFramesSentWithTheUpgrade
+
+        "bytes that arrive with the upgrade are read before the reads queued behind them".pendingUntilFixed(
+            "the parser's leftover bytes are re-offered to the inbound channel, behind the reads already queued in it"
+        ) in {
+            val inbound = Channel.Unsafe.init[Span[Byte]](64)
+            echoesOfFramesSentWithTheUpgrade(inbound)(second => discard(inbound.offer(second))).map { echoes =>
+                assert(echoes == Chunk("first", "second"), s"echoes in arrival order: $echoes")
+                discard(inbound.close())
+                succeed
+            }
+        }
+
+        "bytes that arrive with the upgrade are kept when the inbound channel is full".pendingUntilFixed(
+            "the parser's leftover bytes are re-offered to the inbound channel, and the offer's refusal on a full channel is discarded"
+        ) in {
+            val inbound = Channel.Unsafe.init[Span[Byte]](1)
+            echoesOfFramesSentWithTheUpgrade(inbound) { second =>
+                // The parser's take of the upgrade read moves this parked put into the freed slot, so the channel is full again
+                // when the upgrade is dispatched.
+                discard(inbound.putFiber(second))
+            }.map { echoes =>
+                assert(echoes == Chunk("first", "second"), s"echoes in arrival order: $echoes")
+                discard(inbound.close())
+                succeed
+            }
+        }
+
         "WS connection cleanup tears down pumps" in {
             // Handler that returns immediately — pumps should be torn down
             val handler = HttpHandler.webSocket("ws") { (_, _) => Kyo.unit }

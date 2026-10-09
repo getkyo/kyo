@@ -99,6 +99,31 @@ final class RecordingConnection(underlying: Connection) extends Connection:
     def status: Connection.Status = underlying.status
 end RecordingConnection
 
+/** Wraps a connection whose close leaves its outbound channel open, so the peer reads every byte the owner wrote before closing, rather
+  * than losing the ones still buffered to the channel close's discard.
+  */
+final class OutboundKeepingConnection(underlying: Connection) extends Connection:
+    private val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    def inbound: Channel.Unsafe[Span[Byte]]  = underlying.inbound
+    def outbound: Channel.Unsafe[Span[Byte]] = underlying.outbound
+
+    def isOpen(using AllowUnsafe): Boolean = !closed.get()
+
+    def close()(using AllowUnsafe, Frame): Unit =
+        if closed.compareAndSet(false, true) then discard(underlying.inbound.close())
+
+    private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = underlying.onClosing
+
+    def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] = underlying.detachForUpgrade()
+
+    private[net] def start()(using AllowUnsafe, Frame): Boolean = underlying.start()
+
+    def serverCertificateHash: Maybe[Span[Byte]] = underlying.serverCertificateHash
+
+    def status: Connection.Status = underlying.status
+end OutboundKeepingConnection
+
 /** Wraps a connection and reports `reported` as its close reason, which an in-memory connection cannot produce: `Truncated` for a TLS peer's
   * bare FIN, `CleanClose` for one that sent close_notify, `Active` for an end the transport did not classify (a reset, a fatal record). The
   * reason is reported from the start; a reader is expected to consult it only once the inbound channel has closed, as
