@@ -1,9 +1,11 @@
 package kyo
 
+import kyo.internal.TestContainers
 import kyo.internal.slack.TransportTest
 
-/** A slack-simulator container standing in for Slack for one leaf, removed when the leaf's `Scope` closes with the directory its app
-  * list was staged in.
+/** A slack-simulator container standing in for Slack, one per test process and shared by every leaf. A leaf finds what it posted by
+  * its ts or a marker of its own, and reads envelopes on a Socket Mode connection of its own, so earlier leaves cannot change its
+  * outcome.
   *
   * slack-simulator (github.com/ClydeDz/slack-simulator) is GPL-3.0. The suite only runs it: the image is built from
   * `shared/src/test/slack-simulator/Containerfile`, out of the source at a pinned commit fetched as GitHub's tarball and checked against
@@ -74,14 +76,25 @@ object SlackLiveServer:
 
     private val AppsJson = "/app/config/apps.json"
 
-    def init(using Frame): SlackLiveServer < (Async & Scope & Abort[ContainerException | FileSystemException | HttpException]) =
+    type Failure = ContainerException | FileSystemException | HttpException
+
+    private val servers = TestContainers.memo[SlackLiveServer, Failure]
+
+    /** The process's simulator, started on first use. */
+    def init(using Frame): SlackLiveServer < (Async & Abort[Failure]) =
+        TestContainers.getOrInit(servers, "slack-simulator")(start)
+
+    private def start(using Frame): SlackLiveServer < (Async & Abort[Failure]) =
         for
-            _                 <- built
-            appToken          <- Random.nextStringAlphanumeric(24).map(s => s"xapp-1-$AppId-$s")
-            botToken          <- Random.nextStringAlphanumeric(24).map(s => s"xoxb-1-$s")
-            directory         <- Path.run(Path.tempDir("kyo-slack-server"))
+            _        <- built
+            appToken <- Random.nextStringAlphanumeric(24).map(s => s"xapp-1-$AppId-$s")
+            botToken <- Random.nextStringAlphanumeric(24).map(s => s"xoxb-1-$s")
+            // Unscoped: the app list is bind-mounted into a simulator that outlives the leaf that started it.
+            directory         <- Path.tempDirUnscoped(prefix = "kyo-slack-server")
             _                 <- Path.run((directory / "apps.json").write(appsJson(appToken, botToken)))
-            (container, port) <- started(PortAttempts)(port => Container.init(containerConfig(directory, port)).map((_, port)))
+            (container, port) <- started(PortAttempts)(port =>
+                TestContainers.initShared(containerConfig(directory, port), "slack-simulator").map((_, port))
+            )
         yield SlackLiveServer(container, port, appToken, botToken)
 
     /** How many host ports a server tries before its start fails with the conflict. */
@@ -89,9 +102,9 @@ object SlackLiveServer:
 
     // A port free on the host can still be held inside the container daemon's VM (podman publishes it from there), which the host's
     // check cannot see; the daemon then refuses it as allocated, and a fresh port is the answer.
-    private def started[A](attempts: Int)(start: Int => A < (Async & Scope & Abort[ContainerException | HttpException]))(using
+    private def started[A](attempts: Int)(start: Int => A < (Async & Abort[ContainerException | HttpException]))(using
         Frame
-    ): A < (Async & Scope & Abort[ContainerException | HttpException]) =
+    ): A < (Async & Abort[ContainerException | HttpException]) =
         freePort.map { port =>
             Abort.run[ContainerPortConflictException](start(port)).map {
                 case Result.Success(value)             => value

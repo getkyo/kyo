@@ -1,9 +1,9 @@
 package kyo
 
+import kyo.internal.TestContainers
 import kyo.schema.rename
 
-/** A telegram-mock-ai container standing in for the Bot API for one leaf, removed when the leaf's `Scope` closes with the directory
-  * its configuration was staged in.
+/** A telegram-mock-ai container standing in for the Bot API, one per test process and shared by every leaf.
   *
   * It holds one bot and one person (`PersonId`) with a private chat of the same id. The person's actions come through the emulator's
   * admin API: [[says]] stores a message in the chat, so the bot can delete it as it would on Telegram, and the other actions inject
@@ -49,6 +49,21 @@ final case class TelegramLiveServer(container: Container, botApi: Int, admin: In
     def presses(on: Telegram.Message, data: String)(using Frame): Unit < (Async & Abort[HttpException]) =
         Random.nextStringAlphanumeric(16).map(id => inject(CallbackUpdate(Callback(id, Person.Human, plain(on), s"$PersonId", data))))
 
+    /** Confirms every update queued for the bot. The leaves share the emulator, and an update a leaf left unconfirmed (one that failed
+      * before reading what it caused) would reach the next leaf waiting for the person's next action. `message_reaction` is queued only
+      * when named, so the poll names every kind the suite waits for.
+      */
+    def drain(using Frame): Unit < (Async & Abort[HttpException | DecodeException]) =
+        val bot     = s"http://$Host:$botApi/bot${token.value}"
+        val allowed = "%5B%22message%22%2C%22edited_message%22%2C%22callback_query%22%2C%22message_reaction%22%2C%22my_chat_member%22%5D"
+        HttpClient.getText(s"$bot/getUpdates?timeout=0&allowed_updates=$allowed").map(body => Abort.get(Json.decode[Pending](body))).map {
+            pending =>
+                pending.result.lastMaybe match
+                    case Present(last) => HttpClient.getText(s"$bot/getUpdates?timeout=0&offset=${last.update_id + 1}").unit
+                    case Absent        => Kyo.unit
+        }
+    end drain
+
     /** The tail of the container's log, for a leaf that failed. */
     def postMortem(using Frame): String < Async = ContainerPredef.postMortem(container)
 
@@ -71,14 +86,21 @@ object TelegramLiveServer:
 
     private val Staged = "/kyo-telegram"
 
-    def init(using
-        Frame
-    ): TelegramLiveServer < (Async & Scope & Abort[ContainerException | FileSystemException | HttpException | DecodeException]) =
+    type Failure = ContainerException | FileSystemException | HttpException | DecodeException
+
+    private val servers = TestContainers.memo[TelegramLiveServer, Failure]
+
+    /** The process's emulator, started on first use. */
+    def init(using Frame): TelegramLiveServer < (Async & Abort[Failure]) =
+        TestContainers.getOrInit(servers, "telegram-mock-ai")(start)
+
+    private def start(using Frame): TelegramLiveServer < (Async & Abort[Failure]) =
         Random.nextStringAlphanumeric(35).map { secret =>
             val token = Telegram.Token.init(s"$BotId:$secret").getOrThrow
-            pulled.andThen(Path.run(Path.tempDir("kyo-telegram-server"))).map { directory =>
+            // Unscoped: the directory is bind-mounted into an emulator that outlives the leaf that started it.
+            pulled.andThen(Path.tempDirUnscoped(prefix = "kyo-telegram-server")).map { directory =>
                 Path.run((directory / "config.yaml").write(configYaml(token))).andThen {
-                    Container.init(containerConfig(directory)).map { container =>
+                    TestContainers.initShared(containerConfig(directory), "telegram-mock-ai").map { container =>
                         for
                             botApi <- container.mappedPort(8081)
                             admin  <- container.mappedPort(8082)
