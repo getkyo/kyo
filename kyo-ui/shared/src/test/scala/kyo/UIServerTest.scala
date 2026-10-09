@@ -60,6 +60,40 @@ class UIServerTest extends UITest:
         end for
     }
 
+    "withUI hands its body a live session: the socket is open and the live marker is already resolved" in {
+        withUI(UI.div("live-check").id("lc")) {
+            for
+                state <- Browser.eval("String(window.__kyoWs.readyState)")
+                live  <- kyo.internal.BrowserEval.evalJsAwaiting("window.__kyoLive()")
+            yield
+                assert(state == "1")
+                assert(live == "true")
+        }
+    }
+
+    "the live marker re-arms on a connection drop and resolves again on the reconnected session's first frame" in {
+        val app: UI < Async =
+            for ref <- Signal.initRef("before")
+            yield UI.div(
+                UI.button("update").id("btn").onClick(ref.set("after")),
+                ref.map(v => UI.span(v).id("val"))
+            )
+        withUI(app) {
+            for
+                _    <- Browser.assertText(Selector.id("val"), "before")
+                live <- kyo.internal.BrowserEval.evalJsAwaiting(
+                    """new Promise(function(resolve){
+                        var sock=window.__kyoWs;
+                        sock.addEventListener('close',function(){window.__kyoLive().then(resolve);});
+                        sock.close();
+                    })"""
+                )
+                _ <- Browser.click(Selector.id("btn"))
+                _ <- Browser.assertText(Selector.id("val"), "after")
+            yield assert(live == "true")
+        }
+    }
+
     "WebSocket reconnects and reactive updates resume after connection drop" in {
         val app: UI < Async =
             for ref <- Signal.initRef("before")

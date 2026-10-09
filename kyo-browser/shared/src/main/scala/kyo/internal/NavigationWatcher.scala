@@ -301,9 +301,8 @@ private[kyo] object NavigationWatcher:
         // and `settle` are loop invariants for one awaitSettle call, so the interpolated JS string is too. The
         // Loop closure captures the prebuilt string and reuses it per tick.
         Browser.configLocal.use { cfg =>
-            val jsTemplate       = buildSettleStateJs(settle, cfg.networkIdleWindow.toMillis)
-            val pollInterval     = cfg.navigationPollInterval
-            val postSettleWindow = cfg.navigationPostSettleWindow
+            val jsTemplate   = buildSettleStateJs(settle, cfg.networkIdleWindow.toMillis)
+            val pollInterval = cfg.navigationPollInterval
             Loop(()) { _ =>
                 ensureNetworkTracking(settle).andThen {
                     readSettleStateWith(jsTemplate).map {
@@ -330,12 +329,12 @@ private[kyo] object NavigationWatcher:
                                 Abort.fail(
                                     BrowserNavigationFailedException(navUrl, s"HTTP $status")
                                 )
-                            else postSettleBarrier(postSettleWindow).andThen(Loop.done(()))
+                            else frameBarrier.andThen(Loop.done(()))
                             end if
                         case SettleStatus.Pending(urlHint, _) =>
                             Clock.nowMonotonic.map { now =>
                                 if now >= deadline then
-                                    onPendingDeadline(expectedDifferentFrom, settle, urlHint, throwOnFailure, postSettleWindow)
+                                    onPendingDeadline(expectedDifferentFrom, settle, urlHint, throwOnFailure)
                                 else Async.sleep(pollInterval).andThen(Loop.continue(()))
                             }
                     }
@@ -354,23 +353,24 @@ private[kyo] object NavigationWatcher:
         expectedDifferentFrom: Maybe[NavSnapshot],
         settle: Browser.Settle,
         urlHint: String,
-        throwOnFailure: Boolean,
-        postSettleWindow: Duration
+        throwOnFailure: Boolean
     )(using Frame): Loop.Outcome[Unit, Unit] < (Browser & Async & Abort[BrowserReadException]) =
-        settle match
+        val decision = settle match
             case Browser.Settle.NetworkIdle =>
                 val loadJs = buildSettleStateJs(Browser.Settle.Load, 0L)
-                readSettleStateWith(loadJs).map { probe =>
-                    interpretPendingDecision(
-                        decidePending(expectedDifferentFrom, settle, urlHint, Present(probe), throwOnFailure),
-                        postSettleWindow
-                    )
-                }
-            case _ =>
-                interpretPendingDecision(
-                    decidePending(expectedDifferentFrom, settle, urlHint, Absent, throwOnFailure),
-                    postSettleWindow
+                readSettleStateWith(loadJs).map(probe =>
+                    decidePending(expectedDifferentFrom, settle, urlHint, Present(probe), throwOnFailure)
                 )
+            case _ =>
+                Kyo.lift(decidePending(expectedDifferentFrom, settle, urlHint, Absent, throwOnFailure))
+        decision.map { d =>
+            interpretPendingDecision(d).map { outcome =>
+                d match
+                    case PendingDecision.DegradeToLoad => frameBarrier.andThen(outcome)
+                    case _                             => outcome
+            }
+        }
+    end onPendingDeadline
 
     /** Sealed decision space for the deadline-exhaustion path. Returned by [[decidePending]] so callers (and tests) can match exactly
       * one outcome per (settle mode, expected-different-from, load-probe) tuple.
@@ -452,14 +452,14 @@ private[kyo] object NavigationWatcher:
       * on every platform, not only where a real Chrome can drive it: which exception a transport failure raises decides whether a caller
       * can retry it, and that is not visible from the decision alone.
       */
-    private[internal] def interpretPendingDecision(decision: PendingDecision, postSettleWindow: Duration)(using
+    private[internal] def interpretPendingDecision(decision: PendingDecision)(using
         Frame
     ): Loop.Outcome[Unit, Unit] < (Async & Abort[BrowserReadException]) =
         decision match
             case PendingDecision.DegradeToLoad =>
                 Log.warn(
                     "Settle.NetworkIdle: network never quiesced within budget; degrading to Settle.Load"
-                ).andThen(postSettleBarrier(postSettleWindow)).andThen(Loop.done(()))
+                ).andThen(Loop.done(()))
             case PendingDecision.AbortNavigationNeverCommitted(snapshotUrl, settle) =>
                 Abort.fail(BrowserNavigationFailedException(
                     snapshotUrl,
@@ -479,12 +479,18 @@ private[kyo] object NavigationWatcher:
         end match
     end interpretPendingDecision
 
-    /** Settlement barrier before the nav-wait returns: yields the fiber for a short tick so Chrome can finish post-commit layout and
-      * resource decoding before the next CDP command arrives. `postSettleWindow` is read from `SessionConfig.navigationPostSettleWindow`
-      * by the enclosing `awaitSettle`.
+    /** Settlement barrier before the nav-wait returns: the committed document has run style, layout and paint and presented a frame,
+      * so the next CDP command meets a laid-out page. Two `requestAnimationFrame` callbacks mark it: the first runs before the next
+      * frame's rendering steps, the second after that frame was produced. A hidden document (a background tab) never runs them, and
+      * has no frame to present, so the barrier resolves at once there; every later read forces its own layout.
       */
-    private def postSettleBarrier(postSettleWindow: Duration)(using Frame): Unit < Async =
-        Async.sleep(postSettleWindow)
+    private def frameBarrier(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        BrowserEval.evalJsAwaiting(
+            """new Promise(resolve => {
+                if (document.visibilityState === 'hidden') { resolve('hidden'); return; }
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve('frame')));
+            })"""
+        ).unit
 
     sealed private[internal] trait SettleStatus derives CanEqual
     private[internal] object SettleStatus:

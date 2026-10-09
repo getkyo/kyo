@@ -406,7 +406,6 @@ and have it silently no-op. The compiler enforces the split (`Browser.scala:203,
 | `assertionStabilityWindow` | `100ms` | Window the assertion value must hold constant, also the settling-read stability window (`Browser.scala:4132`) |
 | `stabilitySampleInterval` | `4ms` | In-page sample spacing (`Browser.scala:4137`) |
 | `navigationGraceWindow` | `300ms` | Fast-path window for nav-neutral clicks (`Browser.scala:4136`) |
-| `navigationPostSettleWindow` | `300ms` | Post-settle window (`Browser.scala:4134`) |
 | `captureHoldStillTimeout` | `1s` | Total best-effort hold-still bound per capture (`Browser.scala:4140`) |
 | `captureHoldStillInterval` | `50ms` | Inter-capture pacing in the two-identical-frames loop (`Browser.scala:4141`) |
 

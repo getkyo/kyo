@@ -1184,9 +1184,12 @@ private[kyo] object HtmlRenderer:
            |  try{t.setSelectionRange(s,e);}catch(er){if(er.name!=="InvalidStateError")throw er;}}
            |$reactiveRangesJs
            |${DragClientJs.script(basePath)}
-           |var ws=null,__wsRetries=0,__wsGone=false,__live=false;
+           |var ws=null,__wsRetries=0,__wsGone=false,__live=false,__liveWaiters=[];
            |// Read-only test hook on the current socket; it follows each reconnect.
            |Object.defineProperty(window,"__kyoWs",{get:function(){return ws;},configurable:true});
+           |// Test hook: resolves once the session is live, at once when it already is. The first server frame is the only
+           |// signal that the page can take an interaction, and no document readiness state carries it.
+           |window.__kyoLive=function(){return __live?Promise.resolve(true):new Promise(function(r){__liveWaiters.push(r);});};
            |var __dragRt=null,__dragCleanup=null;
            |// One call site on purpose. The runtime wires document-level capture listeners and a pagehide listener that only its cleanup
            |// removes, so it must be installed once per session and never over a live one; the guard at the open handler is what keeps
@@ -1227,7 +1230,8 @@ private[kyo] object HtmlRenderer:
            |  };
            |  sock.onmessage=function(e){
            |    if(sock!==ws){sock.close();return;}
-           |    if(!__live){__live=true;__wsRetries=0;var pending=__q;__q=[];for(var i=0;i<pending.length;i++)sock.send(pending[i]);}
+           |    if(!__live){__live=true;__wsRetries=0;var pending=__q;__q=[];for(var i=0;i<pending.length;i++)sock.send(pending[i]);
+           |      var waiters=__liveWaiters;__liveWaiters=[];for(var j=0;j<waiters.length;j++)waiters[j](true);}
            |    kyoOnMessage(e);
            |  };
            |  // A connect that never completes reports here and then closes, so recovery is driven from onclose alone;

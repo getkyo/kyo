@@ -4259,7 +4259,6 @@ object Browser:
             mutationFirstMutationGrace = 100.millis,
             assertionStabilityWindow = 100.millis,
             mutationPollInterval = 20.millis,
-            navigationPostSettleWindow = 300.millis,
             navigationPollInterval = 50.millis,
             navigationGraceWindow = 300.millis,
             stabilitySampleInterval = 4.millis,
@@ -4319,7 +4318,6 @@ object Browser:
         mutationFirstMutationGrace: Duration,
         assertionStabilityWindow: Duration,
         mutationPollInterval: Duration,
-        navigationPostSettleWindow: Duration,
         navigationPollInterval: Duration,
         navigationGraceWindow: Duration,
         stabilitySampleInterval: Duration,
@@ -4351,9 +4349,6 @@ object Browser:
 
         /** Returns a copy with the [[mutationPollInterval]] set to `v`. */
         def mutationPollInterval(v: Duration): SessionConfig = copy(mutationPollInterval = v)
-
-        /** Returns a copy with the [[navigationPostSettleWindow]] set to `v`. */
-        def navigationPostSettleWindow(v: Duration): SessionConfig = copy(navigationPostSettleWindow = v)
 
         /** Returns a copy with the [[navigationPollInterval]] set to `v`. */
         def navigationPollInterval(v: Duration): SessionConfig = copy(navigationPollInterval = v)

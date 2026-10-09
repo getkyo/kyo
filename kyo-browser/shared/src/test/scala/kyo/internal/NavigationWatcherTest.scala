@@ -133,8 +133,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
         // leaf below pins the other side of that split.
         Abort.run[BrowserReadException] {
             NavigationWatcher.interpretPendingDecision(
-                NavigationWatcher.PendingDecision.AbortTransportFailure("chrome-error://chromewebdata/"),
-                Duration.Zero
+                NavigationWatcher.PendingDecision.AbortTransportFailure("chrome-error://chromewebdata/")
             )
         }.map {
             case Result.Failure(ex: BrowserNavigationTransportFailedException) =>
@@ -146,8 +145,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
     "NavigationWatcher.interpretPendingDecision: AbortHttpError raises BrowserNavigationFailedException, not the transport type" in {
         Abort.run[BrowserReadException] {
             NavigationWatcher.interpretPendingDecision(
-                NavigationWatcher.PendingDecision.AbortHttpError("https://example.com/landed", 404),
-                Duration.Zero
+                NavigationWatcher.PendingDecision.AbortHttpError("https://example.com/landed", 404)
             )
         }.map {
             case Result.Failure(ex: BrowserNavigationTransportFailedException) =>
@@ -190,8 +188,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
         def errorOf(progress: NavigationWatcher.DocumentProgress)(using Frame, kyo.test.AssertScope): String < Async =
             Abort.run[BrowserReadException] {
                 NavigationWatcher.interpretPendingDecision(
-                    NavigationWatcher.PendingDecision.AbortLoadEventNeverFired("http://127.0.0.1:1/", Present(progress)),
-                    Duration.Zero
+                    NavigationWatcher.PendingDecision.AbortLoadEventNeverFired("http://127.0.0.1:1/", Present(progress))
                 )
             }.map {
                 case Result.Failure(ex: BrowserNavigationFailedException) => ex.error

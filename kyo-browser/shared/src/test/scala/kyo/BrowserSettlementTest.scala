@@ -17,6 +17,24 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
+    "goto returns only after the committed document has presented a frame" in {
+        // The page marks its first presented frame from a requestAnimationFrame callback; the marker is read with no retry so
+        // the navigation's own barrier, not the assertion's schedule, is what makes it visible.
+        val p = page("""<div id='target'>pending</div>
+            <script>requestAnimationFrame(() => requestAnimationFrame(() => {
+                document.getElementById('target').textContent = 'painted';
+            }));</script>""")
+        withBrowser {
+            Browser.withConfig(_.retrySchedule(Schedule.fixed(1.milli).maxDuration(1.milli))) {
+                Browser.goto(p, Browser.Settle.Load).andThen {
+                    Browser.text(Browser.Selector.css("#target")).map { t =>
+                        assert(t == "painted", s"the first frame had not been presented when goto returned: '$t'")
+                    }
+                }
+            }
+        }
+    }
+
     "goto fails when the navigation fails below HTTP rather than reporting success" in {
         // A host reserved by RFC 2606 to never resolve, so Chrome commits its error document with no HTTP
         // response behind it. That is the shape every transport failure takes, including the socket exhaustion

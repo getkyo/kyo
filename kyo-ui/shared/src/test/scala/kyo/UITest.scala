@@ -66,13 +66,20 @@ abstract class UITest extends kyo.test.Test[Any]:
         // shared tabs suppress focus events. That blocker was resolved by BrowserTab.scala calling
         // Emulation.setFocusEmulationEnabled(true) on each tab attach, which forces Chrome to dispatch focus events
         // regardless of tab foregrounding.
+        //
+        // The page is ready for `f` when its session is live: the client script has the socket open and the first server
+        // frame has arrived, so the first interaction reaches the session instead of the client's reconnect buffer. That
+        // is the client's `__kyoLive` promise. Network-idle settling cannot see it (the WebSocket is not a fetch) and would
+        // only add its idle window on top of the load event.
         cancelOnUnsupportedPlatform {
             for
                 uiTree <- ui
                 _      <- SharedUIServer.set(uiTree)
                 url    <- SharedUIServer.url
                 result <- Browser.runShared() {
-                    Browser.goto(url).andThen(f)
+                    Browser.goto(url, Browser.Settle.Load)
+                        .andThen(kyo.internal.BrowserEval.evalJsAwaiting("window.__kyoLive()"))
+                        .andThen(f)
                 }
             yield result
         }
