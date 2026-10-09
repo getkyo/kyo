@@ -313,6 +313,20 @@ private[completion] object CodexWire:
                 case _ => true
         }
 
+    /** True when an `item/started` on this thread and turn is a tool the CLI runs itself. Kyo's tools arrive as `dynamicToolCall`,
+      * so any item type outside the ones a kyo turn produces is a built-in, which never reaches kyo as `item/tool/call` and can
+      * keep the turn open for as long as it runs (a `sleep` item asked for 12 hours). An undecodable item is not classified.
+      */
+    def startsBuiltInTool(event: RpcEvent, threadId: String, turnId: String)(using Frame): Boolean =
+        event.method == "item/started" && {
+            Structure.decode[ItemNotification](event.params) match
+                case Result.Success(notification) =>
+                    notification.threadId == threadId && notification.turnId == turnId && !kyoTurnItems.contains(notification.item.`type`)
+                case _ => false
+        }
+
+    private val kyoTurnItems: Set[String] = Set("userMessage", "agentMessage", "reasoning", "dynamicToolCall")
+
     def isTurnCompleted(event: RpcEvent, threadId: String, turnId: String)(using Frame): Boolean =
         if event.method != "turn/completed" then false
         else

@@ -44,7 +44,11 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             "workspace_dependencies",
             "tool_suggest",
             "multi_agent",
-            "hooks"
+            "hooks",
+            "sleep_tool",
+            "goals",
+            "view_image",
+            "image_generation"
         )
 
     /** The per-turn tool-execution state the `item/tool/call` route and the event loop share: the
@@ -474,9 +478,11 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
       * end, returning the turn's final assistant text (a completed agentMessage, falling back to the
       * accumulated deltas). The capture and the deferral are observed on the event that follows the
       * answered tool-call request (its item/completed always arrives), at which point the turn is
-      * interrupted: this backend's kill-on-call.
+      * interrupted: this backend's kill-on-call. The loop then reads on to the interrupted
+      * `turn/completed`, because the request that made the call reports its usage only after the
+      * interrupt; ending at the interrupt would report every result-tool turn as zero tokens.
       */
-    private def collectTurn(
+    private[completion] def collectTurn(
         handler: JsonRpcHandler,
         events: Channel[RpcEvent],
         threadId: String,
@@ -484,45 +490,49 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         stderrTail: AtomicRef[String],
         bridge: ToolBridge
     )(using Frame): (Maybe[String], AIStats) < (Async & Abort[AIGenException | Closed]) =
-        Loop((Absent: Maybe[String], "", Maybe.empty[TokenCounts], 0)) { (completed, delta, usage, requests) =>
+        type State = (Maybe[String], String, Maybe[TokenCounts], Int, Boolean)
+        Loop[State, (Maybe[String], AIStats), Async & Abort[AIGenException | Closed]](
+            (Absent, "", Absent, 0, false)
+        ) { (completed, delta, usage, requests, interrupted) =>
+            def done = bridge.executed.get.map(calls =>
+                Loop.done[State, (Maybe[String], AIStats)]((finalText(completed, delta), turnStats(usage, requests, calls.size)))
+            )
             events.take.map { event =>
-                trackFollowUp(bridge, event, threadId, turnId).andThen {
-                    bridge.resultCapture.get.map { captured =>
-                        bridge.deferred.get.map { deferred =>
-                            if captured.isDefined || deferred then
-                                interruptTurn(handler, threadId, turnId).andThen(
-                                    bridge.executed.get.map(calls =>
-                                        Loop.done((finalText(completed, delta), turnStats(usage, requests, calls.size)))
+                if event.method == "thread/tokenUsage/updated" then
+                    // Keep the latest total: the ephemeral thread's aggregate IS this turn's usage, already summed
+                    // across the CLI turn's internal provider requests. One notification arrives per provider
+                    // request, so counting them recovers how many model turns ran inside this single kyo turn.
+                    decodeEvent[TokenUsageNotification](event).map { notification =>
+                        if notification.threadId == threadId && notification.turnId == turnId then
+                            Loop.continue((completed, delta, notification.tokenUsage.total.orElse(usage), requests + 1, interrupted))
+                        else Loop.continue((completed, delta, usage, requests, interrupted))
+                    }
+                else if interrupted then
+                    if isTurnCompleted(event, threadId, turnId) then done
+                    else Loop.continue((completed, delta, usage, requests, interrupted))
+                else
+                    trackFollowUp(bridge, event, threadId, turnId).andThen(trackBuiltInTool(bridge, event, threadId, turnId)).andThen {
+                        bridge.resultCapture.get.map { captured =>
+                            bridge.deferred.get.map { deferred =>
+                                if (captured.isDefined || deferred) && isTurnCompleted(event, threadId, turnId) then done
+                                else if captured.isDefined || deferred then
+                                    interruptTurn(handler, threadId, turnId).andThen(
+                                        Loop.continue((completed, delta, usage, requests, true))
                                     )
-                                )
-                            else if isTurnCompleted(event, threadId, turnId) then
-                                if turnError(event).isDefined then failTurn(event, stderrTail)
+                                else if isTurnCompleted(event, threadId, turnId) then
+                                    if turnError(event).isDefined then failTurn(event, stderrTail)
+                                    else done
                                 else
-                                    bridge.executed.get.map(calls =>
-                                        Loop.done((finalText(completed, delta), turnStats(usage, requests, calls.size)))
-                                    )
-                            else if event.method == "thread/tokenUsage/updated" then
-                                // Keep the latest total: the ephemeral thread's aggregate IS this turn's
-                                // usage, already summed across the CLI turn's internal provider requests.
-                                // Tracked here rather than in eventText so the interrupt path (capture)
-                                // reports the totals that arrived before the kill.
-                                //
-                                // One notification arrives per provider request, so counting them recovers
-                                // how many model turns actually ran inside this single kyo turn.
-                                decodeEvent[TokenUsageNotification](event).map { notification =>
-                                    if notification.threadId == threadId && notification.turnId == turnId then
-                                        Loop.continue((completed, delta, notification.tokenUsage.total.orElse(usage), requests + 1))
-                                    else Loop.continue((completed, delta, usage, requests))
-                                }
-                            else
-                                eventText(event, threadId, turnId, stderrTail).map {
-                                    case Present(OutputText.Completed(text)) => Loop.continue((Present(text), delta, usage, requests))
-                                    case Present(OutputText.Delta(text))     => Loop.continue((completed, delta + text, usage, requests))
-                                    case _                                   => Loop.continue((completed, delta, usage, requests))
-                                }
+                                    eventText(event, threadId, turnId, stderrTail).map {
+                                        case Present(OutputText.Completed(text)) =>
+                                            Loop.continue((Present(text), delta, usage, requests, interrupted))
+                                        case Present(OutputText.Delta(text)) =>
+                                            Loop.continue((completed, delta + text, usage, requests, interrupted))
+                                        case _ => Loop.continue((completed, delta, usage, requests, interrupted))
+                                    }
+                            }
                         }
                     }
-                }
             }
         }
     end collectTurn
@@ -565,6 +575,14 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                 case false => Kyo.unit
             }
     end trackFollowUp
+
+    /** Ends the turn as a deferred round when the model starts a CLI built-in tool: the eval loop then replays the executed calls
+      * and iterates, which keeps its forced turn reachable however long the built-in would have run.
+      */
+    private[completion] def trackBuiltInTool(bridge: ToolBridge, event: RpcEvent, threadId: String, turnId: String)(using
+        Frame
+    ): Unit < Sync =
+        if startsBuiltInTool(event, threadId, turnId) then bridge.deferred.set(true) else Kyo.unit
 
     private def interruptTurn(handler: JsonRpcHandler, threadId: String, turnId: String)(using Frame): Unit < Async =
         Abort.run[JsonRpcError | Closed](
