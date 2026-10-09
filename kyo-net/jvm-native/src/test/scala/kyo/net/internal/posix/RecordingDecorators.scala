@@ -970,10 +970,6 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
     // Count of write() calls.
     val writeCalls: AtomicInteger = new AtomicInteger(0)
 
-    // The (data span, offset) pair passed to each write() call, in order. The span is the reference the WritePump re-presents on a Partial
-    // retry; recording it lets a test assert the same Span instance is re-presented at an advancing offset (no Span.drop allocation).
-    val writeRegions: ConcurrentLinkedQueue[(Span[Byte], Int)] = new ConcurrentLinkedQueue[(Span[Byte], Int)]()
-
     // Count of awaitRead() calls.
     val awaitReadCalls: AtomicInteger = new AtomicInteger(0)
 
@@ -986,8 +982,8 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
     val awaitWritableCalls: AtomicInteger = new AtomicInteger(0)
 
     // One-shot callback fired with the registered writable handle, after awaitWritable records the call and the real registration is in
-    // place, on the same thread that called awaitWritable. Firing the failure here (before the poll loop can deliver a writable event)
-    // makes the writable-wait outcome deterministic with no readiness race. null means no hook set; fires exactly once.
+    // place, on the same thread that called awaitWritable. The poll loop can already deliver a writable event for that registration, so
+    // the hook races real readiness. null means no hook set; fires exactly once.
     @volatile var onAwaitWritable: PosixHandle => Unit = null
 
     // Count of cancel() calls.
@@ -1042,27 +1038,9 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         real.awaitRead(handle, promise)
     end awaitRead
 
-    // When true, the next awaitWritable is held instead of registered, until releaseHeldWritable registers it with the real driver. A
-    // loopback socket can drain into the peer's buffer at any moment, so a writable wait registered for real may resolve before a test has
-    // observed the parked state; holding it makes "parked" a state the test ends, not one the kernel ends. Fires once.
-    @volatile var holdNextWritable: Boolean = false
-
-    @volatile private var heldWritable: Maybe[(PosixHandle, Promise.Unsafe[Unit, Abort[Closed | NetException]])] = Absent
-
-    /** Registers the held writable wait with the real driver. */
-    def releaseHeldWritable()(using AllowUnsafe, Frame): Unit =
-        val held = heldWritable
-        heldWritable = Absent
-        held.foreach((handle, promise) => real.awaitWritable(handle, promise))
-    end releaseHeldWritable
-
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         discard(awaitWritableCalls.getAndIncrement())
-        if holdNextWritable then
-            holdNextWritable = false
-            heldWritable = Present((handle, promise))
-        else real.awaitWritable(handle, promise)
-        end if
+        real.awaitWritable(handle, promise)
         val hook = onAwaitWritable
         if hook != null then
             onAwaitWritable = null
@@ -1094,7 +1072,6 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
         // Record the call then always delegate; the real write result (including WriteResult.Error on a reset peer) is returned as-is.
         discard(writeCalls.getAndIncrement())
-        writeRegions.add((data, offset))
         real.write(handle, data, offset)
     end write
 

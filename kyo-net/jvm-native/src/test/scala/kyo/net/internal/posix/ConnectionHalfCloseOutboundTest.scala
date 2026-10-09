@@ -22,8 +22,8 @@ import kyo.net.internal.transport.ReadOutcome
   * any bytes the application queued but the WritePump had not yet flushed; this leaf locks the drain in.
   *
   * Deterministic scenario over a real loopback pair and a real [[PollerIoDriver]]:
-  *   1. `smallBufferedPair` shrinks both kernel buffers so a large write genuinely fills and parks the WritePump in `awaitWritable` (a real
-  *      EAGAIN, no scripting). The WritePump (parked) is then NOT taking from the channel.
+  *   1. `smallBufferedPair` shrinks both kernel buffers and filler spans are offered until a write parks the WritePump in `awaitWritable`
+  *      (a real EAGAIN, no scripting). The WritePump (parked) is then NOT taking from the channel.
   *   2. While the WritePump is parked, a distinct `tail` payload (0xAB) is queued on `outbound`; with no taker it sits in the channel queue.
   *   3. The peer does `halfClose` (SHUT_WR), so the local ReadPump observes EOF and tears down.
   *   4. The peer KEEPS READING (an event-driven `awaitRead` drain through the driver, exactly what a real half-closing peer does). Each read
@@ -73,7 +73,6 @@ class ConnectionHalfCloseOutboundTest extends Test:
             val spy    = new RecordingIoDriver(driver)
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
-                // Shrink both kernel buffers so the first large write fills and parks the WritePump in awaitWritable (a real EAGAIN).
                 PosixTestSockets.smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (clientFd, peerFd) =>
                     val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     // Build connection A over the recording driver; capacity is large enough to hold the queued tail behind the parked write.
@@ -89,14 +88,21 @@ class ConnectionHalfCloseOutboundTest extends Test:
 
                     conn.start()
 
-                    // Filler (0x11) far larger than the shrunk buffers, so the WritePump's first write returns Partial and parks. Tail (0xAB)
-                    // is a disjoint byte value so its presence in the peer's drained bytes is unambiguous.
-                    val filler = Span.fromUnsafe(Array.fill[Byte](256 * 1024)(0x11.toByte))
-                    val tail   = Span.fromUnsafe(Array.fill[Byte](64)(0xab.toByte))
+                    // Filler spans (0x11) are offered until one parks the WritePump: the kernel decides how much a send takes, so no single
+                    // size is sure to park it, but a peer that is not reading makes some write park. Each offer runs the pump's take and write
+                    // inline, so the latch is settled by the time the offer returns. Tail (0xAB) is a disjoint byte value so its presence in
+                    // the peer's drained bytes is unambiguous.
+                    val tail = Span.fromUnsafe(Array.fill[Byte](64)(0xab.toByte))
 
-                    conn.outbound.offer(filler) match
-                        case Result.Success(true) => ()
-                        case other                => fail(s"filler offer should be accepted, got $other")
+                    @scala.annotation.tailrec
+                    def feedUntilParked(): Unit =
+                        if !writePumpParked.done() then
+                            assert(
+                                conn.outbound.offer(Span.fromUnsafe(Array.fill[Byte](256 * 1024)(0x11.toByte))) == Result.succeed(true),
+                                "a filler offer to the pump's waiting take must be accepted"
+                            )
+                            feedUntilParked()
+                    feedUntilParked()
 
                     writePumpParked.safe.get.map { _ =>
                         // The WritePump is parked awaiting writable (peer has not read yet). Queue the tail: with no taker it sits in the

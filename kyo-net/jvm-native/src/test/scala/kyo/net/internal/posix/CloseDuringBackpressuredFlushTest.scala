@@ -22,8 +22,8 @@ import kyo.net.internal.transport.WriteResult
   *   - cause a subsequent `write` on the closed handle to return `Error` (not crash, not touch the freed engine).
   *
   * Three leaves drive the three orderings the field's two writers can produce:
-  *   - close while the flush is PARKED on writability (the peer never reads, so the real socket never becomes writable and the flush stays
-  *     parked deterministically);
+  *   - close while the flush is PARKED on writability (the peer never reads; the leaf writes until the flush is parked with ciphertext
+  *     unsent, then closes);
   *   - close fired from INSIDE an in-flight re-submitted flush (the peer is drained so the real socket becomes writable and the re-flush runs;
   *     `RecordingSocketBindings.onSend` fires `closeHandle` re-entrantly while `beginWrite` is held);
   *   - a looped genuinely-concurrent close vs the real writable-event re-flush race.
@@ -36,8 +36,8 @@ import kyo.net.internal.transport.WriteResult
   * Gate: `PosixTestSockets.assumePoller()` (real loopback pair for real EAGAIN) and `TlsRealEngines.assumeTlsReady()` (a real BoringSSL engine).
   * JS uses `sendNow`; all leaves gate on isJS.
   *
-  * Anti-flakiness: the engine handshakes in-memory via `TlsEngineLoopback.handshake` before any write; `backend.registeredWrite(writeFd).safe.get`
-  * latches on the real `registerWrite` (the flush arm); `fifoBarrier` proves the deferred free ran; `spy.closed(writeFd)` proves the deferred
+  * Anti-flakiness: the engine handshakes in-memory via `TlsEngineLoopback.handshake` before any write; `writeUntilFlushParks` reads the park
+  * behind a FIFO barrier; `backend.registeredWrite(writeFd).safe.get` latches on the real `registerWrite` (the flush arm); `fifoBarrier` proves the deferred free ran; `spy.closed(writeFd)` proves the deferred
   * fd close ran; `spy.onSend` fires before delegating to real
   * (while `beginWrite` is held). No sleep.
   *
@@ -79,6 +79,25 @@ class CloseDuringBackpressuredFlushTest extends Test:
         p
     end fifoBarrier
 
+    /** Returns once the flush is parked on writability with ciphertext unsent, writing a 64 KiB span whenever the tail has fully drained. No
+      * write size is sure to park it: macOS grows a shrunk buffer on demand, and a parked flush resumes and can drain its whole tail when the
+      * kernel opens room (seen draining a parked tail to zero in 1 of 6 runs). The peer never reads, so the kernel runs out of room and the
+      * loop ends. Each check sits behind a FIFO barrier, so the write's engine op and any resumed flush have run.
+      */
+    private def writeUntilFlushParks(driver: PollerIoDriver, handle: PosixHandle, fill: Byte)(using
+        Frame,
+        AllowUnsafe,
+        kyo.test.AssertScope
+    ): Unit < Async =
+        Loop(()) { _ =>
+            if handle.unsentTailBytes == 0 then
+                val w = driver.write(handle, Span.fromUnsafe(Array.fill[Byte](64 * 1024)(fill)), 0)
+                assert(w == WriteResult.Done, s"a TLS write below the tail bound should return Done, got $w")
+            fifoBarrier(driver).safe.get.map { _ =>
+                if handle.flushReArmPending && handle.unsentTailBytes > 0 then Loop.done(()) else Loop.continue(())
+            }
+        }
+
     /** Drain all available bytes from `peerFd` so the WRITE fd's send buffer empties and becomes writable again. */
     private def drainAll(peerFd: Int)(using AllowUnsafe): Unit =
         val buf = Buffer.alloc[Byte](65536)
@@ -104,10 +123,9 @@ class CloseDuringBackpressuredFlushTest extends Test:
                 // but not BoringSSL.
                 if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
                 PosixTestSockets.assumePoller()
-                // The peer NEVER reads, so the 600 KB write encrypts and fills the real send buffer (EAGAIN with bytes pending) and the flush parks
-                // armed on writability that can never fire: the close lands deterministically while the flush is parked. No hook here.
+                // The peer NEVER reads, so writes fill the real send buffer until a flush EAGAINs with bytes pending and parks armed on
+                // writability that can never fire once the buffers are full: the close lands while the flush is parked. No hook here.
                 PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (writeFd, peerFd) =>
-                    val payload   = Array.fill[Byte](600000)(42.toByte)
                     val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
                     val real      = PollerBackend.default()
                     val pollerFd  = real.create()
@@ -122,23 +140,8 @@ class CloseDuringBackpressuredFlushTest extends Test:
                     for
                         // Handshake on the FIFO worker so the client session is created, handshaked, and written on one carrier.
                         _ <- handshakeOnDriver(driver, rawEngine).safe.get
-                        // Write into a non-draining socket: the flush EAGAINs with bytes pending and arms writability (registerWrite #1).
-                        w <- Sync.defer(driver.write(handle, Span.fromUnsafe(payload), 0))
-                        _ = assert(w == WriteResult.Done, s"backpressured write should return Done, got $w")
-                        // Latch on the real registerWrite executing on the change worker (the flush arm).
-                        _ <- backend.registeredWrite(writeFd).safe.get
-                        // Barrier: the write's engine op (including its endWrite, which releases the guard) has fully completed.
-                        _ <- fifoBarrier(driver).safe.get
-                        // The flush must be PARKED on writability before the close. `flushReArmPending` is not a single stable sample here: the
-                        // 600 KB tail over the 4096-byte send buffer parks on the first EAGAIN (registerWrite #1, the latch above), but the kernel
-                        // then drains a few KB of the loopback into the peer's recv buffer (the peer never reads, but the recv buffer absorbs a
-                        // bounded amount), firing the EPOLLOUT edge that clears `flushReArmPending` and re-submits the flush. The re-flush sends more,
-                        // EAGAINs again, and re-arms (`flushReArmPending` true again). `flushReArmPending` therefore toggles false<->true through that bounded
-                        // churn before the buffers fill and it settles stably true. Sample it as an eventual condition, not a single instant, so a
-                        // transient mid-churn false does not flake the precondition; a genuinely lost re-arm (the real-bug shape) keeps it false and
-                        // surfaces as the per-test timeout.
-                        _ <- assertEventually(Sync.defer(handle.flushReArmPending))
-                        _ = assert(handle.pendingCipher.exists(_.size > handle.pendingCipherSent), "pendingCipher must hold unsent bytes")
+                        // Write into a non-draining socket until the flush is parked on writability with ciphertext unsent.
+                        _ <- writeUntilFlushParks(driver, handle, 42.toByte)
                         // Close while the flush is parked. requestClose defers the free to endWrite; two fifoBarriers prove it ran (the close
                         // submits the deferred free op, which a barrier behind it completes after).
                         _ = driver.closeHandle(handle)
@@ -184,7 +187,6 @@ class CloseDuringBackpressuredFlushTest extends Test:
                 // RE-SUBMITTED flush after the peer is drained. The drain makes the real socket writable, so the real backend fires a real write
                 // event the poll loop turns into the re-flush; the hook fires closeHandle re-entrantly with the free deferred to endWrite.
                 PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (writeFd, peerFd) =>
-                    val payload    = Array.fill[Byte](600000)(43.toByte)
                     val closeFired = new AtomicBoolean(false)
                     val hookFired  = Promise.Unsafe.init[Unit, Any]()
                     val driverBox  = new java.util.concurrent.atomic.AtomicReference[PollerIoDriver]()
@@ -205,17 +207,9 @@ class CloseDuringBackpressuredFlushTest extends Test:
                     for
                         // Handshake on the FIFO worker so the client session is created, handshaked, and written on one carrier.
                         _ <- handshakeOnDriver(driver, rawEngine).safe.get
-                        // Backpressure the write: the flush sends until the buffer fills, EAGAINs with bytes pending, and arms writability.
-                        w <- Sync.defer(driver.write(handle, Span.fromUnsafe(payload), 0))
-                        _ = assert(w == WriteResult.Done, s"backpressured write should return Done, got $w")
-                        _ <- backend.registeredWrite(writeFd).safe.get
-                        _ <- fifoBarrier(driver).safe.get
-                        // The flush must be PARKED on writability before the close hook is installed. As in the first leaf, `flushReArmPending` toggles
-                        // through a bounded not-writable->writable churn (the kernel drains a few KB of the loopback into the peer's recv buffer,
-                        // firing the EPOLLOUT edge that clears the arm and re-submits the flush) before settling stably true once the buffers fill, so
-                        // it is sampled as an eventual condition rather than a single instant. A genuinely lost re-arm keeps it false and times out.
-                        _ <- assertEventually(Sync.defer(handle.flushReArmPending))
-                        // Install the close hook NOW (the initial flush has armed): it fires on the first send of the re-flush.
+                        // Backpressure the writes until the flush is parked on writability with ciphertext unsent.
+                        _ <- writeUntilFlushParks(driver, handle, 43.toByte)
+                        // Install the close hook NOW (the flush is parked): it fires on the first send of the re-flush.
                         _ = spy.onSend = () =>
                             if closeFired.compareAndSet(false, true) then
                                 driverBox.get().closeHandle(handleBox.get())
@@ -223,8 +217,17 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         // Drain the peer fully: the real socket becomes writable, the real backend fires the write event, and the poll loop
                         // re-submits the flush. The flush acquires beginWrite, calls sockets.send -> onSend fires closeHandle re-entrantly.
                         _ = drainAll(peerFd)
-                        // Latch on the close hook actually firing inside the re-flush (a real Promise.Unsafe completed by the onSend hook).
-                        _ <- hookFired.safe.get
+                        // Wait for the hook. A parked flush can resume and drain its whole tail before the hook is installed, leaving no flush
+                        // for the drain to wake; a fresh write then gives the hook a flush in flight to land in.
+                        _ <- Loop(()) { _ =>
+                            fifoBarrier(driver).safe.get.map { _ =>
+                                if hookFired.done() then Loop.done(())
+                                else
+                                    if !handle.flushReArmPending && handle.unsentTailBytes == 0 then
+                                        discard(driver.write(handle, Span.fromUnsafe(Array.fill[Byte](64 * 1024)(43.toByte)), 0))
+                                    Loop.continue(())
+                            }
+                        }
                         _ <- fifoBarrier(driver).safe.get
                         _ <- fifoBarrier(driver).safe.get
                         // As in the first leaf, the barriers do not order the real close(fd).
@@ -261,20 +264,14 @@ class CloseDuringBackpressuredFlushTest extends Test:
                 // but not BoringSSL.
                 if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
                 PosixTestSockets.assumePoller()
-                // 10 independent close-vs-writable races, each one fully reproducing the interleaving (the race fires on every iteration, it is not
-                // rare). The 600 KB payload over the 4096-byte send buffer is what RELIABLY parks the flush: the engine encrypts the whole plaintext
-                // into pendingCipher, the flush sends what the send buffer accepts, EAGAINs with the remainder pending, and arms writability EVERY
-                // iteration (the `registeredWrite` latch below fires only from `armWritableForFlush`, so it is the per-iteration park proof). A
-                // smaller payload does NOT park reliably: at these shrunk buffers the kernel drains the loopback in the background fast enough that a
-                // payload at or below ~256 KB sometimes flushes in full with no EAGAIN, so no writability is armed and the close-vs-writable race
-                // window disappears. The per-iteration cost is dominated by encrypting 600 KB up to the park point (~0.3 s on Scala Native, which has
-                // no JIT and slower crypto); 50 iterations overran the Test base's 15 s deadlock ceiling, so the count is 10 (~3 s here, comfortable
-                // margin for a slower CI host) while keeping the parking mechanism and the free-once / no-UAF assertions below unchanged.
+                // 10 independent close-vs-writable races. Each iteration writes until a flush EAGAINs with bytes pending and arms writability
+                // (the `registeredWrite` latch below fires only from `armWritableForFlush`, so it is the per-iteration park proof); no single
+                // payload size parks reliably, since the kernel decides how much a send takes. The per-iteration cost is dominated by encrypting
+                // up to the park point, slowest on Scala Native, which bounds the count.
                 val iterations = 10
 
                 def oneRace(i: Int): Unit < Async =
                     PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (writeFd, peerFd) =>
-                        val payload   = Array.fill[Byte](600000)(((i % 251) + 1).toByte)
                         val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
                         val real      = PollerBackend.default()
                         val pollerFd  = real.create()
@@ -288,8 +285,7 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         for
                             // Handshake on the FIFO worker so the client session is created, handshaked, and written on one carrier.
                             _ <- handshakeOnDriver(driver, rawEngine).safe.get
-                            w <- Sync.defer(driver.write(handle, Span.fromUnsafe(payload), 0))
-                            _ = assert(w == WriteResult.Done, s"iter $i: backpressured write should return Done, got $w")
+                            _ <- writeUntilFlushParks(driver, handle, ((i % 251) + 1).toByte)
                             _ <- backend.registeredWrite(writeFd).safe.get
                             // Race: close on one fiber, draining the peer (which fires the real writable event and re-submits a flush) on another.
                             closeFiber <- Fiber.initUnscoped(Sync.defer(driver.closeHandle(handle)))

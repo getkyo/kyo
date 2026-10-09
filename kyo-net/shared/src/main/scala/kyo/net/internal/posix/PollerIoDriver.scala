@@ -894,7 +894,7 @@ final private[net] class PollerIoDriver private[posix] (
             // ends with flushPending, which arms armWritableForFlush (a socket-readiness re-arm) when it EAGAINs with bytes pending. This branch is
             // reached ONLY from the public WritePump path; the internal flush re-arm and connect call armSocketWritable directly (below), so they
             // are never mis-routed here.
-            handle.backpressurePromise = Present(promise)
+            handle.backpressurePromise.set(Present(promise))
             // Double-check on the FIFO worker: a flush may have drained the tail below the low-water mark between the check above and this
             // registration (flushPending runs on the FIFO worker, this runs on the pump carrier). Routing the re-check through the FIFO observes a
             // consistent tail snapshot (the tail fields are FIFO-worker-owned) and completes the just-registered waiter if the drain already
@@ -919,15 +919,14 @@ final private[net] class PollerIoDriver private[posix] (
         // pendingWritables map. The activeFds + pendingWritables puts are applied on the poll fiber from the registration (single-writer);
         // the entry pairs the promise with the arming handle's id (handle.id) so dispatchWritable drops a recycled fd's prior owner's readiness.
         // rc<0 failure is handled inside dispatchCmd, which reads pendingWritables and fails the stored promise.
-        handle.pendingWritablePromise = Present(promise)
+        handle.pendingWritablePromise.set(Present(promise))
         regIntake.offer(Registration(handle, RegKind.Write))
         submitChange(packCmd(OpRegisterWrite, handle.writeFd))
         // Same offer-then-recheck as awaitRead (see its doc); every caller of this primitive (awaitWritable's below-bound path,
         // awaitConnect, armWritableForFlush) inherits the protection from this one call site.
         if terminal.get() then
             val closed = Closed(label, Frame.internal, s"fd=${handle.writeFd} driver closed")
-            handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
-            handle.pendingWritablePromise = Absent
+            handle.pendingWritablePromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
         end if
     end armSocketWritable
 
@@ -1311,14 +1310,12 @@ final private[net] class PollerIoDriver private[posix] (
         if fdClosing && teardownComplete.get() then completeFdWithdrawal(handle)
         val closed = Closed(handleLabel(handle), handle.createdAt, "canceled")
         handle.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
-        handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
-        handle.pendingWritablePromise = Absent
+        handle.pendingWritablePromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
         handle.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
         handle.pendingAcceptPromise = Absent
         // Fail any WritePump promise parked at the write-backpressure high-water bound (it is not in pendingWritables: a tail-bound park is held on
         // the handle, not armed on socket readiness). Releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
-        handle.backpressurePromise.foreach(_.completeDiscard(Result.fail(closed)))
-        handle.backpressurePromise = Absent
+        handle.backpressurePromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
     end deregisterFds
 
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
@@ -1550,7 +1547,7 @@ final private[net] class PollerIoDriver private[posix] (
                     pendingAccepts.put(handle.readFd, handle)
                 case RegKind.Write =>
                     activeFds.put(handle.writeFd, handle.id.packed)
-                    handle.pendingWritablePromise match
+                    handle.pendingWritablePromise.get() match
                         case Present(p) => pendingWritables.put(handle.writeFd, PendingWritable(p, handle.id, handle))
                         case Absent     => ()
                     end match
@@ -2336,6 +2333,14 @@ final private[net] class PollerIoDriver private[posix] (
     private def dispatchWritable(fd: Int)(using AllowUnsafe, Frame): Unit =
         Maybe(pendingWritables.remove(fd)) match
             case Present(entry) =>
+                // Clear the slot before completing: the completion can re-arm inline, and that deposit must survive. A CAS on the delivered
+                // promise leaves a newer deposit in place.
+                val slot = entry.handle.pendingWritablePromise
+                slot.get() match
+                    case current @ Present(p) if p.asInstanceOf[AnyRef] eq entry.promise.asInstanceOf[AnyRef] =>
+                        discard(slot.compareAndSet(current, Absent))
+                    case _ => ()
+                end match
                 if isStaleId(fd, entry.id) then
                     // Stale event: this fd was closed and recycled into a different handle. Drop it; do not deliver to the new handle.
                     // (Same monotonic-id guard as dispatchRead/dispatchAccept; a presence-only check would deliver the prior owner's
@@ -2554,8 +2559,7 @@ final private[net] class PollerIoDriver private[posix] (
                             handle.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
                             handle.pendingAcceptPromise = Absent
                         case RegKind.Write =>
-                            handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
-                            handle.pendingWritablePromise = Absent
+                            handle.pendingWritablePromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
                     end match
                     PollScratch.IdNoCheck
                 else if kind == RegKind.Read && handle.upgradeActive && !handle.handshakeReading then
@@ -2583,7 +2587,7 @@ final private[net] class PollerIoDriver private[posix] (
                             pendingAccepts.put(fd, handle)
                         case RegKind.Write =>
                             activeFds.put(fd, handle.id.packed)
-                            handle.pendingWritablePromise match
+                            handle.pendingWritablePromise.get() match
                                 case Present(p) => pendingWritables.put(fd, PendingWritable(p, handle.id, handle))
                                 case Absent => () // the writable was already failed/cleared (cancel raced the registration); nothing to arm
                             end match
@@ -2702,8 +2706,7 @@ final private[net] class PollerIoDriver private[posix] (
                             // completeDiscard is idempotent with the synchronous fail.
                             val closed = Closed(handleLabel(h), h.createdAt, "closed")
                             h.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
-                            h.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
-                            h.pendingWritablePromise = Absent
+                            h.pendingWritablePromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
                             h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
                             h.pendingAcceptPromise = Absent
                         end if

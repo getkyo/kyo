@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.NetConfig
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.util.GrowableByteBuffer
 
 /** Shared real-socket helpers for posix-level tests on JVM and Native (Linux epoll, macOS/BSD kqueue, io_uring).
   *
@@ -148,12 +149,11 @@ object PosixTestSockets:
         }
     end acceptOne
 
-    /** Build a loopback pair with shrunk SO_SNDBUF and SO_RCVBUF so a large send genuinely fills and EAGAINs.
+    /** Build a loopback pair with shrunk SO_SNDBUF and SO_RCVBUF so a peer that stops reading fills the socket with little data.
       *
-      * Lifted verbatim from PollerIoDriverWriteBackpressureTest.scala lines 81-121. The kernel rounds and doubles the requested size; the
-      * blob sent in tests is sized far larger than any plausible small buffer so EAGAIN is guaranteed.
-      *
-      * Anti-flakiness: a real kernel buffer limit produces a real EAGAIN; no scripted behavior.
+      * The requested sizes are a hint: the kernel rounds them and macOS grows a send buffer on demand (a 4 KiB SO_SNDBUF took a whole 128 KiB
+      * send), and room can open right after a send returns EAGAIN. No payload size makes a given send partial; only a peer that keeps not
+      * reading makes some later send park.
       */
     def smallBufferedPair(sndBuf: Int, rcvBuf: Int)(using Frame, AllowUnsafe): (Int, Int) < Async =
         val sockets = sock
@@ -260,58 +260,43 @@ object PosixTestSockets:
       * assert the peer received the spans' bytes in exact enqueue order (not just the right total count). No sleep; the loop exits on the real
       * condition total >= want.
       */
-    def drainCollect(driver: IoDriver[PosixHandle], fd: Int, want: Int)(using Frame): List[Byte] < (Abort[Closed] & Async) =
+    def drainCollect(driver: IoDriver[PosixHandle], fd: Int, want: Int)(using Frame): Chunk[Byte] < (Abort[Closed] & Async) =
         import AllowUnsafe.embrace.danger
-        val sockets                               = sock
-        val handle                                = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-        def recvLoop(acc: List[Byte]): List[Byte] =
+        val sockets          = sock
+        val handle           = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+        val out              = new GrowableByteBuffer(math.max(want, 512))
+        def recvLoop(): Unit =
             val buf = Buffer.alloc[Byte](65536)
             try
-                var out  = acc
                 var more = true
                 while more do
                     val r = sockets.recvNow(fd, buf, 65536L, PosixConstants.MSG_DONTWAIT)
                     val n = r.value.toInt
-                    if n > 0 then out = out ++ Buffer.copyToArray[Byte](buf, 0, n).toList
+                    if n > 0 then out.writeBytes(Buffer.copyToArray[Byte](buf, 0, n), 0, n)
                     else more = false
                 end while
-                out
             finally buf.close()
             end try
         end recvLoop
 
-        def loop(acc: List[Byte]): List[Byte] < (Abort[Closed] & Async) =
-            if acc.length >= want then acc
+        def loop(): Chunk[Byte] < (Abort[Closed] & Async) =
+            if out.size >= want then Chunk.from(out.toByteArray)
             else
                 val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, promise)
                 promise.safe.get.map {
                     case ReadOutcome.Bytes(span) =>
                         // The delivered span carries the readiness chunk; recvLoop drains any further bytes the same edge made available.
-                        val afterDelivered = acc ++ span.toArray.toList
-                        loop(recvLoop(afterDelivered))
-                    case _ => acc // EOF: stop
+                        val bytes = span.toArray
+                        out.writeBytes(bytes, 0, bytes.length)
+                        recvLoop()
+                        loop()
+                    case _ => Chunk.from(out.toByteArray) // EOF: stop
                 }
             end if
         end loop
-        loop(Nil)
+        loop()
     end drainCollect
-
-    /** Writes to the non-blocking `fd` until the kernel refuses more, returning the bytes it accepted while the peer is not reading. How much
-      * that is depends on the kernel (macOS grows a 4 KiB SO_SNDBUF and has taken 128 KiB in one write), so a test that needs its next
-      * write to be Partial fills the socket first rather than sizing a payload to beat the buffers.
-      */
-    def fillUntilFull(fd: Int)(using AllowUnsafe): Long =
-        val chunk = 64 * 1024
-        val buf   = Buffer.alloc[Byte](chunk)
-        @scala.annotation.tailrec
-        def loop(total: Long): Long =
-            val sent = sock.sendNow(fd, buf, chunk.toLong, PosixConstants.MSG_NOSIGNAL).value
-            if sent > 0 then loop(total + sent) else total
-        end loop
-        try loop(0L)
-        finally buf.close()
-    end fillUntilFull
 
     /** Force an RST on `fd` by setting SO_LINGER {l_onoff=1, l_linger=0} then closing.
       *

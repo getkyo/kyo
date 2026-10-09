@@ -8,7 +8,7 @@ import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.WriteResult
 
-/** Deterministic guard for the `flushReArmPending` double-arm coalescing in [[PollerIoDriver.armWritableForFlush]]: while a
+/** Guard for the `flushReArmPending` double-arm coalescing in [[PollerIoDriver.armWritableForFlush]]: while a
   * pending-ciphertext flush is already awaiting writability (`flushReArmPending == true`), a SECOND TLS write that arrives and appends
   * more ciphertext must NOT register a second `awaitWritable`. The already-pending flush re-submits a [[PollerIoDriver.flushPending]]
   * that drains the combined buffer, so a single writable re-arm covers both writes; a second registration would leak interest and could
@@ -18,19 +18,16 @@ import kyo.net.internal.transport.WriteResult
   * engine).
   *
   * Coherence (avoiding real-socket + fake-backend incoherence): the backend is a [[RecordingPollerBackend]] over the real
-  * epoll/kqueue, the socket is a real `smallBufferedPair` whose PEER NEVER READS, and the engine is a real BoringSSL engine post-handshake. The
-  * send buffer fills on the first write and never drains, so the real socket NEVER becomes writable: there is no real writable event, no race,
-  * and the test is deterministic. The only registerWrite recorded is the single arm the first flush issues on EAGAIN; the second write coalesces.
-  * The real engine encrypts each plaintext into ciphertext of roughly the same size, so a 600 KB write still overflows the shrunk buffer and
-  * EAGAINs.
+  * epoll/kqueue, the socket is a real `smallBufferedPair` whose PEER NEVER READS, and the engine is a real BoringSSL engine post-handshake.
+  * How much a send takes is the kernel's call (macOS grows a shrunk buffer on demand and can open room after an EAGAIN), so writes are repeated
+  * until the flush is parked on writability, and an attempt counts only when the wait armed before the second write never fired.
   *
   * Anti-flakiness: a real handshake via `TlsEngineLoopback.handshake` driven ON the engine FIFO worker brings the engine to a state where
   * `writePlain` is valid (the session is created, handshaked, and written on one carrier, as the engine-FIFO single-owner contract requires); a
-  * `fifoBarrier` after each write proves that write's engine op (encrypt + flush + any arm) has run, and `spy.registeredWrite(writeFd).safe.get`
-  * latches on the first registerWrite executing on the change-FIFO worker. No sleep, no writable event to race.
+  * `fifoBarrier` after each write proves that write's engine op (encrypt + flush + any arm) has run. No sleep.
   *
-  * Uses a real BoringSSL engine via `TlsRealEngines.singleEngine`, handshaked on the driver's engine FIFO. The key assertion is
-  * `registerWriteCount == 1`: the second write while armed must not register a second `awaitWritable`.
+  * Uses a real BoringSSL engine via `TlsRealEngines.singleEngine`, handshaked on the driver's engine FIFO. The key assertion is that the
+  * handle still holds the writable wait armed before the second write: a write while armed must not arm a second one.
   */
 class FlushReArmPendingCoalesceTest extends Test:
 
@@ -59,21 +56,60 @@ class FlushReArmPendingCoalesceTest extends Test:
         done
     end handshakeOnDriver
 
+    /** Returns once the flush is parked on writability with ciphertext unsent, writing a 64 KiB span whenever the tail has fully drained. No
+      * write size is sure to park it (macOS grows a shrunk buffer on demand, and a parked flush can resume and drain its whole tail), but the
+      * peer never reads, so the kernel runs out of room and the loop ends.
+      */
+    private def writeUntilFlushParks(driver: PollerIoDriver, handle: PosixHandle, fill: Byte)(using
+        Frame,
+        AllowUnsafe,
+        kyo.test.AssertScope
+    ): Unit < Async =
+        Loop(()) { _ =>
+            if handle.unsentTailBytes == 0 then
+                val w = driver.write(handle, Span.fromUnsafe(Array.fill[Byte](64 * 1024)(fill)), 0)
+                assert(w == WriteResult.Done, s"a TLS write below the tail bound should return Done, got $w")
+            fifoBarrier(driver).safe.get.map { _ =>
+                if handle.flushReArmPending && handle.unsentTailBytes > 0 then Loop.done(()) else Loop.continue(())
+            }
+        }
+
+    /** Parks the flush, writes once more, and returns the writable wait armed before that write with the one the handle holds after it. A
+      * parked flush can still resume when the kernel opens room, and the arm it then makes is legitimate, so an attempt counts only when the
+      * wait armed before the write never fired.
+      */
+    private def writeWhileParked(driver: PollerIoDriver, handle: PosixHandle)(using
+        Frame,
+        AllowUnsafe,
+        kyo.test.AssertScope
+    ): (AnyRef, AnyRef) < Async =
+        Loop(()) { _ =>
+            writeUntilFlushParks(driver, handle, 1.toByte).andThen {
+                handle.pendingWritablePromise.get() match
+                    case Absent         => Loop.continue(())
+                    case Present(armed) =>
+                        val w = driver.write(handle, Span.fromUnsafe(Array.fill[Byte](64 * 1024)(2.toByte)), 0)
+                        assert(w == WriteResult.Done, s"the write while parked should return Done, got $w")
+                        fifoBarrier(driver).safe.get.map { _ =>
+                            val after = handle.pendingWritablePromise.get()
+                            if armed.done() then Loop.continue(())
+                            else Loop.done((armed.asInstanceOf[AnyRef], after.asInstanceOf[AnyRef]))
+                        }
+                end match
+            }
+        }
+
     "flushReArmPending double-arm coalescing" - {
         "a second write while a flush is awaiting writable does not arm a second awaitWritable" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
                 TlsRealEngines.assumeTlsReady()
                 PosixTestSockets.assumePoller()
-                // 600 KB payloads: the flushPending loop sends in ~65 KB chunks and EAGAINs within a few chunks (macOS effective TCP buffer
-                // ~520 KB; Linux a few KB). The peer (second element) NEVER READS, so the buffer stays full: the real socket never becomes
-                // writable, so no real writable event ever fires and the double-arm coalescing is observed deterministically.
+                // The peer (second element) NEVER READS, so once its buffers fill the real socket stays unwritable and the double-arm
+                // coalescing is observed with no writable event to race.
                 val clientEngine = TlsRealEngines.singleEngine(isServer = false)
                 val serverEngine = TlsRealEngines.singleEngine(isServer = true)
                 PosixTestSockets.smallBufferedPair(sndBuf = 64, rcvBuf = 64).map { case (writeFd, peerFd) =>
-                    val plain1 = Array.fill[Byte](600000)(1.toByte)
-                    val plain2 = Array.fill[Byte](600000)(2.toByte)
-
                     val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
                     val real     = PollerBackend.default()
                     val pollerFd = real.create()
@@ -85,30 +121,16 @@ class FlushReArmPendingCoalesceTest extends Test:
 
                     for
                         // Handshake the engines ON the FIFO worker so the client session is created, handshaked, and written on one carrier.
-                        _ <- handshakeOnDriver(driver, clientEngine, serverEngine).safe.get
-                        // Write 1: 600 KB. The flushPending loop hits EAGAIN (buffer fills) and arms writability (registerWrite #1).
-                        w1 <- Sync.defer(driver.write(handle, Span.fromUnsafe(plain1), 0))
-                        _ = assert(w1 == WriteResult.Done, s"TLS write 1 should return Done, got $w1")
-                        // The flush runs on the engine FIFO; a fifoBarrier proves it completed (including the submitChange the arm issued).
-                        _ <- fifoBarrier(driver).safe.get
-                        // The arm's registerWrite runs on the change-FIFO worker; latch on its execution (no sleep).
-                        _ <- backend.registeredWrite(writeFd).safe.get
-                        _ = assert(handle.flushReArmPending, "the first flush must arm writability before the second write")
-                        // Write 2 arrives WHILE flushReArmPending is set: appends 600 KB; the flush must NOT register a second awaitWritable.
-                        w2 <- Sync.defer(driver.write(handle, Span.fromUnsafe(plain2), 0))
-                        _ = assert(w2 == WriteResult.Done, s"TLS write 2 should return Done, got $w2")
-                        // FIFO barrier: proves write 2's engine op (including its attempted flush) has run.
-                        _ <- fifoBarrier(driver).safe.get
+                        _              <- handshakeOnDriver(driver, clientEngine, serverEngine).safe.get
+                        (armed, after) <- writeWhileParked(driver, handle)
                     yield
-                        // Coalescing assertion: the second write while armed must NOT arm a second awaitWritable.
-                        val count = backend.registerWriteCount.get()
                         // Free the client engine on the FIFO worker (closeHandle routes the engine free through submitEngineOp) and close the fds.
                         driver.closeHandle(handle)
                         driver.close()
                         PosixTestSockets.closePeerForEof(spy, peerFd)
                         assert(
-                            count == 1,
-                            s"a second write while armed must NOT arm a second awaitWritable (registerWriteCount=$count)"
+                            after eq armed,
+                            "a second write while armed must NOT arm a second awaitWritable: the handle holds a different writable wait"
                         )
                     end for
                 }

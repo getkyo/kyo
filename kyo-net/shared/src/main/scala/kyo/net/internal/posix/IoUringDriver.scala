@@ -432,7 +432,7 @@ final private[net] class IoUringDriver private[posix] (
             // hold the promise on the handle; the CQE re-flush path (onTlsSendComplete / onRawSendComplete) completes it via releaseBackpressureWaiter
             // once the tail falls below the low-water mark. An in-flight send is guaranteed: the tail only reaches the high-water mark through a write
             // whose flush submitted a send SQE (or coalesced behind one), and that SQE's reap re-flushes and re-checks the waiter.
-            handle.backpressurePromise = Present(promise)
+            handle.backpressurePromise.set(Present(promise))
             // Double-check on the FIFO worker: a CQE re-flush may have drained the tail below the low-water mark between the check above and this
             // registration (the reap runs on the FIFO worker, this runs on the pump carrier). Routing the re-check through the FIFO observes a
             // consistent tail snapshot (no race with onTlsSendComplete) and completes the just-registered waiter if the drain already happened, so
@@ -987,8 +987,7 @@ final private[net] class IoUringDriver private[posix] (
         handle.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
         // Fail any WritePump promise parked at the write-backpressure high-water bound. It is held on the handle (a tail-bound park, not a pending
         // SQE), so it is not in `pending`; releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
-        handle.backpressurePromise.foreach(_.completeDiscard(Result.fail(closed)))
-        handle.backpressurePromise = Absent
+        handle.backpressurePromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
     end cancel
 
     /** Listener teardown, sequenced on the reap carrier so a queued accept arm can never outlive the listen fd (the ghost-accept hazard the
