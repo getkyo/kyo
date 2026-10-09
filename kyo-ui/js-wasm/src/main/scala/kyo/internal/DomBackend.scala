@@ -276,7 +276,7 @@ private[kyo] object DomBackend:
                 beginAnimationsSync(element)
             }
             state.active.flatMap(resolveFocus(newElements, _)).foreach { target =>
-                discard(target.asInstanceOf[scalajs.js.Dynamic].focus())
+                focusNoScroll(target)
                 (state.selectionStart, state.selectionEnd) match
                     case (Present(start), Present(end)) => setSelection(target, start, end)
                     case _                              => ()
@@ -323,10 +323,17 @@ private[kyo] object DomBackend:
         (asInt(dyn.selectionStart), asInt(dyn.selectionEnd))
     end readSelection
 
+    /** Focus the engine performs as bookkeeping (restoring focus after a patch, seeding `focusAuto`, returning focus from a closed
+      * `focusRestore` element) passes `preventScroll`: the browser's default `focus()` scrolls every scrollable ancestor to reveal the
+      * target, which would move containers the user never scrolled. Focus the app asks for, and keyboard navigation, keep the default.
+      */
+    private def focusNoScroll(el: dom.Element): Unit =
+        discard(el.asInstanceOf[scalajs.js.Dynamic].focus(scalajs.js.Dynamic.literal(preventScroll = true)))
+
     private def restoreSvgFocus(capturedPath: String, selStart: Maybe[Int], selEnd: Maybe[Int]): Unit =
         val located = document.querySelector(s"""[data-kyo-path="$capturedPath"]""")
         if located != null then
-            val _ = located.asInstanceOf[scalajs.js.Dynamic].focus()
+            focusNoScroll(located)
             (selStart, selEnd) match
                 case (Present(s), Present(e)) => setSelection(located, s, e)
                 case _                        => ()
@@ -377,7 +384,7 @@ private[kyo] object DomBackend:
                 focusReturnStack.append(
                     FocusSeed(el.getAttribute("data-kyo-path"), ret, el.hasAttribute("data-kyo-focus-restore"))
                 )
-            discard(el.asInstanceOf[scalajs.js.Dynamic].focus())
+            focusNoScroll(el)
         }
     end seedFocusAuto
 
@@ -435,6 +442,8 @@ private[kyo] object DomBackend:
       * deeper entry belongs to a seed that closed while a newer one stayed open, so its return target is stale
       * and must not override the one just restored. Its entry is still dropped, so it cannot fire on a later
       * sweep either. Mirrors `sweepFocusAuto` in HtmlRenderer.clientJs.
+      *
+      * A restore only lands where the removal actually took the focus with it (see [[focusWasLost]]).
       */
     @tailrec
     private def sweepFocusAuto(restored: Boolean = false): Unit =
@@ -442,17 +451,30 @@ private[kyo] object DomBackend:
             case Present(seed)
                 if document.querySelector(s"""[data-kyo-path="${seed.path}"][data-kyo-focus-auto]""") == null =>
                 focusReturnStack = focusReturnStack.dropLeftAndRight(0, 1)
-                val landed = !restored && seed.restore && seed.returnTo.exists(retPath => focusIfPresent(retPath))
+                val landed =
+                    !restored && seed.restore && focusWasLost && seed.returnTo.exists(retPath => focusIfPresent(retPath))
                 sweepFocusAuto(restored || landed)
             case _ => ()
     end sweepFocusAuto
+
+    /** Whether the patch that removed the seeded element took the focus with it.
+      *
+      * Removing the focused element leaves `document.activeElement` on `body` (or null), which is the case a
+      * restore exists for: the reader was inside the panel and would otherwise be dropped at the top of the
+      * document. Any other element there means they moved focus themselves before the panel went, a Tab out of
+      * a combobox being the everyday case, and putting it back would undo the move they just made. Twin of the
+      * same check in HtmlRenderer.clientJs.
+      */
+    private def focusWasLost: Boolean =
+        val active = document.activeElement
+        active == null || (active eq document.body)
 
     /** Focus the element carrying `path`; `false` when it is no longer in the document (nothing focused). */
     private def focusIfPresent(path: String): Boolean =
         val el = document.querySelector(s"""[data-kyo-path="$path"]""")
         if el == null then false
         else
-            discard(el.asInstanceOf[scalajs.js.Dynamic].focus())
+            focusNoScroll(el)
             true
         end if
     end focusIfPresent
