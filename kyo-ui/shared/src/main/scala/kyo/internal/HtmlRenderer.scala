@@ -937,7 +937,10 @@ private[kyo] object HtmlRenderer:
           |[hidden] { display: none !important; }
           |""".stripMargin
 
-    private def pathAttr(path: Seq[String]): String = path.mkString(".")
+    /** A render path as a `data-kyo-path` value. Keys are application data, so the joined path is escaped like any
+      * other attribute value.
+      */
+    private def pathAttr(path: Seq[String]): String = esc(path.mkString("."))
 
     private def fmtD(v: Double): String = NumberFormat.double(v)
 
