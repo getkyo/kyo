@@ -51,7 +51,8 @@ set -uo pipefail
 #
 # Reads CI, GITHUB_ACTIONS, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
 # NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX,
-# JS_TEST_BATCH, WASM_TEST_BATCH, CONTAINER_SWEEP, CONTAINER_FIXTURES, and FIXTURE_IMAGES_SCRIPT
+# JS_TEST_BATCH, WASM_TEST_BATCH, CONTAINER_SWEEP, CONTAINER_FIXTURES, FIXTURE_IMAGES_SCRIPT, RESOLVE_ATTEMPTS,
+# RESOLVE_RUN_ATTEMPTS, RESOLVE_BACKOFF, and COURSIER_CACHE
 # from the environment; mutates none of them except
 # JAVA_OPTS, which gains the sbt server switches below (the nativeLink invocations also append
 # -XX:ActiveProcessorCount when NATIVE_LINK_CPUS is set). The
@@ -62,6 +63,7 @@ PLATFORMS="JVM JS Native Wasm"
 ACTIONS="test testDiff compile link"
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sbt-heap-lib.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/resolve-retry-lib.sh"
 
 usage() {
     echo "Usage: ci-test.sh <platform> <action>" >&2
@@ -170,6 +172,7 @@ if [ "${1:-}" = "--self-test" ]; then
         : > "$CALLS"; : > "$HEAP"; : > "$OUT"; : > "$PODCALLS"
         make_fake_sbt "$body"
         env PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 RESOLVE_BACKOFF=0 \
+            RESOLVE_ATTEMPTS=2 RESOLVE_RUN_ATTEMPTS=2 COURSIER_CACHE="$SELFDIR/coursier" \
             CONTAINER_SWEEP=0 CONTAINER_FIXTURES=0 SBT_HEAP_MEMORY_MB=16384 GITHUB_ACTIONS= "$@" \
             "$SELF" "$platform" "$action" > "$OUT" 2>&1
         CT_EXIT=$?
@@ -606,7 +609,7 @@ echo "Tests: succeeded 100, failed 0"; exit 0'
     then record ok "transient resolution 403 on compile-main is retried then passes"
     else record no "transient resolution 403 on compile-main is retried then passes"; fi
 
-    # Persistent resolution failure still fails after the retries (MAX_RETRIES=2 in the self-test).
+    # Persistent resolution failure still fails after the retries (RESOLVE_ATTEMPTS=2 in the self-test).
     run_runner JVM test 'case "$*" in *"--phase compile-main"*)
 echo "[error] Error downloading org.scala-native:nativelib_native0.5_2.13:0.5.12"
 echo "[error]   forbidden: https://repo1.maven.org/maven2/org/scala-native/nativelib.pom"; exit 1 ;;
@@ -625,6 +628,17 @@ echo "Tests: succeeded 100, failed 0"; exit 0'
     if exit_is 1 && [ "$(grep -c -- '--phase compile-main' "$CALLS")" = 1 ]
     then record ok "a real compile error is not retried (no resolution signature)"
     else record no "a real compile error is not retried (no resolution signature)"; fi
+
+    # Narrowness guard: scalac echoes the failing source line, and a README doctest can declare a type named
+    # FetchError (kyo-zio's does). Only Coursier's package-qualified class is a resolution signature.
+    run_runner JVM test 'case "$*" in *"--phase compile-test"*)
+echo "[error] ./kyo-zio/target/doctest/README_15.scala:3:44: Not found: type Reason"
+echo "[error] final case class FetchError(reason: Reason)"; exit 1 ;;
+esac
+echo "Tests: succeeded 100, failed 0"; exit 0'
+    if exit_is 1 && [ "$(grep -c -- '--phase compile-test' "$CALLS")" = 1 ]
+    then record ok "a compile error echoing a user type named FetchError is not retried"
+    else record no "a compile error echoing a user type named FetchError is not retried"; fi
 
     # Run phase: a transient resolution failure (the ++ cross-pass linker re-resolve) carries sbt's
     # ResolveException and the 429 signature, so sbt_run_resolve_retry retries it and passes on the retry.
@@ -652,6 +666,84 @@ esac'
     if exit_is 1 && [ "$(grep -c -- 'testKyo --all JVM' "$CALLS")" = 1 ]
     then record ok "a run-phase test printing 429 without ResolveException is not retried"
     else record no "a run-phase test printing 429 without ResolveException is not retried"; fi
+
+    # Central's 404 burst on a jar: the fake sbt plays Coursier, writing the .error marker on the first
+    # attempt and failing from it on any attempt that still finds it, as Coursier does without a request. The
+    # retry passes only if the marker was purged before it, and the purge leaves the cached pom in place.
+    marker_dir="$SELFDIR/coursier/https/repo1.maven.org/maven2/org/apache/james/apache-mime4j-dom/0.8.15"
+    rm -rf "$SELFDIR/coursier"; mkdir -p "$marker_dir"; touch "$marker_dir/apache-mime4j-dom-0.8.15.pom"
+    rm -f "$SELFDIR/fetch404"
+    run_runner JVM test 'case "$*" in *"--phase compile-test --scala 3"*)
+if [ ! -f "'"$SELFDIR"'/fetch404" ] || [ -f "'"$marker_dir"'/.apache-mime4j-dom-0.8.15.jar.error" ]; then
+touch "'"$SELFDIR"'/fetch404" "'"$marker_dir"'/.apache-mime4j-dom-0.8.15.jar.error"
+echo "[error] (kyo-emailJVM / update) lmcoursier.internal.shaded.coursier.error.FetchError\$DownloadingArtifacts: Error fetching artifacts:"
+echo "[error] https://repo1.maven.org/maven2/a.jar: not found: https://repo1.maven.org/maven2/a.jar"; exit 1; fi ;;
+esac
+echo "Tests: succeeded 100, failed 0"; exit 0'
+    rm -f "$SELFDIR/fetch404"
+    if exit_is 0 && [ "$(grep -c -- '--phase compile-test --scala 3' "$CALLS")" = 2 ] \
+       && [ ! -e "$marker_dir/.apache-mime4j-dom-0.8.15.jar.error" ] && [ -f "$marker_dir/apache-mime4j-dom-0.8.15.pom" ]
+    then record ok "a jar 404 (FetchError not found) is retried after its Coursier error marker is purged"
+    else record no "a jar 404 (FetchError not found) is retried after its Coursier error marker is purged"; fi
+    rm -rf "$SELFDIR/coursier"
+
+    # The run phase's cross-pass re-resolve can fail the same way, as a FetchError with no ResolveException.
+    rm -f "$SELFDIR/runfetch"
+    run_runner JVM test 'case "$*" in
+*"--phase"*) echo "Tests: succeeded 100, failed 0"; exit 0 ;;
+*) if [ ! -f "'"$SELFDIR"'/runfetch" ]; then touch "'"$SELFDIR"'/runfetch"
+echo "[error] lmcoursier.internal.shaded.coursier.error.FetchError\$DownloadingArtifacts: Error fetching artifacts:"
+echo "[error] Caused by: lmcoursier.internal.shaded.coursier.cache.ArtifactError\$NotFound: not found: https://repo1.maven.org/x.jar"; exit 1; fi
+echo "Tests: succeeded 100, failed 0"; exit 0 ;;
+esac'
+    rm -f "$SELFDIR/runfetch"
+    if exit_is 0 && [ "$(grep -c -- 'testKyo --all JVM' "$CALLS")" = 2 ]
+    then record ok "a run-phase FetchError not found is retried then passes"
+    else record no "a run-phase FetchError not found is retried then passes"; fi
+
+    # Narrowness guard: a run-phase test that prints a 404 URL but no resolution-failure class is not retried.
+    run_runner JVM test 'case "$*" in
+*"--phase"*) echo "Tests: succeeded 100, failed 0"; exit 0 ;;
+*) echo "  - some HttpClientTest *** FAILED ***"
+echo "expected 200 but got not found: https://localhost:8080/x"; exit 1 ;;
+esac'
+    if exit_is 1 && [ "$(grep -c -- 'testKyo --all JVM' "$CALLS")" = 1 ]
+    then record ok "a run-phase test printing a 404 URL without a resolution class is not retried"
+    else record no "a run-phase test printing a 404 URL without a resolution class is not retried"; fi
+
+    # The waits double from the base and the attempts are bounded: three attempts wait 1s then 2s, then fail.
+    run_runner_env 'case "$*" in *"--phase compile-main --scala 3"*)
+echo "[error] Error downloading org.apache.james:apache-mime4j-dom:0.8.15"
+echo "[error]   not found: https://repo1.maven.org/maven2/a.pom"; exit 1 ;;
+esac
+exit 0' JVM test RESOLVE_ATTEMPTS=3 RESOLVE_BACKOFF=1
+    if exit_is 1 && [ "$(grep -c -- '--phase compile-main --scala 3' "$CALLS")" = 3 ] \
+       && out_has "(attempt 1/3): purging Coursier error markers, retrying in 1s" \
+       && out_has "(attempt 2/3): purging Coursier error markers, retrying in 2s"
+    then record ok "resolution retries back off exponentially and stop at RESOLVE_ATTEMPTS"
+    else record no "resolution retries back off exponentially and stop at RESOLVE_ATTEMPTS"; fi
+
+    # A run-phase retry repeats a test session, so it stops at RESOLVE_RUN_ATTEMPTS and every retry runs
+    # through --quick, leaving out the tests the failed attempt already passed.
+    run_runner_env 'case "$*" in
+*"--phase"*) echo "Tests: succeeded 100, failed 0"; exit 0 ;;
+*) echo "[error] lmcoursier.internal.shaded.coursier.error.FetchError\$DownloadingArtifacts: Error fetching artifacts:"
+echo "[error] not found: https://repo1.maven.org/x.jar"; exit 1 ;;
+esac' JVM test RESOLVE_RUN_ATTEMPTS=3
+    if exit_is 1 && [ "$(grep -c -- 'testKyo --all JVM' "$CALLS")" = 3 ] \
+       && [ "$(grep -c -- 'testKyo --all JVM --quick' "$CALLS")" = 2 ] \
+       && grep -qx -- "$H_TESTJVM testKyo --all JVM" "$CALLS"
+    then record ok "run-phase resolution retries stop at RESOLVE_RUN_ATTEMPTS and re-run through --quick"
+    else record no "run-phase resolution retries stop at RESOLVE_RUN_ATTEMPTS and re-run through --quick"; fi
+
+    # A Native batch with no verdict is retried by the crash-retry loop, which purges the Coursier error
+    # markers first: the fake sbt fails for as long as the marker it wrote on its first attempt is present.
+    rm -rf "$SELFDIR/coursier"; mkdir -p "$marker_dir"; rm -f "$SELFDIR/natfetch"
+    nat "a Native batch with no verdict is retried after the Coursier error markers are purged" 0 'if [ ! -f "'"$SELFDIR"'/natfetch" ] || [ -f "'"$marker_dir"'/.apache-mime4j-dom-0.8.15.jar.error" ]; then
+touch "'"$SELFDIR"'/natfetch" "'"$marker_dir"'/.apache-mime4j-dom-0.8.15.jar.error"
+echo "[error] not found: https://repo1.maven.org/maven2/a.jar"; exit 1; fi
+'"$PASS_BODY"
+    rm -rf "$SELFDIR/coursier" "$SELFDIR/natfetch"
 
     # A native crash-retry re-runs its batch through testKyo --quick: attempt 1 is the full batch, the
     # retry appends --quick so only the tests sbt did not record as passing (the crashed suites) re-run.
@@ -805,7 +897,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
     # The pinned count catches a case that stops running without failing; a new case raises it.
-    EXPECTED_TOTAL=70
+    EXPECTED_TOTAL=77
     if [ "$TOTAL" -ne "$EXPECTED_TOTAL" ]; then
         echo "ran $TOTAL cases, expected $EXPECTED_TOTAL: a case stopped running, or a new one needs EXPECTED_TOTAL raised"
     fi
@@ -850,9 +942,11 @@ fi
 MAX_RETRIES=${MAX_RETRIES:-3}
 STALE_TIMEOUT=${STALE_TIMEOUT:-600}
 POLL_INTERVAL=${POLL_INTERVAL:-10}
-# Backoff base in seconds between dependency-resolution retries, scaled by attempt number. The self-test
-# overrides it to 0 so the retry path runs instantly.
-RESOLVE_BACKOFF=${RESOLVE_BACKOFF:-20}
+# Dependency resolution gets its own attempt budgets, spaced by resolve-retry-lib.sh's backoff (the self-test
+# sets RESOLVE_BACKOFF to 0 so the retry path runs instantly). A run-phase retry repeats a test session, so it
+# gets fewer attempts than a compile or link one.
+RESOLVE_ATTEMPTS=${RESOLVE_ATTEMPTS:-5}
+RESOLVE_RUN_ATTEMPTS=${RESOLVE_RUN_ATTEMPTS:-3}
 
 # sbt's boot socket and server exist for clients attaching to a running sbt (`sbt --client`, BSP), which
 # this runner never has. On Windows each is a named pipe whose ACL ipcsocket 1.8.0's JNA path builds from a
@@ -978,58 +1072,45 @@ sbt_tee() {
     return "$rc"
 }
 
-# A transient Maven Central error (403/429/5xx) during resolution fails an sbt phase before any build
-# output. Retry with backoff on that signature; a real compile error or unresolvable version carries no
-# such marker (or reproduces every attempt) and still fails. tee keeps output streaming for the console
-# and native watchdog. Compile and link route through here; the JVM/JS/Wasm run phase routes through the
-# stricter sbt_run_resolve_retry below, and the run phase also retries a no-Tests failure in check_log.
-# sbt_resolve_retry <heap role> <sbt args...>
-sbt_resolve_retry() {
-    local attempt=1 rc tmp heap
-    heap=$(sbt_heap "$1") || return 2; shift
-    tmp="$(mktemp)"
-    while :; do
-        sbt_tee "$tmp" "$heap" "$@"
-        rc=$?
-        if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
-        if [ "$attempt" -lt "$MAX_RETRIES" ] &&
-            grep -qE 'Error downloading|[Ff]orbidden: https?://|Server returned HTTP response code: (403|429|50[0-9])|download error' "$tmp"; then
-            log "transient dependency-resolution failure (attempt $attempt/$MAX_RETRIES): retrying in $((attempt * RESOLVE_BACKOFF))s"
-            sleep "$((attempt * RESOLVE_BACKOFF))"
-            attempt=$((attempt + 1))
-            continue
-        fi
-        rm -f "$tmp"; return "$rc"
-    done
+# A runner for resolve_retry: one sbt run under fatal_guard, streamed and copied into the attempt's log.
+sbt_tee_attempt() {
+    local file="$2"
+    shift 2
+    sbt_tee "$file" "$@"
 }
 
-# Run-phase variant of sbt_resolve_retry. The run phase streams test output, so the generic grep above
-# would false-match a test that legitimately prints a 429 or "download error" (a kyo-browser Chrome
-# download, a kyo-pod image pull, an HTTP rate-limit test) and retry a genuine test failure. Gate the
-# retry on sbt's own resolution-failure class, which test output never emits, together with the transient
-# signature, so only a genuine transient dependency-resolution failure is retried, never a failed test.
-# The trigger is the ++ cross-pass linker (scalajs-linker) re-resolving against Maven Central during
-# the version restore after tests pass; a retry re-runs the whole phase, which the 360-minute leg budget
-# absorbs, and is strictly cheaper than a red leg forcing a full-matrix re-dispatch.
+# A transient repository error during resolution fails an sbt phase before any build output; retry it through
+# resolve-retry-lib.sh. tee keeps output streaming for the console and native watchdog. Compile and link route
+# through here; the JVM/JS/Wasm run phase routes through the stricter sbt_run_resolve_retry below, and the run
+# phase also retries a no-Tests failure in check_log.
+# sbt_resolve_retry <heap role> <sbt args...>
+sbt_resolve_retry() {
+    local heap
+    heap=$(sbt_heap "$1") || return 2; shift
+    resolve_retry "$RESOLVE_ATTEMPTS" "dependency-resolution" resolve_transient_failure sbt_tee_attempt "$heap" "$@"
+}
+
+# The runner for a run-phase attempt. A retry appends --quick to the testKyo command (the final argument) so
+# only the tests sbt did not record as passing run again: a resolution failure in the cross pass's linker
+# re-resolve comes after the tests passed, and re-running them all would repeat the whole session.
+sbt_tee_run_attempt() {
+    local attempt="$1" file="$2"
+    shift 2
+    local -a cmd=("$@")
+    if [ "$attempt" -ge 2 ]; then
+        local li=$((${#cmd[@]} - 1))
+        case "${cmd[$li]}" in *testKyo*) cmd[li]="${cmd[$li]} --quick" ;; esac
+    fi
+    sbt_tee "$file" "${cmd[@]}"
+}
+
+# Run-phase variant of sbt_resolve_retry. The run phase streams test output, so it retries only on the
+# signature that also carries a resolution-failure class (resolve_run_transient_failure), never a failed test.
 # sbt_run_resolve_retry <heap role> <sbt args...>
 sbt_run_resolve_retry() {
-    local attempt=1 rc tmp heap
+    local heap
     heap=$(sbt_heap "$1") || return 2; shift
-    tmp="$(mktemp)"
-    while :; do
-        sbt_tee "$tmp" "$heap" "$@"
-        rc=$?
-        if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
-        if [ "$attempt" -lt "$MAX_RETRIES" ] &&
-            grep -q 'sbt\.librarymanagement\.ResolveException' "$tmp" &&
-            grep -qE 'Server returned HTTP response code: (403|429|50[0-9])|Error downloading|download error' "$tmp"; then
-            log "transient run-phase resolution failure (attempt $attempt/$MAX_RETRIES): retrying in $((attempt * RESOLVE_BACKOFF))s"
-            sleep "$((attempt * RESOLVE_BACKOFF))"
-            attempt=$((attempt + 1))
-            continue
-        fi
-        rm -f "$tmp"; return "$rc"
-    done
+    resolve_retry "$RESOLVE_RUN_ATTEMPTS" "run-phase resolution" resolve_run_transient_failure sbt_tee_run_attempt "$heap" "$@"
 }
 
 # sbt for a native link invocation (a NATIVE_HEAVY pre-link or a link-pool batch): applies the
@@ -1334,6 +1415,8 @@ run_watched() {
         check_log; rc=$?
         [ "$rc" -le 1 ] && return "$rc"
         log "no verdict from $label: retrying..."
+        # A pass with no verdict can have stopped on a 404 its re-resolve hit; the retry must reach the network.
+        purge_coursier_error_markers
     done
     log "FAILED: $label produced no verdict after $MAX_RETRIES attempts"
     return 1
