@@ -74,6 +74,10 @@ Global / commands += TestKyo.doneCommand
 // at 1, so docs build one module at a time while compilation and tests stay parallel.
 lazy val DocTag = Tags.Tag("doc")
 
+// kyo-pod's per-runtime test forks, one for podman and one for docker. They reach different daemons and run
+// together; SBT_TASK_LIMIT counts the pair as one task, so a limit of 1 still overlaps them (concurrentRestrictions).
+lazy val PodRuntimeForkTag = Tags.Tag("pod-runtime-fork")
+
 // CI concurrency controls:
 // - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
 // - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
@@ -94,12 +98,17 @@ Global / concurrentRestrictions := {
     val testLimit   = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
     // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
     // podman fork and a docker fork (KYO_POD_RUNTIME pinning), so this bounds container-daemon
-    // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon); real
-    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). 2 everywhere: each fork's heap
-    // is 5GB (Test / javaOptions), so the cap is what bounds the forks' memory on any machine.
+    // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon). 2
+    // everywhere: each fork's heap is 5GB (Test / javaOptions), so the cap is what bounds the forks'
+    // memory on any machine.
     val forkLimit = 2
+    val allLimit  = if (taskLimit != "0") taskLimit.toInt else cores
     Seq(
-        Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
+        // The task limit, with kyo-pod's two runtime forks counted as one task, so SBT_TASK_LIMIT=1
+        // overlaps them and nothing else; the fork cap above still bounds them to two JVMs.
+        Tags.customLimit { m =>
+            Tags.getInt(m, Tags.All) - math.max(0, Tags.getInt(m, PodRuntimeForkTag) - 1) <= allLimit
+        },
         Tags.limit(Tags.Update, if (updateLimit != "0") updateLimit.toInt else 1),
         Tags.limit(Tags.Test, testLimit),
         Tags.limit(Tags.ForkedTestGroup, forkLimit),
@@ -3691,13 +3700,8 @@ lazy val `kyo-pod` =
         .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
-            // The container-leak check in BasePodTest diffs `Container.list(all = true)` around each leaf, so it
-            // attributes to that leaf any container created while it ran. That is exact only while one container
-            // operation is in flight per daemon, which `runBackends` documents and which sequential leaves give
-            // WITHIN a suite. Across suites it does not hold: ContainerItTest forks per runtime while the
-            // orchestration and predef suites auto-detect, so two of them target the same daemon at once and each
-            // reports the other's containers as its own leak. Serial suites make the invariant the check relies on
-            // actually true; a parallel module run reports seventeen such failures and a serial one reports none.
+            // Off the JVM every suite runs in one test process against every reachable daemon, so suites run one
+            // after another there. The JVM overrides this below, where each daemon gets a fork of its own.
             Test / parallelExecution := false
         )
         .settings(
@@ -3705,16 +3709,16 @@ lazy val `kyo-pod` =
         )
         .jvmSettings(
             mimaCheck(false),
-            // Each suite is forked once by default; suites that exercise a container runtime via
-            // `runBackends` / `runBackendsLong` / `runRuntimes` are forked once per runtime instead
-            // (KYO_POD_RUNTIME pinned in each fork) so each fork hits a single daemon and the two
-            // daemons run concurrently up to the global ForkedTestGroup cap. We auto-detect which
-            // suites need the per-runtime split by instantiating each suite at config time and
-            // checking whether `Suite.testNames` contains the bracketed runtime markers `[podman]`
-            // / `[docker]` registered by those test helpers — no marker trait or naming convention
-            // for humans to forget. Brackets ensure no collision with unit-test descriptions that
-            // happen to mention "podman" or "docker" as words (e.g. "docker auto-pull progress…").
-            Test / testForkedParallel := true,
+            // Each suite is forked once by default; suites that reach a container daemon share one fork
+            // per runtime instead (KYO_POD_RUNTIME pinned in each fork, see testGrouping), so each fork
+            // hits a single daemon and the two forks run concurrently, up to the global ForkedTestGroup
+            // cap. Concurrent forks are safe because they reach distinct daemons (ContainerRuntimeBase
+            // cancels a runtime that resolves to another's daemon) and the leak check counts only
+            // containers labelled with its own leaf.
+            Test / parallelExecution := true,
+            // Inside a fork, suites run one after another: the daemon fork's leaves are globally
+            // sequential anyway, and every other fork holds a single suite.
+            Test / testForkedParallel := false,
             Test / testGrouping       := {
                 val javaOptionsValue = javaOptions.value.toVector
                 val envsVarsValue    = envVars.value
@@ -3742,14 +3746,16 @@ lazy val `kyo-pod` =
                     val srcOpt     = testSrcDirs.flatMap(d => (d ** s"$simpleName.scala").get).headOption
                     srcOpt.exists(f => daemonHelperCall.findFirstIn(IO.read(f)).isDefined)
                 }
-                // Every daemon-touching suite shares ONE fork per runtime, rather than getting a fork each. The
-                // per-leaf container-leak check in BasePodTest diffs the daemon's whole container list, so it cannot
-                // tell a container another fork created inside its window from one the leaf leaked, and fails the
-                // leaf for it. One fork per daemon puts all those leaves in a single process, where BasePodTest's
-                // `globallySequential` orders them into one stream and no two ever overlap. The single-leg helpers
+                // Every daemon-touching suite shares ONE fork per runtime, rather than getting a fork each. Container
+                // operations contend on a daemon (ports, names, pulls), so a daemon serves one leaf at a time: one fork
+                // per daemon puts all its leaves in a single process, where BasePodTest's `globallySequential` orders
+                // them into one stream and no two ever overlap. The single-leg helpers
                 // (`runBackend`, `runBackendLong`) are matched too: they register no `[runtime]` marker, but they
-                // reach the daemon, which is what decides this. A fork pinned to a runtime that cannot run here
-                // (absent, or a duplicate of another daemon) registers its container leaves cancelled with the
+                // reach the daemon, which is what decides this. Every leaf not bound to a runtime, these included,
+                // runs in one of the two forks only (ContainerRuntime.runsHostLeaves), and KYO_POD_FORK is what marks
+                // these two: every fork inherits a KYO_POD_RUNTIME set outside the build (CI sets `none` on Windows),
+                // so the pin cannot tell them from the other forks. A fork pinned to a runtime that
+                // cannot run here (absent, or a duplicate of another daemon) registers its container leaves cancelled with the
                 // reason (see ContainerRuntimeBase.assigned), so it costs a short JVM and never runs an empty selection.
                 val daemonGroups =
                     if (daemonTests.isEmpty) Seq.empty
@@ -3758,7 +3764,8 @@ lazy val `kyo-pod` =
                             Tests.Group(
                                 name = s"container#$runtime",
                                 tests = daemonTests,
-                                runPolicy = Tests.SubProcess(baseFork(Map("KYO_POD_RUNTIME" -> runtime)))
+                                runPolicy = Tests.SubProcess(baseFork(Map("KYO_POD_RUNTIME" -> runtime, "KYO_POD_FORK" -> runtime))),
+                                tags = Seq(PodRuntimeForkTag -> 1)
                             )
                         }
                 // Suites that never reach a daemon keep a fork each and stay parallel; they contend for nothing.

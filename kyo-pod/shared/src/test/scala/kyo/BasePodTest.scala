@@ -29,13 +29,22 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     //
     // globallySequential, not just sequential: the resource these suites share is the container daemon, which reaches beyond any one suite.
     // `sequential` only orders a suite's own leaves inside the process-global pool, so two container suites sharing a fork would still
-    // interleave, and the per-leaf container-leak check below diffs the daemon's whole container list: a container another leaf created
-    // inside this leaf's window is indistinguishable from one this leaf leaked, and the leaf fails for it. The build puts every
-    // daemon-touching suite in one fork per daemon so this flag covers all of them.
+    // interleave their operations on the daemon. The build puts every daemon-touching suite in one fork per daemon so this flag covers
+    // all of them.
     //
     // Only socket leak-checking is disabled: the NIO transport defers a connection's fd close to its idle selector's
     // next select() (which nothing wakes), so the fd outlives the run and its opaque socket:[inode] matches no allowlist.
-    override def config = super.config.sequential.globallySequential(true).leakCheckSockets(false)
+    //
+    // A fork that does not own the host's leaves keeps only the leaves the runtime helpers register, which carry `runtimeLeaf`; the rest
+    // run in the owner fork alone (ContainerRuntime.runsHostLeaves). A `--filter` or `--tag` flag replaces this filter, so a filtered run
+    // selects as asked in both forks.
+    override def config =
+        val base = super.config.sequential.globallySequential(true).leakCheckSockets(false)
+        if ContainerRuntime.runsHostLeaves then base else base.filter(base.filter.copy(tagsInclude = Set(runtimeLeaf)))
+    end config
+
+    /** Tag on every leaf the runtime helpers register: a leaf bound to the runtime its fork is pinned to. */
+    private val runtimeLeaf = "kyo.pod.runtime-leaf"
 
     // Linux CI's container runtime (podman REST API) intermittently takes longer than
     // the production 5-second `HttpClientConfig.timeout` default for ordinary Container ops
@@ -142,13 +151,13 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             s"[$runtime]" - {
                 cannotRun match
                     case Present(reason) =>
-                        "http" in cancel(reason)
-                        "shell" in cancel(reason)
+                        "http".tagged(runtimeLeaf) in cancel(reason)
+                        "shell".tagged(runtimeLeaf) in cancel(reason)
                     case Absent =>
                         ContainerRuntime.findSocket(runtime).foreach { path =>
-                            "http" in http(runtime, path)
+                            "http".tagged(runtimeLeaf) in http(runtime, path)
                         }
-                        "shell" in {
+                        "shell".tagged(runtimeLeaf) in {
                             // The http arm above needs a socket to talk to; this one needs a CLI that reaches the
                             // daemon. A runtime reached through a mounted socket with no CLI installed (a build
                             // container, and any CI runner wired the same way) is genuinely available for HTTP and
@@ -185,7 +194,7 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       */
     def runRuntimes(f: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
         ContainerRuntime.assigned.foreach { (runtime, cannotRun) =>
-            s"[$runtime]" in {
+            s"[$runtime]".tagged(runtimeLeaf) in {
                 cannotRun match
                     case Present(reason) => cancel(reason)
                     case Absent          => f(runtime)
@@ -194,9 +203,9 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
 
     /** Register a single leaf using the HTTP backend over the auto-detected runtime socket. Use this when the test exercises kyo-pod's
       * higher-level Container API (predefs, demos, parser-specific stress) and the choice of backend (HTTP vs Shell) or runtime (Podman vs
-      * Docker) does not add coverage. The test runs once: one leaf, one fork — no `[runtime]` marker is registered, so the build's
-      * testGrouping does not fork the suite per runtime. For tests that need runtime variation use [[runBackends]] (both backends per
-      * runtime) or [[runRuntimes]] (one leaf per runtime, body picks the backend).
+      * Docker) does not add coverage. The test runs once per host: the build puts the suite in both per-runtime forks, and only the fork
+      * [[ContainerRuntime.singleLeg]] names runs the leaf while the other registers it cancelled. For tests that need runtime variation use
+      * [[runBackends]] (both backends per runtime) or [[runRuntimes]] (one leaf per runtime, body picks the backend).
       */
     def runBackend(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
         registerSingleLeg(path => Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v)))
@@ -211,18 +220,13 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             }
         }
 
-    /** The `http` leaf of [[runBackend]] over the first runnable runtime's socket, or that leaf cancelled with the reason when no runtime
-      * this process answers for has one, for the same reason [[registerBackends]] registers cancelled twins.
+    /** The `http` leaf of [[runBackend]] over the socket [[ContainerRuntime.singleLeg]] assigns this process, or that leaf cancelled with
+      * the reason when it assigns none, for the same reason [[registerBackends]] registers cancelled twins.
       */
     private def registerSingleLeg(http: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
-        ContainerRuntime.available.iterator.flatMap(rt => ContainerRuntime.findSocket(rt).iterator).nextOption() match
-            case Some(path) => "http" in http(path)
-            case None       =>
-                val reason =
-                    if ContainerRuntime.available.nonEmpty then "no runtime that can run here exposes a socket for the http backend"
-                    else ContainerRuntime.assigned.flatMap(_._2.toOption).mkString("; ")
-                "http" in cancel(reason)
-        end match
+        ContainerRuntime.singleLeg match
+            case Right(path)  => "http".tagged(runtimeLeaf) in http(path)
+            case Left(reason) => "http".tagged(runtimeLeaf) in cancel(reason)
     end registerSingleLeg
 
     /** Returns `config` with `autoRemove = false` so tests can inspect container state after stopping.
