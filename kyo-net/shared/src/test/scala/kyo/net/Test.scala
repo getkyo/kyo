@@ -68,6 +68,15 @@ abstract class Test extends kyo.test.Test[Any]:
     )(using Frame): Unit =
         backendLeaves(skipCell)(scenario)
 
+    /** Like [[eachBackend]] but marks `pendingUntilFixed` (with the returned reason) every cell whose backend name `pendingCell` maps to
+      * `Present`, while every other cell runs as a plain leaf. Pins a contract violation that only some drivers have: the violating cells
+      * report Pending while they still fail and flip to a failure once fixed, and the conforming cells keep asserting the contract.
+      */
+    def eachBackendPending(pendingCell: String => Maybe[String])(
+        scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
+        backendLeaves(_ => Absent, pendingCell)(scenario)
+
     /** Like [[eachBackend]], but each leaf is judged by its progress instead of the module's per-leaf time budget.
       *
       * The scenario reports every unit of work it completes through the [[ProgressWatchdog.Progress]] it receives. The leaf has no time limit:
@@ -91,11 +100,13 @@ abstract class Test extends kyo.test.Test[Any]:
             }
         }
 
-    private def backendLeaves(skipCell: String => Maybe[String])(
+    private def backendLeaves(skipCell: String => Maybe[String], pendingCell: String => Maybe[String] = _ => Absent)(
         scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(using Frame): Unit =
         TestBackends.all.foreach { entry =>
-            s"[${entry.name}]" in {
+            val leaf = s"[${entry.name}]".tagged()
+            // The runner reports a cancelled pending leaf as Pending, so a cell that cannot run is never marked, keeping its cancel visible.
+            pendingCell(entry.name).filter(_ => entry.isAvailable).fold(leaf)(reason => leaf.pendingUntilFixed(reason)) in {
                 if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
                 else
                     skipCell(entry.name) match
@@ -163,7 +174,22 @@ abstract class Test extends kyo.test.Test[Any]:
     )(using Frame): Unit =
         tlsLeaves(config)((_, _) => Absent)(scenario)
 
-    private def tlsLeaves(config: NetConfig)(skipCell: (String, String) => Maybe[String])(
+    /** Like [[eachBackendTls]] with `config`, but marks `pendingUntilFixed` (with the returned reason) every (backend, provider) cell
+      * `pendingCell` maps to `Present`; every other cell runs as a plain leaf. The TLS counterpart of [[eachBackendPending]].
+      */
+    def eachBackendTlsPending(config: NetConfig)(pendingCell: (String, String) => Maybe[String])(
+        scenario: (
+            Transport,
+            NetTlsConfig,
+            NetTlsConfig
+        ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
+        tlsLeaves(config)((_, _) => Absent, pendingCell)(scenario)
+
+    private def tlsLeaves(config: NetConfig)(
+        skipCell: (String, String) => Maybe[String],
+        pendingCell: (String, String) => Maybe[String] = (_, _) => Absent
+    )(
         scenario: (
             Transport,
             NetTlsConfig,
@@ -178,7 +204,10 @@ abstract class Test extends kyo.test.Test[Any]:
             // Inert by default (unset = every registered provider).
             provider <- TlsProviderPlatform.registered.filter(p => Test.isolationEnv("KYO_NET_TLS_ONLY").forall(_ == p.name))
         do
-            s"[${entry.name} / ${provider.name}]" in {
+            val leaf = s"[${entry.name} / ${provider.name}]".tagged()
+            pendingCell(entry.name, provider.name)
+                .filter(_ => entry.isAvailable && provider.probe.isAvailable)
+                .fold(leaf)(reason => leaf.pendingUntilFixed(reason)) in {
                 if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
                 else if !provider.probe.isAvailable then cancel(s"TLS impl ${provider.name} not available on this host")
                 else
