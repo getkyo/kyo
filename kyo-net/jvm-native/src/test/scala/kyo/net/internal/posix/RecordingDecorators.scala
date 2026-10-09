@@ -117,18 +117,30 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     def listen(fd: Int, backlog: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
         real.listen(fd, backlog)
 
+    // (syscall name, buffer) for every buffer passed to a per-call syscall (setsockopt, getsockopt, getsockname, getpeername, fstat,
+    // acceptNow): buffer identity, so a test can check how the transport allocated its per-call scratch.
+    val scratchBufs: ConcurrentLinkedQueue[(String, Buffer[?])] = new ConcurrentLinkedQueue[(String, Buffer[?])]()
+
+    private def scratch(call: String, bufs: Buffer[?]*): Unit =
+        bufs.foreach(b => discard(scratchBufs.add((call, b))))
+
     def setsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
+        scratch("setsockopt", optval)
         real.setsockopt(fd, level, optname, optval, optlen)
 
     def getsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
+        scratch("getsockopt", optval, optlen)
         real.getsockopt(fd, level, optname, optval, optlen)
 
     def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
+        scratch("getsockname", addr, addrlen)
         real.getsockname(fd, addr, addrlen)
     def getpeername(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
+        scratch("getpeername", addr, addrlen)
         real.getpeername(fd, addr, addrlen)
 
     def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.Outcome[Int] =
+        scratch("fstat", buf)
         real.fstat(fd, buf)
 
     def shutdown(fd: Int, how: Int)(using AllowUnsafe): Int =
@@ -226,6 +238,7 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
 
     def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
         discard(callOrder.add(s"accept($fd)"))
+        scratch("acceptNow", addr, addrlen)
         val r = real.acceptNow(fd, addr, addrlen)
         if r.value >= 0 then
             val hook = onAccepted

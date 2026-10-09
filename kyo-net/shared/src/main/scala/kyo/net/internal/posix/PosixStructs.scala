@@ -209,7 +209,9 @@ private[net] case class IoUringCqe(userData: Long, res: Int, flags: Int) derives
   * order. Ports and IPv4/IPv6 addresses are written in network byte order (big-endian) as the socket API requires. Each encoder returns the
   * allocated buffer paired with the `socklen_t` length to pass to `bind`/`connect`.
   *
-  * The caller owns the returned buffer and must `close()` it once the syscall that reads it has returned.
+  * The caller owns the returned buffer and must `close()` it once the syscall that reads it has returned. The buffer is in a shared arena
+  * because a connect target crosses carriers: it is encoded on the resolving fiber's carrier and freed on the driver's engine FIFO once the
+  * connect resolves, and on io_uring the kernel reads it until the connect CQE reaps.
   */
 private[net] object SockAddr:
 

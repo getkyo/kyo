@@ -17,7 +17,7 @@ import kyo.net.internal.transport.WriteResult
   * `io_uring.max` cgroup cap), the leaf cancels cleanly. On native Linux (no cgroup cap) the ring inits and the leaf drives the real ring.
   *
   * The completion / cancel / park machinery is driven against a real ring through a [[RecordingIoUringBindings]] spy: every ring op
-  * delegates to the real bindings and the kernel actually completes it; the spy only observes (the per-write send buffer, the keys set on
+  * delegates to the real bindings and the kernel actually completes it; the spy only observes (the pinned send buffer, the keys set on
   * submitted SQEs, the wait timeout, and a latch fired when each CQE is reaped). No completion value is scripted: a recv that ends in
   * Closed does so because a real peer reset the connection (ECONNRESET), an EOF because a real peer closed, an SQ-full park because a real depth-1
   * ring genuinely has no free SQE.
@@ -25,7 +25,7 @@ import kyo.net.internal.transport.WriteResult
   * Covers: the completion contract (echo bytes equal, res==0 EOF, res<0 Closed naming the real errno, an SQ-full recv parked then re-armed to
   * deliver); the conditional park (indefinite when wake-armed with NODROP confirmed and no stalled ops; bounded ReapTimeoutNs as fallback for
   * older kernels, unarmed wake, or stalled ops); the close ordering (an in-flight buffer is never freed until its CQE is reaped; closeHandle
-  * cancels then defers PosixHandle.close until the handle drains; per-write buffer closed only on reap; shared arena); and the accept contract
+  * cancels then defers PosixHandle.close until the handle drains; the raw send pins the handle's reused send mirror; shared arena); and the accept contract
   * (positive CQE yields the accepted fd; a failed accept yields Closed naming the errno; an SQ-full accept parked then re-armed to complete;
   * re-arm across two accepts).
   */
@@ -434,18 +434,18 @@ class IoUringDriverTest extends Test:
             }
         }
 
-        "a per-write Buffer is closed only after its send CQE is reaped" in {
+        "a raw send pins the handle's reused send mirror, which outlives the send CQE" in {
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload = Span.fromUnsafe(Array.tabulate[Byte](8)(i => i.toByte))
                     val reaped  = recording.awaitReap()
-                    // Observe the per-write buffer OPEN while its send SQE is prepped-but-unsubmitted, deterministically and without any
+                    // Observe the send buffer OPEN while its send SQE is prepped-but-unsubmitted, deterministically and without any
                     // dependency on reap-loop latency. The reap wait blocks on a bounded timeout and is woken promptly by a submission, so a flush
                     // op queued ahead of a single pin would be prepped AND its send SQE submitted + reaped before the test could observe the
                     // in-flight window. Two pins close that race: pin1 blocks the carrier FIRST, so the write's flush op (and pin2) queue behind
-                    // a blocked carrier; releasing gate1 then runs the flush (prep the send SQE + record the per-write buffer) and parks at pin2
+                    // a blocked carrier; releasing gate1 then runs the flush (prep the send SQE + record the send buffer) and parks at pin2
                     // within the SAME drainEngineOps pass, BEFORE submit_and_wait submits the SQE, so the buffer is provably open at pin2.
                     val gate1  = new java.util.concurrent.CountDownLatch(1)
                     val gate2  = new java.util.concurrent.CountDownLatch(1)
@@ -473,17 +473,19 @@ class IoUringDriverTest extends Test:
                             assert(before.nonEmpty, "no send buffer recorded")
                             assert(
                                 openWhilePinned == Present(true),
-                                "per-write buffer must stay open while the send SQE is prepped but unsubmitted"
+                                "send buffer must stay open while the send SQE is prepped but unsubmitted"
                             )
-                            // The driver closes the per-write buffer in complete() (releaseBuffer) BEFORE cqe_seen, so awaiting the reap latch is
-                            // the deterministic "send CQE reaped, buffer lifecycle ran" signal. The buffer must be closed by then, not before.
+                            assert(
+                                before.exists(b => clientH.sendMirror.exists(_ eq b)),
+                                "the raw send must pin the handle's sendMirror, not a per-write buffer"
+                            )
+                            // The reap latch fires after the send CQE is processed. The mirror is owned by the handle, so it must survive the reap
+                            // for the next flush to refill.
                             reaped.safe.get.map { _ =>
+                                val openAfterReap = before.exists(b => !b.isClosed)
                                 drv.closeHandle(clientH)
                                 discard(sock.close(accepted))
-                                assert(
-                                    before.exists(_.isClosed),
-                                    "per-write buffer must be closed once its send CQE is reaped"
-                                )
+                                assert(openAfterReap, "the send mirror must stay open once its send CQE is reaped")
                             }
                         }
                     }

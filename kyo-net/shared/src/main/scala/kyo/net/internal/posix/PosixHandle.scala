@@ -313,6 +313,12 @@ final private[net] class PosixHandle private (
       */
     @volatile var recvStaging: Maybe[Buffer[Byte]] = Absent
 
+    /** The `sockaddr` / `socklen_t` placeholders an io_uring accept SQE on this listen handle points the kernel at; the peer address written
+      * there is discarded. Lazily allocated by the reap carrier on the first accept and reused by every later one, which is safe because the
+      * accept loop arms the next accept only after the previous one completed. Freed in freeResources, after the last accept CQE reaps.
+      */
+    @volatile var acceptPlaceholders: Maybe[(Buffer[Byte], Buffer[Int])] = Absent
+
     /** Ownership tag for [[recvStaging]], stamped with this handle's own [[id]] at allocation (see `IoUringDriver.recvStagingFor`). An
       * always-on invariant, not a diagnostic: every point that feeds `recvStaging`'s bytes into a TLS engine re-checks this against the
       * feeding handle's own id immediately before the feed (`IoUringDriver.complete`). Since `recvStaging` is a field on THIS handle
@@ -388,10 +394,11 @@ final private[net] class PosixHandle private (
       */
     @volatile var flushReArmPending: Boolean = false
 
-    /** Pump-carrier-owned reused off-heap send buffer for plaintext writes. writeRaw copies the unsent plaintext region once into this buffer
-      * and sends from it, eliminating the per-write Buffer.fromArray/close alloc churn. Grown on demand; never shrunk. Lazily allocated on
-      * the first writeRaw call. Freed in freeResources. Owned by the write pump carrier (writeRaw runs synchronously on that carrier under
-      * beginWrite/endWrite guard), so no cross-fiber synchronization is needed beyond the write guard's sequencing.
+    /** Reused off-heap send buffer for plaintext writes. The driver copies the unsent plaintext region once into this buffer and sends from
+      * it, eliminating the per-write Buffer.fromArray/close alloc churn. Grown on demand; never shrunk. Lazily allocated on the first raw
+      * send. Freed in freeResources. The owner is whichever driver serves this handle: for the readiness poller the write pump carrier
+      * (writeRaw runs synchronously under the beginWrite/endWrite guard); for io_uring the engine FIFO worker (flushRaw), refilled only while
+      * no raw send SQE is in flight and pinned in its `PendingOp.Write` until the CQE reaps.
       */
     @volatile var sendMirror: Maybe[Buffer[Byte]] = Absent
 
@@ -815,6 +822,11 @@ private[net] object PosixHandle:
         h.flushMirror = Absent
         h.sendMirror.foreach(_.close())
         h.sendMirror = Absent
+        h.acceptPlaceholders.foreach { (addr, len) =>
+            addr.close()
+            len.close()
+        }
+        h.acceptPlaceholders = Absent
         // NOT an at-rest invariant here (deliberately, after testing one): unlike recvInFlight (a second recv while one is kernel-owned
         // is ALWAYS wrong, no legitimate case), unsent bytes in pendingCipher at freeResources time is routine, correct behavior, not a
         // stale-accounting symptom. freeResources is the single free path for every close, including an abrupt one that deliberately

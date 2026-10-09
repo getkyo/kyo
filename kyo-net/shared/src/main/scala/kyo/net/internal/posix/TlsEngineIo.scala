@@ -265,6 +265,16 @@ private[posix] object TlsEngineIo:
       * shared immutable instance (an empty array is read-only), so the fast path allocates nothing extra.
       */
     val FatalRecord: Array[Byte] = new Array[Byte](0)
+
+    /** Feed `len` bytes of `arr` from `off` to `engine` through a thread-confined scratch copy, returning the engine's result. Every engine
+      * copies the ciphertext before `feedCiphertext` returns, so the scratch never leaves this call. It is confined because closing a shared
+      * JVM arena forces a handshake with every platform thread, which per handshake record dominated TLS connection setup.
+      */
+    def feedHeap(engine: TlsEngine, arr: Array[Byte], off: Int, len: Int)(using AllowUnsafe): Int =
+        Buffer.confinedUse[Byte, Int](len) { buf =>
+            buf.copyFromArray(arr, off, 0, len)
+            engine.feedCiphertext(buf, len)
+        }
 end TlsEngineIo
 
 /** Receives one drained ciphertext chunk `(buf, len)` from the encrypt loop in [[TlsEngineIo.encryptPlaintext]]. A single-abstract-method class

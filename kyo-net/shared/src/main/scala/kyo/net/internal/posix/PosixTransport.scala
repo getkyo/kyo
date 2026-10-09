@@ -839,16 +839,14 @@ final private[net] class PosixTransport private[posix] (
                     val buffered = engine.readBuffered()
                     if buffered.nonEmpty then acc.write(buffered.toArrayUnsafe)
                 // Also pull any further records the engine can decrypt from ciphertext it already holds.
-                var more = true
-                while more do
-                    val out = Buffer.alloc[Byte](handle.readBufferSize)
-                    try
+                Buffer.confinedUse[Byte, Unit](handle.readBufferSize) { out =>
+                    var more = true
+                    while more do
                         val n = engine.readPlain(out, handle.readBufferSize)
                         if n > 0 then acc.write(Buffer.copyToArray[Byte](out, 0, n))
                         else more = false
-                    finally out.close()
-                    end try
-                end while
+                    end while
+                }
                 val bytes = acc.toByteArray
                 if bytes.length > 0 then discard(inbound.offer(Span.fromUnsafe(bytes)))
         end match
@@ -1133,8 +1131,8 @@ final private[net] class PosixTransport private[posix] (
             Clock.live.unsafe.sleep(acceptResourceBackoff).onComplete(_ => scheduleNextAccept())
 
         def acceptAll()(using AllowUnsafe, Frame): AcceptDrain =
-            val noAddr = Buffer.alloc[Byte](SockAddr.inet6Size)
-            val noLen  = Buffer.alloc[Int](1)
+            val noAddr = Buffer.allocConfined[Byte](SockAddr.inet6Size)
+            val noLen  = Buffer.allocConfined[Int](1)
             noLen.set(0, SockAddr.inet6Size)
             try
                 @scala.annotation.tailrec
@@ -1451,7 +1449,7 @@ final private[net] class PosixTransport private[posix] (
 
     /** Set a 4-byte integer socket option. Best-effort: the value buffer is laid out little-endian (all supported targets are LE). */
     private def setIntOpt(fd: Int, level: Int, optname: Int, value: Int)(using AllowUnsafe): Unit =
-        val opt = Buffer.alloc[Byte](4)
+        val opt = Buffer.allocConfined[Byte](4)
         try
             var i = 0
             while i < 4 do
@@ -1466,8 +1464,8 @@ final private[net] class PosixTransport private[posix] (
       * connect's `errno`. The option is a 4-byte int read little-endian.
       */
     private def soError(fd: Int)(using AllowUnsafe): Int =
-        val opt = Buffer.alloc[Byte](4)
-        val len = Buffer.alloc[Int](1)
+        val opt = Buffer.allocConfined[Byte](4)
+        val len = Buffer.allocConfined[Int](1)
         len.set(0, 4)
         try
             if sockets.getsockopt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_ERROR, opt, len).value != 0 then -1
@@ -1584,8 +1582,8 @@ final private[net] class PosixTransport private[posix] (
       */
     private def resolvePort(fd: Int, family: Int)(using AllowUnsafe): Int =
         val size = if family == PosixConstants.AF_INET6 then SockAddr.inet6Size else SockAddr.inet4Size
-        val out  = Buffer.alloc[Byte](size)
-        val ol   = Buffer.alloc[Int](1)
+        val out  = Buffer.allocConfined[Byte](size)
+        val ol   = Buffer.allocConfined[Int](1)
         ol.set(0, size)
         try
             if sockets.getsockname(fd, out, ol).value != 0 then 0
@@ -1605,7 +1603,7 @@ final private[net] class PosixTransport private[posix] (
         !(ioDriver.label == "PollerIoDriver" && backendIsEpoll && isRegularFile(fd))
 
     private def isRegularFile(fd: Int)(using AllowUnsafe): Boolean =
-        val stat = Buffer.alloc[Byte](PosixConstants.statSize)
+        val stat = Buffer.allocConfined[Byte](PosixConstants.statSize)
         try
             if sockets.fstat(fd, stat).value < 0 then false
             else (PosixStat.stMode(stat) & PosixConstants.S_IFMT) == PosixConstants.S_IFREG
@@ -1895,9 +1893,7 @@ final private[net] class PosixTransport private[posix] (
                                         handle.upgradeHandoff.get() match
                                             case staged: PosixHandle.UpgradeHandoff.Carryover =>
                                                 discard(handle.upgradeHandoff.compareAndSet(staged, PosixHandle.UpgradeHandoff.Idle))
-                                                val drainBuf = Buffer.fromArray[Byte](staged.bytes)
-                                                try discard(engine.feedCiphertext(drainBuf, staged.bytes.length))
-                                                finally drainBuf.close()
+                                                discard(TlsEngineIo.feedHeap(engine, staged.bytes, 0, staged.bytes.length))
                                             case _ => ()
                                         end match
                                         // Deliver any application plaintext the handshake already decrypted before the pumps start, so a record
@@ -2037,11 +2033,7 @@ final private[net] class PosixTransport private[posix] (
     private def feedStaged(engine: TlsEngine, staged: Chunk[Span[Byte]])(using AllowUnsafe): Unit =
         staged.foreach { sp =>
             val arr = sp.toArrayUnsafe
-            if arr.length > 0 then
-                val buf = Buffer.fromArray[Byte](arr)
-                try discard(engine.feedCiphertext(buf, arr.length))
-                finally buf.close()
-            end if
+            if arr.length > 0 then discard(TlsEngineIo.feedHeap(engine, arr, 0, arr.length))
         }
 
     /** If the connection's last plaintext read carried the peer's first TLS handshake flight behind the upgrade signal, feed those bytes into
@@ -2066,11 +2058,7 @@ final private[net] class PosixTransport private[posix] (
                         // losing it means the salvage already claimed (and is feeding, or will feed) this exact chunk, so skip here instead
                         // of handing the engine the same handshake record twice.
                         if handle.lastPlaintextRead.compareAndSet(p, Absent) then
-                            val tail = java.util.Arrays.copyOfRange(arr, start, arr.length)
-                            val buf  = Buffer.fromArray[Byte](tail)
-                            try discard(engine.feedCiphertext(buf, tail.length))
-                            finally buf.close()
-                        end if
+                            discard(TlsEngineIo.feedHeap(engine, arr, start, arr.length - start))
                     end if
                 end if
         end match
@@ -2197,7 +2185,7 @@ final private[net] class PosixTransport private[posix] (
         onPanic: Throwable => Unit
     )(using AllowUnsafe, Frame): Unit =
         try
-            val out = Buffer.alloc[Byte](handle.readBufferSize)
+            val out = Buffer.allocConfined[Byte](handle.readBufferSize)
             try
                 val n = engine.drainCiphertext(out, handle.readBufferSize)
                 if n <= 0 then cont()
@@ -2305,9 +2293,7 @@ final private[net] class PosixTransport private[posix] (
             if isReaped() then ()
             else
                 try
-                    val buf = Buffer.fromArray[Byte](arr)
-                    try discard(engine.feedCiphertext(buf, arr.length))
-                    finally buf.close()
+                    discard(TlsEngineIo.feedHeap(engine, arr, 0, arr.length))
                     cont()
                 catch
                     // Contain ANY throw (not just NonFatal): a driver-carrier throw is routed to onPanic,
@@ -2448,9 +2434,7 @@ final private[net] class PosixTransport private[posix] (
                     if isReaped() then ()
                     else
                         try
-                            val buf = Buffer.fromArray[Byte](cipherArr)
-                            try discard(engine.feedCiphertext(buf, n))
-                            finally buf.close()
+                            discard(TlsEngineIo.feedHeap(engine, cipherArr, 0, n))
                             cont()
                         catch
                             // Contain ANY throw (not just NonFatal): a driver-carrier throw is routed to onPanic,
@@ -2501,9 +2485,7 @@ final private[net] class PosixTransport private[posix] (
                             if isReaped() then ()
                             else
                                 try
-                                    val buf = Buffer.fromArray[Byte](arr)
-                                    try discard(engine.feedCiphertext(buf, arr.length))
-                                    finally buf.close()
+                                    discard(TlsEngineIo.feedHeap(engine, arr, 0, arr.length))
                                     cont()
                                 catch
                                     // Contain ANY throw (not just NonFatal): a driver-carrier throw is routed to onPanic,
