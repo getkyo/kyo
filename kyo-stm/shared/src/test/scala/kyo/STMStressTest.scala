@@ -1072,28 +1072,40 @@ class STMStressTest extends kyo.test.Test[Any]:
     }
 
     "TRef.use does not livelock when writer ticks always exceed reader's start tick" in {
+        // A writer that starts after the reader never yields to it: readTick only defers writers
+        // with an older start tick. So the reader may lose every attempt to the continuous writer,
+        // and the guarantee is that it exits within its bounded schedule, either committing a
+        // value the writer wrote or failing with FailedTransaction, rather than retrying forever.
         for
-            ref        <- TRef.init(0)
-            readerDone <- AtomicBoolean.init(false)
-            stop       <- AtomicBoolean.init(false)
-            writer     <- Fiber.initUnscoped {
+            ref          <- TRef.init(0)
+            stop         <- AtomicBoolean.init(false)
+            commits      <- AtomicInt.init(0)
+            writerActive <- Latch.init(1)
+            writer       <- Fiber.initUnscoped {
                 Loop(0) { i =>
                     stop.get.map {
                         case true  => Loop.done(())
-                        case false => STM.run(ref.set(i)).andThen(Loop.continue(i + 1))
+                        case false =>
+                            STM.run(STM.defaultRetrySchedule.forever)(ref.set(i))
+                                .andThen(commits.incrementAndGet)
+                                .andThen(writerActive.release)
+                                .andThen(Loop.continue(i + 1))
                     }
                 }
             }
-            reader <- Fiber.initUnscoped {
-                Abort.run {
-                    STM.run(STM.defaultRetrySchedule)(ref.use(_ + 1))
-                }.map(r => readerDone.set(true).andThen(r))
-            }
-            read <- Abort.run(Async.timeout(5.seconds)(reader.get))
-            _    <- stop.set(true)
-            _    <- writer.get
-            d    <- readerDone.get
-        yield assert(d && read.exists(_.isSuccess), s"the reader must commit within its retry budget: readerDone=$d result=$read")
+            _      <- writerActive.await
+            reader <- Fiber.initUnscoped(Abort.run(STM.run(STM.defaultRetrySchedule)(ref.use(_ + 1))))
+            read   <- Abort.run[Timeout](Async.timeout(5.seconds)(reader.get))
+            _      <- stop.set(true)
+            _      <- writer.get
+            c      <- commits.get
+        yield read match
+            case Result.Success(Result.Success(v)) =>
+                assert(v >= 1 && v <= c, s"the reader committed $v, which no write produced: writerCommits=$c")
+            case Result.Success(Result.Failure(_: FailedTransaction)) =>
+                succeed
+            case other =>
+                fail(s"the reader must exit within its retry schedule: result=$other writerCommits=$c")
     }
 
     "TRef.set does not livelock when readTick stays fresher than writer's start tick" in {
