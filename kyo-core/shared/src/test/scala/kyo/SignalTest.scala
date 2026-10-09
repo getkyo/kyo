@@ -990,6 +990,27 @@ class SignalTest extends kyo.test.Test[Any]:
             _ <- seen.close
         yield misses.foldLeft(0)(_ + _)
 
+    private def streamChangesNeverLosesFinalValue(iterations: Int)(using Frame): Int < Async =
+        for
+            ref    <- Signal.initRef("")
+            seen   <- Channel.initUnscoped[String](16)
+            fiber  <- Fiber.initUnscoped(ref.streamChanges.foreach(v => Abort.run[Closed](seen.put(v)).unit))
+            misses <- Kyo.foreach(Chunk.from(1 to iterations)) { i =>
+                val a                                          = s"a$i"
+                val b                                          = s"b$i"
+                def untilFinal: Unit < (Async & Abort[Closed]) =
+                    seen.take.map(v => if v == b then () else untilFinal)
+                for
+                    _   <- ref.set(a)
+                    _   <- ref.set(b)
+                    got <- Abort.run[Timeout | Closed](Async.timeout(2.seconds)(untilFinal))
+                yield if got.isSuccess then 0 else 1
+                end for
+            }
+            _ <- fiber.interrupt
+            _ <- seen.close
+        yield misses.foldLeft(0)(_ + _)
+
     "observe" - {
         "emits the current value on subscription" in {
             for
@@ -1320,6 +1341,10 @@ class SignalTest extends kyo.test.Test[Any]:
                 .map(lost => assert(lost == 0, s"map lost $lost / 5000 without repair"))
         }
 
+        "streamChanges never loses the final value under back-to-back writes" in {
+            streamChangesNeverLosesFinalValue(iterations = 5000).map(lost => assert(lost == 0, s"streamChanges lost $lost / 5000"))
+        }
+
         "delivers a write that lands while f runs, without repair (SignalRef leaf)" in {
             for
                 ref     <- Signal.initRef(0)
@@ -1387,6 +1412,119 @@ class SignalTest extends kyo.test.Test[Any]:
                 v3  <- Sync.defer(ref.unsafe.version())
             yield assert(v1 == v0 && v2 == v0 + 1 && v3 == v0 + 2)
             end for
+        }
+    }
+
+    "observe with a baseline" - {
+        "runs nothing while the current value equals the baseline" in {
+            for
+                ref    <- Signal.initRef(0)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(ref.observe(Present(0), Signal.defaultRepairInterval)(recordValue(seen, _)))
+                _      <- assertEventually(ref.waiters.map(_ == 1))
+                silent <- seen.get
+                _      <- ref.set(1)
+                _      <- pollUntil(seen.get.map(_.contains(1)))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(silent.isEmpty && result == Chunk(1))
+        }
+
+        "delivers a write that landed between processing the baseline and subscribing" in {
+            for
+                ref       <- Signal.initRef("a")
+                processed <- ref.current
+                _         <- ref.set("b")
+                seen      <- AtomicRef.init(Chunk.empty[String])
+                fiber     <- Fiber.initUnscoped(ref.observe(Present(processed), Signal.defaultRepairInterval)(recordValue(seen, _)))
+                ok        <- pollUntil(seen.get.map(_.contains("b")))
+                _         <- fiber.interrupt
+            yield assert(ok)
+        }
+
+        "a map chain runs nothing while the source's image equals the baseline" in {
+            for
+                ref <- Signal.initRef(1)
+                sig = ref.map(_ * 2)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(sig.observe(Present(2), Signal.defaultRepairInterval)(recordValue(seen, _)))
+                _      <- assertEventually(ref.waiters.map(_ == 1))
+                silent <- seen.get
+                _      <- ref.set(2)
+                _      <- pollUntil(seen.get.map(_.contains(4)))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(silent.isEmpty && result == Chunk(4))
+        }
+
+        "streamChanges with a baseline starts at the first value that differs from it" in {
+            for
+                ref    <- Signal.initRef(0)
+                fiber  <- Fiber.initUnscoped(ref.streamChanges(Present(0)).take(2).run)
+                _      <- assertEventually(ref.waiters.map(_ == 1))
+                _      <- ref.set(1)
+                _      <- assertEventually(ref.waiters.map(_ == 1))
+                _      <- ref.set(2)
+                values <- fiber.get
+            yield assert(values == Chunk(1, 2))
+        }
+
+        "streamChanges with an absent baseline starts at the current value" in {
+            for
+                ref    <- Signal.initRef(0)
+                fiber  <- Fiber.initUnscoped(ref.streamChanges(Absent).take(2).run)
+                _      <- assertEventually(ref.waiters.map(_ == 1))
+                _      <- ref.set(1)
+                values <- fiber.get
+            yield assert(values == Chunk(0, 1))
+        }
+    }
+
+    "projected observation" - {
+        "an observer of a map runs only when the map's own value changes" in {
+            for
+                ref  <- Signal.initRef(1)
+                seen <- AtomicRef.init(Chunk.empty[Boolean])
+                sig = ref.map(_ > 0)
+                fiber  <- Fiber.initUnscoped(sig.observe(recordValue(seen, _)))
+                _      <- assertEventually(ref.waiters.map(_ == 1))
+                _      <- ref.set(2)
+                _      <- assertEventually(ref.waiters.map(_ == 1))
+                still  <- seen.get
+                _      <- ref.set(-1)
+                _      <- pollUntil(seen.get.map(_.size == 2))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(still == Chunk(true) && result == Chunk(true, false))
+        }
+
+        "an idle observer of a map chain holds exactly one waiter on the leaf" in {
+            for
+                ref  <- Signal.initRef(0)
+                seen <- AtomicRef.init(Chunk.empty[Int])
+                sig = ref.map(v => v).map(v => v).map(v => v)
+                fiber <- Fiber.initUnscoped(sig.observe(10.millis)(recordValue(seen, _)))
+                _     <- pollUntil(seen.get.map(_.nonEmpty))
+                _     <- Async.sleep(100.millis)
+                w     <- ref.waiters
+                _     <- fiber.interrupt
+            yield assert(w == 1, s"map chain left $w waiters on the leaf")
+        }
+
+        "a constant delivers once and holds its scope across would-be repair intervals" in {
+            for
+                seen     <- AtomicRef.init(Chunk.empty[Int])
+                released <- AtomicRef.init(false)
+                fiber    <- Fiber.initUnscoped(Signal.initConst(7).observe(10.millis) { v =>
+                    Scope.ensure(released.set(true)).andThen(recordValue(seen, v))
+                })
+                _         <- pollUntil(seen.get.map(_.nonEmpty))
+                _         <- Async.sleep(100.millis)
+                values    <- seen.get
+                duringRun <- released.get
+                _         <- fiber.interrupt
+                afterStop <- pollUntil(released.get)
+            yield assert(values == Chunk(7) && !duringRun && afterStop)
         }
     }
 
