@@ -5,6 +5,7 @@ import kyo.net.internal.JsHandle
 import kyo.net.internal.JsIoDriver
 import kyo.net.internal.JsTransport
 import kyo.net.internal.NodeNet
+import kyo.net.internal.StdioStreams
 import kyo.net.internal.transport.Connection as InternalConnection
 import kyo.net.internal.transport.WriteState
 import scala.scalajs.js as sjs
@@ -230,6 +231,26 @@ class JsTransportCloseContractTest extends Test:
                 s"the write parked on drain must settle once its socket is gone, writeState=${internal.writeState.getClass.getSimpleName}; driver: $section"
             )
             assert(section.contains("pendingWritables=0"), s"no writable may stay pending on the driver: $section")
+        end for
+    }
+
+    "a stdio close leaves no listener on stdin or stdout".pendingUntilFixed(
+        "N6: closeHandle leaves its finish/close listeners on stdout, which never ends, and JsHandle's data/end/close/error stay on stdin"
+    ) in {
+        val streams  = new StdioStreams
+        val baseline = streams.listenerCounts()
+        for
+            (transport, _) <- ownTransport(Clock.live)
+            conn           <- transport.openStdio(streams.stdin, streams.stdout, channelCapacity = 4).safe.get
+            _              <- Sync.defer(conn.close())
+        yield
+            // An idle close releases the handle inside close(), so the listener counts below are read after closeHandle ran.
+            assert(conn.asInstanceOf[InternalConnection[JsHandle]].isReleased, "an idle stdio close must release the handle")
+            val after = streams.listenerCounts()
+            assert(
+                after == baseline,
+                s"a closed stdio connection must leave the streams' listeners as it found them: before $baseline, after $after"
+            )
         end for
     }
 
