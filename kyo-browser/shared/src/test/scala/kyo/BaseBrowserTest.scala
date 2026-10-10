@@ -8,8 +8,8 @@ package kyo
   */
 abstract class BaseBrowserTest extends kyo.test.Test[Any]:
 
-    // Browser suites drive a single per-suite Chrome (the sbt build forks one JVM + one SharedChrome per suite
-    // and runs suites serially). Run each suite's leaves sequentially too: under kyo-test's default leaf
+    // Browser suites drive the one SharedChrome of the process, and the build runs suites one at a time. Run
+    // each suite's leaves sequentially too: under kyo-test's default leaf
     // parallelism dozens of leaves hammer that one Chrome at once, producing BrowserProtocolErrorExceptions and
     // timeouts. ScalaTest's AsyncFreeSpec ran leaves sequentially within a suite; this restores that.
     //

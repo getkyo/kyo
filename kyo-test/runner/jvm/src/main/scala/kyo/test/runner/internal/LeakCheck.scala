@@ -318,7 +318,68 @@ private[runner] object LeakCheck:
       * still detecting file-descriptor leaks (e.g. an unclosed `Files.list` directory stream).
       */
     def fdLeaksForCategories(leaks: Chunk[String], checkSockets: Boolean, checkFileDescriptors: Boolean): Chunk[String] =
-        leaks.filter(target => if target.startsWith("socket:[") then checkSockets else checkFileDescriptors)
+        leaks.filter(target => checksCategory(target, checkSockets, checkFileDescriptors))
+
+    private def checksCategory(target: String, checkSockets: Boolean, checkFileDescriptors: Boolean): Boolean =
+        if target.startsWith("socket:[") then checkSockets else checkFileDescriptors
+
+    /** The descriptors one suite's task opened and still held when it returned, with the descriptor categories that suite checks. `solo` is
+      * false when another task of the fork ran during any part of the window, so the descriptors cannot be told apart by suite.
+      */
+    final case class SuiteWindow(opened: Set[String], solo: Boolean, checkSockets: Boolean, checkFileDescriptors: Boolean)
+        derives CanEqual
+
+    /** The descriptors the end-of-run probe excuses because the suite that opened them exempted their category, given the windows in the
+      * order they closed.
+      *
+      * A suite's category exemption covers what that suite opened, not the whole fork: a process-lifetime resource that a suite exempts
+      * (a shared browser, a shared server) must not fail a fork where a later suite still checks that category, and that later suite must
+      * still be charged for what it opens. The last window that opened a target owns it, so a target closed and reopened by a checking suite
+      * is charged to that suite. A window that overlapped another task's never excuses, since the opener is ambiguous there.
+      */
+    def exemptedFds(windows: Seq[SuiteWindow]): Set[String] =
+        windows.foldLeft(Map.empty[String, Boolean]) { (owners, window) =>
+            window.opened.foldLeft(owners) { (acc, target) =>
+                acc.updated(target, window.solo && !checksCategory(target, window.checkSockets, window.checkFileDescriptors))
+            }
+        }.collect { case (target, true) => target }.toSet
+
+    /** Records a [[SuiteWindow]] around each suite task of a fork. `open` and `close` bracket one task and snapshot the open descriptors on
+      * both sides; where `/proc/self/fd` is unavailable nothing is recorded.
+      */
+    final class SuiteWindows(snapshot: () => Maybe[Set[String]]):
+        def this() = this(() => openFdTargets())
+
+        private val active  = new java.util.concurrent.atomic.AtomicInteger(0)
+        private val starts  = new java.util.concurrent.atomic.AtomicLong(0L)
+        private val windows = new java.util.concurrent.ConcurrentLinkedQueue[SuiteWindow]()
+
+        def open(): SuiteWindows.Open =
+            val alone = active.incrementAndGet() == 1
+            val start = starts.incrementAndGet()
+            SuiteWindows.Open(snapshot(), alone, start)
+        end open
+
+        def close(window: SuiteWindows.Open, checkSockets: Boolean, checkFileDescriptors: Boolean): Unit =
+            val after = snapshot()
+            // Read before leaving the window: a task that starts after this read opens its own window after this snapshot.
+            val solo = window.alone && starts.get() == window.start
+            discard(active.decrementAndGet())
+            window.before.foreach { before =>
+                after.foreach { now =>
+                    val opened = now.filter(target => !before.contains(target) && !benignFd(target))
+                    discard(windows.add(SuiteWindow(opened, solo, checkSockets, checkFileDescriptors)))
+                }
+            }
+        end close
+
+        def recorded: Seq[SuiteWindow] = windows.asScala.toSeq
+
+        def exempted: Set[String] = exemptedFds(recorded)
+    end SuiteWindows
+
+    object SuiteWindows:
+        final case class Open(before: Maybe[Set[String]], alone: Boolean, start: Long)
 
     private val tcpStates = Map(
         "01" -> "ESTABLISHED",
@@ -445,11 +506,13 @@ private[runner] object LeakCheck:
       * this trims false positives without hiding real leaks). The fiber probe builds a per-busy-worker dump (each worker's rendered kyo trace,
       * when its task carries one, plus its JVM thread stack) and matches the allowlist against either the kyo trace or the JVM stack of each busy
       * worker. Every busy worker must match before the finding is excused, so one expected event loop cannot hide another worker's leak.
-      * The descriptor probe enumerates `/proc/self/fd` and reports the exact leaked targets with no count tolerance.
+      * The descriptor probe enumerates `/proc/self/fd` and reports the exact leaked targets with no count tolerance, less `exemptedFds`
+      * (see [[exemptedFds]]).
       */
     def detect(
         baseline: Baseline,
         allowlist: Chunk[String],
+        exemptedFds: Set[String],
         checkFibers: Boolean,
         checkThreads: Boolean,
         checkFileDescriptors: Boolean,
@@ -511,7 +574,7 @@ private[runner] object LeakCheck:
                     // window, never a real leak.)
                     def leaksNow(): Chunk[String] =
                         val raw = openFdTargets().map(fdLeaks(before, _, effectiveAllowlist)).getOrElse(Chunk.empty)
-                        fdLeaksForCategories(raw, checkSockets, checkFileDescriptors)
+                        fdLeaksForCategories(raw, checkSockets, checkFileDescriptors).filterNot(exemptedFds.contains)
                     val persistent = awaitFdDrain(() => leaksNow(), fdDrainBudgetNanos, settleNanos)
                     if persistent.nonEmpty then
                         val described = persistent.map(t => t + describeSocket(t) + originOf(t))

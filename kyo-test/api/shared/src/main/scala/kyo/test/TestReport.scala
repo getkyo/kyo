@@ -120,9 +120,11 @@ end TestReport
   *   the suite's effective `RunConfig.leakCheck` master setting, carried here so the run-level end-of-run leak check (performed once per forked
   *   JVM after all suites finish) can honor each suite's override
   * @param leakCheckSockets
-  *   the suite's effective `RunConfig.leakCheckSockets` setting, aggregated across the fork's suites to gate the socket-descriptor probe
+  *   the suite's effective `RunConfig.leakCheckSockets` setting, aggregated across the fork's suites to gate the socket-descriptor probe, and
+  *   applied to the sockets this suite opened
   * @param leakCheckFileDescriptors
-  *   the suite's effective `RunConfig.leakCheckFileDescriptors` setting, aggregated to gate the non-socket descriptor probe
+  *   the suite's effective `RunConfig.leakCheckFileDescriptors` setting, aggregated to gate the non-socket descriptor probe, and applied to the
+  *   non-socket descriptors this suite opened
   * @param leakCheckThreads
   *   the suite's effective `RunConfig.leakCheckThreads` setting, aggregated to gate the thread probe
   * @param leakCheckFibers

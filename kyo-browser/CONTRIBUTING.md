@@ -1075,16 +1075,17 @@ multiple sequential Chrome round-trips under full-suite load
 (`kyo-kernel/shared/src/main/scala/kyo/internal/BaseKyoKernelTest.scala:61`,
 `jvm/src/test/scala/kyo/BrowserRunSharedJvmTest.scala:19`).
 
-kyo-browser JVM tests use per-suite JVM forking: each suite gets its own JVM and its
-own `SharedChrome`, via a `Test / testGrouping` that wraps every defined test in its
-own `Tests.SubProcess`. The reason is cross-suite Chrome-state degradation over 700+
-tests (`build.sbt:1145-1155`). `Test / parallelExecution := false` and `Test /
-testForkedParallel := false` on JVM serialize the per-suite forks because running
-them concurrently starves the Chrome processes and a dead Chrome cascades; new
-browser suites must not assume any cross-suite parallelism (`build.sbt:1149-1154`).
-Native tests set only `Test / parallelExecution := false` (no per-suite forking
-grouping): suites are serialized so each owns the shared Chrome WebSocket channel in
-turn. JS sets the `CommonJSModule` linker kind and no Chrome-serialization knob
+kyo-browser JVM tests run in one forked JVM per module, as on every other platform:
+every suite of the run shares one `SharedChrome`. `Test / testForkedParallel := false`
+runs the suites one at a time, because concurrent leaves on one Chrome fail with CDP
+timeouts; new browser suites must not assume any cross-suite parallelism. A Chrome
+that dies mid-run is relaunched by `SharedChrome` (each relaunch logs one
+`shared Chrome replaced` warn line), so one lost Chrome does not fail the suites
+after it. A suite's `leakCheckSockets(false)` / `leakCheckFileDescriptors(false)`
+excuses only the descriptors that suite opened, so the descriptors of the shared
+Chrome (and of kyo-ui's shared UI server) do not fail the fork's end-of-run leak
+check, while the suites that keep those categories on are still checked for their own. Native tests set `Test / parallelExecution := false`: suites are
+serialized so each owns the shared Chrome WebSocket channel in turn. JS sets the `CommonJSModule` linker kind and no Chrome-serialization knob
 (`build.sbt:1177-1186`).
 
 ### Platform gates and transient failures

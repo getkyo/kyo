@@ -33,6 +33,11 @@ private[kyo] object SharedChrome:
             AtomicRef.Unsafe.init(Generation())
         end current
 
+        private val replacements =
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            AtomicInt.Unsafe.init(0)
+        end replacements
+
         /** Returns the WebSocket debug URL of the shared Chrome process, launching it on first call.
           *
           * A launch that fails with [[BrowserSetupFailedException]] replaces the generation before the failure propagates, so the next
@@ -40,7 +45,7 @@ private[kyo] object SharedChrome:
           */
         def init(using Frame): String < (Async & Abort[BrowserSetupException]) =
             Sync.Unsafe.defer(current.get()).map { generation =>
-                Abort.recover[BrowserSetupFailedException](e => replace(generation).andThen(Abort.fail(e))) {
+                Abort.recover[BrowserSetupFailedException](e => replace(generation, e).andThen(Abort.fail(e))) {
                     start(generation).andThen(generation.url.safe.get)
                 }
             }
@@ -72,7 +77,7 @@ private[kyo] object SharedChrome:
                 AtomicBoolean.init(false).map { started =>
                     Sync.Unsafe.defer(current.get()).map { generation =>
                         Abort.recover[BrowserConnectionLostException | BrowserSetupFailedException] { e =>
-                            replace(generation).andThen(started.get).map { bodyStarted =>
+                            replace(generation, e).andThen(started.get).map { bodyStarted =>
                                 if bodyStarted || relaunches == 0 then Abort.fail(e) else attempt(relaunches - 1)
                             }
                         } {
@@ -83,10 +88,22 @@ private[kyo] object SharedChrome:
             attempt(relaunches = 1)
         end withUrl
 
-        /** Makes a fresh generation current if `stale` still is, and closes the scope of `stale`'s Chrome. */
-        private def replace(stale: Generation)(using Frame): Unit < Sync =
+        /** Makes a fresh generation current if `stale` still is, and closes the scope of `stale`'s Chrome. Replacing a Chrome that had
+          * launched is logged as one warn line, so a job log carries how often a running shared Chrome was lost. A failed launch is not
+          * logged: on a platform with no Chrome build every leaf's launch fails, and its failure already reaches the caller.
+          */
+        private def replace(stale: Generation, cause: BrowserException)(using Frame): Unit < Sync =
             Sync.Unsafe.defer {
-                if current.compareAndSet(stale, Generation()) then stale.release()
+                if current.compareAndSet(stale, Generation()) then
+                    stale.release()
+                    stale.url.poll() match
+                        case Present(Result.Success(_)) =>
+                            Log.warn(
+                                s"shared Chrome replaced after ${cause.getClass.getSimpleName} (replacement ${replacements.incrementAndGet()})"
+                            )
+                        case _ => Kyo.unit
+                    end match
+                else Kyo.unit
             }
 
         private def start(generation: Generation)(using frame: Frame): Unit < Async =

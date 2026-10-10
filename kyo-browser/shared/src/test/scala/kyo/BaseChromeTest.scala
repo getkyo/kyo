@@ -82,9 +82,9 @@ object BaseChromeTest:
     val transientRetrySchedule: Schedule =
         Schedule.exponentialBackoff(initial = 1.second, factor = 2, maxBackoff = 8.seconds).take(2)
 
-    /** Every transient failure this process has seen, including one on a leaf's last attempt. It is a process count: on the JVM the
-      * build forks one process per suite, so it is the suite's count; on JS, Native and Wasm every suite shares it. Each failure is
-      * also logged, so a job log carries the runner's transient rate whether or not a leaf ended red.
+    /** Every transient failure this process has seen, including one on a leaf's last attempt. It is a process count, which every suite
+      * of a module's test run shares. Each failure is also logged, so a job log carries the runner's transient rate whether or not a leaf
+      * ended red.
       */
     private[kyo] val transientFailures: AtomicInt =
         import AllowUnsafe.embrace.danger
