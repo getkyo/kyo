@@ -101,6 +101,11 @@ jobs:
       # most 8 modules' link state. JS and Wasm targets only.
       JS_TEST_BATCH: "${{ matrix.target == 'JS' && '8' || '' }}"
       WASM_TEST_BATCH: "${{ matrix.target == 'Wasm' && '8' || '' }}"
+      # Tests whose result cannot depend on the host run on linux-x64 JVM only; every other row still
+      # compiles them. These two Scala 2.12 sbt plugins' only tests are scripted suites whose sub-builds
+      # build no native code, while kyo-ffi-plugin's and kyo-test-sbt-publish's compile and link it for the
+      # host and stay on every Linux row. ci-test.sh applies this as `--exclude` to the run.
+      TEST_SKIP: "${{ matrix.target == 'JVM' && inputs.os != 'linux-x64' && 'kyo-compat-plugin,kyo-doctest-plugin' || '' }}"
       # Below 512MB free the runner is minutes from dying WITHOUT uploading its log (observed twice
       # on Native rows). ci-monitor.sh then prints the disk attribution and TERM-kills the build,
       # converting an unattributable runner loss into a normal red job with the evidence in the log.

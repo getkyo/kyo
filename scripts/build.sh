@@ -494,6 +494,9 @@ run_in_container() {
         # The JS and Wasm run-phase batch sizes, as build.yml sets them for those rows.
         [ "$platform" = JS ] && envs+=(-e "JS_TEST_BATCH=${JS_TEST_BATCH-8}")
         [ "$platform" = Wasm ] && envs+=(-e "WASM_TEST_BATCH=${WASM_TEST_BATCH-8}")
+        # The modules whose tests the row does not run. Like NATIVE_SKIP it has no default here: set
+        # TEST_SKIP=<build.yml's value for that row> to reproduce the row's cut.
+        [ -n "${TEST_SKIP:-}" ] && envs+=(-e "TEST_SKIP=$TEST_SKIP")
     fi
     # Forward a host override of the native-run stale-output watchdog into any container run.
     [ -n "${STALE_TIMEOUT:-}" ] && envs+=(-e "STALE_TIMEOUT=$STALE_TIMEOUT")

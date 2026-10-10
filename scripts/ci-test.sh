@@ -51,7 +51,7 @@ set -uo pipefail
 #
 # Reads CI, GITHUB_ACTIONS, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
 # NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX,
-# JS_TEST_BATCH, WASM_TEST_BATCH, CONTAINER_SWEEP, CONTAINER_FIXTURES, and FIXTURE_IMAGES_SCRIPT
+# JS_TEST_BATCH, WASM_TEST_BATCH, TEST_SKIP, CONTAINER_SWEEP, CONTAINER_FIXTURES, and FIXTURE_IMAGES_SCRIPT
 # from the environment; mutates none of them except
 # JAVA_OPTS, which gains the sbt server switches below (the nativeLink invocations also append
 # -XX:ActiveProcessorCount when NATIVE_LINK_CPUS is set). The
@@ -254,7 +254,7 @@ if [ "${1:-}" = "--self-test" ]; then
     if calls_count 5 \
        && call_nth_is 1 "$H_COMPILE testKyo --phase compile-main --scala 3 JVM" \
        && call_nth_is 2 "$H_COMPILE testKyo --phase compile-main --cross JVM" \
-       && call_nth_is 5 "$H_TESTJVM testKyo  JVM" && exit_is 0
+       && call_nth_is 5 "$H_TESTJVM testKyo JVM" && exit_is 0
     then record ok "testDiff omits --all but keeps the same split"
     else record no "testDiff omits --all but keeps the same split"; fi
 
@@ -304,6 +304,26 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "a failed JS/Wasm batch stops the run before the next batch and the cross pass"
     else record no "a failed JS/Wasm batch stops the run before the next batch and the cross pass"; fi
 
+    # 5c-skip. TEST_SKIP reaches the JVM run and nothing else: the compile phases still build the module.
+    run_runner_env 'exit 0' JVM test TEST_SKIP="kyo-compat-plugin, kyo-doctest-plugin"
+    if calls_count 5 \
+       && call_nth_is 4 "$H_COMPILE testKyo --phase compile-test --cross --all JVM" \
+       && call_nth_is 5 "$H_TESTJVM testKyo --exclude kyo-compat-plugin,kyo-doctest-plugin --all JVM" \
+       && [ "$(grep -c -- '--exclude' "$CALLS")" = 1 ] && exit_is 0
+    then record ok "TEST_SKIP reaches the JVM run as --exclude; the compile phases keep the module"
+    else record no "TEST_SKIP reaches the JVM run as --exclude; the compile phases keep the module"; fi
+
+    # 5c-skip-batched. In a batched run TEST_SKIP reaches the plan and the cross pass; the batches consume
+    # the filtered plan by exact module name.
+    FAKE_PLAN="m1JS m2JS"
+    run_runner_env 'exit 0' JS test JS_TEST_BATCH=2 TEST_SKIP="kyo-x"
+    if calls_count 7 \
+       && call_nth_has 5 " --scala 3 --exclude kyo-x --all JS" \
+       && call_nth_is 6 "$H_RUN testKyo --scala 3 --modules m1JS,m2JS JS" \
+       && call_nth_is 7 "$H_RUN testKyo --cross --exclude kyo-x --all JS" && exit_is 0
+    then record ok "TEST_SKIP reaches a batched run's plan and cross pass, not its batches"
+    else record no "TEST_SKIP reaches a batched run's plan and cross pass, not its batches"; fi
+
     # 5d. Container images: the primary compile-main pass writes the selection, and fixture-images.sh
     # receives it after compile-test and before the run. A recorder stands in for the script, writing
     # into the call log so the order is asserted with the sbt calls; its exit code is $1.
@@ -319,7 +339,7 @@ if [ "${1:-}" = "--self-test" ]; then
        && call_nth_is 2 "$H_COMPILE testKyo --phase compile-main --cross JVM" \
        && call_nth_is 3 "$H_COMPILE testKyo --phase compile-test --scala 3 JVM" \
        && call_nth_is 5 "fixtures kyo-dataJVM kyo-teamsJVM " \
-       && call_nth_is 6 "$H_TESTJVM testKyo  JVM" && exit_is 0
+       && call_nth_is 6 "$H_TESTJVM testKyo JVM" && exit_is 0
     then record ok "the compile-main selection reaches fixture-images.sh before the run"
     else record no "the compile-main selection reaches fixture-images.sh before the run"; fi
 
@@ -805,7 +825,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
     # The pinned count catches a case that stops running without failing; a new case raises it.
-    EXPECTED_TOTAL=70
+    EXPECTED_TOTAL=72
     if [ "$TOTAL" -ne "$EXPECTED_TOTAL" ]; then
         echo "ran $TOTAL cases, expected $EXPECTED_TOTAL: a case stopped running, or a new one needs EXPECTED_TOTAL raised"
     fi
@@ -912,6 +932,19 @@ NATIVE_TEST_BATCH="${NATIVE_TEST_BATCH:-}"
 # one process; the CI workflow sets both.
 JS_TEST_BATCH="${JS_TEST_BATCH:-}"
 WASM_TEST_BATCH="${WASM_TEST_BATCH:-}"
+
+# Space- or comma-separated base names whose tests the JVM, JS or Wasm run phase does not run; the compile
+# phases still build them. Applied as `--exclude` to the invocations that select for themselves: the single
+# run, or the plan and the cross pass of a batched run, whose batches consume the filtered plan. Empty by
+# default; the CI workflow sets it where another job already runs a suite whose result cannot differ here.
+TEST_SKIP="${TEST_SKIP:-}"
+
+# The --exclude flag TEST_SKIP turns into; empty when it names nothing.
+test_skip_flag() {
+    local csv; csv=$(printf '%s' "$TEST_SKIP" | tr -s ', ' ',' | sed 's/^,//; s/,$//')
+    [ -n "$csv" ] && printf '%s' "--exclude $csv"
+    return 0
+}
 
 log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 
@@ -1117,12 +1150,13 @@ run_phase_split() {
             provide_fixtures "$FIXTURE_PLAN"
             rm -f "$FIXTURE_PLAN"
             local size; size=$(run_test_batch_size)
+            local skip; skip=$(test_skip_flag)
             if [ -z "$size" ] || [ "$size" = 0 ]; then
-                sbt_run_resolve_retry "$(run_role)" "testKyo $arg $PLATFORM" || return $?
+                sbt_run_resolve_retry "$(run_role)" "$(native_cmd testKyo "$skip" "$arg" "$PLATFORM")" || return $?
                 return 0
             fi
             trap native_cleanup EXIT
-            local plan_cmd; plan_cmd=$(native_cmd "testKyo --dry-run --plan-file $PLAN" '--scala 3' "$arg" "$PLATFORM")
+            local plan_cmd; plan_cmd=$(native_cmd "testKyo --dry-run --plan-file $PLAN" '--scala 3' "$skip" "$arg" "$PLATFORM")
             log "planning $PLATFORM test modules: sbt $plan_cmd"
             sbt_resolve_retry tool "$plan_cmd" || { log "$PLATFORM planning failed"; return 1; }
             if [ ! -f "$PLAN" ]; then
@@ -1134,7 +1168,7 @@ run_phase_split() {
                 log "$PLATFORM test batch: sbt testKyo --scala 3 --modules $batch $PLATFORM"
                 sbt_run_resolve_retry "$(run_role)" "testKyo --scala 3 --modules $batch $PLATFORM" || return $?
             done
-            sbt_run_resolve_retry "$(run_role)" "$(native_cmd 'testKyo --cross' "$arg" "$PLATFORM")" || return $?
+            sbt_run_resolve_retry "$(run_role)" "$(native_cmd 'testKyo --cross' "$skip" "$arg" "$PLATFORM")" || return $?
             return 0
             ;;
     esac
