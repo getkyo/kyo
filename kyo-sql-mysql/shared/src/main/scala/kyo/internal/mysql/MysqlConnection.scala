@@ -12,6 +12,7 @@ import kyo.internal.mysql.exchange.ExtendedQueryExchange
 import kyo.internal.mysql.exchange.HandshakeExchange
 import kyo.internal.mysql.exchange.HandshakeResult
 import kyo.internal.mysql.exchange.LocalInfileExchange
+import kyo.internal.mysql.exchange.MysqlAuthPath
 import kyo.internal.mysql.exchange.MysqlCancelExchange
 import kyo.internal.mysql.exchange.MysqlErrors
 import kyo.internal.mysql.exchange.MysqlPipelineExchange
@@ -46,7 +47,8 @@ final class MysqlConnection(
     private[mysql] val preparedStmtsRef: AtomicRef[Cache[String, MysqlPreparedStmt]],
     private[mysql] val stmtCacheSize: Int,
     private[mysql] val stmtCacheTtl: Duration,
-    private[kyo] val pendingCloses: AtomicRef[Chunk[Int]]
+    private[kyo] val pendingCloses: AtomicRef[Chunk[Int]],
+    private[kyo] val authPath: MysqlAuthPath
 ):
 
     /** Drops this connection's record of its server-side prepared statements, for a caller that has just released them all.
@@ -558,7 +560,8 @@ object MysqlConnection:
             stmtRef,
             preparedStmtCacheSize,
             ttl,
-            closesRef
+            closesRef,
+            result.authPath
         )
         end for
     end mkConnection
@@ -623,7 +626,8 @@ object MysqlConnection:
                 stmtRef,
                 8,
                 Duration.Zero,
-                closesRef
+                closesRef,
+                MysqlAuthPath.Accepted
             )
             end for
         }

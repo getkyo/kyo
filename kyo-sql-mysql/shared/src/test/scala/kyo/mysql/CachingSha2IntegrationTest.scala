@@ -3,18 +3,17 @@ package kyo.mysql
 import kyo.*
 import kyo.OwnContainer
 import kyo.internal.TestContainers
+import kyo.internal.mysql.MysqlConnection
+import kyo.internal.mysql.exchange.MysqlAuthPath
 
 /** Integration tests for caching_sha2_password authentication.
   *
-  * Uses a MySQL 8.0 container started WITHOUT `--default-authentication-plugin=mysql_native_password`, so the server's default
-  * `caching_sha2_password` plugin is active.
+  * Each leaf starts its own MySQL 8.0 container, by default without `--default-authentication-plugin=mysql_native_password`, so the
+  * server's default `caching_sha2_password` plugin is active.
   *
-  * Test structure:
-  *   - Each test that needs a fresh server cache starts its own container (container-per-test) to guarantee cache is empty (cache miss →
-  *     full-auth path).
-  *   - Tests that need a warm cache (fast-path) open a first connection then a second within the same container.
-  *
-  * Container startup takes ~30-60 s, so each test has a 3-minute timeout.
+  * A fresh container does NOT mean a cold credential cache: the container's readiness probe logs in as `test` over TCP, which leaves that
+  * account's cache entry warm. A leaf that needs a cache miss therefore authenticates as an account created for it, which has never logged
+  * in. The handshake leaves read [[MysqlConnection.authPath]] to assert the path they are named for, since the server records none.
   */
 class CachingSha2IntegrationTest extends SqlContainerTest:
 
@@ -26,33 +25,73 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
     override def timeout: Duration = 4.minutes
 
     // Case class to carry connection details from the Kyo fiber to openClient.
-    private case class ConnDetails(host: String, port: Int, user: String, password: String, db: String)
+    private case class ConnDetails(host: String, port: Int, user: String, password: String, db: String, rootPassword: String)
 
-    /** Starts a fresh MySQL container using caching_sha2_password as the default auth plugin, runs `f`, then stops the container. */
-    private def withCachingSha2Container[A](
-        f: ConnDetails => A < (Async & Abort[SqlException])
+    private val fullAuth = MysqlAuthPath(Absent, Present(MysqlAuthPath.CachingSha2.FullAuth))
+    private val fastPath = MysqlAuthPath(Absent, Present(MysqlAuthPath.CachingSha2.FastPath))
+
+    /** Starts a fresh MySQL container with `serverArgs` appended to the predef's, runs `f`, then stops the container. */
+    private def withServer[A](serverArgs: String*)(
+        f: ConnDetails => A < (Async & Abort[SqlException] & Scope)
     )(using Frame): A < (Async & Abort[Throwable] & Scope) =
         // Through `TestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
         // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
         // process leaves something the reaper can find.
-        TestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-caching-sha2").map { mysql =>
-            mysql.container.mappedPort(mysql.config.port).flatMap { port =>
-                val details = ConnDetails(
-                    mysql.container.host,
-                    port,
-                    mysql.username,
-                    mysql.password,
-                    mysql.database
-                )
-                Abort.run[SqlException](f(details)).flatMap {
-                    case Result.Success(a) => a
-                    case Result.Failure(e) => Abort.fail(e: Throwable)
-                    case Result.Panic(t)   =>
-                        scala.Console.err.println(s"[CachingSha2IntegrationTest] panic: ${t.getMessage}")
-                        Abort.fail(t)
+        TestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default.appendServerArgs(serverArgs*), "mysql-caching-sha2").map {
+            mysql =>
+                mysql.container.mappedPort(mysql.config.port).flatMap { port =>
+                    val details = ConnDetails(
+                        mysql.container.host,
+                        port,
+                        mysql.username,
+                        mysql.password,
+                        mysql.database,
+                        mysql.config.rootPassword
+                    )
+                    Abort.run[SqlException](f(details)).flatMap {
+                        case Result.Success(a) => a
+                        case Result.Failure(e) => Abort.fail(e: Throwable)
+                        case Result.Panic(t)   =>
+                            scala.Console.err.println(s"[CachingSha2IntegrationTest] panic: ${t.getMessage}")
+                            Abort.fail(t)
+                    }
+                }
+        }
+
+    /** Starts a fresh MySQL container using caching_sha2_password as the default auth plugin, runs `f`, then stops the container. */
+    private def withCachingSha2Container[A](
+        f: ConnDetails => A < (Async & Abort[SqlException] & Scope)
+    )(using Frame): A < (Async & Abort[Throwable] & Scope) =
+        withServer()(f)
+
+    /** An account authenticating with `plugin` that has never logged in, so the server holds no caching_sha2 cache entry for it. */
+    private def newAccount(details: ConnDetails, plugin: String)(using Frame): ConnDetails < (Async & Abort[SqlException]) =
+        Scope.run {
+            connect(details.copy(user = "root", password = details.rootPassword)).flatMap { root =>
+                Random.nextLong.map(v => s"u_${(v & Long.MaxValue).toHexString}").flatMap { user =>
+                    val password = s"pw_$user"
+                    root.simpleExecute(s"CREATE USER '$user'@'%' IDENTIFIED WITH $plugin BY '$password'")
+                        .andThen(root.simpleExecute(s"GRANT ALL ON `${details.db}`.* TO '$user'@'%'"))
+                        .andThen(details.copy(user = user, password = password))
                 }
             }
         }
+
+    /** Opens one plaintext connection, closed when the enclosing Scope exits. */
+    private def connect(details: ConnDetails)(using Frame): MysqlConnection < (Async & Abort[SqlException] & Scope) =
+        MysqlConnection.connect(
+            details.host,
+            details.port,
+            details.user,
+            Present(details.password),
+            Present(details.db),
+            Absent,
+            64,
+            Duration.Infinity
+        ).flatMap(conn => Scope.ensure(Abort.run(conn.quit()).unit).andThen(conn))
+
+    private def text(rows: Chunk[kyo.internal.mysql.MysqlRow]): String =
+        new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
 
     /** Connects to the given connection details and returns a [[SqlClient]]. The client is closed when the outer Scope exits. */
     private def openClient(
@@ -68,16 +107,15 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
     "HandshakeExchange caching_sha2 fast-path (cache hit), second connection uses fast path".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
-                Scope.run {
+                newAccount(details, "caching_sha2_password").flatMap { account =>
                     // First connection: cache miss → full-auth via RSA, populates server cache.
-                    openClient(details).flatMap { client1 =>
-                        client1.query("SELECT 1").flatMap { _ =>
-                            // Second connection: same user → server cache is warm → fast-path success (AuthMoreData 0x03).
-                            openClient(details).flatMap { client2 =>
-                                client2.query("SELECT 'fast_path_ok'").map { rows =>
-                                    val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                    assert(str == "fast_path_ok")
-                                }
+                    connect(account).flatMap { first =>
+                        // Second connection: same user → server cache is warm → fast-path success (AuthMoreData 0x03).
+                        connect(account).flatMap { second =>
+                            second.simpleQuery("SELECT 'fast_path_ok'").map { rows =>
+                                assert(first.authPath == fullAuth, s"the first connection must miss the cache, took ${first.authPath}")
+                                assert(second.authPath == fastPath, s"the second connection must hit the cache, took ${second.authPath}")
+                                assert(text(rows) == "fast_path_ok")
                             }
                         }
                     }
@@ -86,17 +124,17 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
         }
     }
 
-    // ── caching_sha2 full-auth via RSA (no TLS, fresh container) ─────────────
+    // ── caching_sha2 full-auth via RSA (no TLS) ───────────────────────────────
 
-    "HandshakeExchange caching_sha2 full-auth via RSA (no TLS), fresh container triggers full-auth path".tagged(OwnContainer.name) in {
+    "HandshakeExchange caching_sha2 full-auth via RSA (no TLS), a never-used account triggers full-auth path".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
-                Scope.run {
-                    // Fresh container → cache empty → full-auth: request RSA key, encrypt, send.
-                    openClient(details).flatMap { client =>
-                        client.query("SELECT 'full_auth_rsa_ok'").map { rows =>
-                            val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                            assert(str == "full_auth_rsa_ok")
+                newAccount(details, "caching_sha2_password").flatMap { account =>
+                    // Cache empty for this account → full-auth: request RSA key, encrypt, send.
+                    connect(account).flatMap { conn =>
+                        conn.simpleQuery("SELECT 'full_auth_rsa_ok'").map { rows =>
+                            assert(conn.authPath == fullAuth, s"a never-used account must take full auth, took ${conn.authPath}")
+                            assert(text(rows) == "full_auth_rsa_ok")
                         }
                     }
                 }
@@ -129,13 +167,14 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
     "HandshakeExchange caching_sha2 full-auth updates cache, second connect uses fast-path".tagged(OwnContainer.name) in {
         Scope.run {
             withCachingSha2Container { details =>
-                Scope.run {
+                newAccount(details, "caching_sha2_password").flatMap { account =>
                     // First connection (full-auth): populates server's credential cache.
-                    openClient(details).flatMap { client1 =>
-                        client1.query("SELECT 1").flatMap { _ =>
-                            // Second connection: fast-path (0x03), cache is now warm.
-                            openClient(details).flatMap { client2 =>
-                                client2.isAlive.map { open => assert(open) }
+                    connect(account).flatMap { first =>
+                        // Second connection: fast-path (0x03), cache is now warm.
+                        connect(account).flatMap { second =>
+                            second.ping().map { _ =>
+                                assert(first.authPath == fullAuth, s"the first connection must take full auth, took ${first.authPath}")
+                                assert(second.authPath == fastPath, s"full auth must leave the cache warm, took ${second.authPath}")
                             }
                         }
                     }
@@ -177,25 +216,19 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── fallback to native_password via AuthSwitchRequest ─────────────────────
 
-    "HandshakeExchange fallback to native_password via AuthSwitchRequest, native_password container".tagged(OwnContainer.name) in {
+    "HandshakeExchange fallback to native_password via AuthSwitchRequest, native_password account".tagged(OwnContainer.name) in {
+        // The server names its default plugin, caching_sha2_password, in HandshakeV10; the account's plugin differs, so the server
+        // answers the client's caching_sha2 response with an AuthSwitchRequest to mysql_native_password.
         Scope.run {
-            // This test uses a native_password container and verifies AuthSwitchRequest handling still works.
-            val nativePredef = ContainerPredef.MySQL.Config.default
-                .appendServerArgs("--default-authentication-plugin=mysql_native_password")
-            val nativeConfig = ContainerPredef.MySQL.buildContainerConfig(nativePredef)
-            // Through `TestContainers` rather than `Container.init` directly, so the container carries the
-            // `kyo-test-container` and `kyo-test-owner-pid` labels and a force-killed run's leftover is still reapable.
-            TestContainers.initScoped(nativeConfig, "mysql-native-password").flatMap { nativeContainer =>
-                val mysql = new ContainerPredef.MySQL(nativeContainer, nativePredef)
-                mysql.container.mappedPort(mysql.config.port).flatMap { port =>
-                    // Connect to native_password container, the server may send AuthSwitchRequest.
-                    MysqlClient.init(
-                        s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}",
-                        SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
-                    ).flatMap { client =>
-                        client.query("SELECT 'switch_ok'").map { rows =>
-                            val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                            assert(str == "switch_ok")
+            withServer() { details =>
+                newAccount(details, "mysql_native_password").flatMap { account =>
+                    connect(account).flatMap { conn =>
+                        conn.simpleQuery("SELECT 'switch_ok'").map { rows =>
+                            assert(
+                                conn.authPath == MysqlAuthPath(Present("mysql_native_password"), Absent),
+                                s"the server must switch the exchange to mysql_native_password, took ${conn.authPath}"
+                            )
+                            assert(text(rows) == "switch_ok")
                         }
                     }
                 }
@@ -266,15 +299,20 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
     // ── AuthSwitchRequest to caching_sha2 from initial plugin ────────────────
 
     "HandshakeExchange AuthSwitchRequest to caching_sha2_password, handled by switch handler".tagged(OwnContainer.name) in {
-        // When server is configured with caching_sha2_password and client sends an initial native_password response,
-        // the server issues AuthSwitchRequest to caching_sha2_password. Our handler re-runs fast-path with the new scramble.
-        // This scenario is tested with the caching_sha2_password container.
+        // A server whose default plugin is mysql_native_password names it in HandshakeV10, so the client's first response is a
+        // native_password scramble; the account authenticates with caching_sha2_password, so the server switches to it. The handler
+        // re-runs the caching_sha2 scramble with the new nonce, and the never-used account then takes full auth.
         Scope.run {
-            withCachingSha2Container { details =>
-                Scope.run {
-                    openClient(details).flatMap { client =>
-                        // If we got this far, the AuthSwitchRequest (if any) was handled correctly.
-                        client.isAlive.map { open => assert(open) }
+            withServer("--default-authentication-plugin=mysql_native_password") { details =>
+                newAccount(details, "caching_sha2_password").flatMap { account =>
+                    connect(account).flatMap { conn =>
+                        conn.ping().map { _ =>
+                            assert(
+                                conn.authPath ==
+                                    MysqlAuthPath(Present("caching_sha2_password"), Present(MysqlAuthPath.CachingSha2.FullAuth)),
+                                s"the server must switch the exchange to caching_sha2_password, took ${conn.authPath}"
+                            )
+                        }
                     }
                 }
             }
