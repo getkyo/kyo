@@ -50,7 +50,9 @@ import kyo.minutes
   *   alive. Only active inside an sbt forked JVM (the one quiescent, isolated point); a no-op otherwise. This is the master switch; the four
   *   category toggles ([[leakCheckSockets]], [[leakCheckFileDescriptors]], [[leakCheckThreads]], [[leakCheckFibers]]) turn off one category
   *   while keeping the rest. Override per suite with `def config = super.config.leakCheck(false)` (all categories) or a single category toggle
-  *   for a suite whose design legitimately holds one kind of resource for the whole run.
+  *   for a suite whose design legitimately holds one kind of resource for the whole run. Turning off a descriptor category ([[leakCheckSockets]],
+  *   [[leakCheckFileDescriptors]]) excuses the descriptors this suite opens while no other suite of the fork runs, so a suite sharing the fork
+  *   that keeps the category on is still charged for its own; turning off threads or fibers excuses them only once every suite in the fork does.
   * @param leakCheckSockets
   *   when `true` (the default), socket descriptors are included in the file-descriptor probe along with files, directories, and pipes. A suite
   *   that drives a transport which defers a closed socket's fd release (so the fd briefly outlives the run) can turn off this one category via

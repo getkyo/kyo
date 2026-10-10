@@ -3820,37 +3820,9 @@ lazy val `kyo-browser` =
         )
         .jvmSettings(
             mimaCheck(false),
-            // Per-suite JVM forking: each test suite gets its own JVM (and its own SharedChrome).
-            // Cross-suite Chrome state degradation makes a single shared Chrome unstable over 700+ tests
-            // in a 10-minute run; isolating each suite eliminates that contamination at the cost of ~3
-            // minutes of additional Chrome startup. parallelExecution = false serializes the per-suite
-            // groups so Chrome processes don't compete for resources; testForkedParallel = false keeps
-            // within-fork tests sequential as a belt-and-braces safeguard. (Running the per-suite forks
-            // concurrently was tried and reverted: cores/2 simultaneous Chrome processes starve each other,
-            // a Chrome dies, and the dead-Chrome failures cascade -- the very thing the serial mode prevents.)
-            Test / parallelExecution  := false,
-            Test / testForkedParallel := false,
-            Test / testGrouping       := {
-                val javaOptionsValue = (Test / javaOptions).value.toVector
-                val envsVarsValue    = envVars.value
-                (Test / definedTests).value map { test =>
-                    Tests.Group(
-                        name = test.name,
-                        tests = Seq(test),
-                        runPolicy = Tests.SubProcess(
-                            ForkOptions(
-                                javaHome = javaHome.value,
-                                outputStrategy = outputStrategy.value,
-                                bootJars = Vector.empty,
-                                workingDirectory = Some(baseDirectory.value),
-                                runJVMOptions = javaOptionsValue,
-                                connectInput = connectInput.value,
-                                envVars = envsVarsValue
-                            )
-                        )
-                    )
-                }
-            }
+            // Every suite of the fork drives the one SharedChrome, which is not safe for concurrent suites:
+            // concurrent leaves on one Chrome fail with CDP timeouts.
+            Test / testForkedParallel := false
         )
         .nativeSettings(
             `native-settings`,
@@ -4082,32 +4054,9 @@ lazy val `kyo-ui` =
         )
         .jvmSettings(
             mimaCheck(false),
-            // kyo-ui tests drive real Chrome via kyo-browser's SharedChrome. Per-suite JVM forking gives
-            // each test class its own JVM and SharedChrome; parallelExecution = false serializes the
-            // per-suite groups so the Chrome processes don't compete. Mirrors kyo-browser's jvmSettings.
-            Test / parallelExecution  := false,
-            Test / testForkedParallel := false,
-            Test / testGrouping       := {
-                val javaOptionsValue = (Test / javaOptions).value.toVector
-                val envsVarsValue    = envVars.value
-                (Test / definedTests).value map { test =>
-                    Tests.Group(
-                        name = test.name,
-                        tests = Seq(test),
-                        runPolicy = Tests.SubProcess(
-                            ForkOptions(
-                                javaHome = javaHome.value,
-                                outputStrategy = outputStrategy.value,
-                                bootJars = Vector.empty,
-                                workingDirectory = Some(baseDirectory.value),
-                                runJVMOptions = javaOptionsValue,
-                                connectInput = connectInput.value,
-                                envVars = envsVarsValue
-                            )
-                        )
-                    )
-                }
-            }
+            // Every suite of the fork drives the one SharedChrome, and SharedUIServer serves one UI at a
+            // time, so suites must not run concurrently.
+            Test / testForkedParallel := false
         )
         .nativeSettings(
             `native-settings`,

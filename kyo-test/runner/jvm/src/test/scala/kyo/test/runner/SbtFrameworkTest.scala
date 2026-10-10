@@ -6,6 +6,7 @@ import java.net.URLClassLoader
 import java.nio.charset.StandardCharsets
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
+import kyo.discard
 import kyo.test.internal.TestBase
 import kyo.test.runner.internal.SbtRunner
 import org.scalatest.NonImplicitAssertions
@@ -53,6 +54,29 @@ class NextSuiteB extends TestBase[Any]:
 end NextSuiteB
 
 class NextEmptySuite extends TestBase[Any]
+
+object HeldSockets:
+    val held         = new java.util.concurrent.ConcurrentLinkedQueue[java.net.ServerSocket]()
+    def open(): Unit =
+        discard(held.add(new java.net.ServerSocket(0)))
+    def closeAll(): Unit =
+        while !held.isEmpty do held.poll().close()
+end HeldSockets
+
+class NextSocketExemptSuite extends TestBase[Any]:
+    override def config = super.config.leakCheckSockets(false)
+    "holds a socket for the rest of the run" in {
+        HeldSockets.open()
+        succeed
+    }
+end NextSocketExemptSuite
+
+class NextSocketLeakingSuite extends TestBase[Any]:
+    "leaves a socket open" in {
+        HeldSockets.open()
+        succeed
+    }
+end NextSocketLeakingSuite
 
 // ── Test infrastructure ─────────────────────────────────────────────────────────────────────────
 
@@ -224,6 +248,33 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
         assert(summary.startsWith("kyo-test: 1 tests, 0 passed, 1 failed"), summary): Unit
         assert(summary.contains("TOTAL FAILURES (1)"), summary): Unit
         assert(bytes.toString("UTF-8") == summary + java.lang.System.lineSeparator())
+    }
+
+    private def runForked(suites: Class[?]*): SbtRunner =
+        val runner = runnerWritingTo(new java.io.ByteArrayOutputStream, forked = true)
+        runner.tasks(suites.map(taskDefFor).toArray).foreach(_.execute(new CapturingEventHandler, loggers))
+        runner
+    end runForked
+
+    private val procFd = java.nio.file.Files.isDirectory(java.nio.file.Paths.get("/proc/self/fd"))
+
+    test("a socket a suite exempted does not fail a fork whose next suite checks sockets") {
+        assume(procFd, "the descriptor probe reads /proc/self/fd")
+        try
+            val runner = runForked(classOf[NextSocketExemptSuite], classOf[NextSuiteA])
+            val _      = runner.done()
+        finally HeldSockets.closeAll()
+        end try
+    }
+
+    test("a socket left open by a suite that checks sockets fails the fork after an exempting suite") {
+        assume(procFd, "the descriptor probe reads /proc/self/fd")
+        try
+            val runner  = runForked(classOf[NextSocketExemptSuite], classOf[NextSocketLeakingSuite])
+            val failure = intercept[RuntimeException](runner.done())
+            assert(failure.getMessage.contains("file-descriptor leak (1)"), failure.getMessage)
+        finally HeldSockets.closeAll()
+        end try
     }
 
     test("an unforked runner leaves its summary to sbt") {

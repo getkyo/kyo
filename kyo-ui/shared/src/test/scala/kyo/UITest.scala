@@ -13,8 +13,8 @@ abstract class UITest extends kyo.test.Test[Any]:
 
     // kyo-ui suites drive a single shared Chrome via Browser.runShared. Run each suite's leaves sequentially:
     // under kyo-test's default leaf parallelism the leaves hammer that one Chrome at once, producing
-    // BrowserAssertionTimedOutExceptions and CDP timeouts (the same hazard BaseBrowserTest documents). The sbt
-    // build already serializes suites (one forked JVM + Chrome per suite); .sequential closes the within-suite gap.
+    // BrowserAssertionTimedOutExceptions and CDP timeouts (the same hazard BaseBrowserTest documents). The build
+    // runs suites one at a time on every platform; .sequential closes the within-suite gap.
     //
     // failOnNoAssertion is disabled because kyo-ui suites assert through Browser.assert* (domain helpers that do not
     // flow through the kyo.test assert macros), so the no-assertion counter sees zero.
@@ -59,7 +59,7 @@ abstract class UITest extends kyo.test.Test[Any]:
         // per leaf (that churn exhausted Windows sockets: WSAENOBUFS / error 10055, the failure this fixes). Suite
         // wall-clock is unchanged on JVM+Chrome (measured: identical to the per-leaf-server version, since a localhost
         // bind is cheap and per-leaf cost is dominated by CDP navigation), so this is a correctness fix, not a speedup.
-        // Safe because leaves never overlap (JS sequential + `.sequential`; one JVM per suite on the JVM), so the
+        // Safe because leaves never overlap (suites run one at a time and each is `.sequential`), so the
         // set-then-navigate has no race.
         //
         // An earlier runShared trial dropped the trailing focus event on focus-transition tests because non-foregrounded

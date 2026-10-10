@@ -73,6 +73,7 @@ final private[runner] class SbtRunner(
     // baseline, no carrier tracking, no check (the diff would be polluted by sbt's own resources and a throw would fail sbt).
     private val leakBaseline      = if forked then LeakCheck.baseline() else LeakCheck.Baseline(kyo.Maybe.empty, Set.empty)
     private val endOfRunChecksRan = new java.util.concurrent.atomic.AtomicBoolean(false)
+    private val suiteWindows      = new LeakCheck.SuiteWindows
 
     private val tasksRequested = new java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -106,7 +107,7 @@ final private[runner] class SbtRunner(
             case Args.Result.Ok(_) =>
                 discoveryErrors.set(SuiteDiscovery.discoverDetailed(testClassLoader).errors)
                 taskDefs.foreach(td => discard(selected.add(td.fullyQualifiedName())))
-                taskDefs.map(td => new SbtTask(td, baseOverlay, testClassLoader, results, completed, forked))
+                taskDefs.map(td => new SbtTask(td, baseOverlay, testClassLoader, results, completed, forked, suiteWindows))
             case _ =>
                 Array.empty
         end match
@@ -161,8 +162,9 @@ final private[runner] class SbtRunner(
             val suites    = results.asScala.flatMap(_.suiteReports)
             val allowlist = Chunk.from(suites.flatMap(_.leakCheckAllowlist)).distinct
             // Each category runs if any suite in the fork enabled it (master on AND that category on); a suite exempts a category by
-            // turning just that one off, so the fork keeps detecting the rest. To exempt a category fork-wide, every suite must opt out,
-            // which is why the per-category toggles live on the shared suite base (e.g. BaseHttpTest disables only sockets).
+            // turning just that one off, so the fork keeps detecting the rest. A descriptor category exemption covers the descriptors the
+            // exempting suite opened (LeakCheck.exemptedFds); fibers and threads carry no opener, so exempting them fork-wide still takes
+            // every suite opting out, which is why the per-category toggles live on the shared suite base.
             val checkFibers          = suites.exists(s => s.leakCheck && s.leakCheckFibers)
             val checkThreads         = suites.exists(s => s.leakCheck && s.leakCheckThreads)
             val checkFileDescriptors = suites.exists(s => s.leakCheck && s.leakCheckFileDescriptors)
@@ -171,6 +173,7 @@ final private[runner] class SbtRunner(
                 LeakCheck.detect(
                     leakBaseline,
                     allowlist = allowlist,
+                    exemptedFds = suiteWindows.exempted,
                     checkFibers = checkFibers,
                     checkThreads = checkThreads,
                     checkFileDescriptors = checkFileDescriptors,

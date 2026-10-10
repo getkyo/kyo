@@ -48,6 +48,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         LeakCheck.detect(
             LeakCheck.baseline(),
             allowlist,
+            exemptedFds = Set.empty,
             checkFibers = true,
             checkThreads = false,
             checkFileDescriptors = false,
@@ -99,6 +100,57 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         assert(LeakCheck.fdLeaksForCategories(leaks, checkSockets = true, checkFileDescriptors = false).toSet == Set("socket:[99]"))
         // both off: nothing reported
         assert(LeakCheck.fdLeaksForCategories(leaks, checkSockets = false, checkFileDescriptors = false).isEmpty)
+    }
+
+    private def window(opened: String*)(solo: Boolean = true, checkSockets: Boolean = true, checkFileDescriptors: Boolean = true) =
+        LeakCheck.SuiteWindow(opened.toSet, solo, checkSockets, checkFileDescriptors)
+
+    test("exemptedFds excuses what an exempting suite opened, in its exempted category only") {
+        val exempted = LeakCheck.exemptedFds(Seq(
+            window("socket:[1]", "pipe:[2]")(checkSockets = false),
+            window("socket:[3]", "pipe:[4]")(checkFileDescriptors = false),
+            window("socket:[5]", "pipe:[6]")()
+        ))
+        assert(exempted == Set("socket:[1]", "pipe:[4]"), s"got $exempted")
+    }
+
+    test("exemptedFds charges a target to the last suite that opened it") {
+        val reopened = LeakCheck.exemptedFds(Seq(window("/tmp/a")(checkFileDescriptors = false), window("/tmp/a")()))
+        assert(reopened.isEmpty, s"a checking suite that reopened the target owns it, got $reopened")
+        val heldAcross = LeakCheck.exemptedFds(Seq(window("/tmp/a")(checkFileDescriptors = false), window()()))
+        assert(heldAcross == Set("/tmp/a"), s"a later checking suite that did not open the target is not charged for it, got $heldAcross")
+    }
+
+    test("exemptedFds never excuses a target opened in a window another suite overlapped") {
+        val exempted = LeakCheck.exemptedFds(Seq(window("socket:[1]")(solo = false, checkSockets = false)))
+        assert(exempted.isEmpty, s"got $exempted")
+    }
+
+    test("SuiteWindows records what each task opened, and marks overlapping tasks as not solo") {
+        val samples = Iterator(
+            Set("/jar.jar"),
+            Set("/jar.jar", "socket:[1]"),
+            Set("/jar.jar", "socket:[1]", "socket:[2]"),
+            Set("/jar.jar", "socket:[1]", "socket:[2]", "pipe:[3]"),
+            Set("/jar.jar", "socket:[1]", "socket:[2]", "pipe:[3]", "pipe:[4]"),
+            Set("/jar.jar", "socket:[1]", "socket:[2]", "pipe:[3]", "pipe:[4]")
+        )
+        val windows = new LeakCheck.SuiteWindows(() => Maybe(samples.next()))
+        val first   = windows.open()
+        windows.close(first, checkSockets = false, checkFileDescriptors = true)
+        val outer = windows.open()
+        val inner = windows.open()
+        windows.close(inner, checkSockets = false, checkFileDescriptors = false)
+        windows.close(outer, checkSockets = false, checkFileDescriptors = false)
+        assert(
+            windows.recorded == Seq(
+                LeakCheck.SuiteWindow(Set("socket:[1]"), solo = true, checkSockets = false, checkFileDescriptors = true),
+                LeakCheck.SuiteWindow(Set("pipe:[4]"), solo = false, checkSockets = false, checkFileDescriptors = false),
+                LeakCheck.SuiteWindow(Set("pipe:[3]", "pipe:[4]"), solo = false, checkSockets = false, checkFileDescriptors = false)
+            ),
+            s"got ${windows.recorded}"
+        )
+        assert(windows.exempted == Set("socket:[1]"), s"got ${windows.exempted}")
     }
 
     /** One `/proc/net/tcp` row in the kernel's column layout, loopback on both ends. */

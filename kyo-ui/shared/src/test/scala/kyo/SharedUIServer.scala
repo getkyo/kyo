@@ -6,8 +6,8 @@ package kyo
   * WebSocket routes re-read [[current]] per request (`UIServer.handlers` takes `ui` by-name), so one long-lived server
   * serves every leaf's UI in turn. Collapsing the previous per-leaf ephemeral server into one keeps Chrome on a single
   * origin (connection reuse) and removes the Windows socket exhaustion (WSAENOBUFS / error 10055) that per-leaf ephemeral
-  * ports produced. Safe without locking because leaves never overlap: JS suites run sequentially and `UITest` is
-  * `.sequential`, and on the JVM each suite is its own forked JVM.
+  * ports produced. Safe without locking because leaves never overlap: the build runs suites one at a time on every
+  * platform and `UITest` is `.sequential`.
   *
   * The server runs inside a long-lived background fiber held open with `Async.never`; on scheduler shutdown the fiber is
   * interrupted and the scope's finalizers close it.
