@@ -3,6 +3,8 @@ package kyo.mysql
 import kyo.*
 import kyo.OwnContainer
 import kyo.internal.TestContainers
+import kyo.internal.mysql.MysqlConnection
+import kyo.internal.mysql.exchange.MysqlAuthPath
 import kyo.net.NetTlsConfig
 
 /** Integration test for MySQL sha256_password auth plugin.
@@ -137,6 +139,45 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
                     client.query("SELECT 'sha256_default_ok'").map { rows =>
                         val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
                         assert(str == "sha256_default_ok", s"Expected 'sha256_default_ok', got '$str'")
+                    }
+                }
+            }
+        }
+    }
+
+    // ─── Leaf 4: a password as long as the switch nonce ──────────────────────
+
+    "sha256_password reached by AuthSwitchRequest authenticates a password longer than the 20-byte nonce over plaintext".tagged(
+        OwnContainer.name
+    ) in {
+        // The RSA payload is (password + NUL) XORed with the nonce, cycled. Up to 19 password bytes never reach the nonce's 21st
+        // position, so only a longer password tells a 20-byte nonce from one that kept the switch request's NUL terminator.
+        Scope.run {
+            TestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-sha256-password").map { mysql =>
+                mysql.container.mappedPort(mysql.config.port).flatMap { port =>
+                    val host                          = mysql.container.host
+                    val user                          = "sha256_long"
+                    val password                      = "a_sha256_password_of_32_bytes_xx"
+                    def connect(u: String, p: String) =
+                        MysqlConnection.connect(host, port, u, Present(p), Present(mysql.database), Absent, 64, Duration.Infinity)
+                            .flatMap(conn => Scope.ensure(Abort.run(conn.quit()).unit).andThen(conn))
+                    Scope.run {
+                        connect("root", mysql.config.rootPassword).flatMap { root =>
+                            root.simpleExecute(s"CREATE USER '$user'@'%' IDENTIFIED WITH sha256_password BY '$password'")
+                                .andThen(root.simpleExecute(s"GRANT ALL ON `${mysql.database}`.* TO '$user'@'%'"))
+                        }
+                    }.andThen {
+                        connect(user, password).flatMap { conn =>
+                            conn.simpleQuery("SELECT 'sha256_long_ok'").map { rows =>
+                                assert(password.length == 32)
+                                assert(
+                                    conn.authPath == MysqlAuthPath(Present("sha256_password"), Absent),
+                                    s"the server must switch the exchange to sha256_password, took ${conn.authPath}"
+                                )
+                                val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                                assert(str == "sha256_long_ok")
+                            }
+                        }
                     }
                 }
             }

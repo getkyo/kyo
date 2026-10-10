@@ -15,7 +15,9 @@ import kyo.internal.mysql.Unmarshaller
   *
   * Disambiguation from EOF: the caller checks payload length >= 2 AND the auth context is active.
   *
-  * The auth data typically ends with a NUL byte per the MySQL protocol; the trailing NUL is included in pluginData.
+  * The server terminates the nonce with a NUL, as it does the HandshakeV10 nonce, and the trailing NUL is trimmed the same way
+  * [[HandshakeV10Unmarshaller]] trims it: every plugin hashes the 20 nonce bytes, so a scramble that kept the terminator authenticates
+  * nothing. The server never generates a NUL inside a nonce, so only the terminator is removed.
   *
   * Reference: MySQL Internals, Protocol::AuthSwitchRequest
   */
@@ -23,7 +25,10 @@ object AuthSwitchRequestUnmarshaller extends Unmarshaller[AuthSwitchRequest]:
 
     def read(buf: MysqlBufferReader)(using Frame): AuthSwitchRequest < Abort[SqlDecodeException] =
         val pluginName = buf.readNulTerminatedString()
-        val pluginData = buf.readRestOfPacket()
+        val data       = buf.readRestOfPacket()
+        val pluginData =
+            if data.size > 0 && data(data.size - 1) == 0.toByte then data.slice(0, data.size - 1)
+            else data
         AuthSwitchRequest(pluginName, pluginData)
     end read
 

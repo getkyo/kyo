@@ -29,6 +29,8 @@ import kyo.net.NetTlsConfig
   *   last-seen server status flags
   * @param channel
   *   the [[MysqlChannel]] to use for subsequent communication (may be TLS-wrapped if TLS was negotiated)
+  * @param authPath
+  *   how the server accepted the credentials
   */
 final case class HandshakeResult(
     connectionId: Long,
@@ -36,8 +38,29 @@ final case class HandshakeResult(
     capabilities: Long,
     charset: Int,
     statusFlags: Int,
-    channel: MysqlChannel
+    channel: MysqlChannel,
+    authPath: MysqlAuthPath
 )
+
+/** How the server accepted a connection's credentials: the plugin an `AuthSwitchRequest` moved the exchange to, if any, and which
+  * caching_sha2_password round completed it, if that plugin was in play.
+  *
+  * MySQL keeps no per-session record of either: no status variable, `performance_schema` column, or log line says whether caching_sha2
+  * answered from its cache or which plugin a session switched to. So the client is the only party that can report the path, and the
+  * integration suites read it here to assert that a leaf took the path it is named for.
+  */
+final private[kyo] case class MysqlAuthPath(switchedTo: Maybe[String], cachingSha2: Maybe[MysqlAuthPath.CachingSha2]) derives CanEqual
+
+private[kyo] object MysqlAuthPath:
+
+    /** The server's answer to a caching_sha2_password scramble: 0x03 (cache hit) or 0x04 (cache miss, full authentication). */
+    enum CachingSha2 derives CanEqual:
+        case FastPath, FullAuth
+
+    /** Accepted on the client's first auth response, with no switch and no further round. */
+    val Accepted: MysqlAuthPath = MysqlAuthPath(Absent, Absent)
+
+end MysqlAuthPath
 
 /** Executes the MySQL connection-phase handshake on a newly-connected [[MysqlChannel]].
   *
@@ -160,7 +183,8 @@ private[mysql] object HandshakeExchange:
                                         clientCaps,
                                         handshake.charset,
                                         handshake.statusFlags,
-                                        activeChannel
+                                        activeChannel,
+                                        MysqlAuthPath.Accepted
                                     )
 
                                 case err: ErrPacket =>
@@ -168,7 +192,16 @@ private[mysql] object HandshakeExchange:
 
                                 case AuthMoreData(data) if pluginName == "caching_sha2_password" =>
                                     // caching_sha2_password multi-round auth.
-                                    handleCachingSha2MoreData(activeChannel, data, password, scramble, handshake, clientCaps, tlsActive)
+                                    handleCachingSha2MoreData(
+                                        activeChannel,
+                                        data,
+                                        password,
+                                        scramble,
+                                        handshake,
+                                        clientCaps,
+                                        tlsActive,
+                                        Absent
+                                    )
 
                                 case AuthMoreData(data) if pluginName == "sha256_password" =>
                                     // sha256_password: server sent AuthMoreData (PEM public key), XOR with scramble, encrypt, send.
@@ -198,6 +231,8 @@ private[mysql] object HandshakeExchange:
       *
       * @param data
       *   the raw AuthMoreData payload (first byte is the status byte)
+      * @param switchedTo
+      *   the plugin an `AuthSwitchRequest` named before this round, if one did
       */
     private def handleCachingSha2MoreData(
         channel: MysqlChannel,
@@ -206,7 +241,8 @@ private[mysql] object HandshakeExchange:
         scramble: Span[Byte],
         handshake: HandshakeV10,
         clientCaps: Long,
-        tlsActive: Boolean
+        tlsActive: Boolean,
+        switchedTo: Maybe[String]
     )(using Frame): HandshakeResult < (Async & Abort[SqlException]) =
         if data.size < 1 then
             Abort.fail(SqlConnectionProtocolDecodeException("AuthMoreData", "caching_sha2_password payload is empty"))
@@ -222,7 +258,8 @@ private[mysql] object HandshakeExchange:
                             clientCaps,
                             handshake.charset,
                             handshake.statusFlags,
-                            channel
+                            channel,
+                            MysqlAuthPath(switchedTo, Present(MysqlAuthPath.CachingSha2.FastPath))
                         )
                     case err: ErrPacket =>
                         Abort.fail(mkAuthError(err))
@@ -231,7 +268,15 @@ private[mysql] object HandshakeExchange:
                 }
             else if statusByte == FullAuthRequired then
                 // Full-auth required: cache miss.
-                performFullAuth(channel, password, scramble, handshake, clientCaps, tlsActive)
+                performFullAuth(
+                    channel,
+                    password,
+                    scramble,
+                    handshake,
+                    clientCaps,
+                    tlsActive,
+                    MysqlAuthPath(switchedTo, Present(MysqlAuthPath.CachingSha2.FullAuth))
+                )
             else
                 Abort.fail(SqlConnectionUnexpectedMessageException(
                     "caching_sha2_password AuthMoreData",
@@ -253,12 +298,13 @@ private[mysql] object HandshakeExchange:
         scramble: Span[Byte],
         handshake: HandshakeV10,
         clientCaps: Long,
-        tlsActive: Boolean
+        tlsActive: Boolean,
+        path: MysqlAuthPath
     )(using Frame): HandshakeResult < (Async & Abort[SqlException]) =
         if tlsActive then
             // Over TLS: send cleartext password NUL-terminated.
             channel.send(AuthMoreDataResponse(nulTerminated(password)))(using channel.marshallers.authMoreData).flatMap { _ =>
-                readFinalOk(channel, handshake, clientCaps)
+                readFinalOk(channel, handshake, clientCaps, path)
             }
         else
             // Non-TLS: request RSA public key.
@@ -269,7 +315,7 @@ private[mysql] object HandshakeExchange:
                         passwordToEncrypt(password, "caching_sha2").flatMap { pw =>
                             CachingSha2Shared.computeFullAuthResponse(pw, scramble, pemData).flatMap { encrypted =>
                                 channel.send(AuthMoreDataResponse(encrypted))(using channel.marshallers.authMoreData).flatMap { _ =>
-                                    readFinalOk(channel, handshake, clientCaps)
+                                    readFinalOk(channel, handshake, clientCaps, path)
                                 }
                             }
                         }
@@ -290,7 +336,8 @@ private[mysql] object HandshakeExchange:
     private def readFinalOk(
         channel: MysqlChannel,
         handshake: HandshakeV10,
-        clientCaps: Long
+        clientCaps: Long,
+        path: MysqlAuthPath
     )(using Frame): HandshakeResult < (Async & Abort[SqlException]) =
         channel.receive(inAuthContext = true).flatMap {
             case _: OkPacket =>
@@ -300,7 +347,8 @@ private[mysql] object HandshakeExchange:
                     clientCaps,
                     handshake.charset,
                     handshake.statusFlags,
-                    channel
+                    channel,
+                    path
                 )
             case err: ErrPacket =>
                 Abort.fail(mkAuthError(err))
@@ -333,7 +381,7 @@ private[mysql] object HandshakeExchange:
         passwordToEncrypt(password, "sha256_password").flatMap { pw =>
             Sha256Password.computeEncryptedResponse(pw, scramble, data).flatMap { encrypted =>
                 channel.send(AuthMoreDataResponse(encrypted))(using channel.marshallers.authMoreData).flatMap { _ =>
-                    readFinalOk(channel, handshake, clientCaps)
+                    readFinalOk(channel, handshake, clientCaps, MysqlAuthPath.Accepted)
                 }
             }
         }
@@ -351,17 +399,18 @@ private[mysql] object HandshakeExchange:
         scramble: Span[Byte],
         handshake: HandshakeV10,
         clientCaps: Long,
-        tlsActive: Boolean
+        tlsActive: Boolean,
+        path: MysqlAuthPath
     )(using Frame): HandshakeResult < (Async & Abort[SqlException]) =
         if tlsActive then
             // Over TLS: send cleartext password NUL-terminated (same shape as caching_sha2 TLS path).
             channel.send(AuthSwitchResponse(nulTerminated(password)))(using channel.marshallers.authSwitchResponse).flatMap { _ =>
-                readFinalOk(channel, handshake, clientCaps)
+                readFinalOk(channel, handshake, clientCaps, path)
             }
         else if !hasPassword(password) then
             // No secret to protect, so no key to fetch: the single NUL is the whole response.
             channel.send(AuthSwitchResponse(Sha256Password.EmptyPassword))(using channel.marshallers.authSwitchResponse).flatMap { _ =>
-                readFinalOk(channel, handshake, clientCaps)
+                readFinalOk(channel, handshake, clientCaps, path)
             }
         else
             // Non-TLS: send \x01 to request RSA public key.
@@ -371,7 +420,7 @@ private[mysql] object HandshakeExchange:
                         passwordToEncrypt(password, "sha256_password").flatMap { pw =>
                             Sha256Password.computeEncryptedResponse(pw, scramble, pemData).flatMap { encrypted =>
                                 channel.send(AuthMoreDataResponse(encrypted))(using channel.marshallers.authMoreData).flatMap { _ =>
-                                    readFinalOk(channel, handshake, clientCaps)
+                                    readFinalOk(channel, handshake, clientCaps, path)
                                 }
                             }
                         }
@@ -399,6 +448,7 @@ private[mysql] object HandshakeExchange:
         clientCaps: Long,
         tlsActive: Boolean
     )(using Frame): HandshakeResult < (Async & Abort[SqlException]) =
+        val switched = MysqlAuthPath(Present(plugin), Absent)
         plugin match
             case "mysql_native_password" =>
                 val authResp = computeNativePassword(password, newScramble)
@@ -411,7 +461,8 @@ private[mysql] object HandshakeExchange:
                                 clientCaps,
                                 handshake.charset,
                                 handshake.statusFlags,
-                                channel
+                                channel,
+                                switched
                             )
                         case err: ErrPacket =>
                             Abort.fail(mkAuthError(err))
@@ -433,13 +484,23 @@ private[mysql] object HandshakeExchange:
                                 clientCaps,
                                 handshake.charset,
                                 handshake.statusFlags,
-                                channel
+                                channel,
+                                switched
                             )
                         case err: ErrPacket =>
                             Abort.fail(mkAuthError(err))
                         case AuthMoreData(data) =>
                             // Fast-path result after AuthSwitchRequest re-auth.
-                            handleCachingSha2MoreData(channel, data, password, newScramble, handshake, clientCaps, tlsActive)
+                            handleCachingSha2MoreData(
+                                channel,
+                                data,
+                                password,
+                                newScramble,
+                                handshake,
+                                clientCaps,
+                                tlsActive,
+                                Present(plugin)
+                            )
                         case other =>
                             Abort.fail(SqlConnectionUnexpectedMessageException(
                                 "caching_sha2 AuthSwitchResponse",
@@ -450,18 +511,20 @@ private[mysql] object HandshakeExchange:
                 }
             case "sha256_password" =>
                 // sha256_password: proceed to full auth using the new scramble from AuthSwitchRequest.
-                performSha256Auth(channel, password, newScramble, handshake, clientCaps, tlsActive)
+                performSha256Auth(channel, password, newScramble, handshake, clientCaps, tlsActive, switched)
 
             case "mysql_clear_password" =>
                 requireTlsForClearPassword(tlsActive).andThen {
                     channel.send(AuthSwitchResponse(ClearPassword.encode(password)))(using channel.marshallers.authSwitchResponse).flatMap {
                         _ =>
-                            readFinalOk(channel, handshake, clientCaps)
+                            readFinalOk(channel, handshake, clientCaps, switched)
                     }
                 }
 
             case other =>
                 Abort.fail(SqlConnectionUnsupportedAuthMethodException(other))
+        end match
+    end handleAuthSwitch
 
     // --- Utilities ---
 
