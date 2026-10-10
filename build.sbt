@@ -3906,7 +3906,7 @@ lazy val `kyo-email` =
         .in(file("kyo-email"))
         .dependsOn(`kyo-net` % "compile->compile;test->test", `kyo-schema`, `kyo-charset`, `kyo-mime`)
         .dependsOn(`kyo-schema-json` % "test->compile")
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,

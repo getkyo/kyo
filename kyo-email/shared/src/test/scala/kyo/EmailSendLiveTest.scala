@@ -111,14 +111,15 @@ class EmailSendLiveTest extends EmailLiveSuite:
         }
     }
 
-    "a wrong password is rejected with the server's 535 reply" in server() { mail =>
+    "a wrong password is rejected with the server's 535 reply" in ownServer() { mail =>
         Abort.run[EmailSendFailure] {
-            val wrong   = EmailLiterals.passwordAccountOf(User.Test.login, EmailLiterals.passwordOf(mail.password + "x"))
-            val message = Email.Message(from = Chunk(User.Test.address), to = Chunk(User.Test.address), subject = "wrong", text = "Hi.")
+            val wrong   = EmailLiterals.passwordAccountOf(mail.login(User.Test), EmailLiterals.passwordOf(mail.password + "x"))
+            val message =
+                Email.Message(from = Chunk(mail.address(User.Test)), to = Chunk(mail.address(User.Test)), subject = "wrong", text = "Hi.")
             EmailSend.run(mail.smtp(User.Test).account(wrong))(EmailSend.send(message))
         }.map {
             case Result.Failure(rejected: EmailAuthenticationException) =>
-                assert(rejected.user == User.Test.login)
+                assert(rejected.user == mail.login(User.Test))
                 rejected.reply match
                     case EmailAuthenticationException.Reply.Smtp(code, enhanced, _) =>
                         assert(code == 535)

@@ -110,7 +110,7 @@ class EmailReceiveLoopLiveTest extends EmailLiveSuite:
             events <- receiving(account.imap, Start.All(inbox))
             _      <- send(account, "before")
             before <- events.take
-            kicked <- mail.doveadm("kick", User.Test.login)
+            kicked <- mail.doveadm("kick", mail.login(User.Test))
             _      <- send(account, "after")
             after  <- events.take
             _      <- send(account, "later")
@@ -126,10 +126,10 @@ class EmailReceiveLoopLiveTest extends EmailLiveSuite:
         val account = mail.account(User.Test)
         val watched = EmailLiterals.mailboxOf("Watched")
         for
-            _       <- mail.doveadm("mailbox", "create", "-u", User.Test.login, watched.value)
+            _       <- mail.doveadm("mailbox", "create", "-u", mail.login(User.Test), watched.value)
             old     <- EmailReceive.run(account.imap)(EmailReceive.status(watched))
-            _       <- mail.doveadm("mailbox", "delete", "-u", User.Test.login, watched.value)
-            _       <- mail.doveadm("mailbox", "create", "-u", User.Test.login, watched.value)
+            _       <- mail.doveadm("mailbox", "delete", "-u", mail.login(User.Test), watched.value)
+            _       <- mail.doveadm("mailbox", "create", "-u", mail.login(User.Test), watched.value)
             current <- EmailReceive.run(account.imap)(EmailReceive.status(watched))
             resume = Start.After(EmailLiterals.uidOf(watched, old.uidValidity, 1))
             result <- Abort.run[EmailReceiveFailure](EmailReceive.run(account.imap)(EmailReceive.receive(resume)(_ => Kyo.unit)))
