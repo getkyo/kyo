@@ -89,7 +89,7 @@ class EmailReceiveLiveTest extends EmailLiveSuite:
     "a mailbox named past ASCII is listed, counted and moved into under its own name" in server() { mail =>
         val account = mail.account(User.Test)
         val name    = EmailLiterals.mailboxOf("Réunion 日本 & co")
-        mail.doveadm("mailbox", "create", "-u", User.Test.login, name.value).andThen {
+        mail.doveadm("mailbox", "create", "-u", mail.login(User.Test), name.value).andThen {
             delivered(account, "utf-8 mailbox").map { uid =>
                 EmailReceive.run(account.imap) {
                     for
@@ -146,11 +146,11 @@ class EmailReceiveLiveTest extends EmailLiveSuite:
         }
     }
 
-    "a wrong password is rejected with the server's AUTHENTICATIONFAILED" in server() { mail =>
-        val wrong = EmailLiterals.passwordAccountOf(User.Test.login, EmailLiterals.passwordOf(mail.password + "x"))
+    "a wrong password is rejected with the server's AUTHENTICATIONFAILED" in ownServer() { mail =>
+        val wrong = EmailLiterals.passwordAccountOf(mail.login(User.Test), EmailLiterals.passwordOf(mail.password + "x"))
         Abort.run[EmailStatusFailure](EmailReceive.run(mail.imap(User.Test).account(wrong))(EmailReceive.status(inbox))).map {
             case Result.Failure(rejected: EmailAuthenticationException) =>
-                assert(rejected.user == User.Test.login)
+                assert(rejected.user == mail.login(User.Test))
                 rejected.reply match
                     case EmailAuthenticationException.Reply.Imap(code, _) =>
                         assert(code == Present(EmailReceive.ResponseCode.AuthenticationFailed))

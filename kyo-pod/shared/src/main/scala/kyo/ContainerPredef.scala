@@ -29,7 +29,8 @@ object ContainerPredef:
       */
     private[kyo] def readinessScript(probe: Chunk[String], budget: Duration): String =
         val quoted = probe.map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
-        s"""end=$$(($$(date +%s)+${budget.toSeconds})); while [ "$$(date +%s)" -lt "$$end" ]; do $quoted >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"""
+        // POSIX `sleep` takes whole seconds only, so an image whose `sleep` refuses the fraction polls once a second instead of spinning.
+        s"""end=$$(($$(date +%s)+${budget.toSeconds})); while [ "$$(date +%s)" -lt "$$end" ]; do $quoted >/dev/null 2>&1 && exit 0; sleep 0.25 2>/dev/null || sleep 1; done; exit 1"""
     end readinessScript
 
     /** Whether a readiness exec that the daemon failed is worth one more attempt.

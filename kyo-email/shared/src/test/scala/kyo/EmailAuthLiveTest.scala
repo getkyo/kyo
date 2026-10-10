@@ -12,8 +12,8 @@ class EmailAuthLiveTest extends EmailLiveSuite:
         for
             token <- mail.token(User.Test, Token.Valid)
             runs  <- AtomicInt.init
-            oauth   = EmailLiterals.oauth2AccountOf(User.Test.login, runs.incrementAndGet.andThen(token))
-            account = EmailLiveAccount(User.Test.address, mail.imap(User.Test).account(oauth), mail.smtp(User.Test).account(oauth))
+            oauth   = EmailLiterals.oauth2AccountOf(mail.login(User.Test), runs.incrementAndGet.andThen(token))
+            account = EmailLiveAccount(mail.address(User.Test), mail.imap(User.Test).account(oauth), mail.smtp(User.Test).account(oauth))
             message = Email.Message(from = Chunk(account.address), to = Chunk(account.address), subject = "oauth", text = "Token.")
             (id, _, received) <- arrival(account, "oauth")(EmailSend.run(account.smtp)(EmailSend.send(message)))
             count             <- runs.get
@@ -31,9 +31,9 @@ class EmailAuthLiveTest extends EmailLiveSuite:
         (Token.Expired, User.Test, "past its expiry"),
         (Token.Valid, User.Other, "issued to another user")
     ).foreach { (kind, subject, described) =>
-        s"IMAP refuses a token $described with AUTHENTICATIONFAILED" in server() { mail =>
+        s"IMAP refuses a token $described with AUTHENTICATIONFAILED" in ownServer() { mail =>
             mail.token(subject, kind).map { token =>
-                val oauth = EmailLiterals.oauth2AccountOf(User.Test.login, token)
+                val oauth = EmailLiterals.oauth2AccountOf(mail.login(User.Test), token)
                 Abort.run[EmailStatusFailure](EmailReceive.run(mail.imap(User.Test).account(oauth))(EmailReceive.status(inbox))).map {
                     case Result.Failure(rejected: EmailAuthenticationException) =>
                         assert(rejected.mechanism == Email.Auth.Mechanism.XOAuth2)
@@ -44,10 +44,11 @@ class EmailAuthLiveTest extends EmailLiveSuite:
             }
         }
 
-        s"SMTP refuses a token $described with 535" in server() { mail =>
+        s"SMTP refuses a token $described with 535" in ownServer() { mail =>
             mail.token(subject, kind).map { token =>
-                val oauth   = EmailLiterals.oauth2AccountOf(User.Test.login, token)
-                val message = Email.Message(from = Chunk(User.Test.address), to = Chunk(User.Test.address), subject = "refused", text = "x")
+                val oauth   = EmailLiterals.oauth2AccountOf(mail.login(User.Test), token)
+                val address = mail.address(User.Test)
+                val message = Email.Message(from = Chunk(address), to = Chunk(address), subject = "refused", text = "x")
                 Abort.run[EmailSendFailure] {
                     EmailSend.run(mail.smtp(User.Test).account(oauth))(EmailSend.send(message))
                 }.map {
