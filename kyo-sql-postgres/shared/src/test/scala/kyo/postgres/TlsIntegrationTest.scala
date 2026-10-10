@@ -3,7 +3,6 @@ package kyo.postgres
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.TestContainers
 import kyo.net.NetTlsConfig
 
 /** Integration tests for Postgres TLS upgrade via SSLRequest handshake.
@@ -20,8 +19,9 @@ import kyo.net.NetTlsConfig
   * `ssl=on` proves the server offers encryption, not that this connection took it, so without that check each of these leaves passes
   * unchanged over plaintext.
   *
-  * The TLS fixture generates a self-signed cert on the host via `openssl`, mounts it into a Postgres container, and starts Postgres with
-  * SSL enabled via an entrypoint wrapper script, no ALTER SYSTEM, no container restart.
+  * The TLS leaves share [[SqlConfigTlsModeIntegrationTest]]'s TLS server: a self-signed cert generated on the host via `openssl`, mounted
+  * into a Postgres container that starts with SSL enabled via an entrypoint wrapper script. Its host connections authenticate with
+  * scram-sha-256, the postgres:16 default. The non-TLS leaf runs on [[PostgresSharedServer]].
   */
 class TlsIntegrationTest extends SqlContainerTest:
 
@@ -32,20 +32,10 @@ class TlsIntegrationTest extends SqlContainerTest:
 
     override def timeout: Duration = 5.minutes
 
-    /** Starts a Postgres container with SSL enabled using a self-signed certificate generated on the host.
-      *
-      * Steps:
-      *   1. Generate a self-signed cert + key in a host temp directory using `openssl`.
-      *   2. Start `postgres:16` with the cert directory mounted read-only at `/etc/ssl-pg` inside the container.
-      *   3. Override the container entrypoint with a shell wrapper that copies the certs to `/tmp`, fixes permissions, and execs
-      *      `docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=... -c ssl_key_file=...`.
-      *   4. Poll for readiness via the built-in health check.
-      *   5. Yield connection details with `NetTlsConfig(trustAll = true)` because the self-signed cert is not in the JDK trust store.
-      *   6. On scope exit: Scope cleans up the container; `Scope.ensure` deletes the temp directory.
+    /** Runs `f` against the TLS-enabled Postgres server of [[SqlConfigTlsModeIntegrationTest.withTlsContainer]], with
+      * `NetTlsConfig(trustAll = true)` because its self-signed cert is not in the JDK trust store.
       */
     private def withPostgresTls[A, S](
-        extraEnv: Map[String, String] = Map.empty
-    )(
         f: (
             host: String,
             port: Int,
@@ -54,85 +44,10 @@ class TlsIntegrationTest extends SqlContainerTest:
             db: String,
             trustAllConfig: NetTlsConfig
         ) => A < (S & Async & Abort[SqlException])
-    )(using
-        Frame
-    ): A < (S & Async & Scope & Abort[ContainerException] & Abort[CommandException] & Abort[SqlException] & Abort[FileSystemException]) =
-        // Step 1: generate self-signed cert on the host
-        val username = "test"
-        val password = "test"
-        val database = "test"
-        Path.tempDirUnscoped(prefix = "kyo-sql-tls-").flatMap { tempDirPath =>
-            val tempDir = tempDirPath.toString
-            Command(
-                "openssl",
-                "req",
-                "-new",
-                "-x509",
-                "-days",
-                "1",
-                "-nodes",
-                "-subj",
-                "/CN=localhost",
-                "-keyout",
-                s"$tempDir/server.key",
-                "-out",
-                s"$tempDir/server.crt"
-            ).text.andThen(
-                // The directory Path.tempDirUnscoped creates is 0700, and the container that bind-mounts it reads the
-                // material as its own user, so without this its entrypoint fails on "can't stat ... Permission denied"
-                // and it exits before the health check can run. The material is a throwaway self-signed pair, and the
-                // entrypoint re-restricts the copy it makes inside the container.
-                Command("chmod", "-R", "a+rX", tempDir).text
-            ).andThen {
-                // Step 2 & 3: start container with bind mount + entrypoint wrapper
-                val wrapperScript =
-                    "cp /etc/ssl-pg/server.crt /tmp/server.crt && " +
-                        "cp /etc/ssl-pg/server.key /tmp/server.key && " +
-                        "chmod 600 /tmp/server.key && " +
-                        "chown postgres:postgres /tmp/server.crt /tmp/server.key && " +
-                        "exec docker-entrypoint.sh postgres " +
-                        "-c ssl=on " +
-                        "-c ssl_cert_file=/tmp/server.crt " +
-                        "-c ssl_key_file=/tmp/server.key"
-
-                val baseEnv = Map(
-                    "POSTGRES_USER"     -> username,
-                    "POSTGRES_PASSWORD" -> password,
-                    "POSTGRES_DB"       -> database
-                ) ++ extraEnv
-
-                val containerConfig = Container.Config.default
-                    .copy(image = ContainerImage("postgres:16-alpine"))
-                    .envAll(Dict.from(baseEnv))
-                    .port(5432, 0)
-                    // A database fixture must prove its published port is SERVED, not merely bound: the daemon records
-                    // the binding before its forwarder dials the container, so a caller handed the port on the binding
-                    // alone gets a refused connect. Every ContainerPredef fixture sets this; a hand-rolled one must say so.
-                    .requireService(true)
-                    .bind(tempDirPath, Path("/etc/ssl-pg"), readOnly = true)
-                    .command("sh", "-c", wrapperScript)
-                    .healthCheck(Container.HealthCheck.exec(
-                        Command("psql", "-U", username, "-d", database, "-c", "SELECT 1"),
-                        Absent,
-                        Schedule.fixed(1.second).take(60)
-                    ))
-
-                // Step 4: start and await the health check. Through `TestContainers` rather than `Container.init`
-                // directly, so the container carries the `kyo-test-container` and `kyo-test-owner-pid` labels: the
-                // scope removes it on every normal exit, and on a force-kill the labels are the only thing that
-                // lets the next run reap it and its anonymous volume. An unlabelled container here would be
-                // exactly the leak `TestContainers` exists to stop.
-                TestContainers.initScoped(containerConfig, "postgres-tls").flatMap { container =>
-                    // Step 5: yield connection details
-                    container.awaitHealthy.andThen {
-                        container.mappedPort(5432).flatMap { port =>
-                            f(container.host, port, username, password, database, NetTlsConfig(trustAll = true))
-                        }
-                    }
-                }
-            }
+    )(using Frame): A < (S & Async & Abort[SqlException | ContainerException]) =
+        SqlConfigTlsModeIntegrationTest.withTlsContainer { ctx =>
+            f(ctx.host, ctx.port, ctx.user, ctx.password, ctx.db, NetTlsConfig(trustAll = true))
         }
-    end withPostgresTls
 
     // Helper: open a TLS SqlClient pool and return it.
     private def initTlsClient(
@@ -168,7 +83,7 @@ class TlsIntegrationTest extends SqlContainerTest:
 
     "TLS connection, SELECT 1 returns correct row".tagged(OwnContainer.name) in {
         Scope.run {
-            withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
+            withPostgresTls { (host, port, user, password, db, tlsConfig) =>
                 initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
                     // Use text literal '1' so the server returns text OID bytes (UTF-8 compatible in binary format).
                     client.query("SELECT '1'").flatMap { rows =>
@@ -186,7 +101,7 @@ class TlsIntegrationTest extends SqlContainerTest:
 
     "TLS connection, multi-row query SELECT generate_series(1,10) returns 10 rows".tagged(OwnContainer.name) in {
         Scope.run {
-            withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
+            withPostgresTls { (host, port, user, password, db, tlsConfig) =>
                 initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
                     client.query("SELECT generate_series(1,10)").flatMap { rows =>
                         assert(rows.size == 10)
@@ -199,7 +114,7 @@ class TlsIntegrationTest extends SqlContainerTest:
 
     "TLS connection, error recovery: bad SQL followed by valid query works".tagged(OwnContainer.name) in {
         Scope.run {
-            withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
+            withPostgresTls { (host, port, user, password, db, tlsConfig) =>
                 initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
                     Abort.run[SqlException](client.query("this is not valid SQL !!!")).flatMap { errResult =>
                         assert(errResult.isFailure)
@@ -219,11 +134,8 @@ class TlsIntegrationTest extends SqlContainerTest:
 
     "TLS connection, connect with Present(tls) to non-TLS Postgres raises SqlConnectionException".tagged(OwnContainer.name) in {
         Scope.run {
-            // Start a standard (non-TLS) Postgres and try to connect with TLS required.
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-leaf").map { pg =>
+            // A standard (non-TLS) Postgres, connected to with TLS required.
+            PostgresSharedServer.server.map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     Abort.run[SqlException] {
                         Scope.run {
@@ -249,23 +161,21 @@ class TlsIntegrationTest extends SqlContainerTest:
 
     "TLS connection, SCRAM-SHA-256 auth works over TLS".tagged(OwnContainer.name) in {
         Scope.run {
-            // postgres:16-alpine uses scram-sha-256 by default; explicitly set to confirm.
-            withPostgresTls(extraEnv = Map("POSTGRES_HOST_AUTH_METHOD" -> "scram-sha-256")) {
-                (host, port, user, password, db, tlsConfig) =>
-                    initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
-                        // The container sets POSTGRES_HOST_AUTH_METHOD=scram-sha-256, so any successful query
-                        // proves SCRAM-SHA-256 authenticated; what needs asserting on top is that it did so over
-                        // an encrypted connection. isAlive is a ping mapped to isSuccess, which proves a round
-                        // trip happened and nothing about value, transport or auth method.
-                        assertEncrypted(client)
-                    }
+            withPostgresTls { (host, port, user, password, db, tlsConfig) =>
+                initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
+                    // The server's host connections use scram-sha-256, so any successful query proves SCRAM-SHA-256
+                    // authenticated; what needs asserting on top is that it did so over an encrypted connection.
+                    // isAlive is a ping mapped to isSuccess, which proves a round trip happened and nothing about
+                    // value, transport or auth method.
+                    assertEncrypted(client)
+                }
             }
         }
     }
 
     "TLS connection through SqlClient.init authenticates and queries over an encrypted connection".tagged(OwnContainer.name) in {
         Scope.run {
-            withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
+            withPostgresTls { (host, port, user, password, db, tlsConfig) =>
                 SqlClient.init(
                     s"postgres://$user:$password@$host:$port/$db",
                     SqlConfig.default.copy(

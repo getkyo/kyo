@@ -10,15 +10,16 @@ import kyo.net.NetTlsConfig
   * sha256_password is the legacy RSA-auth plugin, supported for MySQL 8.0.5 or later over plaintext. Unlike caching_sha2_password there is no
   * fast-path cache, every connection either encrypts the password with the server's RSA public key (non-TLS) or sends cleartext over TLS.
   *
-  * Container strategy, and which handshake path each leaf actually takes:
-  *   - Root connects and runs `ALTER USER 'test'@'%' IDENTIFIED WITH sha256_password BY 'test'` to switch the test user to sha256_password.
-  *   - Leaves 1 and 2 leave the server's own `default_authentication_plugin` at `caching_sha2_password`, so the server still names that plugin
-  *     in its `HandshakeV10` and reaches `sha256_password` through an `AuthSwitchRequest`. They therefore cover `performSha256Auth`, not the
-  *     initial-response branch: leaf 1 the plaintext RSA-OAEP round via [[kyo.internal.mysql.auth.PasswordEncryption]], leaf 2 the TLS
-  *     path where the client sends the cleartext NUL-terminated password and skips RSA.
-  *   - Leaf 3 starts the server with `--default-authentication-plugin=sha256_password`, which is the only configuration in which the client's
-  *     `HandshakeResponse41` carries a `sha256_password` initial auth response at all. Without it that branch is unreachable, which is how it
-  *     came to send the wrong bytes with every leaf here passing.
+  * Server strategy, and which handshake path each leaf actually takes:
+  *   - Leaves 1 and 2 run as a new `sha256_password` account on [[MysqlSharedServer]], whose `default_authentication_plugin` is
+  *     `caching_sha2_password`, so the server still names that plugin in its `HandshakeV10` and reaches `sha256_password` through an
+  *     `AuthSwitchRequest`. They therefore cover `performSha256Auth`, not the initial-response branch: leaf 1 the plaintext RSA-OAEP round
+  *     via [[kyo.internal.mysql.auth.PasswordEncryption]], leaf 2 the TLS path where the client sends the cleartext NUL-terminated password
+  *     and skips RSA.
+  *   - Leaf 3 starts its own server with `--default-authentication-plugin=sha256_password`, which is the only configuration in which the
+  *     client's `HandshakeResponse41` carries a `sha256_password` initial auth response at all. Without it that branch is unreachable, which
+  *     is how it came to send the wrong bytes with every leaf here passing. Root switches the `test` account to `sha256_password` with
+  *     `ALTER USER`.
   */
 class Sha256PasswordIntegrationTest extends SqlContainerTest:
 
@@ -31,6 +32,12 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
 
     // ─── Container + user-switch helper ─────────────────────────────────────
 
+    /** Runs `f` as a new `sha256_password` account on [[MysqlSharedServer]]. */
+    private def withSharedSha256User[A, S](
+        f: (String, Int, String, String, String) => A < (S & Async & Abort[SqlException] & Scope)
+    )(using Frame): A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
+        MysqlSharedServer.withAccount("sha256_password")(a => f(a.host, a.port, a.user, a.password, a.database))
+
     /** Starts a fresh MySQL container, switches the "test" user to sha256_password via root, and runs `f` with connection details.
       *
       * `serverArgs` reaches `mysqld`'s command line, which is the only way to move the server's default authentication plugin: the plugin named
@@ -38,8 +45,7 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
       * auth response comes from.
       */
     private def withSha256User[A, S](
-        tls: Maybe[NetTlsConfig],
-        serverArgs: Chunk[String] = Chunk.empty
+        serverArgs: Chunk[String]
     )(
         f: (String, Int, String, String, String) => A < (S & Async & Abort[SqlException] & Scope)
     )(using Frame): A < (S & Async & Abort[Throwable] & Scope) =
@@ -84,7 +90,7 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
 
     "MySQL user configured with sha256_password authenticates via RSA-OAEP (non-TLS)".tagged(OwnContainer.name) in {
         Scope.run {
-            withSha256User(Maybe.Absent) { (host, port, user, pass, db) =>
+            withSharedSha256User { (host, port, user, pass, db) =>
                 // Connect without TLS: HandshakeExchange sends empty auth → receives PEM key → XOR+RSA-OAEP encrypts → server decrypts.
                 MysqlClient.init(
                     s"mysql://$user:$pass@$host:$port/$db",
@@ -103,7 +109,7 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
 
     "TLS path skips RSA encryption for sha256_password (cleartext NUL-terminated)".tagged(OwnContainer.name) in {
         Scope.run {
-            withSha256User(Maybe.Present(NetTlsConfig(trustAll = true))) { (host, port, user, pass, db) =>
+            withSharedSha256User { (host, port, user, pass, db) =>
                 // Connect with TLS (trustAll): sends cleartext NUL-terminated password in HandshakeResponse41, no RSA involved.
                 MysqlClient.init(
                     s"mysql://$user:$pass@$host:$port/$db",
@@ -129,7 +135,7 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
         // response has to be the single byte 0x01, which is what makes the server answer with its RSA public key; an
         // empty response is read as an empty password and the connection is refused with a real password set.
         Scope.run {
-            withSha256User(Maybe.Absent, Chunk("--default-authentication-plugin=sha256_password")) { (host, port, user, pass, db) =>
+            withSha256User(Chunk("--default-authentication-plugin=sha256_password")) { (host, port, user, pass, db) =>
                 MysqlClient.init(
                     s"mysql://$user:$pass@$host:$port/$db",
                     SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
