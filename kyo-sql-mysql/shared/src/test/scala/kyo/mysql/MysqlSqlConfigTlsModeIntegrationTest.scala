@@ -7,22 +7,18 @@ import kyo.internal.TestContainers
 /** Integration tests for MySQL sslmode `allow` and `prefer` (opportunistic TLS).
   *
   * Container groups:
-  *   - Leaf 1 uses `ContainerPredef.MySQL.Config.default.cmd(Chunk("--skip-ssl", "--default-authentication-plugin=mysql_native_password"))`
-  * a per-leaf MySQL container with TLS disabled. SSL is disabled at the mysqld level so the server advertises no CLIENT_SSL
-  *     capability: prefer falls back to plaintext, and allow stays on plaintext. The
-  *     `--default-authentication-plugin=mysql_native_password` flag is required alongside `--skip-ssl` so the health-check client and
-  *     kyo-sql client can authenticate over plaintext without TLS or RSA key exchange (caching_sha2_password, the MySQL 8.0 default, cannot
-  *     complete fast-auth without TLS).
+  *   - Leaves 1 and 4 share a server with TLS disabled (see [[withSkipSslContainer]]). SSL is disabled at the mysqld level so the server
+  *     advertises no CLIENT_SSL capability: prefer falls back to plaintext, and allow stays on plaintext.
   *   - Leaf 2 uses a per-leaf MySQL container started with `--require-secure-transport=ON
   *     --default-authentication-plugin=mysql_native_password`. The server rejects any plaintext connection with error 3159
   *     (ER_SECURE_TRANSPORT_REQUIRED), triggering the `requiresSecureTransport` reconnect path in MysqlSqlConnection. The test verifies the
   *     connection is established over TLS via `SHOW SESSION STATUS LIKE 'Ssl_cipher'`.
-  *   - Leaves 3 and 5 share a single TLS-enabled MySQL container lazily started by a per-class CAS-singleton (see [[tlsRef]]). `mysql:8.0`
-  *     auto-generates server certs on first start, so no manual cert setup is required. The container survives the test class; it carries
-  *     the `kyo-test-container` and `kyo-test-owner-pid` labels, and `TestContainers.initSingleton` removes every dead-owner container,
-  *     together with its anonymous volumes, before creating a new singleton. There is no build-level cleanup task: a force-killed test
-  *     process runs no sbt hook either.
-  *   - Leaf 4 starts its own `--skip-ssl` container rather than sharing the singleton, so it is grouped with leaf 1 rather than with 3.
+  *   - Leaves 3 and 5 run on [[MysqlSharedServer]]: `mysql:8.0` auto-generates server certs on first start, so no manual cert setup is
+  *     required.
+  *   - Leaves 6 to 8 share the known-certificate container (see [[withCertContainer]]).
+  *
+  * The shared servers are [[kyo.internal.TestContainers.initSingleton]] fixtures: they survive the test class and carry the labels the
+  * reaper finds once this process is gone.
   *
   * Every leaf here whose title claims TLS reads `Ssl_cipher`, because this server accepts plaintext as well: a query answering correctly
   * proves the connection works and says nothing about whether it was encrypted.
@@ -54,30 +50,18 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     import MysqlSqlConfigTlsModeIntegrationTest.*
 
     // ── Leaf 1: sslmode=allow connects plaintext when server permits plaintext ─
-    // Uses a per-leaf MySQL container started with --skip-ssl --default-authentication-plugin=mysql_native_password
-    // (no CLIENT_SSL capability). allow mode: try plaintext first → server accepts → stay plaintext. No reconnect.
+    // Uses the shared --skip-ssl server (no CLIENT_SSL capability). allow mode: try plaintext first → server accepts → stay plaintext.
+    // No reconnect.
 
     "sslmode=allow connects plaintext when server permits plaintext".tagged(OwnContainer.name) in {
-        Scope.run {
-            // --skip-ssl disables server-side TLS so the server does not advertise CLIENT_SSL.
-            // --default-authentication-plugin=mysql_native_password is required alongside --skip-ssl so
-            // that the 'test' user can authenticate over plaintext; caching_sha2_password (8.0 default)
-            // does not complete its fast-auth path without TLS or RSA key exchange.
-            val skipSslPredef = ContainerPredef.MySQL.Config.default
-                .appendServerArgs("--skip-ssl", "--default-authentication-plugin=mysql_native_password")
-            val skipSslConfig = ContainerPredef.MySQL.buildContainerConfig(skipSslPredef)
-            // Through `TestContainers` rather than `Container.init` directly, so the container carries the
-            // `kyo-test-container` and `kyo-test-owner-pid` labels and a force-killed run's leftover is still reapable.
-            TestContainers.initScoped(skipSslConfig, "mysql-skip-ssl").flatMap { skipSslContainer =>
-                val mysql = new ContainerPredef.MySQL(skipSslContainer, skipSslPredef)
-                mysql.container.mappedPort(mysql.config.port).flatMap { port =>
-                    val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=allow"
-                    MysqlClient.init(url).flatMap { client =>
-                        DB.run(client) {
-                            client.query("SELECT 1").flatMap { rows =>
-                                assert(rows.size == 1, "sslmode=allow should connect plaintext when server has no TLS")
-                                assertPlaintext("sslmode=allow against a server with no TLS")
-                            }
+        withSkipSslContainer { ctx =>
+            val url = s"mysql://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=allow"
+            Scope.run {
+                MysqlClient.init(url).flatMap { client =>
+                    DB.run(client) {
+                        client.query("SELECT 1").flatMap { rows =>
+                            assert(rows.size == 1, "sslmode=allow should connect plaintext when server has no TLS")
+                            assertPlaintext("sslmode=allow against a server with no TLS")
                         }
                     }
                 }
@@ -185,30 +169,19 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     }
 
     // ── Leaf 4: sslmode=prefer falls back to plaintext when server refuses TLS ─
-    // Uses a per-leaf MySQL container started with --skip-ssl --default-authentication-plugin=mysql_native_password
-    // (no CLIENT_SSL capability). prefer mode: HandshakeExchange sees no CLIENT_SSL → preferFallback=true → plaintext fallback.
+    // Uses the shared --skip-ssl server (no CLIENT_SSL capability). prefer mode: HandshakeExchange sees no CLIENT_SSL →
+    // preferFallback=true → plaintext fallback.
 
     "sslmode=prefer falls back to plaintext when server refuses TLS".tagged(OwnContainer.name) in {
-        Scope.run {
-            // --skip-ssl disables server-side TLS so the server does not advertise CLIENT_SSL.
-            // --default-authentication-plugin=mysql_native_password is required alongside --skip-ssl so
-            // that the 'test' user can authenticate over plaintext; caching_sha2_password (8.0 default)
-            // does not complete its fast-auth path without TLS or RSA key exchange.
-            val skipSslPredef2 = ContainerPredef.MySQL.Config.default
-                .appendServerArgs("--skip-ssl", "--default-authentication-plugin=mysql_native_password")
-            val skipSslConfig2 = ContainerPredef.MySQL.buildContainerConfig(skipSslPredef2)
-            // Labelled for the same reason as leaf 1: an unlabelled container is unreapable after a force-kill.
-            TestContainers.initScoped(skipSslConfig2, "mysql-skip-ssl").flatMap { skipSslContainer2 =>
-                val mysql = new ContainerPredef.MySQL(skipSslContainer2, skipSslPredef2)
-                mysql.container.mappedPort(mysql.config.port).flatMap { port =>
-                    val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=prefer"
-                    MysqlClient.init(url).flatMap { client =>
-                        DB.run(client) {
-                            // Connection must succeed via plaintext fallback when no CLIENT_SSL.
-                            client.query("SELECT 1").flatMap { rows =>
-                                assert(rows.size == 1, "sslmode=prefer should fall back to plaintext when server has no TLS")
-                                assertPlaintext("sslmode=prefer falling back against a server with no TLS")
-                            }
+        withSkipSslContainer { ctx =>
+            val url = s"mysql://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=prefer"
+            Scope.run {
+                MysqlClient.init(url).flatMap { client =>
+                    DB.run(client) {
+                        // Connection must succeed via plaintext fallback when no CLIENT_SSL.
+                        client.query("SELECT 1").flatMap { rows =>
+                            assert(rows.size == 1, "sslmode=prefer should fall back to plaintext when server has no TLS")
+                            assertPlaintext("sslmode=prefer falling back against a server with no TLS")
                         }
                     }
                 }
@@ -376,57 +349,31 @@ object MysqlSqlConfigTlsModeIntegrationTest:
             assert(cipher.isEmpty, s"$context: the connection must be plaintext, but Ssl_cipher reports '$cipher'")
         }
 
-    /** Connection details for the shared MySQL TLS container.
-      *
-      * Built once on first leaf access; subsequent leaves reuse the same container.
-      */
+    /** Connection details for a shared MySQL server. */
     final case class TlsCtx(host: String, port: Int, user: String, password: String, db: String)
 
-    private type TlsPromise = Promise[TlsCtx, Abort[ContainerException]]
-
-    // Unsafe: module-load AtomicRef init (no live Frame yet).
-    private val tlsRef: AtomicRef[Maybe[TlsPromise]] =
-        import AllowUnsafe.embrace.danger
-        AtomicRef.Unsafe.init[Maybe[TlsPromise]](Maybe.empty).safe
-
-    /** Acquires the shared MySQL-TLS container, lazily starting it on first call. Concurrent callers that lose the CAS race wait on the
-      * same [[Promise]]. On startup failure the slot is reset so the next caller retries.
-      */
+    /** Runs `f` as the `test` account of [[MysqlSharedServer]], whose auto-generated certificate makes CLIENT_SSL available. */
     def withTlsContainer[A, S](f: TlsCtx => A < (S & Async & Abort[ContainerException]))(using
         Frame
     ): A < (S & Async & Abort[ContainerException]) =
-        tlsRef.use {
-            case Maybe.Present(p) => p.get.flatMap(f)
-            case Maybe.Absent     =>
-                Promise.init[TlsCtx, Abort[ContainerException]].flatMap { p =>
-                    tlsRef.compareAndSet(Maybe.empty, Maybe.Present(p)).flatMap {
-                        case false =>
-                            // Lost the race; await the winner (or recurse if the slot was reset due to failure).
-                            tlsRef.use {
-                                case Maybe.Present(winner) => winner.get.flatMap(f)
-                                case Maybe.Absent          => withTlsContainer(f)
-                            }
-                        case true =>
-                            Fiber.initUnscoped(initTlsContainer).flatMap { fiber =>
-                                fiber.getResult.flatMap {
-                                    case Result.Success(ctx) =>
-                                        p.completeDiscard(Result.succeed(ctx)).andThen(f(ctx))
-                                    case Result.Failure(e: ContainerException) =>
-                                        // Reset slot first so subsequent callers retry instead of seeing a poisoned Promise.
-                                        tlsRef.set(Maybe.empty)
-                                            .andThen(p.completeDiscard(Result.fail(e)))
-                                            .andThen(p.get)
-                                            .flatMap(f)
-                                    case Result.Panic(t) =>
-                                        tlsRef.set(Maybe.empty)
-                                            .andThen(p.completeDiscard(Result.panic(t)))
-                                            .andThen(p.get)
-                                            .flatMap(f)
-                                }
-                            }
-                    }
-                }
-        }
+        MysqlSharedServer.testAccount.map(a => TlsCtx(a.host, a.port, a.user, a.password, a.database)).flatMap(f)
+
+    /** Runs `f` against a shared server started with `--skip-ssl`, so it advertises no CLIENT_SSL.
+      *
+      * `--default-authentication-plugin=mysql_native_password` is required alongside `--skip-ssl` so that the `test` user can authenticate
+      * over plaintext: caching_sha2_password, the 8.0 default, does not complete its fast-auth path without TLS or RSA key exchange.
+      */
+    def withSkipSslContainer[A, S](f: TlsCtx => A < (S & Async & Abort[ContainerException]))(using
+        Frame
+    ): A < (S & Async & Abort[ContainerException]) =
+        val predef = ContainerPredef.MySQL.Config.default
+            .appendServerArgs("--skip-ssl", "--default-authentication-plugin=mysql_native_password")
+        TestContainers.getOrInit(TestContainers.containers, "mysql-skip-ssl")(
+            TestContainers.initSingleton(ContainerPredef.MySQL.buildContainerConfig(predef), "mysql-skip-ssl")
+        ).flatMap { container =>
+            container.mappedPort(predef.port).map(port => TlsCtx(container.host, port, predef.username, predef.password, predef.database))
+        }.flatMap(f)
+    end withSkipSslContainer
 
     /** Connection details for the KNOWN-CERTIFICATE MySQL container, which is a different fixture from [[TlsCtx]] above.
       *
@@ -452,9 +399,8 @@ object MysqlSqlConfigTlsModeIntegrationTest:
         import AllowUnsafe.embrace.danger
         AtomicRef.Unsafe.init[Maybe[CertPromise]](Maybe.empty).safe
 
-    /** Acquires the known-certificate container, lazily starting it on first call. Same lose-the-CAS-race-and-wait shape as
-      * [[withTlsContainer]]; the block is repeated rather than factored because the sibling PostgreSQL fixture repeats it too, so a shared
-      * helper would be a cross-module refactor of working concurrency code rather than part of this fixture.
+    /** Acquires the known-certificate container, lazily starting it on first call. Concurrent callers that lose the CAS race wait on the
+      * same [[Promise]]. On startup failure the slot is reset so the next caller retries.
       */
     def withCertContainer[A, S](f: CertCtx => A < (S & Async & Abort[ContainerException]))(using
         Frame
@@ -590,23 +536,5 @@ object MysqlSqlConfigTlsModeIntegrationTest:
             }
         }
     end startCertContainer
-
-    /** Starts a plain `mysql:8.0` container, auto-generated certs make CLIENT_SSL available out of the box. The container is left running
-      * for the JVM's lifetime; `TestContainers.initSingleton` reaps it, with its anonymous volumes, on the next container-using run once
-      * this process is gone.
-      */
-    private def initTlsContainer(using Frame): TlsCtx < (Async & Abort[ContainerException]) =
-        val username = "test"
-        val password = "test"
-        val database = "test"
-        val predef   = ContainerPredef.MySQL.Config.default.copy(username = username, password = password, database = database)
-        val cfg      = ContainerPredef.MySQL.buildContainerConfig(predef)
-        TestContainers.initSingleton(cfg, "mysql-tls-mode").flatMap { container =>
-            val mysql = new ContainerPredef.MySQL(container, predef)
-            mysql.container.mappedPort(mysql.config.port).map { port =>
-                TlsCtx(mysql.container.host, port, username, password, database)
-            }
-        }
-    end initTlsContainer
 
 end MysqlSqlConfigTlsModeIntegrationTest

@@ -7,7 +7,7 @@ import kyo.internal.TestContainers
 
 /** Integration tests for MD5 password authentication.
   *
-  * Uses a postgres:16 container with `POSTGRES_HOST_AUTH_METHOD=md5`.
+  * Uses one postgres:16 container with `POSTGRES_HOST_AUTH_METHOD=md5`, shared by every leaf.
   */
 class Md5IntegrationTest extends SqlContainerTest:
 
@@ -30,23 +30,19 @@ class Md5IntegrationTest extends SqlContainerTest:
             )
         }
 
-    /** Start a Postgres container with `POSTGRES_HOST_AUTH_METHOD=md5` and pass the [[ContainerPredef.Postgres]] handle to `f`. */
-    private def initWithMd5[A, S](
-        predefConfig: ContainerPredef.Postgres.Config = ContainerPredef.Postgres.Config.default
-    )(f: ContainerPredef.Postgres => A < S)(using Frame): A < (S & Async & Abort[ContainerException] & Scope) =
+    /** Runs `f` against the process's Postgres server with `POSTGRES_HOST_AUTH_METHOD=md5`, shared by every leaf here. */
+    private def initWithMd5[A, S](f: ContainerPredef.Postgres => A < S)(using Frame): A < (S & Async & Abort[ContainerException]) =
+        val predefConfig    = ContainerPredef.Postgres.Config.default
         val containerConfig = ContainerPredef.Postgres.buildContainerConfig(predefConfig)
             .env("POSTGRES_HOST_AUTH_METHOD", "md5")
-        // Through `TestContainers` rather than `Container.init` directly, so the container carries the
-        // `kyo-test-container` and `kyo-test-owner-pid` labels: the scope removes it on every normal exit, and on a
-        // force-kill the labels are the only thing that lets the next run reap it and its anonymous volume.
-        TestContainers.initScoped(containerConfig, "postgres-md5").flatMap { container =>
-            f(new ContainerPredef.Postgres(container, predefConfig))
-        }
+        TestContainers.getOrInit(TestContainers.containers, "postgres-md5")(
+            TestContainers.initSingleton(containerConfig, "postgres-md5")
+        ).flatMap(container => f(new ContainerPredef.Postgres(container, predefConfig)))
     end initWithMd5
 
     "StartupExchange succeeds with MD5 server, connect completes without error".tagged(OwnContainer.name) in {
         Scope.run {
-            initWithMd5() { pg =>
+            initWithMd5 { pg =>
                 initMd5Client(pg).flatMap { client =>
                     client.isAlive.map(alive => assert(alive))
                 }
@@ -56,7 +52,7 @@ class Md5IntegrationTest extends SqlContainerTest:
 
     "StartupExchange MD5 wrong password raises SqlConnectionAuthenticationFailedException".tagged(OwnContainer.name) in {
         Scope.run {
-            initWithMd5(ContainerPredef.Postgres.Config.default.password("correctmd5pw")) { pg =>
+            initWithMd5 { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     Abort.run[SqlException] {
                         Scope.run {
@@ -80,7 +76,7 @@ class Md5IntegrationTest extends SqlContainerTest:
 
     "StartupExchange MD5 SELECT 1 returns correct result after MD5 authentication".tagged(OwnContainer.name) in {
         Scope.run {
-            initWithMd5() { pg =>
+            initWithMd5 { pg =>
                 initMd5Client(pg).flatMap { client =>
                     // Use text literal '1' so the server returns text OID bytes (UTF-8 compatible in binary format).
                     client.query("SELECT '1'").map { rows =>

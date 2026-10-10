@@ -6,15 +6,8 @@ import kyo.internal.TestContainers
 
 /** Integration tests for caching_sha2_password authentication.
   *
-  * Uses a MySQL 8.0 container started WITHOUT `--default-authentication-plugin=mysql_native_password`, so the server's default
-  * `caching_sha2_password` plugin is active.
-  *
-  * Test structure:
-  *   - Each test that needs a fresh server cache starts its own container (container-per-test) to guarantee cache is empty (cache miss →
-  *     full-auth path).
-  *   - Tests that need a warm cache (fast-path) open a first connection then a second within the same container.
-  *
-  * Container startup takes ~30-60 s, so each test has a 3-minute timeout.
+  * The caching_sha2 leaves run as the `test` account of [[MysqlSharedServer]], whose default plugin is `caching_sha2_password`. The
+  * native_password leaf needs `--default-authentication-plugin=mysql_native_password` on the server, so it starts its own container.
   */
 class CachingSha2IntegrationTest extends SqlContainerTest:
 
@@ -28,29 +21,18 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
     // Case class to carry connection details from the Kyo fiber to openClient.
     private case class ConnDetails(host: String, port: Int, user: String, password: String, db: String)
 
-    /** Starts a fresh MySQL container using caching_sha2_password as the default auth plugin, runs `f`, then stops the container. */
+    /** Runs `f` against the shared caching_sha2 server as its `test` account. */
     private def withCachingSha2Container[A](
         f: ConnDetails => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[Throwable] & Scope) =
-        // Through `TestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
-        // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-        // process leaves something the reaper can find.
-        TestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-caching-sha2").map { mysql =>
-            mysql.container.mappedPort(mysql.config.port).flatMap { port =>
-                val details = ConnDetails(
-                    mysql.container.host,
-                    port,
-                    mysql.username,
-                    mysql.password,
-                    mysql.database
-                )
-                Abort.run[SqlException](f(details)).flatMap {
-                    case Result.Success(a) => a
-                    case Result.Failure(e) => Abort.fail(e: Throwable)
-                    case Result.Panic(t)   =>
-                        scala.Console.err.println(s"[CachingSha2IntegrationTest] panic: ${t.getMessage}")
-                        Abort.fail(t)
-                }
+        MysqlSharedServer.testAccount.map { account =>
+            val details = ConnDetails(account.host, account.port, account.user, account.password, account.database)
+            Abort.run[SqlException](f(details)).flatMap {
+                case Result.Success(a) => a
+                case Result.Failure(e) => Abort.fail(e: Throwable)
+                case Result.Panic(t)   =>
+                    scala.Console.err.println(s"[CachingSha2IntegrationTest] panic: ${t.getMessage}")
+                    Abort.fail(t)
             }
         }
 
@@ -238,22 +220,24 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
             withCachingSha2Container { details =>
                 Scope.run {
                     openClient(details).flatMap { client =>
-                        client.executeRaw("CREATE TABLE IF NOT EXISTS csha2_test (id INT, name VARCHAR(64))").flatMap { _ =>
-                            client.executeRaw("INSERT INTO csha2_test VALUES (42, 'hello')").flatMap { affected =>
-                                assert(affected == 1L)
-                                client.query("SELECT id, name FROM csha2_test").flatMap { rows =>
-                                    assert(rows.size == 1)
-                                    val row = rows(0)
-                                    // Extended protocol: INT is a 4-byte little-endian LONG, VARCHAR is
-                                    // length-prefixed UTF-8. Decode typed.
-                                    for
-                                        idVal   <- row.decode[Int]("id")
-                                        nameVal <- row.decode[String]("name")
-                                        _ = assert(idVal == 42)
-                                        _ = assert(nameVal == "hello")
-                                        r <- client.executeRaw("DROP TABLE csha2_test").map(_ => succeed)
-                                    yield r
-                                    end for
+                        Random.nextLong.map(v => s"csha2_test_${(v & Long.MaxValue).toHexString}").flatMap { table =>
+                            client.executeRaw(s"CREATE TABLE $table (id INT, name VARCHAR(64))").flatMap { _ =>
+                                client.executeRaw(s"INSERT INTO $table VALUES (42, 'hello')").flatMap { affected =>
+                                    assert(affected == 1L)
+                                    client.query(s"SELECT id, name FROM $table").flatMap { rows =>
+                                        assert(rows.size == 1)
+                                        val row = rows(0)
+                                        // Extended protocol: INT is a 4-byte little-endian LONG, VARCHAR is
+                                        // length-prefixed UTF-8. Decode typed.
+                                        for
+                                            idVal   <- row.decode[Int]("id")
+                                            nameVal <- row.decode[String]("name")
+                                            _ = assert(idVal == 42)
+                                            _ = assert(nameVal == "hello")
+                                            r <- client.executeRaw(s"DROP TABLE $table").map(_ => succeed)
+                                        yield r
+                                        end for
+                                    }
                                 }
                             }
                         }

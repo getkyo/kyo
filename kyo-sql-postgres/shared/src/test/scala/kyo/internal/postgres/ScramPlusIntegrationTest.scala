@@ -28,7 +28,7 @@ import kyo.net.NetTlsConfig
   *   - The default postgres:16-alpine pg_hba.conf already requires scram-sha-256 for host connections; over TLS, the server offers both
   *     SCRAM-SHA-256 and SCRAM-SHA-256-PLUS in the AuthenticationSASL message.
   *   - `awaitSslReady` probe confirms TLS is actually active before any leaf runs.
-  *   - The plaintext-fallback leaf uses `ContainerPredef.Postgres` (no TLS needed, plaintext SCRAM-SHA-256).
+  *   - The plaintext-fallback leaf uses [[kyo.postgres.PostgresSharedServer]] (no TLS needed, plaintext SCRAM-SHA-256).
   */
 class ScramPlusIntegrationTest extends SqlContainerTest:
 
@@ -151,11 +151,8 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     "connecting plaintext to a PG that offers PLUS falls back to SCRAM-SHA-256".tagged(OwnContainer.name) in {
         Scope.run {
-            // Use a plain non-TLS Postgres container. Without TLS, no cert hash, so non-PLUS.
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram-plus-leaf").map { pg =>
+            // A plain non-TLS Postgres. Without TLS, no cert hash, so non-PLUS.
+            kyo.postgres.PostgresSharedServer.server.map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     AtomicRef.init("").flatMap { mechanismRef =>
                         PostgresConnection.connectWithCertHashOverride(

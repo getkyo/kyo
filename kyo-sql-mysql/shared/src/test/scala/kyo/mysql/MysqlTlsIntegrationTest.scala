@@ -2,15 +2,12 @@ package kyo.mysql
 
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.TestContainers
 import kyo.net.NetTlsConfig
 
 /** Integration tests for MySQL TLS upgrade (CLIENT_SSL mid-handshake).
   *
-  * Uses a vanilla `mysql:8.0` container, the image runs `mysqld` with `--auto-generate-certs=ON`, so a self-signed server certificate is
-  * generated on first start and TLS is ready out of the box. No bind mounts, no `mysql_ssl_rsa_setup`, no container restart.
-  *
-  * All TLS assertions run inside a single test body so the container setup occurs only once per test run.
+  * Runs on [[MysqlSharedServer]], a vanilla `mysql:8.0` whose image runs `mysqld` with `--auto-generate-certs=ON`, so a self-signed server
+  * certificate is generated on first start and TLS is ready out of the box. No bind mounts, no `mysql_ssl_rsa_setup`, no container restart.
   */
 class MysqlTlsIntegrationTest extends SqlContainerTest:
 
@@ -30,28 +27,23 @@ class MysqlTlsIntegrationTest extends SqlContainerTest:
         trustAllConfig: NetTlsConfig
     )
 
-    /** Starts a fresh MySQL container (with TLS auto-enabled by mysql:8) and runs `f` against connection details that request TLS. */
+    /** Runs `f` as the `test` account of [[MysqlSharedServer]] against connection details that request TLS. */
     private def withTlsContainer[A](
         f: TlsConnDetails => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[Throwable] & Scope) =
-        // Through `TestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
-        // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-        // process leaves something the reaper can find.
-        TestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-tls").map { mysql =>
-            mysql.container.mappedPort(mysql.config.port).flatMap { port =>
-                val details = TlsConnDetails(
-                    mysql.container.host,
-                    port,
-                    mysql.username,
-                    mysql.password,
-                    mysql.database,
-                    NetTlsConfig(trustAll = true)
-                )
-                Abort.run[SqlException](f(details)).flatMap {
-                    case Result.Success(a) => a
-                    case Result.Failure(e) => Abort.fail(e: Throwable)
-                    case Result.Panic(t)   => Abort.fail(t)
-                }
+        MysqlSharedServer.testAccount.map { account =>
+            val details = TlsConnDetails(
+                account.host,
+                account.port,
+                account.user,
+                account.password,
+                account.database,
+                NetTlsConfig(trustAll = true)
+            )
+            Abort.run[SqlException](f(details)).flatMap {
+                case Result.Success(a) => a
+                case Result.Failure(e) => Abort.fail(e: Throwable)
+                case Result.Panic(t)   => Abort.fail(t)
             }
         }
 

@@ -2,7 +2,6 @@ package kyo.postgres
 
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.TestContainers
 
 /** What [[PostgresConfig.searchPath]] does against a live server.
   *
@@ -23,12 +22,18 @@ class PostgresConfigSearchPathIntegrationTest extends SqlContainerTest:
 
     override def timeout: Duration = 5.minutes
 
+    /** Runs `f` with the URL of a new database on [[PostgresSharedServer]], dropped when the enclosing scope closes. */
     private def withServer[A](f: String => A < (Async & Abort[SqlException] & Scope))(using
         Frame
     ): A < (Async & Abort[SqlException | ContainerException] & Scope) =
-        TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-search-path").flatMap { pg =>
-            pg.container.mappedPort(pg.config.port).flatMap { port =>
-                val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}"
+        for
+            adminUrl <- PostgresSharedServer.url()
+            database <- PostgresSharedServer.uniqueName("search_path")
+            admin    <- SqlClient.init(adminUrl, SqlConfig.default.maxConnections(1))
+            _        <- admin.executeRaw(s"""CREATE DATABASE "$database"""")
+            _        <- Scope.ensure(Abort.run(admin.executeRaw(s"""DROP DATABASE IF EXISTS "$database" WITH (FORCE)""")).unit)
+            url      <- PostgresSharedServer.url(database)
+            result   <-
                 SqlClient.init(url, SqlConfig.default.maxConnections(1)).flatMap { setup =>
                     DB.run(setup) {
                         // The same table name in two schemas, holding different rows.
@@ -39,8 +44,7 @@ class PostgresConfigSearchPathIntegrationTest extends SqlContainerTest:
                             .andThen(setup.executeRaw("INSERT INTO app.probe VALUES ('app')"))
                     }.andThen(f(url))
                 }
-            }
-        }
+        yield result
 
     private def noteOn(client: SqlClient)(using Frame): String < (Async & Abort[SqlException]) =
         client.query("SELECT note FROM probe").map(_.head.decode[String](0))
