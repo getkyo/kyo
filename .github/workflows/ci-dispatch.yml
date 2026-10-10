@@ -138,6 +138,7 @@ jobs:
     runs-on: ${{ inputs.custom-runner }}
     env:
       SBT_TASK_LIMIT: 1
+      SBT_COMPILE_LIMIT: 2
     steps:
       - uses: actions/checkout@v7.0.1
         with:

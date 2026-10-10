@@ -76,6 +76,7 @@ lazy val DocTag = Tags.Tag("doc")
 
 // CI concurrency controls:
 // - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
+// - SBT_COMPILE_LIMIT: let compile tasks alone exceed SBT_TASK_LIMIT (see project/TaskLimits.scala)
 // - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
 // - Test limit: cap concurrent test projects. On CI (detected via the `CI` env
 //   var set by GitHub Actions, Travis, CircleCI, etc.) use 50% of cores to
@@ -87,7 +88,6 @@ lazy val DocTag = Tags.Tag("doc")
 // `Tags.limit(Tags.ForkedTestGroup, 1)` would otherwise shadow our larger forkLimit. Per-project
 // `Global / concurrentRestrictions ++=` (e.g. Scala.JS linker locks) still appends as expected.
 Global / concurrentRestrictions := {
-    val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
     val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
     val cores       = java.lang.Runtime.getRuntime.availableProcessors()
     val isCI        = sys.env.contains("CI")
@@ -95,11 +95,11 @@ Global / concurrentRestrictions := {
     // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
     // podman fork and a docker fork (KYO_POD_RUNTIME pinning), so this bounds container-daemon
     // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon); real
-    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). 2 everywhere: each fork's heap
+    // CI additionally serializes via SBT_TASK_LIMIT=1 (TaskLimits.rule below). 2 everywhere: each fork's heap
     // is 5GB (Test / javaOptions), so the cap is what bounds the forks' memory on any machine.
     val forkLimit = 2
     Seq(
-        Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
+        TaskLimits.rule(Seq(Tags.Test, Tags.ForkedTestGroup, ScalaJSTags.Link, NativeTags.Link, DoctestTag, DocTag)),
         Tags.limit(Tags.Update, if (updateLimit != "0") updateLimit.toInt else 1),
         Tags.limit(Tags.Test, testLimit),
         Tags.limit(Tags.ForkedTestGroup, forkLimit),
