@@ -796,32 +796,44 @@ final private[kyo] class JsTransport private (
             // Exactly one stdio per process: fds 0/1 are process-global, so double-ownership is rejected.
             Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
         else
-            val driver = pool.next()
-            // A duplex shim over the two Node streams: reads route to process.stdin, writes to process.stdout.
-            // JsHandle/JsIoDriver expect a single socket-like object, so the shim presents one whose read events
-            // come from stdin and whose write goes to stdout. destroy() is a no-op: the process owns fds 0/1.
-            val shim   = stdioShim()
-            val handle = JsHandle.init(shim, driver, frame)
-            // stdio keeps peerCloseGrace = Infinity: no TCP peer to reclaim against.
-            val connection = Connection.init(handle, driver, channelCapacity)
-            if connection.start() then
-                Fiber.Unsafe.fromResult(Result.succeed(connection: NetConnection))
-            else
-                // Unreachable: Connection.init registers nothing a concurrent close could reach before start() runs immediately above.
-                // Surfaced as a typed failure (not a Panic) since the return type already supports it and the shape here is eager/synchronous,
-                // unlike the deferred PosixTransport.stdio() (see PosixTransport.scala:197 above).
-                Fiber.Unsafe.fromResult(Result.fail(NetConnectionClosedException(Operation.Start)))
-            end if
+            val process = js.Dynamic.global.process
+            openStdio(process.stdin, process.stdout, channelCapacity)
     end stdio
 
-    /** Build the stdin/stdout duplex shim. The readable side (`on`, `pause`, `resume`) delegates to `process.stdin`; the writable side
-      * (`write`, `once`/`removeListener` for drain/close/error) delegates to `process.stdout`. `destroyed` and `writableFinished` are always
-      * false and `end` and `destroy` are no-ops so neither process fd is ever closed or ended.
+    /** A stdio connection reading `stdin` and writing `stdout`, two Node streams the caller owns and this connection never ends or destroys.
+      * `stdio` claims the process streams and passes them here; the claim is about fds 0/1, so it stays out of this method.
       */
-    private def stdioShim()(using AllowUnsafe): js.Dynamic =
-        val process = js.Dynamic.global.process
-        val stdin   = process.stdin
-        val stdout  = process.stdout
+    private[net] def openStdio(stdin: js.Dynamic, stdout: js.Dynamic, channelCapacity: Int)(using
+        allow: AllowUnsafe,
+        frame: Frame
+    ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+        val driver = pool.next()
+        // JsHandle/JsIoDriver expect a single socket-like object, so the shim presents one whose read events come from stdin and whose write
+        // goes to stdout.
+        val shim   = stdioShim(stdin, stdout)
+        val handle = JsHandle.init(shim, driver, frame)
+        // stdio keeps peerCloseGrace = Infinity: no TCP peer to reclaim against.
+        val connection = Connection.init(handle, driver, channelCapacity)
+        if connection.start() then
+            Fiber.Unsafe.fromResult(Result.succeed(connection: NetConnection))
+        else
+            // Unreachable: Connection.init registers nothing a concurrent close could reach before start() runs immediately above.
+            // Surfaced as a typed failure (not a Panic) since the return type already supports it and the shape here is eager/synchronous,
+            // unlike the deferred PosixTransport.stdio().
+            Fiber.Unsafe.fromResult(Result.fail(NetConnectionClosedException(Operation.Start)))
+        end if
+    end openStdio
+
+    /** Build the stdin/stdout duplex shim. The readable side (`on`, `pause`, `resume`, `readableEnded`, `readableAborted`) delegates to
+      * `stdin`; the writable side (`write`, `once`/`removeListener` for drain/close/error) delegates to `stdout`. `destroyed` and
+      * `writableFinished` are always false and `end` and `destroy` are no-ops so neither stream is ever closed or ended.
+      *
+      * `readableEnded` and `readableAborted` are live getters over stdin's own flags: a stdin that emitted `end`, or was destroyed or
+      * errored before it, emits nothing more, so the driver's read finds that state only through these flags, and a read that misses it
+      * parks forever. stdin's `destroyed` is not forwarded as the shim's `destroyed`, which the write path reads: a destroyed stdin must not
+      * fail writes to a live stdout.
+      */
+    private def stdioShim(stdin: js.Dynamic, stdout: js.Dynamic)(using AllowUnsafe): js.Dynamic =
         // The set of read-side events JsHandle/JsIoDriver subscribe to on the readable stream. Node passes the
         // event name as a JS string; `toString` returns it unchanged, so it is compared as a Scala String.
         def isReadEvent(event: js.Any): Boolean =
@@ -833,6 +845,16 @@ final private[kyo] class JsTransport private (
         val shim = js.Dynamic.literal()
         shim.destroyed = false
         shim.writableFinished = false
+        discard(js.Dynamic.global.Object.defineProperty(
+            shim,
+            "readableEnded",
+            js.Dynamic.literal(get = ({ () => stdin.readableEnded }: js.Function0[js.Any]))
+        ))
+        discard(js.Dynamic.global.Object.defineProperty(
+            shim,
+            "readableAborted",
+            js.Dynamic.literal(get = ({ () => stdin.readableAborted }: js.Function0[js.Any]))
+        ))
         shim.on = ({ (event: js.Any, fn: js.Any) =>
             if isReadLifecycle(event) then discard(stdin.on(event, fn))
             else discard(stdout.on(event, fn))
@@ -1050,10 +1072,7 @@ final private[kyo] class JsTransport private (
                 // connection the caller was just handed.
                 ()
             case _ =>
-                // Node's net.Socket#destroyed is a documented boolean property; js.Dynamic erases that to an untyped JS value, so recovering
-                // the typed Boolean needs this narrowing cast. Safe per Node's documented property type; it cannot dissolve without a typed
-                // facade for Node's net.Socket.
-                if !socket.destroyed.asInstanceOf[Boolean] then discard(socket.destroy())
+                if !JsIoDriver.isTrue(socket.destroyed) then discard(socket.destroy())
         }
         // Route a close() of the plaintext connection to that owner: settling `promise` runs the same release a handshake failure takes, and once
         // the upgrade has succeeded the promise is complete and this is inherently a no-op, leaving the upgraded connection's socket untouched.

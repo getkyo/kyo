@@ -3,7 +3,6 @@ package kyo.net.internal
 import kyo.*
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
-import scala.scalajs.js.annotation.JSImport
 import scala.scalajs.js as sjs
 
 /** Real-Node loopback tests for the [[JsIoDriver]] peer-close grace probe. Node gives no non-consuming FIN signal on a paused socket
@@ -262,8 +261,3 @@ class JsIoDriverTest extends kyo.net.Test:
     }
 
 end JsIoDriverTest
-
-// Imported like the facades in NodeBuiltins, since the Wasm backend links this suite as an ES module without `require`.
-@sjs.native
-@JSImport("node:stream", JSImport.Namespace)
-private object NodeStream extends sjs.Object

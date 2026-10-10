@@ -77,19 +77,19 @@ final private[kyo] class JsIoDriver private (
 
     def awaitRead(handle: JsHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         armedOps += 1
-        // Node's net.Socket#destroyed / #readableEnded are documented boolean properties; js.Dynamic erases them to untyped JS values, so recovering
-        // the typed Boolean needs these narrowing casts. Safe per Node's documented property types.
         if handle.hasLeftover then
             // (i) Deliver any staged/leftover chunk FIRST, in order, even if the socket has since ended/been destroyed: a peer-close-probe-induced
             // 'end' (and Node's allowHalfOpen=false auto-destroy) must not drop bytes the probe already staged. deliverLeftover needs pendingRead set.
             handle.pendingRead = Present(promise)
             deliverLeftover(handle)
-        else if handle.socket.readableEnded.asInstanceOf[Boolean] then
+        else if JsIoDriver.isTrue(handle.socket.readableEnded) then
             // (ii) The readable side ended (peer FIN, buffer fully consumed). Surface EOF. MANDATORY after a probe-induced 'end' fired with no pending
             // read (signalEof dropped it): a resume() on an already-ended stream would park forever, since no further 'data'/'end' will come.
             promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
-        else if handle.socket.destroyed.asInstanceOf[Boolean] then
-            // (iii) Socket destroyed (RST, or a completed close) with nothing staged: fail Closed.
+        else if JsIoDriver.isTrue(handle.socket.destroyed) || JsIoDriver.isTrue(handle.socket.readableAborted) then
+            // (iii) Socket destroyed (RST, or a completed close) or its readable side aborted (destroyed or errored before 'end') with nothing
+            // staged: fail Closed, never an orderly end. The stdio shim reports stdin's abort only through readableAborted, since its
+            // `destroyed` is the write side's.
             promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "socket destroyed")))
         else
             // (iv) Request the next chunk: the permanent 'data' listener delivers it (or 'end'/'error' the EOF/failure).
@@ -106,15 +106,22 @@ final private[kyo] class JsIoDriver private (
       */
     override def isPeerClosed(handle: JsHandle)(using AllowUnsafe, Frame): Boolean =
         val s = handle.socket
-        if s.destroyed.asInstanceOf[Boolean] || s.readableEnded.asInstanceOf[Boolean] then true
+        if JsIoDriver.isTrue(s.destroyed) || JsIoDriver.isTrue(s.readableEnded) || JsIoDriver.isTrue(s.readableAborted) then true
         else if handle.stagedBytes >= JsIoDriver.PeerProbeBufferCap then false
-        else if s.listenerCount("data").asInstanceOf[Int] == 0 then false
+        else if !hasDataListener(s) then false
         else
             // Resume for one chunk: the permanent 'data' listener re-pauses and stashes it, or 'end'/'error' latches the close.
             discard(s.resume())
             false
         end if
     end isPeerClosed
+
+    // The stdio shim has no `listenerCount`, so a missing method reads as no listener rather than a TypeError.
+    private def hasDataListener(socket: js.Dynamic): Boolean =
+        js.typeOf(socket.listenerCount) == "function" &&
+            ((socket.listenerCount("data"): Any) match
+                case n: Int => n > 0
+                case _      => false)
 
     /** STARTTLS handoff: the plaintext ReadPump pulled `bytes` off the socket but detachForUpgrade already closed the inbound
       * channel, so these are the peer's first TLS flight (the ClientHello a server pulled a moment before detaching).
@@ -138,10 +145,7 @@ final private[kyo] class JsIoDriver private (
         promise.completeDiscard(Result.Panic(NetDriverUnsupportedException(label, "awaitAccept")))
 
     def awaitWritable(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
-        // Node's net.Socket#destroyed is a documented boolean property; js.Dynamic erases that to an untyped JS value, so recovering the typed
-        // Boolean needs this narrowing cast. Safe per Node's documented property type; it cannot dissolve without a typed facade for Node's
-        // net.Socket.
-        if handle.socket.destroyed.asInstanceOf[Boolean] then
+        if JsIoDriver.isTrue(handle.socket.destroyed) then
             promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "socket destroyed")))
         else
             // Register one-shot listeners for drain/close/error
@@ -181,17 +185,14 @@ final private[kyo] class JsIoDriver private (
     end awaitWritable
 
     def write(handle: JsHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
-        // Two Node narrowing casts below: net.Socket#destroyed (a documented boolean property) and net.Socket#write (a documented boolean
-        // return, where false signals backpressure). js.Dynamic erases both to untyped JS values, so recovering the typed Boolean needs these
-        // narrowing casts. Safe per Node's documented types; they cannot dissolve without a typed facade for Node's net.Socket.
         if data.isEmpty || offset >= data.size then WriteResult.Done
-        else if handle.socket.destroyed.asInstanceOf[Boolean] then WriteResult.Error
+        else if JsIoDriver.isTrue(handle.socket.destroyed) then WriteResult.Error
         else
             // Node.js socket.write accepts the data slice starting at offset. On backpressure (flushed == false), the data was already
             // handed to Node.js, so we must NOT re-send it on the next pump call. Returning Partial(data, data.size) causes the pump to
             // retry with offset == data.size, which computes len == 0 and returns Done -- effectively "wait for drain, then proceed".
             val nodeBuf = toNodeBuffer(data, offset)
-            val flushed = handle.socket.write(nodeBuf).asInstanceOf[Boolean]
+            val flushed = JsIoDriver.isTrue(handle.socket.write(nodeBuf))
             if flushed then WriteResult.Done
             else WriteResult.Partial(data, data.size) // accepted, not flushed: sentinel offset prevents double-send on retry
         end if
@@ -230,14 +231,11 @@ final private[kyo] class JsIoDriver private (
       * and a peer reset destroy the socket themselves before this runs, and a socket Node already destroyed is left alone.
       */
     def closeHandle(handle: JsHandle)(using allow: AllowUnsafe, frame: Frame): Unit =
-        // Node's net.Socket#destroyed and #writableFinished are documented boolean properties; js.Dynamic erases them to untyped JS values,
-        // so recovering the typed Boolean needs these narrowing casts. Safe per Node's documented property types; they cannot dissolve
-        // without a typed facade for Node's net.Socket.
         readArmed -= handle
         val socket = handle.socket
-        if !socket.destroyed.asInstanceOf[Boolean] then
+        if !JsIoDriver.isTrue(socket.destroyed) then
             def destroyNow(): Unit =
-                if !socket.destroyed.asInstanceOf[Boolean] then discard(socket.destroy())
+                if !JsIoDriver.isTrue(socket.destroyed) then discard(socket.destroy())
             val settle: js.Function0[Unit] =
                 if handle.closeFlushGrace.isFinite then
                     val timer = handle.clock.unsafe.sleep(handle.closeFlushGrace)
@@ -251,7 +249,7 @@ final private[kyo] class JsIoDriver private (
             discard(socket.once("finish", settle))
             discard(socket.once("close", settle))
             discard(socket.end())
-            if socket.writableFinished.asInstanceOf[Boolean] then settle()
+            if JsIoDriver.isTrue(socket.writableFinished) then settle()
         end if
     end closeHandle
 
@@ -304,6 +302,18 @@ private[kyo] object JsIoDriver:
 
     /** Cap on staged probe bytes per handle; past it the probe stops resuming (see NioIoDriver.GraceProbeStagingCap for the trade). 1 MiB. */
     private[net] val PeerProbeBufferCap: Int = 1 << 20
+
+    /** A Node stream flag (`destroyed`, `readableEnded`, `readableAborted`, `writableFinished`, a `write` result), true only when it is the JS boolean `true`.
+      *
+      * A cast of a non-boolean to `Boolean` is a fatal `UndefinedBehaviorError` under Scala.js development linking and unchecked under
+      * production linking, so an object that lacks the property must never reach the cast. Absent reads as false, which is Node's own initial
+      * value for each of these flags; a socket-like object that stands in for a stream (the stdio shim) must expose the real flag wherever
+      * its value can be true.
+      */
+    private[internal] def isTrue(value: js.Dynamic): Boolean =
+        (value: Any) match
+            case b: Boolean => b
+            case _          => false
 
     def init()(using AllowUnsafe): JsIoDriver =
         new JsIoDriver(new IOPromise[Any, Unit], AtomicBoolean.Unsafe.init(false))
