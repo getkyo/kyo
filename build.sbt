@@ -1979,6 +1979,14 @@ lazy val `kyo-ffi-codegen` =
             Test / javaOptions += s"-Dkyo.ffi.codegen.test.classpath=${(Test / fullClasspath).value.map(_.data.getAbsolutePath).mkString(java.io.File.pathSeparator)}"
         )
 
+// A batch runs its scripted tests in one nested sbt, reloading between them, so a plugin's static state and the batch's
+// test directory path carry from one test to the next. sbt's default leaves batching off on every 1.x: it compares the
+// binary sbt version, "1.0", against 1.4.
+def scriptedBatches(instances: Int): Seq[Setting[?]] = Seq(
+    scriptedBatchExecution    := true,
+    scriptedParallelInstances := instances
+)
+
 lazy val `kyo-ffi-plugin` =
     project
         .in(file("kyo-ffi/plugin"))
@@ -2018,7 +2026,8 @@ lazy val `kyo-ffi-plugin` =
                         "-Dscalanative.version=" + nativeVersion
                     )
             },
-            scriptedBufferLog                      := false,
+            scriptedBufferLog := false,
+            scriptedBatches(2),
             libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.20" % Test,
             // Publish kyo-ffi + transitive deps locally across all three platforms before
             // scripted runs: scripted tests resolve `"io.getkyo" %% "kyo-ffi"` from Ivy.
@@ -2027,33 +2036,33 @@ lazy val `kyo-ffi-plugin` =
             //   kyo-config -> kyo-stats-registry -> kyo-data -> kyo-kernel -> kyo-prelude
             //   -> kyo-scheduler -> kyo-core -> kyo-ffi
             scriptedDependencies := {
-                val a0 = (`kyo-config`.jvm / publishLocal).value
-                val a1 = (`kyo-stats-registry`.jvm / publishLocal).value
-                val a2 = (`kyo-data`.jvm / publishLocal).value
-                val a3 = (`kyo-kernel`.jvm / publishLocal).value
-                val a4 = (`kyo-prelude`.jvm / publishLocal).value
-                val a5 = (`kyo-scheduler`.jvm / publishLocal).value
-                val a6 = (`kyo-core`.jvm / publishLocal).value
-                val a7 = (`kyo-ffi`.jvm / publishLocal).value
-                val b0 = (`kyo-config`.native / publishLocal).value
-                val b1 = (`kyo-stats-registry`.native / publishLocal).value
-                val b2 = (`kyo-data`.native / publishLocal).value
-                val b3 = (`kyo-kernel`.native / publishLocal).value
-                val b4 = (`kyo-prelude`.native / publishLocal).value
-                val b5 = (`kyo-scheduler`.native / publishLocal).value
-                val b6 = (`kyo-core`.native / publishLocal).value
-                val b7 = (`kyo-ffi`.native / publishLocal).value
-                val c0 = (`kyo-config`.js / publishLocal).value
-                val c1 = (`kyo-stats-registry`.js / publishLocal).value
-                val c2 = (`kyo-data`.js / publishLocal).value
-                val c3 = (`kyo-kernel`.js / publishLocal).value
-                val c4 = (`kyo-prelude`.js / publishLocal).value
-                val c5 = (`kyo-scheduler`.js / publishLocal).value
-                val c6 = (`kyo-core`.js / publishLocal).value
-                val c7 = (`kyo-ffi`.js / publishLocal).value
+                val a0 = (`kyo-config`.jvm / publishLocalWithoutDoc).value
+                val a1 = (`kyo-stats-registry`.jvm / publishLocalWithoutDoc).value
+                val a2 = (`kyo-data`.jvm / publishLocalWithoutDoc).value
+                val a3 = (`kyo-kernel`.jvm / publishLocalWithoutDoc).value
+                val a4 = (`kyo-prelude`.jvm / publishLocalWithoutDoc).value
+                val a5 = (`kyo-scheduler`.jvm / publishLocalWithoutDoc).value
+                val a6 = (`kyo-core`.jvm / publishLocalWithoutDoc).value
+                val a7 = (`kyo-ffi`.jvm / publishLocalWithoutDoc).value
+                val b0 = (`kyo-config`.native / publishLocalWithoutDoc).value
+                val b1 = (`kyo-stats-registry`.native / publishLocalWithoutDoc).value
+                val b2 = (`kyo-data`.native / publishLocalWithoutDoc).value
+                val b3 = (`kyo-kernel`.native / publishLocalWithoutDoc).value
+                val b4 = (`kyo-prelude`.native / publishLocalWithoutDoc).value
+                val b5 = (`kyo-scheduler`.native / publishLocalWithoutDoc).value
+                val b6 = (`kyo-core`.native / publishLocalWithoutDoc).value
+                val b7 = (`kyo-ffi`.native / publishLocalWithoutDoc).value
+                val c0 = (`kyo-config`.js / publishLocalWithoutDoc).value
+                val c1 = (`kyo-stats-registry`.js / publishLocalWithoutDoc).value
+                val c2 = (`kyo-data`.js / publishLocalWithoutDoc).value
+                val c3 = (`kyo-kernel`.js / publishLocalWithoutDoc).value
+                val c4 = (`kyo-prelude`.js / publishLocalWithoutDoc).value
+                val c5 = (`kyo-scheduler`.js / publishLocalWithoutDoc).value
+                val c6 = (`kyo-core`.js / publishLocalWithoutDoc).value
+                val c7 = (`kyo-ffi`.js / publishLocalWithoutDoc).value
                 // The plugin resolves kyo-ffi-codegen at task time, so publish it locally too:
                 // scripted tests resolve it from Ivy the way a downstream user resolves it from Central.
-                val d0 = (`kyo-ffi-codegen` / publishLocal).value
+                val d0 = (`kyo-ffi-codegen` / publishLocalWithoutDoc).value
                 scriptedDependencies.value
             },
             // Run the scripted suite as part of the plugin's regular test task so CI gates it via
@@ -4655,6 +4664,7 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
             "-Dkyo.scalaVersion=" + scala39Version
         ),
         scriptedBufferLog := false,
+        scriptedBatches(2),
         // Provide the kyo-doctest runner's built classpath to the scripted forks without ivy
         // resolution (mirrors how kyo-settings injects it into the main build's doctest fork). The
         // path is handed to each scripted sub-build, which reads it into doctestExtraClasspath.
@@ -4719,6 +4729,7 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
             "-Dplugin.version=" + version.value
         ),
         scriptedBufferLog := false,
+        scriptedBatches(2),
         // Run the scripted suite as part of the plugin's regular test task (matches
         // kyo-doctest-plugin) so the testKyo 2.12 pass gates it; no bespoke CI step.
         Test / test := (Test / test).dependsOn(Def.taskDyn {
@@ -4938,6 +4949,8 @@ lazy val `kyo-test-sbt-publish` =
                 "-Dkyo.scalaVersion=" + scala39Version
             ),
             scriptedBufferLog := false,
+            // One instance: a second would hold another 4G heap beside it.
+            scriptedBatches(1),
             // The sub-builds resolve kyo-test-runner from ivy-local, and publishLocal is not
             // transitive, so the whole classpath closure has to be published first. Derived from the
             // build graph rather than listed: the closure reaches kyo-config through
@@ -4949,7 +4962,7 @@ lazy val `kyo-test-sbt-publish` =
                     .map(id => ProjectRef(build, id))
                 val closure = roots.flatMap(r => r +: deps.getOrElse(r, Nil)).distinct
                 Def.task {
-                    publishLocal.all(ScopeFilter(inProjects(closure *))).value
+                    publishLocalWithoutDoc.all(ScopeFilter(inProjects(closure *))).value
                     (`kyo-test-sbt` / publishLocal).value
                     publishLocal.value
                     ()

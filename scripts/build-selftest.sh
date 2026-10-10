@@ -250,6 +250,16 @@ if podman_log_has "-e NATIVE_HEAVY=kyo-foo" && podman_log_has "-e NATIVE_LINK_CP
 then record ok "a host pool-env override reaches the container"
 else record no "a host pool-env override reaches the container"; fi
 
+# 15. podman-ci forwards a host TEST_SKIP, and sets none of its own.
+make_podman_stub 0; reset_logs
+run_build --env podman-ci test JVM >/dev/null 2>&1 || true
+skip_unset_ok=no; podman_log_lacks "TEST_SKIP" && skip_unset_ok=yes
+reset_logs
+TEST_SKIP="kyo-compat-plugin,kyo-doctest-plugin" run_build --env podman-ci test JVM >/dev/null 2>&1 || true
+if [ "$skip_unset_ok" = yes ] && podman_log_has "-e TEST_SKIP=kyo-compat-plugin,kyo-doctest-plugin"
+then record ok "podman-ci forwards a host TEST_SKIP and sets none by default"
+else record no "podman-ci forwards a host TEST_SKIP and sets none by default"; fi
+
 # Negative control: a deliberately wrong check must flip FAIL to prove the harness
 # is not vacuous. Not counted in the scenario total.
 make_podman_stub 0; reset_logs
@@ -259,5 +269,5 @@ then echo "  SELFTEST-BUG: negative control passed (vacuous harness)"; FAIL=$((F
 
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 19 ]
+[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 20 ]
 exit $?
