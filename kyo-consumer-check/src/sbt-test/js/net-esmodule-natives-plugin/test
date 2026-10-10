@@ -1,0 +1,32 @@
+# The CommonJS fixture round trips under ModuleKind.ESModule, the module kind with no global require. Every route to
+# a delivered library goes through the require built from node:module there, so this fixture is what keeps that
+# construction wired: without it the koffi gate answers false, the runtime reports a native it cannot reach, and the
+# application runs on the Node transport with the build still green.
+# Run directly rather than through run for three reasons: the transport is process-lifetime and a program that never
+# exits would hang sbt with nothing to report; the bound below separates a process that ends from one that cannot;
+# and the same binary has to run a second time against a stripped delivery, which run cannot express.
+> kyoNativesReport
+
+# The overrides themselves, not their effect. `jsEnv` reaches only the Node processes sbt spawns, so a run launched
+# from a shell sees them only if they are exported. Asserting them here is what separates the plugin having set
+# them from something else having found the library.
+> writeNodeEnv
+$ exec sh -c 'set -eu; cat node-env.sh; grep -q "KYO_FFI_KYONET_BORINGSSL_PATH=" node-env.sh; grep -q "KYO_FFI_KYONET_POSIX_URING_PATH=" node-env.sh'
+# Each one has to name a file that exists, since the loader honours the override only when it does.
+$ exec sh -c 'set -eu; . ./node-env.sh; test -f "$KYO_FFI_KYONET_BORINGSSL_PATH"; test -f "$KYO_FFI_KYONET_POSIX_URING_PATH"'
+
+> fastLinkJS
+$ exec sh -c 'set -eu; test -f target/node_modules/koffi/package.json'
+
+# With the overrides exported: the posix transport, both round trips.
+$ exec sh -c 'set -eu; . ./node-env.sh; entry=$(find target -name "main.mjs" -path "*fastopt*" | head -n1); test -n "$entry"; node "$entry" > run.log 2>&1 & pid=$!; i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 120 ]; do sleep 1; i=$((i+1)); done; if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; echo "the process was still alive after ${i}s with its transport open"; cat run.log; exit 1; fi; wait "$pid" || { cat run.log; exit 1; }; echo "exited after ${i}s"'
+$ exec sh -c 'cat run.log; grep -q "CONSUMER transport=PosixTransport plain=hello tls=hello" run.log'
+
+# The negative control, and the assertion that pins the claim. What it removes is the DELIVERY, not one of the routes
+# that reach it: the path override and the package lookup both resolve the same files and both work under this module
+# kind, so unsetting the override alone leaves the other route to find the library and proves nothing.
+# koffi itself stays where it is under target/node_modules, so a run that reaches the floor does so because the
+# library is gone rather than because the FFI layer went missing, which is a different failure wearing the same
+# result. The env is still sourced, so NODE_PATH is unchanged and the override still names its now absent file, which
+# is the state the loader treats as no override at all.
+$ exec sh -c 'set -eu; . ./node-env.sh; rm -rf target/kyo-natives; find target/node_modules -name "libkyonet_*" -delete; entry=$(find target -name "main.mjs" -path "*fastopt*" | head -n1); test -n "$entry"; node "$entry" > floor.log 2>&1 & pid=$!; i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 120 ]; do sleep 1; i=$((i+1)); done; if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; echo "the floor run was still alive after ${i}s"; cat floor.log; exit 1; fi; wait "$pid" || { cat floor.log; exit 1; }; cat floor.log; grep -q "CONSUMER transport=JsTransport" floor.log'

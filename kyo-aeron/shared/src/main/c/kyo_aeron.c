@@ -7,11 +7,26 @@
  * in Scala Async, not a C busy-loop). The fragment handler stays in C, fired synchronously
  * on the calling Scala carrier thread by aeron_subscription_poll. Offers use the copy path,
  * not tryClaim. Each driver/client handle is bundled with its context so the context
- * outlives the handle close. The #if guard compiles to nothing where the Aeron headers are
- * absent, mirroring kyo_uring.c.
+ * outlives the handle close.
+ *
+ * Link gate, three states, because on Scala Native this file is compiled by the consumer's build:
+ *
+ *   KYO_FFI_LINKED_KYO_AERON    the Aeron archive is on this link, so the real shim compiles.
+ *   KYO_FFI_EXTERNAL_KYO_AERON  the build links the prebuilt shim library the artifact carries, so
+ *                               this file compiles to nothing and every entry point resolves there.
+ *                               Defining anything here would shadow the library with a stub.
+ *   neither                     no Aeron anywhere: every entry point is a stub, the binary links,
+ *                               and kyo_aeron_linked returns 0, so kyo-aeron refuses to start with
+ *                               FfiLoadError.LibraryNotFound instead of failing inside the first call.
  */
 
-#if __has_include(<aeronc.h>) && __has_include(<aeronmd.h>)
+#if defined(KYO_FFI_EXTERNAL_KYO_AERON)
+
+/* Deliberately empty: the entry points come from the linked library. An empty translation unit is not
+ * valid C, so give it one declaration. */
+typedef int kyo_aeron_external_translation_unit;
+
+#elif defined(KYO_FFI_LINKED_KYO_AERON)
 
 #include <aeronc.h>
 #include <aeronmd.h>
@@ -373,6 +388,8 @@ static void kyo_aeron_fragment_handler(
     memcpy(b->slot, buffer, length);
     b->slot_len = (int32_t)length;  /* length <= slot_cap <= KYO_AERON_SLOT_MAX_CAP <= INT32_MAX */
 }
+
+int kyo_aeron_linked(void) { return 1; }
 
 void* kyo_aeron_driver_start(const char* dir, int64_t client_liveness_ns, int64_t publication_unblock_ns)
 {
@@ -1184,6 +1201,78 @@ void kyo_aeron_test_inject_error(void* client, int errcode, const char* errmsg)
     b->err_slot->present = 0;
     kyo_mutex_unlock(&b->err_slot->mutex);
     kyo_aeron_error_handler(b->err_slot, errcode, errmsg);
+}
+
+#else
+
+/*
+ * No Aeron on this link. kyo_aeron_linked returns 0 and AeronPlatformTransport checks it before any
+ * other call, so nothing below is reached in practice; each stub still returns the failure its real
+ * counterpart returns (NULL handle, -1 poll/offer, 0 flag) so a caller that did reach one gets a refusal
+ * rather than a crash. Signatures MUST match kyo_aeron.h, which the @extern AeronBindings name either way.
+ */
+
+#include <stddef.h>
+
+#include "kyo_aeron.h"
+
+int kyo_aeron_linked(void) { return 0; }
+
+void* kyo_aeron_driver_start(const char* dir, int64_t client_liveness_ns, int64_t publication_unblock_ns)
+{
+    (void)dir; (void)client_liveness_ns; (void)publication_unblock_ns;
+    return NULL;
+}
+void kyo_aeron_driver_close(void* driver) { (void)driver; }
+void* kyo_aeron_client_connect(const char* dir) { (void)dir; return NULL; }
+void kyo_aeron_client_close(void* client) { (void)client; }
+
+void* kyo_aeron_async_add_publication(void* client, const char* uri, int32_t stream_id)
+{
+    (void)client; (void)uri; (void)stream_id;
+    return NULL;
+}
+int64_t kyo_aeron_async_add_publication_poll(void* async_token) { (void)async_token; return -1; }
+void* kyo_aeron_async_add_publication_get(void* async_token) { (void)async_token; return NULL; }
+void kyo_aeron_async_add_publication_free(void* async_token) { (void)async_token; }
+int kyo_aeron_async_add_publication_err_code(void* async_token) { (void)async_token; return 0; }
+const char* kyo_aeron_async_add_publication_err_msg(void* async_token) { (void)async_token; return ""; }
+
+int kyo_aeron_publication_is_connected(void* pub) { (void)pub; return 0; }
+int64_t kyo_aeron_publication_offer(void* pub, const uint8_t* buffer, int32_t length)
+{
+    (void)pub; (void)buffer; (void)length;
+    return -1;
+}
+int32_t kyo_aeron_publication_max_message_length(void* pub) { (void)pub; return 0; }
+void kyo_aeron_publication_close(void* pub) { (void)pub; }
+
+void* kyo_aeron_async_add_subscription(void* client, const char* uri, int32_t stream_id)
+{
+    (void)client; (void)uri; (void)stream_id;
+    return NULL;
+}
+int64_t kyo_aeron_async_add_subscription_poll(void* async_token) { (void)async_token; return -1; }
+void* kyo_aeron_async_add_subscription_get(void* async_token) { (void)async_token; return NULL; }
+void kyo_aeron_async_add_subscription_free(void* async_token) { (void)async_token; }
+int kyo_aeron_async_add_subscription_err_code(void* async_token) { (void)async_token; return 0; }
+const char* kyo_aeron_async_add_subscription_err_msg(void* async_token) { (void)async_token; return ""; }
+
+int kyo_aeron_subscription_is_connected(void* sub) { (void)sub; return 0; }
+int64_t kyo_aeron_subscription_poll(void* sub, uint8_t* dst, int32_t dst_cap)
+{
+    (void)sub; (void)dst; (void)dst_cap;
+    return -1;
+}
+void kyo_aeron_subscription_close(void* sub) { (void)sub; }
+
+int kyo_aeron_has_client_error(void* client) { (void)client; return 0; }
+const char* kyo_aeron_client_error_msg(void* client) { (void)client; return ""; }
+int kyo_aeron_client_error_code(void* client) { (void)client; return 0; }
+
+void kyo_aeron_test_inject_error(void* client, int errcode, const char* errmsg)
+{
+    (void)client; (void)errcode; (void)errmsg;
 }
 
 #endif

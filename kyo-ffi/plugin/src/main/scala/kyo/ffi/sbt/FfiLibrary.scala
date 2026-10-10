@@ -94,6 +94,10 @@ import sbt._
   *   order C compilation so a library that `#include`s another's header (or
   *   links against its symbols) is built afterwards. Unknown ids are errors;
   *   cycles are errors.
+  * @param system
+  *   the library a Scala Native consumer's machine may provide for this one's C, published with the Native
+  *   artifact and resolved in the consumer's build (see [[FfiSystemLibrary]]). Independent of `linkLibs`, which
+  *   say what THIS build links: an unstaged or header-less build host must not decide what a consumer can use.
   */
 final case class FfiLibrary(
     id: String,
@@ -109,7 +113,8 @@ final case class FfiLibrary(
     dependsOn: Seq[String] = Nil,
     compilerByOs: Map[String, String] = Map.empty,
     osTargets: Seq[String] = Nil,
-    osArchTargets: Seq[String] = Nil
+    osArchTargets: Seq[String] = Nil,
+    system: Option[FfiSystemLibrary] = None
 ) {
 
     /** Whether this library's shared library is built and bundled on `os` (the resolved TARGET os).
@@ -131,6 +136,10 @@ final case class FfiLibrary(
     def buildsOnTarget(osArch: String): Boolean =
         buildsOn(CCompiler.parseOsArch(osArch)._1) &&
             (osArchTargets.isEmpty || osArchTargets.contains(osArch))
+
+    /** Every supported os-arch tag this library is built and bundled for, which is what a release publishes for it. */
+    def osArchTags: Seq[String] =
+        CCompiler.supportedOsArchTags.filter(buildsOnTarget)
 
     /** The `osTargets` entries that are not `CCompiler.supportedOs` names. A typo makes `buildsOn`
       * false on every OS, which is silent: the library is skipped everywhere, recorded `absent` in
@@ -158,6 +167,25 @@ final case class FfiLibrary(
         (linkLibs ++ osSpecific).distinct
     }
 
+    /** The preprocessor macro that tells this library's C its link libraries are on the link:
+      * `KYO_FFI_LINKED_<ID>`, the id upper-cased with every other character as `_` (the spelling
+      * `KYO_FFI_<ID>_PATH` uses). A shim gates the code that calls into an external library on it and
+      * compiles a stub in its `#else`.
+      *
+      * The gate cannot be header presence. On Scala Native the C ships as source and compiles in the
+      * consumer's build, where `__has_include(<openssl/ssl.h>)` answers yes on any machine with the
+      * headers while nothing puts `-lssl` on that link: the binary then fails to link on symbols the
+      * consumer never wrote. The macro is emitted by the same build that emits the link flags, so the
+      * two cannot disagree, and a build that emits neither compiles the stub and links.
+      */
+    def linkedDefine: String = FfiLibrary.linkedDefineFor(id)
+
+    /** `-D<linkedDefine>` when this library declares anything to link for `os`, empty otherwise. That is link
+      * libraries, or link flags: an archive named by path in `linkFlags` is on the link as surely as a `-l`.
+      */
+    def linkedDefineFlags(os: String): Seq[String] =
+        if (resolvedLinkLibs(os).nonEmpty || linkFlags.nonEmpty) Seq(s"-D$linkedDefine") else Nil
+
     /** The C compiler this library requires for the OS being built, overriding the global
       * `ffiCCompiler` for that OS only. `linux-musl` resolves the `linux` key. Absent (the default,
       * empty map) means use the global compiler, so a library that does not set `compilerByOs`
@@ -168,4 +196,24 @@ final case class FfiLibrary(
         val key = if (os == "linux-musl") "linux" else os
         compilerByOs.get(key)
     }
+}
+
+object FfiLibrary {
+
+    /** [[FfiLibrary.linkedDefine]] for a library known only by `id`, as a consumer reading a published declaration knows it. */
+    def linkedDefineFor(id: String): String =
+        "KYO_FFI_LINKED_" + macroSuffix(id)
+
+    /** The define that compiles a shim to nothing, for a build linking the prebuilt library instead.
+      *
+      * A Scala Native binary compiles the shim's C from the artifact's sources, so linking the library as well puts
+      * two definitions of every entry point in one link. The shim answers this define with an empty translation unit,
+      * leaving the library's symbols as the only ones. Distinct from [[linkedDefineFor]], which selects the shim's
+      * real body for a build that compiles it.
+      */
+    def externalDefineFor(id: String): String =
+        "KYO_FFI_EXTERNAL_" + macroSuffix(id)
+
+    private def macroSuffix(id: String): String =
+        id.map(c => if (c.isLetterOrDigit) c.toUpper else '_')
 }

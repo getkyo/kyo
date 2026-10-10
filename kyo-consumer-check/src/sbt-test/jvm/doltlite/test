@@ -1,0 +1,3 @@
+# The engine loads from the natives the artifact ships and answers the query.
+> run
+$ exec sh -c 'cat out.txt; grep -q "CONSUMER doltlite=2" out.txt'

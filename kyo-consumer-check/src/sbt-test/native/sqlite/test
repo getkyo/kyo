@@ -1,0 +1,3 @@
+# Links and runs with no plugin: the engine compiles from the source in the artifact.
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER sqlite=1024" out.txt'

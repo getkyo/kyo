@@ -53,6 +53,12 @@ class SqliteBindingsTest extends Test:
             }
         }
 
+    "the vendored binding declares no headers gate, so the publishing host cannot bake throwing stubs into it" in {
+        // SQLite's amalgamation compiles into every Native link from the sources the artifact ships, so the binding always links;
+        // a gate would only let a publish from a host without the staged tree ship an impl that throws on every call.
+        assert(VendoredSqliteBindings.headers.isEmpty, s"${VendoredSqliteBindings.headers}")
+    }
+
     "the vendored library is the version this module pins" in {
         bindings.map { b =>
             // 3.53.4 renders as 3*1000000 + 53*1000 + 4, pinned because a build falling back to a host library

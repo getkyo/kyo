@@ -67,6 +67,7 @@ class IoUringProbeDepthTest extends Test:
         def kyo_uring_probe_available(depth: Int)(using AllowUnsafe): Boolean                         =
             lastDepth.set(depth)
             true
+        def kyo_uring_compiled_stub()(using AllowUnsafe): Boolean = false
         // This test exercises only the depth-probe call below; the wake-eventfd surface is never invoked here.
         def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit = ()
         def kyo_uring_poll_peer_closed(fd: Int)(using AllowUnsafe): Int                                                 = 0

@@ -31,6 +31,10 @@ class IoUringBindingsTest extends Test:
     end loadOrSkip
 
     "IoUringBindings" - {
+        "declares no headers gate, so the publishing host cannot bake throwing stubs into the published binding" in {
+            assert(IoUringBindings.headers.isEmpty, s"${IoUringBindings.headers}")
+        }
+
         // Reproduces the RC6 macOS/arm64 Native link failure. The binding is generated when kyo is COMPILED but linked on the
         // consumer's host, so an artifact published from Linux carried `@extern` declarations for all 30 `kyo_uring_*` / `io_uring_*`
         // symbols while `kyo_uring.c` compiled to nothing off Linux, and a macOS `nativeLink` died with "symbol(s) not found for

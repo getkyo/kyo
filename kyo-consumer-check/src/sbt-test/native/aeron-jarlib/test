@@ -1,0 +1,6 @@
+# Aeron works on Native through the library the published artifact carries. The binary is staged with its
+# library beside it and run from an unrelated working directory, so the rpath, not the build layout, is what
+# resolves it. The second run proves the dependency is real: without the library the program cannot start.
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); lib=$(find target/kyo-ffi/natives -name "libkyo_aeron.*" | head -n1); rm -rf deploy; mkdir deploy; cp "$bin" "$lib" deploy/; here=$(pwd); cd /; "$here/deploy/consumer" > "$here/out.txt" 2>&1 || { cat "$here/out.txt"; exit 1; }; cat "$here/out.txt"; grep -q "CONSUMER aeron=roundtrip" "$here/out.txt"'
+$ exec sh -c 'set -eu; rm -f deploy/libkyo_aeron.*; here=$(pwd); cd /; if "$here/deploy/consumer" > "$here/missing.txt" 2>&1; then echo "expected the program to fail without its library"; exit 1; fi; cat "$here/missing.txt"; grep -qi "libkyo_aeron" "$here/missing.txt"'

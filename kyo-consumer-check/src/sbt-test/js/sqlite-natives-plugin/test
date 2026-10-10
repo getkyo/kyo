@@ -1,0 +1,23 @@
+# SQLite reaches Node from kyo-sql-sqlite's main artifact, and the query is answered with the math extension the
+# artifact's build enabled.
+> kyoNativesReport
+> fastLinkJS
+$ exec sh -c 'set -eu; test -f target/node_modules/koffi/package.json; ls target/node_modules/@kyo/ffi-native/native/*/libkyo_sqlite.* > /dev/null'
+
+# A Node built against the system SQLite has sqlite3_* in the process's global scope before koffi loads this library,
+# so the library binds its own sqlite3_* to itself, which is true of the file on every Linux, whatever Node this machine
+# has. The control first shows the check refusing a library that does not.
+$ exec sh elf-self-binding.sh control
+$ exec sh elf-self-binding.sh check kyo_sqlite
+
+# DoltLite is a test-only dependency, so the package the application ships carries none of it.
+$ exec sh -c 'set -eu; if ls target/node_modules/@kyo/ffi-native/native/*/libkyo_doltlite.* > /dev/null 2>&1; then echo "a test-only engine reached the production package" >&2; exit 1; fi'
+> run
+$ exec sh -c 'cat out.txt; grep -q "CONSUMER sqlite=1024" out.txt'
+
+# The test run reads the Test configuration, where DoltLite is, and its query is answered only when that engine was
+# delivered where the test run resolves it.
+> test
+
+# The test run's libraries live in their own package, so the one a packager reads still carries no test-only engine.
+$ exec sh -c 'set -eu; ls target/kyo-natives-test-node/node_modules/@kyo/ffi-native/native/*/libkyo_doltlite.* > /dev/null; if ls target/node_modules/@kyo/ffi-native/native/*/libkyo_doltlite.* > /dev/null 2>&1; then echo "a test-only engine reached the production package after test" >&2; exit 1; fi'

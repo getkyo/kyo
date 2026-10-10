@@ -27,7 +27,7 @@ libraryDependencies ++= Seq(
 )
 ```
 
-Use `%%` for JVM and Scala Native, `%%%` for the Scala.js and WebAssembly backends. See the [Modules](#modules) tables below for platform support per module. Replace `<version>` with: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3)
+Use `%%` for the JVM and `%%%` for Scala.js, Scala Native, and the WebAssembly backend, which links the Scala.js artifacts. See the [Modules](#modules) tables below for platform support per module. Replace `<version>` with: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3)
 
 A minimal application extends `KyoApp`, the entrypoint trait that discharges the effect row your `main` body produces:
 
@@ -249,13 +249,13 @@ If you prefer direct-style code, [kyo-direct](kyo-direct/README.md) ships a `dir
 
 ## Platforms
 
-One source tree, one Scala 3 LTS compiler, four published targets:
+One source tree, one Scala 3 LTS compiler, four targets. JVM, Scala.js, and Scala Native artifacts are published; a WebAssembly build links the Scala.js ones:
 
 | Platform     | Runtime              | Coordinate |
 | ------------ | -------------------- | ---------- |
-| JVM          | JDK 21+              | `%%`       |
+| JVM          | JDK 25+              | `%%`       |
 | Scala.js     | Node.js, browsers    | `%%%`      |
-| Scala Native | Native binary (LLVM) | `%%`       |
+| Scala Native | Native binary (LLVM) | `%%%`      |
 | WebAssembly  | Node.js 24+          | `%%%`      |
 
 Scala.js and the WebAssembly backend share a single-threaded, event-loop concurrency model; on the JVM, Kyo runs its multi-threaded work-stealing scheduler.

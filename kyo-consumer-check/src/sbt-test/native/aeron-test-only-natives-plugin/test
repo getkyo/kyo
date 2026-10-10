@@ -1,0 +1,15 @@
+# kyo-aeron is a test-only dependency. Its library belongs to the test link alone: the test config carries the
+# external define and the -l, and the production config carries neither.
+> kyoNativesReport
+> writeLinkConfigs
+$ exec sh -c 'set -eu; cat test-config.txt; grep -qxF -- "-DKYO_FFI_EXTERNAL_KYO_AERON" test-config.txt; grep -qxF -- "-lkyo_aeron" test-config.txt'
+$ exec sh -c 'set -eu; if grep -qiF aeron production-config.txt; then cat production-config.txt; echo "a test-only library reached the production link" >&2; exit 1; fi'
+
+# The production binary links and runs without it, and nothing of Aeron is staged beside it.
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; "$bin" | grep -q "CONSUMER production=ok"; if ls "$(dirname "$bin")"/libkyo_aeron.* > /dev/null 2>&1; then echo "a test-only library was staged beside the production binary" >&2; exit 1; fi'
+
+# The test binary is linked and run, and its round trip completes on the library staged beside it.
+> test
+> writeTestBinary
+$ exec sh -c 'set -eu; bin=$(cat test-binary.txt); ls "$(dirname "$bin")"/libkyo_aeron.* > /dev/null'

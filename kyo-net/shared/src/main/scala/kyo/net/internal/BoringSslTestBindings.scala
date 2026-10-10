@@ -1,7 +1,6 @@
 package kyo.net.internal
 
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.ffi.Ffi
 
 /** Binding to the BoringSSL shim's error-injection seams (`kyo_bssl_test_*`), used only by the C-shim reproduction tests.
@@ -27,7 +26,6 @@ end BoringSslTestBindings
 
 private[net] object BoringSslTestBindings extends Ffi.Config(
         library = "kyonet_boringssl",
-        headers = Chunk("openssl/ssl.h"),
         // Same bundled shim as BoringSslBindings; the test-only seams resolve through the one loaded library.
         nativeBundled = true
     )

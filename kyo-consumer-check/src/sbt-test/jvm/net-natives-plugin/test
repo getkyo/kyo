@@ -1,0 +1,10 @@
+# The natives reach the runtime classpath with no classifier named in the build, and the forced transport and TLS
+# provider make a native that does not load fail the round trip. The certificate is kyo-net's self-signed localhost
+# test certificate. The assertions live in check.sh.
+> kyoNativesReport
+> writeRuntimeClasspath
+$ exec sh check.sh classpath
+> run
+$ exec sh check.sh run
+> makePom
+$ exec sh check.sh pom

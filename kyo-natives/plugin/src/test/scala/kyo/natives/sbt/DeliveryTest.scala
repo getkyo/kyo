@@ -1,0 +1,195 @@
+package kyo.natives.sbt
+
+import kyo.ffi.sbt.DeliveryPlatform
+import kyo.ffi.sbt.NativeDelivery
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers
+import sbt._
+
+/** Unit coverage for turning a classpath into the set of artifacts to fetch, and for pulling a library back out of
+  * one. Both halves are file-shaped rather than pure, so each test builds a real jar: a test that agreed with the
+  * code about a path neither had ever read from a jar would prove nothing.
+  */
+class DeliveryTest extends AnyFunSuite with Matchers {
+
+    private def withJar(entries: Seq[(String, String)])(check: File => Unit): Unit = {
+        IO.withTemporaryDirectory { dir =>
+            val files = entries.map { case (path, content) =>
+                val f = dir / "content" / path.replace('/', '_')
+                IO.write(f, content)
+                f -> path
+            }
+            val jar = dir / "artifact.jar"
+            IO.zip(files, jar, None)
+            check(jar)
+        }
+    }
+
+    /** A Maven-layout repository holding `io.example:demo:1.0` with its POM and main jar and no classifier jar, which is
+      * what a release that carries no library for a target looks like to a consumer.
+      */
+    private def withRepository(check: sbt.librarymanagement.DependencyResolution => Unit): Unit =
+        IO.withTemporaryDirectory { dir =>
+            val module = dir / "io" / "example" / "demo" / "1.0"
+            IO.write(
+                module / "demo-1.0.pom",
+                """<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion>""" +
+                    """<groupId>io.example</groupId><artifactId>demo</artifactId><version>1.0</version></project>"""
+            )
+            withJar(Seq("demo.txt" -> "demo"))(jar => IO.copyFile(jar, module / "demo-1.0.jar"))
+            val config = lmcoursier.CoursierConfiguration()
+                .withResolvers(Vector(sbt.librarymanagement.MavenRepository("demo", dir.toURI.toString)))
+                .withCache(Some(dir / "coursier-cache"))
+            check(lmcoursier.CoursierDependencyResolution(config))
+        }
+
+    test("a classifier jar the repository does not carry is a Left, not an exception") {
+        withRepository { depRes =>
+            val missing = ("io.example" % "demo" % "1.0").classifier("linux-x86_64").intransitive()
+            val result  = Delivery.resolve(depRes, missing, "kyo_demo", sbt.util.Logger.Null)
+            result.isLeft shouldBe true
+            result.left.get should include("demo")
+        }
+    }
+
+    test("a repository that cannot be reached fails the resolution, rather than reading as a release without the library") {
+        IO.withTemporaryDirectory { dir =>
+            // Port 1 refuses the connection at once, the way a machine that lost its network does.
+            val config = lmcoursier.CoursierConfiguration()
+                .withResolvers(Vector(sbt.librarymanagement.MavenRepository("unreachable", "http://127.0.0.1:1/maven")))
+                .withCache(Some(dir / "coursier-cache"))
+            val depRes  = lmcoursier.CoursierDependencyResolution(config)
+            val module  = ("io.example" % "demo" % "1.0").classifier("linux-x86_64").intransitive()
+            val message = the[Exception] thrownBy Delivery.resolve(depRes, module, "kyo_demo", sbt.util.Logger.Null)
+            message.getMessage should include("kyo_demo")
+            message.getMessage should include("io.example:demo:1.0")
+            message.getMessage should include("127.0.0.1:1")
+            message.getMessage should include("NativesSource.Disabled")
+        }
+    }
+
+    test("a jar the repository carries resolves to that one jar") {
+        withRepository { depRes =>
+            val present = ("io.example" % "demo" % "1.0").intransitive()
+            Delivery.resolve(depRes, present, "kyo_demo", sbt.util.Logger.Null).map(_.getName) shouldBe Right("demo-1.0.jar")
+        }
+    }
+
+    private def deliveryEntry(delivery: Map[String, NativeDelivery.Entry]): (String, String) =
+        NativeDelivery.dir.mkString("/") + "/demo.properties" -> NativeDelivery.render(delivery).mkString("\n")
+
+    test("a Native jar's declaration yields the JVM artifact of the same module and version") {
+        withJar(Seq(deliveryEntry(Map("kyo_aeron" -> NativeDelivery.mainArtifact(NativeDelivery.allPlatforms))))) { jar =>
+            val module   = "io.getkyo" % "kyo-aeron_native0.5_3" % "1.2.3"
+            val requests = Delivery.requests(Seq(module -> jar), "darwin-aarch64", DeliveryPlatform.Native)
+            requests.map(_.libId) shouldBe Seq("kyo_aeron")
+            val carrier = requests.head.module
+            carrier.organization shouldBe "io.getkyo"
+            carrier.name shouldBe "kyo-aeron_3"
+            carrier.revision shouldBe "1.2.3"
+            carrier.explicitArtifacts.flatMap(_.classifier) shouldBe Vector.empty
+            carrier.isTransitive shouldBe false
+        }
+    }
+
+    test("a sliced module's declaration names the classifier for the target asked for") {
+        val boringssl = Map("kyonet_boringssl" -> NativeDelivery.underClassifier("<os-arch>-boringssl", NativeDelivery.allPlatforms))
+        withJar(Seq(deliveryEntry(boringssl))) { jar =>
+            val module  = "io.getkyo" % "kyo-net_native0.5_3" % "1.2.3"
+            val carrier = Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Native).head.module
+            carrier.name shouldBe "kyo-net_3"
+            carrier.explicitArtifacts.flatMap(_.classifier) shouldBe Vector("linux-x86_64-boringssl")
+        }
+    }
+
+    test("a library the declaration does not deliver to this platform is not requested") {
+        // kyo-net's shape: the transport's C compiles into a Native binary already, the TLS shim's library does not.
+        val delivery = Map(
+            "kyonet_posix_uring" -> NativeDelivery.underClassifier("<os-arch>"),
+            "kyonet_boringssl"   -> NativeDelivery.underClassifier("<os-arch>-boringssl", NativeDelivery.allPlatforms)
+        )
+        withJar(Seq(deliveryEntry(delivery))) { jar =>
+            val module = "io.getkyo" % "kyo-net_native0.5_3" % "1.2.3"
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Native).map(_.libId) shouldBe
+                Seq("kyonet_boringssl")
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Jvm).map(_.libId).sorted shouldBe
+                Seq("kyonet_boringssl", "kyonet_posix_uring")
+        }
+    }
+
+    test("two modules declaring one library id fail, rather than race for the file name") {
+        val delivery = Map("kyo_sqlite" -> NativeDelivery.mainArtifact(NativeDelivery.allPlatforms))
+        withJar(Seq(deliveryEntry(delivery))) { first =>
+            withJar(Seq(deliveryEntry(delivery))) { second =>
+                val classpath = Seq(
+                    ("io.getkyo" % "kyo-sql-sqlite_native0.5_3"   % "1.2.3") -> first,
+                    ("io.getkyo" % "kyo-sql-doltlite_native0.5_3" % "1.2.3") -> second
+                )
+                val message = intercept[RuntimeException] {
+                    Delivery.requests(classpath, "darwin-aarch64", DeliveryPlatform.Native)
+                }.getMessage
+                message should include("kyo_sqlite")
+                message should include("kyo-sql-sqlite_3")
+                message should include("kyo-sql-doltlite_3")
+            }
+        }
+    }
+
+    test("the JVM asks for a classifier jar and not for the main artifact it already depends on") {
+        // A main-artifact library is already on a JVM classpath, and the loader extracts from there. Requesting it
+        // would resolve that same jar and unpack a file nothing on this platform reads.
+        val delivery = Map(
+            "kyonet_boringssl" -> NativeDelivery.underClassifier("<os-arch>-boringssl", NativeDelivery.allPlatforms),
+            "kyo_aeron"        -> NativeDelivery.mainArtifact(NativeDelivery.allPlatforms)
+        )
+        withJar(Seq(deliveryEntry(delivery))) { jar =>
+            val module = "io.getkyo" % "kyo-net_3" % "1.2.3"
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Jvm).map(_.libId) shouldBe
+                Seq("kyonet_boringssl")
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Native).map(_.libId).sorted shouldBe
+                Seq("kyo_aeron", "kyonet_boringssl")
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Js).map(_.libId).sorted shouldBe
+                Seq("kyo_aeron", "kyonet_boringssl")
+        }
+    }
+
+    test("a jar carrying no declaration asks for nothing") {
+        withJar(Seq("kyo/Something.class" -> "irrelevant")) { jar =>
+            Delivery.requests(Seq(("org" % "thing_3" % "1") -> jar), "darwin-aarch64", DeliveryPlatform.Jvm) shouldBe Nil
+        }
+    }
+
+    test("a classpath entry that is a directory rather than a jar is skipped") {
+        IO.withTemporaryDirectory { dir =>
+            Delivery.requests(Seq(("org" % "thing_3" % "1") -> dir), "darwin-aarch64", DeliveryPlatform.Jvm) shouldBe Nil
+        }
+    }
+
+    test("the entry path a consumer looks up is the one the packaging writes") {
+        Delivery.entryPath("kyo_aeron", "darwin-aarch64", "darwin") shouldBe "META-INF/native/darwin-aarch64/libkyo_aeron.dylib"
+        Delivery.entryPath("kyo_aeron", "linux-musl-x86_64", "linux-musl") shouldBe "META-INF/native/linux-musl-x86_64/libkyo_aeron.so"
+        Delivery.entryPath("kyo_aeron", "windows-x86_64", "windows") shouldBe "META-INF/native/windows-x86_64/kyo_aeron.dll"
+    }
+
+    test("unpack writes the library flat, because -L names one directory") {
+        val path = Delivery.entryPath("kyo_aeron", "linux-x86_64", "linux")
+        path shouldBe "META-INF/native/linux-x86_64/libkyo_aeron.so"
+        withJar(Seq(path -> "ELF-ish")) { jar =>
+            IO.withTemporaryDirectory { out =>
+                val unpacked = Delivery.unpack(jar, "kyo_aeron", "linux-x86_64", "linux", out)
+                unpacked.map(_.getName) shouldBe Some("libkyo_aeron.so")
+                unpacked.map(_.getParentFile) shouldBe Some(out)
+                unpacked.map(IO.read(_)) shouldBe Some("ELF-ish")
+            }
+        }
+    }
+
+    test("unpack of a target the jar does not carry yields nothing rather than an empty file") {
+        withJar(Seq(Delivery.entryPath("kyo_aeron", "linux-x86_64", "linux") -> "ELF-ish")) { jar =>
+            IO.withTemporaryDirectory { out =>
+                Delivery.unpack(jar, "kyo_aeron", "darwin-aarch64", "darwin", out) shouldBe None
+                out.listFiles() shouldBe Array.empty[File]
+            }
+        }
+    }
+}

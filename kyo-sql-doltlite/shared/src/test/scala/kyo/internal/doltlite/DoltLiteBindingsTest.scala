@@ -9,9 +9,14 @@ import kyo.Test
   */
 class DoltLiteBindingsTest extends Test:
 
-    "the library and header are this engine's own" in {
+    "the library is this engine's own" in {
         assert(DoltLiteBindings.library == "kyo_doltlite", DoltLiteBindings.library)
-        assert(DoltLiteBindings.headers == Chunk("doltlite.h"), s"${DoltLiteBindings.headers}")
+    }
+
+    "declares no headers gate, so the publishing host cannot bake throwing stubs into the published binding" in {
+        // kyo_sqlite.c defines every entry point in its linked, external and stub states, so the binding links everywhere and the
+        // shim, not the codegen, decides whether the engine is there.
+        assert(DoltLiteBindings.headers.isEmpty, s"${DoltLiteBindings.headers}")
     }
 
     "this binding is native-bundled, because its shim is compiled into the binary" in {

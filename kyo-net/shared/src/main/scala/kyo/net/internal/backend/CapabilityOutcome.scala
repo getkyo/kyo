@@ -32,6 +32,14 @@ private[net] enum CapabilityOutcome derives CanEqual:
       */
     case Unavailable(reason: String)
 
+    /** The candidate's C shim compiled its stub body, because the build that compiled it did not link the library, so the library is not in
+      * the binary at all. A build fact, not a runtime one: on Scala Native the shim compiles in the build that links the binary, so the
+      * remedy is a relink with the library on that link, which no amount of runtime diagnosis would suggest. Distinct from
+      * [[CapabilityOutcome.Unavailable]], where the library IS compiled in and its probe said no, and from [[CapabilityOutcome.NotBundled]],
+      * where the shim itself could not be loaded. Carries the shim's source file, the library it is a stub for, and the remedy.
+      */
+    case CompiledStub(source: String, library: String, remedy: String)
+
     /** A native library the candidate declares is not staged for this `<os>-<arch>`. This is the incident shape: a readiness backend whose
       * libc gate passes on a host with no bundled shim used to win selection and then die per connection at the first bundled-shim call, so
       * the probe reaches this outcome and the backend demotes at selection time instead. Carries the library id the loader could not resolve
@@ -59,11 +67,17 @@ private[net] enum CapabilityOutcome derives CanEqual:
         case Available => true
         case _         => false
 
-    /** One line for the selection report and for the terminal exception's cause. */
+    /** One line saying why the candidate cannot serve (or `available`). It never restates the unavailable status: every caller already
+      * frames the line with it (the selection report through [[status]], the demotion and forced-backend warnings), so a status here would
+      * print twice.
+      */
     def describe: String = this match
-        case Available           => "available"
-        case UnsupportedOS       => "not applicable to this OS/runtime"
-        case Unavailable(reason) => s"unavailable ($reason)"
+        case Available                             => "available"
+        case UnsupportedOS                         => "not applicable to this OS/runtime"
+        case Unavailable(reason)                   => reason
+        case CompiledStub(source, library, remedy) =>
+            s"$source compiled its stub because the build that linked this binary did not link $library, so the binary carries no " +
+                s"$library; $remedy"
         // The remedy differs by runtime, and naming the wrong one costs the reader the same hours as naming none:
         // a classifier artifact is a dependency-resolution fact and there is no classpath on Node, where the
         // library is found by an operator path or an npm package instead.
@@ -75,5 +89,9 @@ private[net] enum CapabilityOutcome derives CanEqual:
                 s"""libraryDependencies += "io.getkyo" %% "kyo-net" % <version> classifier "$platform""""
         case VersionTooOld(have, need) => s"native version $have is below the required $need"
         case ProbeFailed(cause)        => s"probe failed (${NetException.show(cause)})"
+
+    /** The status line: `available`, or `unavailable (<describe>)`. What the selection report prints per candidate. */
+    def status: String =
+        if isAvailable then "available" else s"unavailable ($describe)"
 
 end CapabilityOutcome

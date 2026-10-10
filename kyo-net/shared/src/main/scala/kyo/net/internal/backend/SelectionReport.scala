@@ -40,7 +40,7 @@ private[net] object SelectionReport:
         case NotRegistered(name: String)
 
         def render: String = this match
-            case Probed(name, priority, outcome) => s"$name[$priority] ${outcome.describe}"
+            case Probed(name, priority, outcome) => s"$name[$priority] ${outcome.status}"
             case NotRegistered(name)             => s"$name not registered"
 
     end Entry

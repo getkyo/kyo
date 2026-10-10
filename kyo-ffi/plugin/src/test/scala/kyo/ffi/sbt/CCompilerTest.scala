@@ -94,6 +94,24 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         cmd should contain("-pthread")
     }
 
+    test("buildCommand: an ELF library binds references to its own functions and data to itself, so a host's copy cannot interpose") {
+        def cmd(out: String, os: String) = CCompiler.buildCommand(
+            cc = "cc",
+            family = CCompiler.Gcc,
+            cFlags = Seq("-O2", "-fPIC"),
+            linkFlags = Nil,
+            linkLibs = Nil,
+            sources = Seq(new File("/tmp/kyo_sqlite.c")),
+            includes = Nil,
+            outFile = new File(out),
+            staticLink = false,
+            os = os
+        )
+        cmd("/tmp/libkyo_sqlite-linux-x86_64.so", "linux") should contain("-Wl,-Bsymbolic")
+        cmd("/tmp/libkyo_sqlite-linux-musl-aarch64.so", "linux") should contain("-Wl,-Bsymbolic")
+        cmd("/tmp/libkyo_sqlite-darwin-aarch64.dylib", "darwin").filter(_.contains("Bsymbolic")) shouldBe empty
+    }
+
     test("buildCommand: an MSVC DLL gets the dynamic CRT, so it shares errno with its loader") {
         // cl defaults to the static CRT, which gives the library a private errno the host's Panama
         // capture cannot see. staticLink is about vendored archives and must not change this.
@@ -760,4 +778,53 @@ class CCompilerTest extends AnyFunSuite with Matchers {
     test("parseArtifactName: a library id containing a hyphen is preserved") {
         CCompiler.parseArtifactName("libkyo-tcp-linux-x86_64.so") shouldBe Some(("kyo-tcp", "linux", "x86_64"))
     }
+
+    // --- definedFunctions ----------------------------------------------------
+    //
+    // This is what decides whether a shim honours its EXTERNAL state, so it is exercised against a real compiler
+    // rather than a stub: a test that agreed with the code about nm's output without ever running nm would prove
+    // nothing. A host with no cc cancels rather than passing, so a run that covered none of this says so.
+
+    private def withShim(body: String)(check: Option[Set[String]] => Unit): Unit = {
+        val available =
+            try scala.sys.process.Process(Seq("cc", "--version")).!(scala.sys.process.ProcessLogger(_ => (), _ => ())) == 0
+            catch { case _: Exception => false }
+        if (!available) cancel("no cc on PATH, so there is nothing to run nm over")
+        val dir = java.nio.file.Files.createTempDirectory("kyo-ffi-shim").toFile
+        try {
+            val src = new File(dir, "shim.c")
+            java.nio.file.Files.write(src.toPath, body.getBytes("UTF-8"))
+            check(CCompiler.definedFunctions("cc", Nil, Nil, Seq(src), new File(dir, "out"), sbt.util.Logger.Null))
+        } finally sbt.io.IO.delete(dir)
+    }
+
+    test("definedFunctions names the entry points a translation unit defines") {
+        withShim("int kyo_probe_one(void) { return 1; }\nint kyo_probe_two(void) { return 2; }\n") { defined =>
+            defined shouldBe Some(Set("kyo_probe_one", "kyo_probe_two").map(nameFor))
+        }
+    }
+
+    test("definedFunctions sees nothing in a translation unit that compiles to nothing") {
+        withShim("typedef int kyo_probe_empty;\n") { defined =>
+            defined shouldBe Some(Set.empty[String])
+        }
+    }
+
+    test("definedFunctions ignores data, which cannot shadow an entry point") {
+        // kyo_sqlite.c carries exactly this shape under its EXTERNAL define, so that two copies of the shim still
+        // collide at link time. Reporting it would make the check unusable for that library.
+        withShim("int kyo_probe_sentinel = 0;\n") { defined =>
+            defined shouldBe Some(Set.empty[String])
+        }
+    }
+
+    test("definedFunctions ignores a static function, which no other translation unit can see") {
+        withShim("static int kyo_probe_local(void) { return 1; }\nint kyo_probe_keep = 0;\n") { defined =>
+            defined shouldBe Some(Set.empty[String])
+        }
+    }
+
+    // Mach-O prefixes every symbol with an underscore; ELF does not.
+    private def nameFor(symbol: String): String =
+        if (sys.props("os.name").toLowerCase.contains("mac")) "_" + symbol else symbol
 }

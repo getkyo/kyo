@@ -1,0 +1,159 @@
+package kyo.natives.sbt
+
+import java.util.zip.ZipFile
+import kyo.ffi.sbt.DeliveryPlatform
+import kyo.ffi.sbt.NativeDelivery
+import kyo.ffi.sbt.NativeTargets
+import sbt._
+import sbt.librarymanagement.DependencyResolution
+import sbt.util.Logger
+
+/** Finding and unpacking the shared libraries a kyo artifact delivers.
+  *
+  * Everything here is driven by the [[NativeDelivery]] declarations on the project's own classpath, so the set of
+  * modules this understands is whatever the build depends on rather than a list compiled in here.
+  */
+private[sbt] object Delivery {
+
+    /** One library to fetch: the artifact carrying it, and the id naming the file inside. */
+    final case class Request(module: ModuleID, libId: String)
+
+    /** A library that was fetched, the jar it came from, and the coordinate that jar was resolved from. */
+    final case class Fetched(libId: String, library: File, jar: File, module: ModuleID)
+
+    /** The classpath-relative path a JVM artifact packages a library at. Both halves come from the packaging side, so
+      * a consumer cannot look for a name the producer does not write.
+      */
+    def entryPath(libId: String, osArch: String, os: String): String =
+        s"META-INF/native/$osArch/${NativeTargets.libraryFileName(libId, os)}"
+
+    /** What `classpath` asks for on `platform`, for target `osArch`.
+      *
+      * A Native or JS artifact declares the delivery but carries no library, so each request names the JVM artifact of
+      * the same module and version: the declaration supplies the classifier, and [[NativeDelivery.jvmArtifactName]]
+      * maps the platform-suffixed name back. `intransitive` because only that one jar is wanted, never the module's
+      * dependency closure, which the project already has.
+      *
+      * A declaration that does not deliver to `platform` is skipped, which is how a library whose C already compiles
+      * into a Native binary stays out of that link.
+      *
+      * On the JVM a library in the module's MAIN artifact is skipped too, because there is nothing to deliver: the
+      * project already depends on that jar, and the JVM loader extracts from the classpath. Requesting it would
+      * resolve the jar the build already has, unpack a file no JVM path reads, and put a second classpath entry for
+      * it. Only a classifier jar, which a plain dependency does not bring, adds anything there. The other two
+      * platforms take both kinds, since neither can read a jar at run time at all.
+      *
+      * Two modules declaring the same library id is an error rather than a choice. The id names the file that both the
+      * Native `-L` directory and the Node package hold, so the second would overwrite the first and the build would
+      * link or open whichever was unpacked last, with nothing said.
+      */
+    def requests(classpath: Seq[(ModuleID, File)], osArch: String, platform: DeliveryPlatform): Seq[Request] = {
+        val found = classpath.flatMap { case (module, file) =>
+            if (!file.isFile || !file.getName.endsWith(".jar")) Nil
+            else
+                NativeDelivery.readJar(file).filter(_._2.deliversTo(platform)).flatMap { case (id, entry) =>
+                    val classifier = entry.classifier(osArch)
+                    if (platform == DeliveryPlatform.Jvm && classifier.isEmpty) None
+                    else {
+                        val carrier        = module.organization % NativeDelivery.jvmArtifactName(module.name) % module.revision
+                        val withClassifier = classifier.fold(carrier)(c => carrier.classifier(c))
+                        Some(Request(withClassifier.withCrossVersion(CrossVersion.disabled).intransitive(), id))
+                    }
+                }
+        }.distinct
+        found.groupBy(_.libId).find(_._2.size > 1).foreach { case (libId, clashing) =>
+            sys.error(
+                s"[kyo-natives] $libId is declared by more than one module (${clashing.map(_.module.name).sorted.mkString(", ")}), " +
+                    "and both would deliver to the same file name."
+            )
+        }
+        found
+    }
+
+    /** Resolves `module` to its single jar, or a message saying why not.
+      *
+      * A classifier jar a release does not carry for this target is an ordinary outcome, not a build failure: the
+      * caller decides, because whether a missing library is fatal depends on the source the application pinned.
+      *
+      * Not memoized across commands. `depRes.update` reads Coursier's own on-disk cache, so a repeat is a local
+      * metadata lookup, and a resolution held in this object would answer for a `-SNAPSHOT` republished beside a
+      * running session. sbt already memoizes the task within one command, which is where the repeats are.
+      *
+      * Any other failure throws, naming `libId` and the way to build without it: lm-coursier's own exception names only
+      * a synthetic resolver module and a URL, which does not tell the build what it asked for or that it asked at all.
+      */
+    def resolve(depRes: DependencyResolution, module: ModuleID, libId: String, log: Logger): Either[String, File] = {
+        val descriptor = depRes.moduleDescriptor(
+            sbt.librarymanagement.ModuleDescriptorConfiguration(
+                "io.getkyo" % "kyo-natives-resolver" % "0",
+                sbt.librarymanagement.ModuleInfo("kyo-natives-resolver")
+            ).withDependencies(Vector(module))
+                .withConfigurations(Vector(sbt.librarymanagement.Configurations.Compile))
+                .withScalaModuleInfo(None)
+        )
+        // Only a repository answering that the artifact is not there is the ordinary outcome, a release that carries no
+        // library for this target. Coursier THROWS for it, and throws the same way for a timeout, a refused connection or
+        // an unreadable cache, which say nothing about the release and must fail the build under every source rather
+        // than leave a binary without the library and a warning. The module itself is the one the project already
+        // resolved, so a module that does not resolve here is never the not-carried case either.
+        val updated =
+            try
+                depRes.update(
+                    descriptor,
+                    sbt.librarymanagement.UpdateConfiguration().withLogging(sbt.librarymanagement.UpdateLogging.Quiet),
+                    sbt.librarymanagement.UnresolvedWarningConfiguration(),
+                    log
+                ) match {
+                    case Right(report) => Right(report)
+                    case Left(warning) => throw warning.resolveException
+                }
+            catch {
+                case scala.util.control.NonFatal(e) if notFound(e) => Left(s"$module is not in the repository: ${e.getMessage}")
+                case scala.util.control.NonFatal(e)                =>
+                    throw new RuntimeException(
+                        s"[kyo-natives] fetching $libId from $module failed, which says nothing about whether the release " +
+                            s"carries it, so the build stops: ${e.getMessage}. Restore access to the repository, or set " +
+                            "kyoNativesSource := NativesSource.Disabled to build without kyo's natives.",
+                        e
+                    )
+            }
+        updated match {
+            case Right(report) =>
+                // Intransitive and single-artifact, so anything but one jar means the request did not say what it
+                // meant and picking one would deliver a library nobody asked for.
+                report.allFiles.distinct.filter(_.getName.endsWith(".jar")) match {
+                    case Seq(jar) => Right(jar)
+                    case Seq()    => Left(s"$module resolved no jar")
+                    case several  => Left(s"$module resolved ${several.size} jars: ${several.map(_.getName).mkString(", ")}")
+                }
+            case Left(why) => Left(why)
+        }
+    }
+
+    /** Whether `e`, or anything that caused it, is coursier's answer that an artifact is absent from the repository.
+      * Matched by class name because lm-coursier shades coursier under its own package.
+      */
+    private def notFound(e: Throwable): Boolean =
+        Iterator.iterate(e)(_.getCause).takeWhile(_ != null).take(32).exists(_.getClass.getName.endsWith("ArtifactError$NotFound"))
+
+    /** Copies `libId`'s library for `osArch` out of `jar` into `out`, flat, or None when the jar carries none.
+      *
+      * Flat because a `-L` search directory names one directory and expects `lib<id>.<ext>` directly in it, and
+      * because the same directory is what travels beside a linked binary.
+      */
+    def unpack(jar: File, libId: String, osArch: String, os: String, out: File): Option[File] = {
+        val path = entryPath(libId, osArch, os)
+        val zip  = new ZipFile(jar)
+        try
+            Option(zip.getEntry(path)).map { entry =>
+                val dest = out / NativeTargets.libraryFileName(libId, os)
+                IO.createDirectory(out)
+                val in = zip.getInputStream(entry)
+                try IO.transfer(in, dest)
+                finally in.close()
+                dest.setExecutable(true, false)
+                dest
+            }
+        finally zip.close()
+    }
+}

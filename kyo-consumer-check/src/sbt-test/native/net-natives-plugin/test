@@ -1,0 +1,53 @@
+# kyo-net on Scala Native through kyo-natives-plugin alone: no kyo-ffi-plugin enabled and no hand-written
+# nativeConfig, which is what the net-plugin fixture beside this one needs to reach the same round trip.
+
+# Whether this machine has OpenSSL's development files is stated by the leg running the suite, as
+# KYO_CONSUMER_SYSTEM_OPENSSL=present|absent (present when unset), rather than inferred from what the probe found: a
+# broken probe and a bare machine produce the same empty answer, and only the stated expectation tells them apart.
+> kyoNativesReport
+
+> writeSystemLibraries
+
+$ exec sh -c 'set -eu; cat system-libraries.txt; case "${KYO_CONSUMER_SYSTEM_OPENSSL:-present}" in present) grep -q "^kyonet_openssl " system-libraries.txt ;; absent) if grep -q "^kyonet_openssl " system-libraries.txt; then echo "OpenSSL resolved on a machine stated to have none" >&2; exit 1; fi ;; *) echo "KYO_CONSUMER_SYSTEM_OPENSSL must be present or absent" >&2; exit 1 ;; esac'
+
+# liburing the same way, as KYO_CONSUMER_LIBURING=present|absent, on Linux only: the declaration names no library for
+# any other OS, so nothing may resolve there whatever the machine has.
+$ exec sh -c 'set -eu; if [ "$(uname -s)" != Linux ]; then if grep -q "^kyonet_posix_uring " system-libraries.txt; then echo "liburing resolved off Linux" >&2; exit 1; fi; exit 0; fi; case "${KYO_CONSUMER_LIBURING:-present}" in present) grep -q "^kyonet_posix_uring " system-libraries.txt ;; absent) if grep -q "^kyonet_posix_uring " system-libraries.txt; then echo "liburing resolved on a machine stated to have none" >&2; exit 1; fi ;; *) echo "KYO_CONSUMER_LIBURING must be present or absent" >&2; exit 1 ;; esac'
+
+# Which of the rest resolve is the machine's answer: a Linux host with liburing-dev links io_uring, one without it
+# compiles the shim's stubs. So the rest is a relation rather than a set: whatever the probe resolved must have
+# reached nativeConfig, which is what the linker reads. Deleting the system half from the fold breaks this.
+$ exec sh -c 'set -eu; cat native-config.txt; while read -r id rest; do [ -n "$id" ] || continue; up=$(echo "$id" | tr "[:lower:]-" "[:upper:]_"); grep -qxF -- "-DKYO_FFI_LINKED_$up" native-config.txt || { echo "probe resolved $id but its define never reached nativeConfig" >&2; exit 1; }; for f in $rest; do grep -qxF -- "$f" native-config.txt || { echo "probe resolved $id but its flag $f never reached nativeConfig" >&2; exit 1; }; done; done < system-libraries.txt'
+
+# The delivered library is folded in through the same nativeConfig, so its define has to be there too. This one does
+# not depend on the machine: kyo-net publishes BoringSSL for every pole this fixture can run on, and kyoNativesSource
+# is Jar, so a missing delivery fails the build before here.
+$ exec sh -c 'set -eu; grep -qxF -- "-DKYO_FFI_EXTERNAL_KYONET_BORINGSSL" native-config.txt'
+
+> nativeLink
+
+# The delivered BoringSSL library is staged beside the binary, which is how it resolves at run time.
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; ls "$(dirname "$bin")"/libkyonet_boringssl.* > /dev/null'
+
+# One round trip per provider, each pinned on both ends. BoringSSL answers from the delivered library on every
+# machine. OpenSSL answers exactly where the machine has it, and elsewhere fails closed as unavailable rather than
+# being served by BoringSSL.
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER tls.boringssl=hello " out.txt; case "${KYO_CONSUMER_SYSTEM_OPENSSL:-present}" in present) grep -q " tls.openssl=hello$" out.txt ;; absent) grep -q " tls.openssl=failure:NetTlsProviderUnavailableException$" out.txt ;; esac'
+
+# With nothing installed, the binary depends on no system TLS library at all: TLS is the delivered library's alone.
+$ exec sh -c 'set -eu; [ "${KYO_CONSUMER_SYSTEM_OPENSSL:-present}" = absent ] || exit 0; bin=$(find target -type f -perm -u+x -name consumer | head -n1); case "$(uname -s)" in Darwin) otool -L "$bin" > deps.txt ;; *) ldd "$bin" > deps.txt ;; esac; cat deps.txt; if grep -E "libssl|libcrypto" deps.txt; then echo "a binary built with no system OpenSSL depends on one" >&2; exit 1; fi'
+
+# Which backend the binary runs on, on Linux, where liburing is the probe's to find. With liburing, the selection is the
+# top of the gradient and logs nothing, and forcing io_uring (KYO_NET_BACKEND, which fails loud rather than falling back)
+# still completes the round trip, so the ring is linked and builds at production depth. Without it, the binary demotes to
+# epoll and says why: kyo_uring.c compiled its stub, not a ring that failed. Off Linux there is no io_uring to select.
+$ exec sh -c 'set -eu; if [ "$(uname -s)" != Linux ]; then echo "io_uring is Linux-only; skipped on $(uname -s)"; exit 0; fi; bin=$(find target -type f -perm -u+x -name consumer | head -n1); case "${KYO_CONSUMER_LIBURING:-present}" in present) if grep -q "IoBackend: selected" out.txt; then echo "the binary demoted from io_uring on a machine stated to have liburing" >&2; exit 1; fi; KYO_NET_BACKEND=io_uring "$bin" > uring.txt 2>&1 || { cat uring.txt; exit 1; }; cat uring.txt; grep -q "CONSUMER tls.boringssl=hello " uring.txt ;; absent) grep -q "IoBackend: selected .epoll.; higher-priority backend(s) unavailable: io_uring (kyo_uring.c compiled its stub" out.txt ;; *) echo "KYO_CONSUMER_LIBURING must be present or absent" >&2; exit 1 ;; esac'
+
+# The library is a real dependency, not a copy the binary happens to ignore: without it the program fails naming it.
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); rm -f "$(dirname "$bin")"/libkyonet_boringssl.*; here=$(pwd); cd /; if "$here/$bin" > "$here/missing.txt" 2>&1; then echo "expected the program to fail without its library"; exit 1; fi; cat "$here/missing.txt"; grep -qi "kyonet_boringssl" "$here/missing.txt"'
+
+# A release link is the one a deployment ships, and it gets what nativeLink gets: the delivered library staged beside the
+# binary. It runs after the library was deleted above, so a staged copy is this link's. Run from here, where the
+# certificate the round trip serves is.
+> writeReleaseBinary
+$ exec sh -c 'set -eu; bin=$(cat release-binary.txt); ls "$(dirname "$bin")"/libkyonet_boringssl.* > /dev/null; "$bin" > release.txt 2>&1 || { cat release.txt; exit 1; }; cat release.txt; grep -q "CONSUMER tls.boringssl=hello " release.txt'

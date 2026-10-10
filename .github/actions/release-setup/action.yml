@@ -59,7 +59,7 @@ runs:
 
     # Every vendored tree an FFI module links, staged for this probe's os-arch and cached per pin.
     # BoringSSL must be staged before any build: without the tree build.sbt silently compiles the
-    # c-boringssl-stub shim into kyo-net (probe_available -> 0, BoringSslProvider unavailable at
+    # BoringSSL shim's stub branch into kyo-net (probe_available -> 0, BoringSslProvider unavailable at
     # runtime), so the published artifact would ship without BoringSSL TLS. ffiCompileAll compiles
     # every module's shim, so libaeron, SQLite and DoltLite are staged for the same reason.
     - uses: ./.github/actions/stage-natives

@@ -1,8 +1,8 @@
 #ifndef KYO_AERON_H
 #define KYO_AERON_H
 
-#if __has_include(<aeronc.h>) && __has_include(<aeronmd.h>)
-
+/* The shim's own surface names no Aeron type, so it is declared the same whether kyo_aeron.c
+ * compiles its real branch or its stubs. */
 #include <stdint.h>
 
 /* Windows exports nothing from a DLL unless each symbol says so, where ELF and Mach-O export by
@@ -15,6 +15,9 @@
 #else
 #define KYO_AERON_API
 #endif
+
+/* 1 when this build links Aeron, 0 when kyo_aeron.c compiled its stubs. */
+KYO_AERON_API int     kyo_aeron_linked(void);
 
 /* Timeouts are nanoseconds; <= 0 leaves the driver's own default in place. */
 KYO_AERON_API void*   kyo_aeron_driver_start(const char* dir, int64_t client_liveness_ns, int64_t publication_unblock_ns);
@@ -63,11 +66,5 @@ KYO_AERON_API int         kyo_aeron_client_error_code(void* client);
 
 /* Test-inject seam: fires the error handler with a synthetic error (always compiled in). */
 KYO_AERON_API void kyo_aeron_test_inject_error(void* client, int errcode, const char* errmsg);
-
-#else
-/* Header-absent translation unit is an explicit no-op rather than silently empty. The typedef
- * is unused; it keeps the TU well-formed on hosts where the Aeron headers are not staged. */
-typedef int kyo_aeron_unavailable_t;
-#endif
 
 #endif

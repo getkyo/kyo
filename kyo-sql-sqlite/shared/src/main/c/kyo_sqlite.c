@@ -8,8 +8,9 @@
 #include <string.h>
 
 /*
-** kyo-sql-doltlite compiles this same file with -DKYO_SQLITE_HEADER="doltlite.h" against a SQLite
-** fork exposing the same sqlite3_* API, so every wrapper below must stay within that shared API.
+** kyo-sql-doltlite compiles this same file with -DKYO_SQLITE_HEADER="doltlite.h" -DKYO_SQLITE_DOLTLITE
+** against a SQLite fork exposing the same sqlite3_* API, so every wrapper below must stay within that
+** shared API.
 */
 #ifndef KYO_SQLITE_HEADER
 #define KYO_SQLITE_HEADER "sqlite3.h"
@@ -20,7 +21,7 @@
 ** the function. MinGW's ld auto-exports and needs no attribute. Every entry point below carries
 ** KYO_SQLITE_API, as kyo_net_api.h and kyo_aeron.h do for the same reason.
 **
-** sqlite3.c's own entry points are covered by -DSQLITE_API, set on Windows in build.sbt: the
+** sqlite3.c's own entry points are covered by -DSQLITE_API, set on Windows in build.sbt's ffiCFlags: the
 ** bindings call most sqlite3_* symbols directly rather than through a wrapper here.
 */
 #if defined(_WIN32)
@@ -29,6 +30,46 @@
 #define KYO_SQLITE_API
 #endif
 #include KYO_SQLITE_HEADER
+
+/*
+** One binary holds one embedded engine. kyo-sql-sqlite and kyo-sql-doltlite compile THIS file with the
+** same kyo_sqlite3_* entry points, and Scala Native unpacks each jar's sources into its own directory, so
+** a binary depending on both compiles both copies and the linker rejects the duplicates. That rejection is
+** the whole guard, and the branch below can remove it: a delivered DoltLite compiles its copy to nothing,
+** leaving one definition of each wrapper, and every doltlite:// call then binds to the plain-SQLite
+** definitions in the executable rather than to the delivered library, opening a Dolt database with an
+** engine that does not understand it. This definition is outside every branch so the duplicate survives
+** whatever the gate says, and it is a strong definition rather than a tentative one so -fcommon cannot
+** merge the two.
+**
+** The guard holds only because both artifacts compile THIS file. Giving kyo-sql-doltlite an entry file of
+** its own would remove the collision; native/two-sqlite-engines-natives-plugin asserts it is still there.
+*/
+int kyo_sql_one_embedded_sqlite_engine_per_binary = 0;
+
+/*
+** kyo-sql-sqlite compiles SQLite's own source beside this file, so its engine is always on the link.
+** kyo-sql-doltlite links a prebuilt engine instead, and on Scala Native this file compiles in whichever
+** build links the binary, a consumer's included. Three states for that build:
+**
+**   KYO_FFI_LINKED_KYO_DOLTLITE    the DoltLite archive is on this link, so the wrappers compile.
+**   KYO_FFI_EXTERNAL_KYO_DOLTLITE  the build links the prebuilt shim library the artifact carries, so
+**                                  this file compiles to nothing and every entry point resolves there.
+**   neither                        the stubs at the end compile, so the binary still links and DoltLite
+**                                  reports the engine unavailable when a database is opened.
+*/
+#if defined(KYO_SQLITE_DOLTLITE) && defined(KYO_FFI_EXTERNAL_KYO_DOLTLITE)
+
+/* Deliberately empty: the entry points come from the linked library. The definition above is what keeps
+** this a valid translation unit. */
+
+#else
+
+#if defined(KYO_SQLITE_DOLTLITE) && !defined(KYO_FFI_LINKED_KYO_DOLTLITE)
+#define KYO_SQLITE_ENGINE_STUBS
+#endif
+
+#if !defined(KYO_SQLITE_ENGINE_STUBS)
 
 /*
 ** The handle is the RETURN value and the result code is left on the connection, a handle not being
@@ -190,3 +231,50 @@ KYO_SQLITE_API int kyo_sqlite3_configure_connection(sqlite3 *db, int busyTimeout
 
   return sqlite3_busy_timeout(db, busyTimeoutMillis);
 }
+
+#else
+
+/*
+** No engine on the link. These define every function the DoltLite binding reaches, through a wrapper
+** or directly, so the link resolves. The version is 0, which no SQLite release reports, and DoltLite
+** checks it before any other call, so the rest are never reached; each still answers failure rather
+** than plausible data in case one is.
+*/
+KYO_SQLITE_API sqlite3 *kyo_sqlite3_open_v2(const char *filename, int flags, const char *zVfs) { return 0; }
+KYO_SQLITE_API sqlite3_stmt *kyo_sqlite3_prepare_one(sqlite3 *db, const char *zSql, int nByte) { return 0; }
+KYO_SQLITE_API int kyo_sqlite3_bind_text_copy(sqlite3_stmt *stmt, int idx, const char *value, int nBytes) { return SQLITE_ERROR; }
+KYO_SQLITE_API int kyo_sqlite3_bind_blob_copy(sqlite3_stmt *stmt, int idx, const void *value, int nBytes) { return SQLITE_ERROR; }
+KYO_SQLITE_API int kyo_sqlite3_column_text_bytes(sqlite3_stmt *stmt, int iCol, void *dst, int cap) { return 0; }
+KYO_SQLITE_API int kyo_sqlite3_column_blob_bytes(sqlite3_stmt *stmt, int iCol, void *dst, int cap) { return 0; }
+KYO_SQLITE_API int kyo_sqlite3_column_decltype_bytes(sqlite3_stmt *stmt, int iCol, void *dst, int cap) { return -1; }
+KYO_SQLITE_API int kyo_sqlite3_exec_simple(sqlite3 *db, const char *sql) { return SQLITE_ERROR; }
+KYO_SQLITE_API int kyo_sqlite3_configure_connection(sqlite3 *db, int busyTimeoutMillis) { return SQLITE_ERROR; }
+KYO_SQLITE_API const char *kyo_sqlite3_db_filename(sqlite3 *db, const char *zDbName) { return ""; }
+KYO_SQLITE_API int kyo_sqlite3_txn_state(sqlite3 *db) { return 0; }
+
+int sqlite3_libversion_number(void) { return 0; }
+int sqlite3_close_v2(sqlite3 *db) { return SQLITE_ERROR; }
+int sqlite3_step(sqlite3_stmt *stmt) { return SQLITE_ERROR; }
+int sqlite3_finalize(sqlite3_stmt *stmt) { return SQLITE_ERROR; }
+int sqlite3_reset(sqlite3_stmt *stmt) { return SQLITE_ERROR; }
+int sqlite3_clear_bindings(sqlite3_stmt *stmt) { return SQLITE_ERROR; }
+int sqlite3_bind_parameter_count(sqlite3_stmt *stmt) { return 0; }
+int sqlite3_bind_null(sqlite3_stmt *stmt, int idx) { return SQLITE_ERROR; }
+int sqlite3_bind_int64(sqlite3_stmt *stmt, int idx, sqlite3_int64 value) { return SQLITE_ERROR; }
+int sqlite3_bind_double(sqlite3_stmt *stmt, int idx, double value) { return SQLITE_ERROR; }
+int sqlite3_column_count(sqlite3_stmt *stmt) { return 0; }
+const char *sqlite3_column_name(sqlite3_stmt *stmt, int iCol) { return ""; }
+int sqlite3_column_type(sqlite3_stmt *stmt, int iCol) { return SQLITE_NULL; }
+sqlite3_int64 sqlite3_column_int64(sqlite3_stmt *stmt, int iCol) { return 0; }
+double sqlite3_column_double(sqlite3_stmt *stmt, int iCol) { return 0; }
+int sqlite3_extended_errcode(sqlite3 *db) { return SQLITE_ERROR; }
+const char *sqlite3_errmsg(sqlite3 *db) { return "the DoltLite engine is not linked into this binary"; }
+sqlite3_int64 sqlite3_changes64(sqlite3 *db) { return 0; }
+sqlite3_int64 sqlite3_last_insert_rowid(sqlite3 *db) { return 0; }
+void sqlite3_interrupt(sqlite3 *db) {}
+int sqlite3_stmt_readonly(sqlite3_stmt *stmt) { return 0; }
+int sqlite3_get_autocommit(sqlite3 *db) { return 1; }
+
+#endif /* KYO_SQLITE_ENGINE_STUBS */
+
+#endif /* KYO_FFI_EXTERNAL_KYO_DOLTLITE */

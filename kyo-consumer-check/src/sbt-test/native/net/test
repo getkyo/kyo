@@ -1,0 +1,5 @@
+# Links with no plugin: the TLS shims compile their stubs, so no OpenSSL symbol reaches the link. Plain TCP works and TLS
+# fails closed as unavailable, never as a crash. The failure says each shim was compiled to its stub and names the
+# plugin that links its library, rather than a library that is present and failed.
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER plain=hello tls=failure:NetTlsProviderUnavailableException" out.txt; grep -q "kyo_net_boringssl.c compiled its stub" out.txt; grep -q "kyo_net_openssl.c compiled its stub" out.txt; grep -q "kyo-natives-plugin" out.txt; if grep -q "SSL_CTX probe" out.txt; then echo "a stub was reported as a library that is present and failed" >&2; exit 1; fi'

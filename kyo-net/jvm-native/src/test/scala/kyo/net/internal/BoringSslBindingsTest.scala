@@ -12,6 +12,18 @@ class BoringSslBindingsTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
+    "the TLS bindings declare no headers gate, so the publishing host cannot bake throwing stubs into the published binding" in {
+        // kyo_net_boringssl.c and kyo_net_openssl.c define every entry point in their linked, external and stub states, so the
+        // bindings link everywhere and the shim, not the codegen, decides whether the library is there.
+        val gated = Chunk[(String, Ffi.Config)](
+            "BoringSslBindings"     -> BoringSslBindings,
+            "BoringSslProbe"        -> BoringSslProbe,
+            "BoringSslTestBindings" -> BoringSslTestBindings,
+            "OpenSslBindings"       -> OpenSslBindings
+        ).filter(_._2.headers.nonEmpty)
+        assert(gated.isEmpty, s"${gated.map((name, config) => s"$name: ${config.headers}")}")
+    }
+
     "SSL_CTX_new + SSL_new + free round-trip without leak, and probeAvailable() returns true" in {
         val bssl =
             try Ffi.load[BoringSslBindings]

@@ -258,10 +258,10 @@ def request(host: String, port: Int, payload: Span[Byte]): Maybe[Span[Byte]] < (
 | JVM, Linux | io_uring / epoll | BoringSSL | NIO + JDK TLS |
 | JVM, macOS | kqueue | BoringSSL | NIO + JDK TLS |
 | JVM, Windows | (none) | (none) | NIO + JDK TLS |
-| Native, Linux/macOS/BSD | io_uring / epoll / kqueue | BoringSSL / system OpenSSL | link-time |
+| Native, Linux/macOS/BSD | io_uring / epoll / kqueue | BoringSSL, or the machine's OpenSSL, both through kyo-natives-plugin | epoll / kqueue, no TLS |
 | JS / Wasm, Node | koffi io_uring / epoll / kqueue | koffi BoringSSL | Node transport + Node TLS |
 
-The native I/O backend and BoringSSL are the primary on every posix platform; the Floor column is what runs when no native is available (the JVM main jar with no classifier dependency, a host with no staged native, Windows). Selection always prefers the native and degrades to the floor unless a `-D` property forces a choice.
+The native I/O backend is the primary on every posix platform, and so is BoringSSL on the JVM and Node; the Floor column is what runs when no native is available (the JVM main jar with no classifier dependency, a host with no staged native, a Scala Native build that neither delivers BoringSSL nor finds a system library, Windows). Selection always prefers the native and degrades to the floor unless a `-D` property forces a choice.
 
 - `stdio` is supported on every shipped transport: the posix transport, the pure-JDK NIO floor, and Node. It aborts `NetStdioAlreadyOpenException` if a stdio connection is already open (fds 0 and 1 are process-global, so only one can exist at a time); `NetStdioUnsupportedException` remains the contract for a transport with no byte stream to fds 0 and 1, such as an in-memory transport.
 - io_uring requires Linux with a usable ring; where it is unavailable the transport falls back to epoll/kqueue or the NIO floor automatically.
@@ -273,7 +273,7 @@ The native I/O backend and BoringSSL are the primary on every posix platform; th
 
 The JVM `kyo-net` jar is pure-JVM NIO with JDK TLS and carries no native libraries. The native completion transport (`io_uring`/`epoll`/`kqueue`) and the vendored BoringSSL TLS engine ship in per-platform classifier jars, following the netty distribution model: a build adds the classifier for its host to opt into the native transport, and a build without those dependencies runs on the NIO floor.
 
-Two classifier families ship per `<os>-<arch>`: the transport-native family (classifier `<os>-<arch>`, carrying the posix readiness native) and the vendored-BoringSSL family (classifier `<os>-<arch>-boringssl`). The transport family covers `linux-x86_64`, `linux-aarch64`, `linux-musl-x86_64`, `linux-musl-aarch64`, `darwin-x86_64`, `darwin-aarch64`, `windows-x86_64` and `windows-aarch64`; the Windows natives carry the epoll and io_uring shims, whose entry points are defined on every target and answer `ENOSYS` there, so the bindings resolve and the backend selection demotes to NIO. BoringSSL ships no Windows classifier: Windows is NIO plus the JDK's TLS by ruling. An `all-natives` classifier aggregates every platform for a fat build.
+Two classifier families ship per `<os>-<arch>`: the transport-native family (classifier `<os>-<arch>`, carrying the posix readiness native) and the vendored-BoringSSL family (classifier `<os>-<arch>-boringssl`). The transport family covers `linux-x86_64`, `linux-aarch64`, `linux-musl-x86_64`, `linux-musl-aarch64`, `darwin-x86_64`, `darwin-aarch64`, `windows-x86_64` and `windows-aarch64`; the Windows natives carry the epoll and io_uring shims, whose entry points are defined on every target and answer `ENOSYS` there, so the bindings resolve and the backend selection demotes to NIO. BoringSSL ships no Windows classifier: Windows is NIO plus the JDK's TLS by ruling. A Windows JVM build with `kyo-natives-plugin` therefore gets the transport classifier and no BoringSSL; under the default `NativesSource.Auto` the build says so in a warning and runs on JDK TLS, and under `NativesSource.Jar`, which fails on any missing library, it fails naming `windows-x86_64-boringssl`, so a Windows build keeps `Auto`. An `all-natives` classifier aggregates every platform for a fat build.
 
 ```
 // add the native transport + BoringSSL TLS for your host's <os>-<arch> (e.g. linux-x86_64, darwin-aarch64):
@@ -286,28 +286,39 @@ Migration: a consumer that upgrades to the classifier distribution without addin
 
 ## Scala Native builds
 
-A Scala Native build links kyo-net's C shims into the binary rather than loading a shared library, so the C compiles on the machine doing the link. Scala Native picks the sources up from the jar on its own; what it does not pick up is the libraries each shim needs at link time. Those travel as classpath manifests, and the kyo FFI plugin is what reads them, so a Native build of anything that reaches a socket needs the plugin and the two lines that fold its answer into `nativeConfig`:
+A Scala Native build links kyo-net's C shims into the binary rather than loading a shared library, so the C compiles on the machine doing the link. Scala Native picks the sources up from the jar on its own, and with nothing else a Native build links on any machine: the plain transport (epoll on Linux, kqueue on macOS and BSD) works, while the TLS and io_uring shims compile to stubs whose probes report unavailable, so `connectTls` fails closed with `NetTlsProviderUnavailableException` and the backend selection skips io_uring.
+
+TLS comes from the artifact. kyo-net publishes a BoringSSL library per os-arch, and `kyo-natives-plugin` links your binary against it:
 
 ```
 // project/plugins.sbt
-addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" % kyoVersion)
+addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
+```
+```
+// the Native project; on a crossProject, `.enablePlugins` covers every leg and
+// `.nativeConfigure(_.enablePlugins(KyoNativesPlugin))` covers only this one
+.enablePlugins(KyoNativesPlugin)
 ```
 
-```
-// the Native project, or a crossProject's .nativeSettings
-.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin)
-.settings(
-    nativeConfig := {
-        val base = nativeConfig.value
-        base
-            .withLinkingOptions(base.linkingOptions ++ ffiNativeDependencyLinkingOptions.value)
-            .withCompileOptions(base.compileOptions ++ ffiNativeDependencyCompileOptions.value)
-    }
-)
-```
+That is the whole setup, and it needs no OpenSSL on the machine: the shim compiles to nothing and the library supplies its entry points. The same two lines serve the JVM, where they add the per-os-arch classifier jars to the classpath in place of the two `classifier` dependencies above. What each platform then does with the library, where it is staged, what a deployment has to carry and what `kyoNativesTargets` is for are in [kyo-natives-plugin's README](../kyo-natives/README.md).
 
-`ffiNativeDependencyLinkingOptions` and `ffiNativeDependencyCompileOptions` are the flags kyo-net declares for its own shims, read off the manifests it ships. They have to be wired in explicitly because `nativeConfig` is per-project and does not cross a dependency edge, while the C does: Scala Native compiles kyo-net's shims into your binary, so your link is the one that needs their libraries. On Linux that is `-luring`; on macOS the shims need nothing beyond libc.
+The transport is not delivered this way and does not need to be: Scala Native compiles kyo-net's epoll and kqueue C into your binary from the sources the artifact ships, so the plain transport works with no setup at all.
 
-`[kyo-ffi-plugin]` lines in the build output confirm the plugin is active. This is a build-time dependency only: nothing in the application imports it.
+On Node the same plugin delivers the transport and BoringSSL libraries, and the application then runs on the posix transport rather than the `JsTransport` floor. A Node process on this transport stays alive while a listener is open and exits once its last connection closes. Without the plugin Node runs on the floor, whose behavior [Platform capability differences](#platform-capability-differences) describes.
 
-The I/O backend is chosen at runtime, as on every other platform, and the shims that do not apply to the target compile to stubs whose probes report unavailable, so a macOS binary links the same sources a Linux one does and selects kqueue. In-process TLS needs a staged BoringSSL or the host's OpenSSL; where neither is present the TLS provider reports unavailable and `connectTls` fails closed rather than falling back to plaintext.
+io_uring, and TLS from the machine's own OpenSSL, come from the machine that links rather than from the artifact, and the same plugin finds them. kyo-net's artifact declares what to look for, system OpenSSL and a static liburing on Linux, and the plugin compiles and links a small probe against each: for every one that links, it enables that shim and adds the library to your link. There is nothing further to add, and `sbt show kyoNativesSystemLibraries` lists what it found.
+
+The probe has to run in your build rather than in kyo's because `nativeConfig` is per-project and does not cross a dependency edge, while the C does: Scala Native compiles kyo-net's shims into your binary, so your link is the one that needs their libraries.
+
+A library that does not link is not an error. Its shim compiles stubs and the capability reports itself unavailable at run time, exactly as it does on a machine where the library is absent on any other platform. On Linux, `liburing-dev` is what turns io_uring on; without it epoll serves.
+
+What the plugin looks for:
+
+- OpenSSL: `openssl/ssl.h` with `-lssl -lcrypto`, in the compiler's default paths and then, on macOS, under Homebrew's `openssl@3` and `openssl` prefixes and MacPorts' `/opt/local`. Install `libssl-dev` (Debian, Ubuntu), `openssl-devel` (Fedora), or `brew install openssl@3`.
+- liburing, Linux only: `liburing.h` linked statically, so the binary carries no runtime liburing dependency. Install `liburing-dev`; a machine with only the shared library leaves io_uring off, and epoll serves.
+
+`sbt show kyoNativesSystemLibraries` lists the libraries found and the flags each adds, and a `[kyo-natives]` line in the build output names each one that was not found. The plugin is a build-time dependency only: nothing in the application imports it.
+
+The I/O backend is chosen at runtime, as on every other platform, and the shims that do not apply to the target compile to stubs, so a macOS binary links the same sources a Linux one does and selects kqueue.
+
+TLS has two providers and they are independent. The delivered BoringSSL library exports its own `kyo_bssl_*` wrappers and no BoringSSL symbols at all, so the machine's OpenSSL has nothing in it to bind to, and both can be linked without interfering. `BoringSslProvider` is the one selected when both are present; a machine with OpenSSL and no BoringSSL for its os-arch gets the OpenSSL one. The only cost of having both is a system library the binary does not call, which `-Dkyo.net.tls` can also decide explicitly.

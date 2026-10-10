@@ -12,7 +12,7 @@ permissions:
 
 # The native producer jobs (P3) and the publish job all gate on the same condition: a push (main or
 # a v1.* tag) or a `/release` comment on a PR. Producers build ONE os-arch's classifier natives each
-# and upload only those; the publish job downloads all of them into ffiPrebuiltDir so the single JVM
+# and upload only those; the publish job downloads all of them into ffiPrebuiltPool so the single JVM
 # ci-release slices every os-arch's classifier jars (DECISION-P2b) and the completeness guard runs as
 # the pre-sonaRelease belt. Windows publishes kyo-aeron's shim and kyo-net's posix/uring shim: kyo_epoll.c
 # and kyo_uring.c define their entry points on every target, so those bindings resolve there and answer
@@ -586,6 +586,24 @@ jobs:
         run: |
           scripts/sbt.sh tool -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
           scripts/sbt.sh tool -Dplatform=JS  'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
+      # The guards above check what the artifacts contain; this checks that they work. kyo-consumer-check
+      # publishes the FFI modules locally from this same tree and pool, then builds, links and runs small
+      # applications outside this build against them on JVM, Scala.js and Scala Native, with and without
+      # kyo-natives-plugin. A Native jar that no consumer could link passed every in-build suite, because those
+      # link through in-build flags and staged trees. Before the tag upload, so a failure stops the release.
+      # libssl-dev is the system OpenSSL the plugin-enabled Native fixtures' link probe resolves on this machine.
+      # This host is linux-x86_64 with OpenSSL and liburing; the other poles and the legs without a system library
+      # run in release-probe.yml, on pull requests and on the release tag.
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Consumer check, every FFI module (pre-release belt)
+        timeout-minutes: 120
+        shell: bash
+        run: |
+          bash scripts/apt-install.sh --if-missing libssl-dev
+          scripts/sbt.sh publish -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' kyo-consumer-check/scripted
       # Phase 2: upload and publish the whole staged bundle as ONE Central Portal deployment. Single
       # attempt: re-uploading would collide on the portal. It bundles target/sona-staging and does not
       # re-run doc. Tag pushes only; snapshots were already published by the stage steps above.

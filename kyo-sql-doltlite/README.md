@@ -59,6 +59,29 @@ search detail, the platform it looked for and every path it tried, on the runtim
 [kyo-sql-sqlite](../kyo-sql-sqlite/README.md) is the embedded engine that does run everywhere. It compiles from C
 source, so it has no per-platform artifact and no such gap. What it does not have is version control.
 
+The Native artifact carries the driver's C, which compiles in the application's build, but not the engine, so a
+Native application needs the engine library delivered to it. `kyo-natives-plugin` does that:
+
+```
+// project/plugins.sbt
+addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
+```
+```
+// the application project; on a crossProject, `.enablePlugins` covers every leg and
+// `.nativeConfigure(_.enablePlugins(KyoNativesPlugin))` covers only one
+.enablePlugins(KyoNativesPlugin)
+```
+
+It links the binary against the engine library the published artifact carries, and on Node writes that library where
+koffi resolves it. Without the plugin the application still links, and opening a `doltlite://` URL fails with
+`DoltLiteEngineUnavailableException`, whose message says the binary was linked without the engine. What a deployment
+has to carry on each platform is in [kyo-natives-plugin's README](../kyo-natives/README.md).
+
+One Native binary cannot hold both this artifact and kyo-sql-sqlite. The two compile the same shim, so both define
+the same entry points and the link fails on duplicate symbols, whether or not the engine library is delivered.
+Without that failure the link would succeed and every `doltlite://` call would reach kyo-sql-sqlite's plain engine,
+opening a Dolt database with something that does not understand it.
+
 ## Opening a database
 
 The URL is a file path, or `:memory:` for a database that lives only as long as the connection:

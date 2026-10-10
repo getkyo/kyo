@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsConfigException
 import kyo.net.Test
+import kyo.net.internal.backend.CapabilityOutcome
 
 /** Engine construction over recording bindings instead of a real TLS library.
   *
@@ -121,13 +122,16 @@ class SslLibProviderOwnershipTest extends Test:
         def shutdownStep(ssl: Long)(using AllowUnsafe): Int                                            = 1
         def peerCertEndPointHash(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int = -1
         def probeAvailable()(using AllowUnsafe): Boolean                                               = true
+        def compiledStub()(using AllowUnsafe): Boolean                                                 = false
     end StubBindings
 
     private class StubProvider(bindings: StubBindings) extends SslLibProvider:
-        def name                                  = "stub"
-        def priority                              = 0
-        def libraryIds: Chunk[String]             = Chunk("stub")
-        private[internal] val lib: SslLibBindings = bindings
+        def name                                                             = "stub"
+        def priority                                                         = 0
+        def libraryIds: Chunk[String]                                        = Chunk("stub")
+        private[internal] val lib: SslLibBindings                            = bindings
+        private[net] val compiledStubOutcome: CapabilityOutcome.CompiledStub =
+            CapabilityOutcome.CompiledStub("stub.c", "stub", "link the stub")
     end StubProvider
 
     private def build(bindings: StubBindings, config: NetTlsConfig = NetTlsConfig(), hostname: String = "example.com") =

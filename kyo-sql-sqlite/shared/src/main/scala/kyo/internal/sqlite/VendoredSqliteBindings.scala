@@ -1,7 +1,6 @@
 package kyo.internal.sqlite
 import kyo.*
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.Fiber
 import kyo.Maybe
 import kyo.ffi.Buffer
@@ -167,7 +166,6 @@ private[kyo] object VendoredSqliteBindings extends Ffi.Config(
             "txnState"            -> "kyo_sqlite3_txn_state",
             "dbFilename"          -> "kyo_sqlite3_db_filename"
         ),
-        headers = Chunk("sqlite3.h"),
         // SQLite's C source is compiled into the Native binary, so the generated binding must not emit
         // @link("kyo_sqlite"): that sends the linker after a dynamic library that does not exist.
         nativeBundled = true

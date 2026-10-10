@@ -1,7 +1,6 @@
 package kyo.net.internal.posix
 
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.Fiber
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
@@ -20,7 +19,8 @@ import kyo.ffi.Ffi
   * `Buffer[KEvent]` round-trip through `StructLayout` incurs on the poll hot path (a JFR alloc profile pinpointed it). `kevent` takes the
   * changelist and eventlist `Buffer[Byte]`s (the standard register-and-poll pattern) plus a single [[Timespec]] timeout passed by reference.
   *
-  * Header-gated on `sys/event.h`: on a non-macOS/BSD build host the generator emits stubs.
+  * The symbols are `kyo_kqueue.c`'s wrappers, which answer ENOSYS off macOS/BSD, so the binding resolves on every platform and kqueue's
+  * absence is a runtime errno rather than a missing symbol.
   */
 private[net] trait KqueueBindings extends Ffi:
 
@@ -66,8 +66,16 @@ private[net] trait KqueueBindings extends Ffi:
 end KqueueBindings
 
 private[net] object KqueueBindings extends Ffi.Config(
-        library = "c",
-        headers = Chunk("sys/event.h"),
-        // keventNow is the non-blocking synchronous companion of kevent (register-only, timeout 0); it binds the same libc `kevent` symbol.
-        symbols = Map(("keventNow", "kevent"))
+        library = "kyonet_posix_uring",
+        // Each method carries the libc name it wraps; the C symbol it binds is the kyo-owned wrapper `kyo_kqueue.c` defines on every
+        // platform. No `headers` entry, for the reason EpollBindings has none: the codegen's header probe runs on the publishing host.
+        // keventNow is the non-blocking synchronous companion of kevent (register-only, timeout 0) and binds the same wrapper.
+        symbols = Map(
+            "kqueue"    -> "kyo_kqueue",
+            "kevent"    -> "kyo_kevent",
+            "keventNow" -> "kyo_kevent",
+            "close"     -> "kyo_kqueue_close"
+        ),
+        // Compiled into the Scala Native binary rather than loaded, as EpollBindings is.
+        nativeBundled = true
     )
