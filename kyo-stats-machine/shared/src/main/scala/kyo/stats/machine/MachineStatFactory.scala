@@ -12,8 +12,9 @@ import kyo.stats.internal.TraceExporter
   * (`traceExporter()` returns `None`): the SPI seam is used only as an on-classpath start trigger.
   *
   * Scala Native build precondition: Scala Native discovers `ServiceLoader` providers only from a build-time
-  * allowlist, so a downstream Native build must register this factory or dead-code elimination drops the
-  * unreferenced provider and sampling never starts. Add it to `nativeConfig`:
+  * allowlist, so a downstream Native build has to enlist this factory or dead-code elimination drops the
+  * unreferenced provider and sampling never starts, with nothing at run time to say so. `kyo-natives-plugin`
+  * enlists it from the services entry above; a build without that plugin writes it into `nativeConfig` itself:
   * {{{
   * nativeConfig ~= { _.withServiceProviders(Map(
   *     "kyo.stats.internal.ExporterFactory" -> Seq("kyo.stats.machine.MachineStatFactory")

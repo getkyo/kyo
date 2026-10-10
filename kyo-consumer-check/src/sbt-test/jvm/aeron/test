@@ -1,0 +1,4 @@
+# The embedded driver starts, and two messages published over IPC arrive intact at a subscriber, through the natives
+# the artifact ships.
+> run
+$ exec sh -c 'cat out.txt; grep -q "CONSUMER aeron=roundtrip" out.txt'

@@ -25,9 +25,9 @@ private[net] class IoUringSqe
   * exports. The three real liburing exports are wrapped too, so that every symbol this trait names is one `kyo_uring.c` defines.
   *
   * The shim and its statically-linked liburing are built by the kyo-net build; this trait binds the contract the C must satisfy. The shim is
-  * compiled on the machine that LINKS the binary, so its `#if defined(__linux__) && __has_include(<liburing.h>)` guard decides against the
-  * target platform: on a host without liburing every entry point is a stub, `kyo_uring_probe_available` returns 0, and the io_uring backend
-  * probe reports unavailable. Gating on the trait's declared headers instead would freeze the decision at the moment kyo was compiled and
+  * compiled by the build that LINKS the binary, so its `#if defined(__linux__) && defined(KYO_FFI_LINKED_KYONET_POSIX_URING)` guard decides
+  * against that link: where liburing is not on it every entry point is a stub, `kyo_uring_compiled_stub` returns 1, and the io_uring backend
+  * probe reports the stub. Gating on the trait's declared headers instead would freeze the decision at the moment kyo was compiled and
   * leave the symbols undefined at a macOS Scala Native link of an artifact published from Linux.
   *
   * Every method is part of the unsafe FFI tier and takes a trailing `(using AllowUnsafe)` clause. The one `@Ffi.blocking` method
@@ -210,6 +210,12 @@ private[net] trait IoUringBindings extends Ffi:
       * that initializes a token ring but rejects the production-depth ring is then reported unavailable instead of selected and failing at build.
       */
     def kyo_uring_probe_available(depth: Int)(using AllowUnsafe): Boolean
+
+    /** True when `kyo_uring.c` compiled its stub body: off Linux, and on Linux wherever the build that compiled it did not link liburing. The
+      * probe asks this before [[kyo_uring_probe_available]], so a binary that carries no liburing is reported as such instead of as a kernel
+      * that refused a ring.
+      */
+    def kyo_uring_compiled_stub()(using AllowUnsafe): Boolean
 
 end IoUringBindings
 

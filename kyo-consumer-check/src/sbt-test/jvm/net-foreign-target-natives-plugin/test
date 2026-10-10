@@ -1,0 +1,5 @@
+# Each named pole contributes both kyo-net classifier jars, the transport and BoringSSL, to the runtime classpath an
+# image is built from.
+> kyoNativesReport
+> writeRuntimeClasspath
+$ exec sh -c 'set -eu; cat runtime-classpath.txt; while read -r pole; do grep -q -- "-$pole\.jar$" runtime-classpath.txt || { echo "no transport jar for $pole" >&2; exit 1; }; grep -q -- "-$pole-boringssl\.jar$" runtime-classpath.txt || { echo "no BoringSSL jar for $pole" >&2; exit 1; }; done < poles.txt'

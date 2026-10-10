@@ -1,7 +1,6 @@
 package kyo.net.internal
 
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 
@@ -11,8 +10,9 @@ import kyo.ffi.Ffi
   * `Ffi.Config` symbols map carries each method's `kyo_ossl_*` C symbol (not `kyo_bssl_*`) and the shim (`kyo_net_openssl.c`) compiles
   * against the host's system OpenSSL (macOS: openssl@3; Linux: libssl-dev). The `kyo_ossl_*` prefix keeps the surface distinct from the
   * BoringSSL shim's `kyo_bssl_*` on the single Native binary; the raw `SSL_*` calls in both shims resolve to the one TLS implementation the
-  * binary links (the system OpenSSL dylib), so the two prefixed surfaces coexist with no symbol clash. On Native the codegen probes
-  * `openssl/ssl.h`: when it is absent the binding stubs out and [[SystemOpenSslProvider]] reports unavailable; the `headers` gate that probe.
+  * binary links (the system OpenSSL dylib), so the two prefixed surfaces coexist with no symbol clash. The shim defines every `kyo_ossl_*`
+  * symbol on every host, compiling stubs where the build that compiles it does not link OpenSSL, so the binding declares no `headers`: a
+  * codegen header probe would answer for the publishing host, not the one that links the binary.
   *
   * Opaque `SSL_CTX*` / per-SSL state pointers cross the FFI boundary as `Long` (the shim casts them to `(long)(intptr_t)ptr` and back): a
   * non-zero value is a live pointer, `0` is allocation failure. The caller never dereferences them; it only round-trips them back into these
@@ -45,12 +45,12 @@ private[net] trait OpenSslBindings extends SslLibBindings, Ffi:
     def shutdownStep(ssl: Long)(using AllowUnsafe): Int
     def peerCertEndPointHash(ssl: Long, outBuf: Buffer[Byte], outLen: Int)(using AllowUnsafe): Int
     def probeAvailable()(using AllowUnsafe): Boolean
+    def compiledStub()(using AllowUnsafe): Boolean
 
 end OpenSslBindings
 
 private[net] object OpenSslBindings extends Ffi.Config(
         library = "kyonet_openssl",
-        headers = Chunk("openssl/ssl.h", "openssl/x509.h"),
         // The neutral SslLibBindings method names map to the shim's kyo_ossl_* C symbols here, so the
         // generated binding resolves each method to its prefixed export on Panama (JVM) and @extern (Native).
         symbols = Map(
@@ -75,7 +75,8 @@ private[net] object OpenSslBindings extends Ffi.Config(
             "pending"                       -> "kyo_ossl_pending",
             "shutdownStep"                  -> "kyo_ossl_shutdown_step",
             "peerCertEndPointHash"          -> "kyo_ossl_peer_cert_end_point_hash",
-            "probeAvailable"                -> "kyo_ossl_probe_available"
+            "probeAvailable"                -> "kyo_ossl_probe_available",
+            "compiledStub"                  -> "kyo_ossl_compiled_stub"
         ),
         // On Native the shim's C (kyo_net_openssl.c) is compiled INTO the binary (copied under
         // resources/scala-native by KyoFfiPlugin) and the system OpenSSL is linked via the

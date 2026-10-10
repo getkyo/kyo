@@ -465,6 +465,9 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
     def kyo_uring_probe_available(depth: Int)(using AllowUnsafe): Boolean =
         real.kyo_uring_probe_available(depth)
 
+    def kyo_uring_compiled_stub()(using AllowUnsafe): Boolean =
+        real.kyo_uring_compiled_stub()
+
     def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit =
         real.kyo_uring_prep_poll_multishot(sqe, fd, pollMask)
 

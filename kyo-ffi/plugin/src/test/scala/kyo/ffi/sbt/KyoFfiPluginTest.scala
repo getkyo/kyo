@@ -168,73 +168,56 @@ class KyoFfiPluginTest extends AnyFunSuite with Matchers {
         KyoFfiPlugin.prebuiltOverriddenCompiled(Seq(uring, boringssl), staged) shouldBe Seq(boringssl)
     }
 
-    // The native-flag manifests are packaged, so they reach machines that have never seen the build host's
-    // filesystem. A release shipped `-L/home/runner/work/kyo/kyo/.../boringssl/staged/linux-x86_64/lib` inside
-    // its jar, naming a tree no consumer has and archives the artifact does not carry; the only flags that can
-    // travel are the ones that name no file.
-    test("nativeCompileOptions: carries each library's include dirs and preprocessor defines") {
+    // A library's -D cFlags reach a Native compile through its descriptor, which a consumer's build reads; compileOptions apply to every
+    // C file in the binary and never cross a dependency edge, so carrying them here too would compile them into C that never asked.
+    test("nativeCompileOptions: carries include dirs and the linked define of each library linked on the os, and no cFlags") {
         val shim = FfiLibrary(
             id = "shim",
             cSources = Seq(new File("/src/shim.c")),
             includeDirs = Seq(new File("/src"), new File("/staged")),
+            linkLibsByOs = Map("linux" -> Seq("uring")),
             cFlags = Seq("-DKYO_SQLITE_HEADER=\"doltlite.h\"", "-O2", "-UNDEBUG")
         )
         val other =
             FfiLibrary(id = "other", cSources = Seq(new File("/src/other.c")), includeDirs = Seq(new File("/src")), cFlags = Seq("/MD"))
-        KyoFfiPlugin.nativeCompileOptions(Seq(shim, other)) shouldBe Seq(
+        KyoFfiPlugin.nativeCompileOptions(Seq(shim, other), "linux") shouldBe Seq(
             s"-I${new File("/src").getAbsolutePath}",
             s"-I${new File("/staged").getAbsolutePath}",
-            "-DKYO_SQLITE_HEADER=\"doltlite.h\"",
-            "-UNDEBUG"
+            "-DKYO_FFI_LINKED_SHIM"
+        )
+        KyoFfiPlugin.nativeCompileOptions(Seq(shim, other), "darwin") shouldBe Seq(
+            s"-I${new File("/src").getAbsolutePath}",
+            s"-I${new File("/staged").getAbsolutePath}"
         )
     }
 
-    test("partitionPortableFlags: keeps flags that name no file") {
-        val (portable, dropped) =
-            KyoFfiPlugin.partitionPortableFlags(Seq("-luring", "-lc++", "-Wl,--whole-archive", "-Wl,--no-whole-archive"))
-        portable shouldBe Seq("-luring", "-lc++", "-Wl,--whole-archive", "-Wl,--no-whole-archive")
-        dropped shouldBe empty
-    }
-
-    test("partitionPortableFlags: drops a path wherever it sits in the flag") {
-        val flags = Seq(
-            "-L/home/runner/work/kyo/kyo/kyo-net/native/../build/boringssl/staged/linux-x86_64/lib",
-            "-I/home/runner/work/kyo/kyo/kyo-net/native/../build/boringssl/staged/linux-x86_64/include",
-            "-Wl,-force_load,/Users/dev/kyo/kyo-net/build/boringssl/staged/darwin-aarch64/lib/libssl.a",
-            "-I../relative/include",
-            "-lssl"
+    test("nativeDescriptorDefines: carries every library's -D flag, without the -D, once") {
+        val sqlite = FfiLibrary(
+            id = "kyo_sqlite",
+            cSources = Nil,
+            cFlags = Seq("-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_MATH_FUNCTIONS=1")
         )
-        val (portable, dropped) = KyoFfiPlugin.partitionPortableFlags(flags)
-        portable shouldBe Seq("-lssl")
-        dropped should have size 4
+        val other = FfiLibrary(id = "other", cSources = Nil, cFlags = Seq("-DSQLITE_THREADSAFE=1", "-DKYO_SQLITE_HEADER=\"doltlite.h\""))
+        KyoFfiPlugin.nativeDescriptorDefines(Seq(sqlite, other)) shouldBe
+            Seq("SQLITE_THREADSAFE=1", "SQLITE_ENABLE_MATH_FUNCTIONS=1", "KYO_SQLITE_HEADER=\"doltlite.h\"")
     }
 
-    test("partitionPortableFlags: an empty flag set stays empty on both sides") {
-        KyoFfiPlugin.partitionPortableFlags(Nil) shouldBe ((Nil, Nil))
+    test("nativeDescriptorDefines: flags in one compiler's syntax stay out") {
+        val aeron = FfiLibrary(id = "kyo_aeron", cSources = Nil, cFlags = Seq("/MD", "-O2"))
+        KyoFfiPlugin.nativeDescriptorDefines(Seq(aeron)) shouldBe empty
     }
 
-    // A vendored library's -l names carry no path, so the path test keeps them, and on their own they are worse than useless: without the
-    // -L that finds the vendored tree, `-lssl -lcrypto` resolve against the consumer's SYSTEM OpenSSL under the vendored library's name.
-    // That links, runs, and reports the wrong provider. They leave with the tree.
-    test("partitionPortableFlags: a vendored library's link libs leave with its tree") {
-        val flags = Seq(
-            "-L/build/boringssl/staged/linux-x86_64/lib",
-            "-Wl,--whole-archive",
-            "-lssl",
-            "-lcrypto",
-            "-Wl,--no-whole-archive",
-            "-lstdc++",
-            "-Wl,-Bstatic",
-            "-luring",
-            "-Wl,-Bdynamic"
-        )
-        val (portable, dropped) = KyoFfiPlugin.partitionPortableFlags(flags, Set("ssl", "crypto"))
-        portable shouldBe Seq("-Wl,--whole-archive", "-Wl,--no-whole-archive", "-lstdc++", "-Wl,-Bstatic", "-luring", "-Wl,-Bdynamic")
-        dropped shouldBe Seq("-L/build/boringssl/staged/linux-x86_64/lib", "-lssl", "-lcrypto")
+    test("nativeDescriptorDefines: refuses a define the comma-separated descriptor would split") {
+        val bad = FfiLibrary(id = "bad", cSources = Nil, cFlags = Seq("-DPAIR=a,b"))
+        an[RuntimeException] should be thrownBy KyoFfiPlugin.nativeDescriptorDefines(Seq(bad))
     }
 
-    test("partitionPortableFlags: a system link lib with the same spelling as no vendored lib is kept") {
-        KyoFfiPlugin.partitionPortableFlags(Seq("-lssl"), Set("crypto"))._1 shouldBe Seq("-lssl")
+    test("nativeDescriptorDefines: refuses a define in one compiler's syntax, which a consumer's compiler may not parse") {
+        Seq("-DSQLITE_API=__declspec(dllexport)", "-DAPI=__attribute__((visibility(\"default\")))", "-DCALL=__stdcall()").foreach { flag =>
+            val hostShaped = FfiLibrary(id = "kyo_sqlite", cSources = Nil, cFlags = Seq("-DSQLITE_THREADSAFE=1", flag))
+            val error      = intercept[RuntimeException](KyoFfiPlugin.nativeDescriptorDefines(Seq(hostShaped)))
+            error.getMessage should include("ffiCFlags")
+        }
     }
 }
 

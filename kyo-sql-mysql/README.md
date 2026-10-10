@@ -68,9 +68,20 @@ backend.
 |---|---|
 | JVM | `ServiceLoader` reads the `META-INF/services/kyo.db.Backend` entry. Nothing to do. |
 | Scala.js, Wasm | An exported object registers the factory at module load. Nothing to do. |
-| Scala Native | The application enlists the class in `nativeConfig.withServiceProviders`, since Native resolves service providers at link time. |
+| Scala Native | `kyo-natives-plugin` enlists the class for the link, since Native resolves service providers at link time. |
 
-The Native enlistment names the same class the services file does:
+Native needs the enlistment because its `ServiceLoader` resolves when the binary links, and the linker drops any class nothing references. `kyo-natives-plugin` reads it from the same `META-INF/services` entry the JVM reads at run time:
+
+```
+// project/plugins.sbt
+addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
+```
+```
+// the Native project
+.enablePlugins(KyoNativesPlugin)
+```
+
+`sbt show kyoNativesServiceProviders` lists what it enlisted. Without the plugin, name the class yourself, which is the same one the services file holds:
 
 ```scala doctest:expect=skipped
 nativeConfig ~= {

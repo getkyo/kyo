@@ -101,6 +101,38 @@ rather than real natives, and the `library-state` manifest records each library'
 classifier jar carrying the `META-INF/native/<os>-<arch>/` tree; `ffiHostOsArch` resolves
 the host tag both the build and the packaged layout name the native by.
 
+## Scala Native: decided where the binary links
+
+A Native artifact ships its shims as C source, and Scala Native compiles that C in the build
+that links the binary, which for a published module is the consumer's, on the consumer's
+machine. So nothing about which body a shim compiles or which libraries the link needs may be
+decided on the machine that publishes. Every rule below follows from that.
+
+- **A shim gates on the link, never on a header.** The real body compiles only under
+  `KYO_FFI_LINKED_<ID>` (`FfiLibrary.linkedDefine`), which the plugin defines in exactly the
+  build that links the library. `KYO_FFI_EXTERNAL_<ID>` compiles the shim to an empty
+  translation unit, for a build that links the prebuilt library the JVM artifact carries
+  (`ffiNativeDelivery`); `checkExternalState` fails a build whose shim still defines an entry
+  point under it. Neither define selects the stub body, which defines the same entry points
+  over no library. A visible header is not a linkable library, so `__has_include` decides
+  nothing; an OS check (`__linux__`, `__APPLE__`) is fine, because it reads the linking target.
+- **A binding declares no `headers` gate over a shim.** The codegen evaluates `headers` on
+  the publishing host and bakes stubs or externs into the published binding. A shim that
+  defines its entry points in every state needs none; kqueue and the TLS bindings bind
+  `kyo_*` wrappers for that reason.
+- **Each shim says which body it compiled.** A `*_compiled_stub` entry point lets the runtime
+  report "linked without the library" rather than "present and failed"
+  (`CapabilityOutcome.CompiledStub`).
+- **Flags never travel; declarations do.** The in-build flag manifests name this machine's
+  paths and are kept out of the jar. A system library a consumer's machine may provide is an
+  `FfiLibrary.system` declaration (`FfiSystemLibrary`), which the consumer's build resolves by
+  compiling and linking a probe. A library's `-D` cFlags travel in the module's
+  `scala-native.properties` descriptor, which Scala Native applies to that module's C alone.
+
+kyo-consumer-check is where these rules are verified: its fixtures resolve published
+artifacts through POMs and link them outside this build. A change to a shim, a binding's
+config or the delivery declarations is not validated by the in-build suites alone.
+
 ## Thread-blocking substrate
 
 The no-blocking rule bans thread parking by semantic intent. kyo-ffi has a SMALL,

@@ -9,9 +9,11 @@ name: release-probe
 # existing `/release` comment trigger is the heavyweight alternative: it needs secrets and does
 # publish snapshots, so it is not usable as a routine per-PR check.
 #
-# JVM only. Both failures this exists to catch surfaced on the JVM leg: a plugin dependency that
-# could not be resolved (kyo-compat-plugin / update) and a missing native library for a C shim
-# (kyo-aeronJVM / ffiCompile, which the JVM leg compiles). ci.yml covers JS, Native, and Wasm.
+# The probe job is JVM only. Both failures it exists to catch surfaced on the JVM leg: a plugin
+# dependency that could not be resolved (kyo-compat-plugin / update) and a missing native library
+# for a C shim (kyo-aeronJVM / ffiCompile, which the JVM leg compiles). ci.yml covers JS, Native,
+# and Wasm builds in-tree. The consumer-check jobs cover what no in-tree build can: applications
+# outside this build that resolve the published artifacts, on every platform, the way a user does.
 #
 # The provisioning is shared with release.yml through .github/actions/release-setup rather than
 # copied, so this probe cannot drift away from the environment it is vouching for.
@@ -20,6 +22,18 @@ on:
     branches: [main]
   push:
     branches: [main]
+    # A release tag runs the consumer-check jobs on the exact head release.yml publishes, every pole and every
+    # leg without a system library; release.yml's own consumer check runs on its one publish host.
+    tags: ["v1.*"]
+  # Runs the consumer-check jobs on a branch before it has a pull request; the probe job's guard skips itself there upstream.
+  workflow_dispatch:
+    inputs:
+      plan-check:
+        description: >-
+          Select the consumer jobs through the publish plan against the merge base, as a pull request whose diff
+          touches no consumer-check path does, and fail unless the plan selects them.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -122,3 +136,361 @@ jobs:
         env:
           PLAN: ${{ steps.plan.outputs.jvm }}
         run: scripts/sbt.sh tool -Dplatform=JVM 'set ThisBuild / ffiCFlags ++= Seq("-DKYO_FFI_PROBE=1")' "ffiCompileAll${PLAN:+ $PLAN}"
+
+  # Whether this change can affect what a consumer of the FFI modules resolves: the diff reaches the main side of a module
+  # kyo-consumer-check publishes (directly or through a dependency, as testKyo's publish plan reads it), or it changes the
+  # fixtures or this workflow. Every other pull request skips the consumer jobs below.
+  consumer-scope:
+    if: github.event_name != 'push' || github.repository != 'getkyo/kyo' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: coursier/setup-action@v3.0.4
+        with:
+          jvm: corretto:25
+          apps: sbt
+      - name: Select
+        id: scope
+        shell: bash
+        # plan-check takes the plan branch on a branch whose own diff would short-circuit it, so the branch every
+        # pull request outside the consumer paths depends on has been run, and a plan that selects nothing for a diff
+        # reaching kyo-net fails rather than skipping every consumer leg.
+        env:
+          PLAN_CHECK: ${{ github.event_name == 'workflow_dispatch' && inputs.plan-check }}
+        run: |
+          if [ "$PLAN_CHECK" = true ]; then
+            base="$(git merge-base origin/main HEAD)"
+          elif [ "${{ github.event_name }}" != pull_request ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            base="$(git rev-parse HEAD^1)"
+            if git diff --name-only "$base" HEAD | grep -qE '^(kyo-consumer-check/|kyo-natives/|\.github/workflows/release-probe\.yml$)'; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          scripts/sbt.sh tool -Dplatform=JVM \
+            "testKyo --phase publish --dry-run --plan-file target/consumer-plan-jvm $base JVM" \
+            "testKyo --phase publish --dry-run --plan-file target/consumer-plan-js $base JS" \
+            "testKyo --phase publish --dry-run --plan-file target/consumer-plan-native $base Native"
+          cat target/consumer-plan-*
+          selected=$(cat target/consumer-plan-* | grep -xE 'kyo-(net|aeron|sql-sqlite|sql-doltlite|stats-machine|doctest)(JVM|JS|Native)|kyo-httpNative|kyo-(ffi-plugin|natives-plugin|ffi-codegen|doctest-plugin)' || true)
+          echo "consumer-checked modules in the plan: ${selected:-none}"
+          if [ -n "$selected" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$PLAN_CHECK" = true ]; then
+            echo "plan-check: the plan against $base selects no consumer-checked module" >&2
+            exit 1
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The natives a release's producers build, for the poles the consumer legs below run on. A release publishes every
+  # pole's natives from one host, which pools them, so the consumer path is the same here: each producer compiles its
+  # own pole and the publish job pools them, each the way release.yml's producer for that pole builds it.
+  consumer-natives:
+    needs: consumer-scope
+    if: needs.consumer-scope.outputs.run == 'true'
+    name: consumer-natives (${{ matrix.pole }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pole: linux-x86_64
+            runner: ubuntu-latest
+          - pole: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - pole: linux-musl-x86_64
+            runner: ubuntu-latest
+          - pole: linux-musl-aarch64
+            runner: ubuntu-24.04-arm
+          - pole: darwin-aarch64
+            runner: macos-14
+          # Cross-built on the arm64 runner, as release.yml's darwin producer does.
+          - pole: darwin-x86_64
+            runner: macos-14
+          - pole: windows-x86_64
+            runner: windows-latest
+          - pole: windows-aarch64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      POLE: ${{ matrix.pole }}
+      MODULES: kyo-netJVM kyo-aeronJVM kyo-sql-sqliteJVM kyo-sql-doltliteJVM kyo-stats-machineJVM
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - if: matrix.pole == 'linux-x86_64' || matrix.pole == 'linux-aarch64'
+        uses: ./.github/actions/release-setup
+      - if: runner.os == 'macOS'
+        uses: ./.github/actions/stage-natives
+        with:
+          os-archs: ${{ matrix.pole }}
+      - if: runner.os != 'Linux' && matrix.pole != 'windows-aarch64'
+        uses: coursier/setup-action@v3.0.4
+        with:
+          jvm: corretto:25
+          apps: sbt
+      # As release.yml's windows-aarch64 producer: no coursier launcher and no Corretto for Windows on ARM, and the
+      # running JVM's os.arch names the artifacts, so an emulated x64 JDK would build windows-x86_64 ones.
+      - if: matrix.pole == 'windows-aarch64'
+        uses: actions/setup-java@v6
+        with:
+          distribution: microsoft
+          java-version: '25'
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-native-setup
+        with:
+          os-arch: ${{ matrix.pole }}
+      - name: Compile the consumer-checked modules' natives
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.pole }}" in
+            darwin-x86_64)
+              scripts/sbt.sh tool -Dplatform=JVM -Dos.arch=x86_64 'set ThisBuild / ffiCFlags ++= Seq("-arch", "x86_64")' "ffiCompileAll $MODULES" ;;
+            linux-musl-*)
+              # A musl library builds on a musl host: the staging scripts refuse a cross-OS request.
+              mkdir -p "$HOME/.cache/coursier"
+              docker run --rm -e MODULES -e POLE -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
+                set -eu
+                apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
+                sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
+                . scripts/fetch-lib.sh
+                fetch_url "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" /tmp/sbt.tgz
+                tar -xzf /tmp/sbt.tgz -C /opt
+                export PATH="/opt/sbt/bin:$PATH"
+                bash kyo-net/build/boringssl/build-boringssl.sh "$POLE"
+                bash kyo-aeron/scripts/build-aeron.sh "$POLE"
+                bash kyo-sql-sqlite/scripts/build-sqlite.sh
+                bash kyo-sql-doltlite/scripts/build-doltlite.sh
+                bash scripts/sbt.sh tool -Dplatform=JVM "ffiCompileAll $MODULES"
+              ' ;;
+            *)
+              scripts/sbt.sh tool -Dplatform=JVM "ffiCompileAll $MODULES" ;;
+          esac
+      - if: runner.os != 'Windows'
+        name: Collect
+        shell: bash
+        run: |
+          mkdir -p natives-out
+          case "${{ matrix.pole }}" in
+            darwin-*) find . -path "*/target/ffi/lib*-${{ matrix.pole }}.dylib" -exec cp -n {} natives-out/ \; ;;
+            *)        find . -path "*/target/ffi/lib*-${{ matrix.pole }}.so" -exec cp -n {} natives-out/ \; ;;
+          esac
+          test -n "$(ls -A natives-out)" || { echo "consumer-natives built nothing for ${{ matrix.pole }}" >&2; exit 1; }
+          ls -l natives-out
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-native-collect
+        with:
+          os-arch: ${{ matrix.pole }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: consumer-natives-${{ matrix.pole }}
+          path: natives-out
+          if-no-files-found: error
+          retention-days: 3
+
+  # Every artifact a fixture resolves, published once to a Maven-layout repository from the host a release publishes
+  # from, with every pole's natives pooled the way release.yml pools them. Each consumer leg then resolves these same
+  # artifacts: a release ships one Native jar to every OS, so a leg that published its own would test a jar no release
+  # carries, which is exactly how a jar that links only on its publisher's OS stayed green.
+  consumer-publish:
+    needs: consumer-natives
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/release-setup
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: consumer-natives-*
+          path: ffi-prebuilt
+          merge-multiple: true
+      - name: Publish the consumer-checked closure
+        shell: bash
+        run: |
+          scripts/sbt.sh publish -Dplatform=JVM \
+            'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' \
+            kyo-consumer-check/consumerCheckPublish
+          tar -C "$HOME/.m2/repository" -cf consumer-m2.tar io/getkyo
+      - uses: actions/upload-artifact@v7
+        with:
+          name: consumer-m2
+          path: consumer-m2.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # kyo-consumer-check's fixtures, run on each pole against the artifacts above. The legs without a system library take
+  # one away and run only the fixtures whose answer depends on it, each told what the machine has so that a probe finding
+  # nothing is told apart from a probe that broke. Every pole a release publishes has a leg.
+  consumer-check:
+    needs: consumer-publish
+    name: consumer-check (${{ matrix.leg }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: linux-x86_64
+            runner: ubuntu-latest
+            openssl: present
+            liburing: present
+            fixtures: ''
+          - leg: linux-aarch64
+            runner: ubuntu-24.04-arm
+            openssl: present
+            liburing: present
+            fixtures: ''
+          - leg: darwin-aarch64
+            runner: macos-14
+            openssl: present
+            liburing: absent
+            fixtures: ''
+          - leg: darwin-x86_64
+            runner: macos-15-intel
+            openssl: present
+            liburing: absent
+            fixtures: ''
+          # Alpine, in a container on the runner of the same architecture: the musl JDK, toolchain and Node the leg needs
+          # are its packages.
+          - leg: linux-musl-x86_64
+            runner: ubuntu-latest
+            openssl: present
+            liburing: present
+            fixtures: ''
+          - leg: linux-musl-aarch64
+            runner: ubuntu-24.04-arm
+            openssl: present
+            liburing: present
+            fixtures: ''
+          # JVM consumers only. Windows is NIO and the JDK's TLS by ruling, with no Native delivery and no posix
+          # transport on Node, which is what the Native and JS fixtures assert. jvm/sqlite is the run-time proof that
+          # the Windows DLL exports sqlite3_*, which its SQLITE_API define exists to do.
+          - leg: windows-x86_64
+            runner: windows-latest
+            openssl: absent
+            liburing: absent
+            fixtures: jvm/net-natives-plugin jvm/sqlite
+          - leg: windows-aarch64
+            runner: windows-11-arm
+            openssl: absent
+            liburing: absent
+            fixtures: jvm/net-natives-plugin jvm/sqlite
+          - leg: linux-x86_64-no-libssl
+            runner: ubuntu-latest
+            openssl: absent
+            liburing: present
+            fixtures: native/net native/net-plugin native/net-jarlib native/net-natives-plugin
+          - leg: linux-x86_64-no-liburing
+            runner: ubuntu-latest
+            openssl: present
+            liburing: absent
+            fixtures: native/net native/net-plugin native/net-natives-plugin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          name: consumer-m2
+      - name: Install the published artifacts
+        shell: bash
+        run: mkdir -p "$HOME/.m2/repository" && tar -C "$HOME/.m2/repository" -xf consumer-m2.tar
+      - if: matrix.leg != 'windows-aarch64'
+        uses: coursier/setup-action@v3.0.4
+        with:
+          jvm: corretto:25
+          apps: sbt
+      # As consumer-natives' windows-aarch64 producer: a native ARM JDK, since its os.arch is the host the plugin delivers for.
+      - if: matrix.leg == 'windows-aarch64'
+        uses: actions/setup-java@v6
+        with:
+          distribution: microsoft
+          java-version: '25'
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - if: ${{ !startsWith(matrix.leg, 'linux-musl-') }}
+        name: Host libraries
+        shell: bash
+        env:
+          OPENSSL: ${{ matrix.openssl }}
+          LIBURING: ${{ matrix.liburing }}
+        run: |
+          has() { if [ -e "$1" ]; then echo present; else echo absent; fi; }
+          case "$RUNNER_OS" in
+            Linux)
+              purge() { if dpkg -s "$1" >/dev/null 2>&1; then sudo apt-get purge -y "$1"; fi; }
+              if [ "$OPENSSL" = present ]; then bash scripts/apt-install.sh --if-missing libssl-dev; else purge libssl-dev; fi
+              if [ "$LIBURING" = present ]; then bash scripts/apt-install.sh --if-missing liburing-dev; else purge liburing-dev; fi
+              openssl=$(has /usr/include/openssl/ssl.h)
+              liburing=$(has /usr/include/liburing.h) ;;
+            macOS)
+              # /opt/homebrew on arm64, /usr/local on x86_64: both are prefixes the declaration names.
+              prefix="$(brew --prefix)/opt/openssl@3"
+              [ -e "$prefix/include/openssl/ssl.h" ] || brew install openssl@3
+              openssl=$(has "$prefix/include/openssl/ssl.h")
+              liburing=absent ;;
+            *)
+              # The Windows leg runs JVM fixtures only, which link no system library.
+              openssl=absent
+              liburing=absent ;;
+          esac
+          echo "OpenSSL development files: $openssl (stated $OPENSSL); liburing: $liburing (stated $LIBURING)"
+          [ "$openssl" = "$OPENSSL" ] && [ "$liburing" = "$LIBURING" ]
+      - if: ${{ !startsWith(matrix.leg, 'linux-musl-') }}
+        name: Run the fixtures
+        shell: bash
+        env:
+          KYO_CONSUMER_SYSTEM_OPENSSL: ${{ matrix.openssl }}
+          KYO_CONSUMER_LIBURING: ${{ matrix.liburing }}
+          FIXTURES: ${{ matrix.fixtures }}
+        run: scripts/sbt.sh tool -Dkyo.consumerCheck.prepublished=true "kyo-consumer-check/scripted${FIXTURES:+ $FIXTURES}"
+      - if: startsWith(matrix.leg, 'linux-musl-')
+        name: Run the fixtures (Alpine)
+        shell: bash
+        env:
+          KYO_CONSUMER_SYSTEM_OPENSSL: ${{ matrix.openssl }}
+          KYO_CONSUMER_LIBURING: ${{ matrix.liburing }}
+          FIXTURES: ${{ matrix.fixtures }}
+        # Docker's default seccomp profile refuses the io_uring syscalls, so a ring cannot be created in the container
+        # whatever liburing is installed, and the leg could not tell a binary that should run on io_uring from one that
+        # does. The container runs under that same default profile with only those three syscalls added, as the host
+        # legs' kernel policy allows them. The profile is checked in rather than fetched, so the legs do not depend on
+        # GitHub serving it: moby/profiles seccomp/default.json at 2ceae35d351c156cb5a8efc0fdc4a08cf94569d8, plus one
+        # entry allowing the three, appended last.
+        #
+        # The alt-stack probe stays until a musl-x86_64 start failure with "failed to set alt stack: Out of memory" has
+        # been read against it: that failure depends on the host, and without the probe's lines a recurrence leaves
+        # nothing to read. It never fails the step.
+        run: |
+          mkdir -p "$HOME/.cache/coursier"
+          docker run --rm --security-opt seccomp="$PWD/.github/seccomp/docker-default-io-uring.json" -e KYO_CONSUMER_SYSTEM_OPENSSL -e KYO_CONSUMER_LIBURING -e FIXTURES \
+            -v "$PWD:/work" -v "$HOME/.m2:/root/.m2" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work \
+            eclipse-temurin:25-jdk-alpine sh -c '
+              set -eu
+              apk add --no-cache bash build-base clang lld musl-dev linux-headers openssl-dev liburing-dev util-linux-dev nodejs npm git curl tar
+              sh .github/scripts/altstack-probe.sh || true
+              test -e /usr/include/openssl/ssl.h && test -e /usr/include/liburing.h
+              # The version the fixtures resolve comes from git; the mount belongs to another user in here.
+              git config --global --add safe.directory /work
+              sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
+              . scripts/fetch-lib.sh
+              fetch_url "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" /tmp/sbt.tgz
+              tar -xzf /tmp/sbt.tgz -C /opt
+              export PATH="/opt/sbt/bin:$PATH"
+              bash scripts/sbt.sh tool -Dkyo.consumerCheck.prepublished=true "kyo-consumer-check/scripted${FIXTURES:+ $FIXTURES}"
+            '

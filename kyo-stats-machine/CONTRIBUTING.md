@@ -92,12 +92,13 @@ The sampler starts with zero explicit user call, mirroring
    (`MachineStatFactory.scala:52-74`). Unset or unparseable enables (graceful
    default, never a failure).
 5. **Native caveat**: Scala Native's `ServiceLoader` discovers providers only
-   from a build-time allowlist. A downstream Native build that wants the
-   sampler MUST declare
+   from a build-time allowlist, so a downstream Native build has to enlist this
+   factory for the link. `kyo-natives-plugin` does it from the module's own
+   `META-INF/services` entry; a build without that plugin declares
    `nativeConfig ~= { _.withServiceProviders(Map("kyo.stats.internal.ExporterFactory" -> Seq("kyo.stats.machine.MachineStatFactory"))) }`
-   (documented at `MachineStatFactory.scala:16-21`); absent that declaration,
-   the provider is discovered but never constructed and sampling silently
-   does not start on that platform. JVM and JS need no such step.
+   itself. Absent either, the provider is discovered but never constructed and
+   sampling silently does not start on that platform. JVM and JS need no such
+   step.
 
 ## The metric model
 

@@ -22,8 +22,10 @@ case object WasmPlatform extends Platform {
     def identifier: String = "wasm"
     def sbtSuffix: String  = "Wasm"
 
-    /** Published Maven coordinate suffix for WebAssembly artifacts, parallel to Scala.js `_sjs1` and Scala Native `_native0.5`. A wasm
-      * module publishes as e.g. `kyo-core_sjs1-wasm_3`, distinct from the JS `kyo-core_sjs1_3`, so the two never collide on Maven Central.
+    /** Coordinate suffix for WebAssembly artifacts, parallel to Scala.js `_sjs1` and Scala Native `_native0.5`: e.g. `kyo-core_sjs1-wasm_3`.
+      *
+      * WebAssembly is a test-only platform and nothing on it is published (see `enable`). The distinct suffix still matters locally: a
+      * `publishLocal` of a wasm project would otherwise land on the JS coordinate and shadow the real JS artifact in the local repository.
       */
     val wasmCrossVersion: CrossVersion = CrossVersion.binaryWith("sjs1-wasm_", "")
 
@@ -34,11 +36,11 @@ case object WasmPlatform extends Platform {
                 _.withESFeatures(_.withESVersion(ESVersion.ES2022).withUseWebAssembly(true))
                     .withModuleKind(ModuleKind.ESModule)
             },
-            // Give kyo's own wasm artifacts a distinct coordinate the way the ScalaJS and ScalaNative platforms do for theirs. External
-            // `%%%` dependencies stay on `_sjs1`, since no upstream Scala.js library publishes a wasm build yet and the `_sjs1` artifacts
-            // link to WasmGC unchanged.
-            crossVersion                     := wasmCrossVersion,
-            platformDepsCrossVersion         := ScalaJSCrossVersion.binary,
+            // Give kyo's own wasm artifacts a distinct coordinate (see wasmCrossVersion). External `%%%` dependencies stay on `_sjs1`,
+            // since no upstream Scala.js library publishes a wasm build yet and the `_sjs1` artifacts link to WasmGC unchanged.
+            crossVersion             := wasmCrossVersion,
+            platformDepsCrossVersion := ScalaJSCrossVersion.binary,
+            // Test-only: a release publishes no WebAssembly artifact, and release.yml has no Wasm stage.
             sbt.Keys.publish / sbt.Keys.skip := true
         )
 }

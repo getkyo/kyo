@@ -1,0 +1,12 @@
+# The build's `nativeConfig :=` replaced what the plugin folded in, so the link it would produce has every TLS shim
+# compiled to its stub. The plugin's fold check refuses that link rather than letting it read at run time as a machine
+# without the library, and it refuses every link task, the release ones included, since each reads the same config.
+> expectFoldRefusal nativeLink
+> expectFoldRefusal nativeLinkReleaseFast
+> expectFoldRefusal nativeLinkReleaseFull
+
+# With the plugin told to contribute nothing, the same build links, and TLS fails closed naming the plugin that would
+# have linked it.
+> set kyoNativesSource := NativesSource.Disabled
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER plain=hello tls=failure:NetTlsProviderUnavailableException" out.txt; grep -q "kyo_net_boringssl.c compiled its stub" out.txt; grep -q "kyo-natives-plugin" out.txt'

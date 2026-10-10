@@ -1,0 +1,28 @@
+# The stats-machine fixture beside this one, with the link-time enlistment coming from the plugin rather than from a
+# hand-written nativeConfig line.
+> kyoNativesReport
+
+# The assertion that carries this fixture: the provider reached nativeConfig, which is what the linker reads. Asserted
+# there rather than on kyoNativesServiceProviders so that deleting the fold into nativeConfig fails the test, and
+# asserted at all because the failure it guards is silent at run time.
+> writeServiceProviders
+$ exec sh -c 'set -eu; cat service-providers.txt; grep -q "kyo.stats.internal.ExporterFactory=kyo.stats.machine.MachineStatFactory" service-providers.txt'
+
+# The Compile and Test links carry different sets, and the split is the point: a test-only dependency's provider
+# belongs in the test binary and must stay out of the production one, where its class is not on the classpath at all
+# and naming it would fail that link rather than degrade.
+$ exec sh -c 'set -eu; cat test-service-providers.txt; grep -q "kyo.db.Backend=kyo.internal.sqlite.SqliteBackendFactory" test-service-providers.txt'
+$ exec sh -c 'set -eu; grep -q "SqliteBackendFactory" service-providers.txt && { echo "a Test-only provider reached the production link config" >&2; exit 1; }; exit 0'
+
+# The same assertion has to be able to go red, or it proves nothing about the plugin. With the enlistment turned off
+# the provider is absent, which is also the state a Native application is in without this plugin.
+> set kyoNativesEnlistServices := false
+> writeServiceProviders
+$ exec sh -c 'set -eu; cat service-providers.txt; grep -q "MachineStatFactory" service-providers.txt && { echo "the provider survived kyoNativesEnlistServices := false, so the assertion above cannot fail" >&2; exit 1; }; exit 0'
+> set kyoNativesEnlistServices := true
+
+# The end of the chain, which the config assertion above cannot reach: the provider was enlisted, so the factory was
+# constructed, so the sampler started and registered metrics under `machine`. The application reads that back through
+# StatsRegistry.snapshot, so an enlistment that reached nativeConfig but produced no sampler still fails here.
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER machine=sampled" out.txt'

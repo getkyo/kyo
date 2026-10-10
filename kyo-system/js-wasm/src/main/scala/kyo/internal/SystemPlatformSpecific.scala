@@ -89,35 +89,57 @@ private[kyo] object SystemPlatformSpecific:
         end if
     end availableProcessors
 
-    /** Node's own count through `require("os")`, or 0 when `require` or the module is unavailable. */
-    private def nodeProcessors(): Int =
+    /** Node's own count through the `os` builtin, or 0 when it cannot be reached.
+      *
+      * Reachable from tests because the fallbacks below it hide its failure: `navigator` answers the same number
+      * on Node 21 and later, so an assertion on `availableProcessors` alone stays green while this route is dead
+      * and every older Node sizes its pools off the stub.
+      */
+    private[kyo] def nodeProcessors(): Int =
         try
-            val require = js.Dynamic.global.selectDynamic("require")
-            if js.typeOf(require) == "undefined" || require == null then 0
+            val os = nodeOs()
+            if os == null then 0
+            else if js.typeOf(os.selectDynamic("availableParallelism")) == "function" then
+                val n = os.applyDynamic("availableParallelism")()
+                if js.isUndefined(n) || n == null then 0 else n.asInstanceOf[Int]
             else
-                val os = require.asInstanceOf[js.Function1[String, js.Dynamic]]("os")
-                if js.isUndefined(os) || os == null then 0
-                else if js.typeOf(os.selectDynamic("availableParallelism")) == "function" then
-                    val n = os.applyDynamic("availableParallelism")()
-                    if js.isUndefined(n) || n == null then 0 else n.asInstanceOf[Int]
-                else
-                    val cpus = os.applyDynamic("cpus")()
-                    if js.isUndefined(cpus) || cpus == null then 0
-                    else cpus.asInstanceOf[js.Array[js.Dynamic]].length
-                end if
+                val cpus = os.applyDynamic("cpus")()
+                if js.isUndefined(cpus) || cpus == null then 0
+                else cpus.asInstanceOf[js.Array[js.Dynamic]].length
             end if
         catch case ex: Throwable if scala.util.control.NonFatal(ex) => 0
     end nodeProcessors
 
-    /** `navigator.hardwareConcurrency`, or 0 when there is no such global. */
+    /** The `os` builtin, or `null` where neither route reaches it.
+      *
+      * Two routes because the module kind decides which one exists: a CommonJS bundle carries the `require`
+      * global, an ESModule bundle carries none and reaches builtins through `process.getBuiltinModule`. Asking
+      * only for the global leaves every ESModule bundle on the Java stub below, which answers 1, so a machine's
+      * pools are sized for a single CPU with nothing reporting it.
+      *
+      * Each `typeof` guard stays INLINE on its global selection, for the reason recorded on `env`.
+      */
+    private def nodeOs(): js.Dynamic =
+        if js.typeOf(js.Dynamic.global.selectDynamic("require")) == "function" then
+            val os = js.Dynamic.global.selectDynamic("require").asInstanceOf[js.Function1[String, js.Dynamic]]("os")
+            if js.isUndefined(os) || os == null then null else os
+        else if js.typeOf(js.Dynamic.global.process) == "undefined" then null
+        else if js.typeOf(js.Dynamic.global.process.selectDynamic("getBuiltinModule")) != "function" then null
+        else
+            val os = js.Dynamic.global.process.applyDynamic("getBuiltinModule")("node:os")
+            if js.isUndefined(os) || os == null then null else os
+    end nodeOs
+
+    /** `navigator.hardwareConcurrency`, or 0 when there is no such global. The guard stays INLINE for the reason
+      * recorded on `env`: Node grew `navigator` in 21, and on anything older a bound read throws before a check on
+      * the binding can answer.
+      */
     private def navigatorProcessors(): Int =
         try
-            val nav = js.Dynamic.global.selectDynamic("navigator")
-            if js.typeOf(nav) == "undefined" || nav == null then 0
+            if js.typeOf(js.Dynamic.global.selectDynamic("navigator")) == "undefined" then 0
             else
-                val n = nav.selectDynamic("hardwareConcurrency")
+                val n = js.Dynamic.global.selectDynamic("navigator").selectDynamic("hardwareConcurrency")
                 if js.typeOf(n) != "number" then 0 else n.asInstanceOf[Int]
-            end if
         catch case ex: Throwable if scala.util.control.NonFatal(ex) => 0
     end navigatorProcessors
 

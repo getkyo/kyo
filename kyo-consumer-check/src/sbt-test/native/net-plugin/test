@@ -1,0 +1,7 @@
+# With kyo-ffi-plugin wired by hand, the plugin finds this machine's OpenSSL from the declaration in kyo-net's jar,
+# enables the TLS shim, and links it: a TLS round trip succeeds. On a machine the leg states has no OpenSSL
+# (KYO_CONSUMER_SYSTEM_OPENSSL=absent) the shim compiles its stub, the binary still links, and TLS fails closed as
+# unavailable. The fixture's certificate is kyo-net's self-signed localhost test certificate.
+> show ffiNativeSystemLibraries
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; case "${KYO_CONSUMER_SYSTEM_OPENSSL:-present}" in present) grep -q "CONSUMER tls=hello" out.txt ;; absent) grep -q "CONSUMER tls=failure:NetTlsProviderUnavailableException" out.txt ;; *) echo "KYO_CONSUMER_SYSTEM_OPENSSL must be present or absent" >&2; exit 1 ;; esac'

@@ -1,0 +1,4 @@
+# Links with no plugin: the shim compiles its stubs. Opening a database refuses with DoltLiteEngineUnavailableException,
+# the error every platform without the engine gives, rather than failing inside the first engine call.
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER doltlite=failure:DoltLiteEngineUnavailableException" out.txt'

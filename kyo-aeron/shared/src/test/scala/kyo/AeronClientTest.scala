@@ -213,6 +213,7 @@ class AeronClientTest extends Test:
         onConnect: () => Unit,
         closed: java.util.concurrent.atomic.AtomicBoolean
     ) extends AeronBindings:
+        def linked()(using AllowUnsafe): Boolean                                                            = true
         def clientConnect(dir: String)(using AllowUnsafe): Fiber.Unsafe[Ffi.Handle[AeronClientHandle], Any] =
             onConnect()
             connectFiber

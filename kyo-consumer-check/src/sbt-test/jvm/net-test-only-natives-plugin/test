@@ -1,0 +1,7 @@
+# kyo-net's classifier jars reach the test classpath, which the test-only dependency's natives load from, and stay off
+# the runtime classpath. The certificate is kyo-net's self-signed localhost test certificate.
+> kyoNativesReport
+> writeClasspaths
+$ exec sh -c 'set -eu; cat test-classpath.txt; grep -E "^kyo-net_3-.*-(darwin|linux)-[a-z0-9_-]+\.jar$" test-classpath.txt | grep -qv boringssl; grep -qE "^kyo-net_3-.*-boringssl\.jar$" test-classpath.txt'
+$ exec sh -c 'set -eu; if grep -q "kyo-net" runtime-classpath.txt; then cat runtime-classpath.txt; echo "a test-only dependency reached the runtime classpath" >&2; exit 1; fi'
+> test

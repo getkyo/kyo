@@ -1,0 +1,2 @@
+# The plugin alone runs doctest: it resolves the kyo-doctest runner, which compiles one block and rejects the other.
+> doctest

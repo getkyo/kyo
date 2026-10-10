@@ -231,10 +231,28 @@ private[sbt] object CCompiler {
             // The Native archive link (ffiNativeLinkingOptions) already appends linkFlags after the
             // archives; this matches that order. linkFlags is empty for every other library, so the order
             // is a no-op there.
+            // Every binary that links a dylib records its install name, and the default is the output path, which
+            // resolves only on the machine that built it. `@rpath/lib<id>.dylib` (a soname on linux) leaves the
+            // location to whoever links it, so a Scala Native binary finds the library beside itself. The name is
+            // the one the ARTIFACT carries, through parseArtifactName, the rule packaging uses to strip the
+            // `-<os>-<arch>` suffix. The JVM and Node loaders open an extracted path of their own and ignore it.
+            val libraryName =
+                parseArtifactName(outFile.getName)
+                    .map { case (libId, libOs, _) => libraryFileName(libId, libOs) }
+                    .getOrElse(outFile.getName)
+            // -Bsymbolic binds the library's references to its own functions and data to itself. ELF otherwise resolves
+            // them in the process's global scope first, so on a host whose Node already loaded a system libsqlite3, the
+            // calls libkyo_sqlite makes to its own sqlite3_* reach that copy and one connection spans two engines.
+            // Nothing outside these libraries takes the address of their symbols or replaces them, which is what
+            // -Bsymbolic would break. darwin's two-level namespace already binds them.
+            val nameFlags =
+                if (os == "darwin") Seq("-Wl,-install_name,@rpath/" + libraryName)
+                else if (os == "windows") Nil
+                else Seq("-Wl,-soname," + libraryName, "-Wl,-Bsymbolic")
             splitCc(cc) ++ Seq("-shared") ++ targetCFlags ++ includeFlags ++
                 sources.map(_.getAbsolutePath) ++
                 Seq("-o", outFile.getAbsolutePath) ++
-                linkLibFlags ++ linkFlags
+                nameFlags ++ linkLibFlags ++ linkFlags
     }
 
     /** Translate a gcc/clang-style flag to its MSVC equivalent. Unknown flags pass
@@ -277,6 +295,14 @@ private[sbt] object CCompiler {
 
     /** Shared-library filename prefix for a target OS: `lib` everywhere but Windows. */
     def libPrefix(os: String): String = if (os == "windows") "" else "lib"
+
+    /** The STAGED filename for `libraryId` on `os`: `lib<id>.<ext>`, or `<id>.dll` on Windows.
+      *
+      * This is the name without the disambiguating `-<os>-<arch>` suffix the compile output carries. Three things
+      * have to agree on it and would each otherwise spell it: the install name a library records, the name the
+      * packaging writes into `META-INF/native/<os-arch>/`, and the name `-l<id>` resolves when a consumer links it.
+      */
+    def libraryFileName(libraryId: String, os: String): String = libPrefix(os) + libraryId + "." + libExtension(os)
 
     /** The compile-output filename for `libraryId` on a target os/arch:
       * `lib<id>-<os>-<arch>.<ext>` (POSIX) or `<id>-<os>-<arch>.dll` (Windows). `Packager` strips
@@ -383,6 +409,61 @@ private[sbt] object CCompiler {
         val exitCode = Process(cmd).!
         if (exitCode != 0) sys.error(s"[kyo-ffi-plugin] C compilation failed (exit=$exitCode)")
         Seq(outFile)
+    }
+
+    /** The names of the global FUNCTIONS `sources` define when compiled with `cFlags`, or None where the toolchain
+      * cannot be asked.
+      *
+      * Functions only. A data definition cannot shadow an entry point, and one shim deliberately carries a global
+      * `int` so that two copies of itself collide at link time; reporting that would make this unusable.
+      *
+      * None rather than empty when `nm` is missing or MSVC is the compiler, so a caller can tell "nothing defined"
+      * from "could not look", and none of the callers turns a missing toolchain into a build failure. An `nm` that
+      * ran and failed is neither, and fails the build: a reading that did not happen must not pass for an empty one.
+      */
+    def definedFunctions(
+        cc: String,
+        cFlags: Seq[String],
+        includes: Seq[File],
+        sources: Seq[File],
+        outDir: File,
+        log: Logger
+    ): Option[Set[String]] = {
+        if (detectFamily(cc) == Msvc || sources.isEmpty) None
+        else {
+            Files.createDirectories(outDir.toPath)
+            val includeFlags = includes.flatMap(dir => Seq("-I", dir.getAbsolutePath))
+            val objects      = sources.zipWithIndex.map { case (src, i) =>
+                val obj = new File(outDir, s"probe-$i.o")
+                val cmd = splitCc(cc) ++ Seq("-c") ++ cFlags ++ includeFlags ++ Seq(src.getAbsolutePath, "-o", obj.getAbsolutePath)
+                val rc  = Process(cmd).!
+                if (rc != 0)
+                    sys.error(s"[kyo-ffi-plugin] ${src.getName} does not compile with ${cFlags.mkString(" ")} (exit=$rc).")
+                obj
+            }
+            val lines = new StringBuilder
+            // `nm -g` over an OBJECT file, whose format is the same on darwin and ELF: an address, a one-letter
+            // type, and the name, with an undefined symbol carrying `U` and no address. Reading objects rather than
+            // the built library is what keeps this off `nm -D`, which darwin does not have.
+            // A missing nm is a host this check cannot run on; an nm that ran and failed is a reading this check must
+            // not silently pass. Only the first is tolerated, and it is said out loud because a skipped invariant check
+            // otherwise looks exactly like a passing one.
+            val rc =
+                try Process(Seq("nm", "-g") ++ objects.map(_.getAbsolutePath))
+                        .!(ProcessLogger(line => { lines.append(line).append('\n'); () }, _ => ()))
+                catch {
+                    case _: java.io.IOException =>
+                        log.warn("[kyo-ffi-plugin] nm is not on the PATH, so the external-state check did not run.")
+                        return None
+                }
+            if (rc != 0)
+                sys.error(s"[kyo-ffi-plugin] nm failed (exit $rc) reading ${sources.map(_.getName).mkString(", ")}.")
+            else
+                Some(lines.toString.split("\n").iterator.flatMap { line =>
+                    val parts = line.trim.split("\\s+")
+                    if (parts.length >= 3 && parts(parts.length - 2) == "T") Some(parts.last) else None
+                }.toSet)
+        }
     }
 
     /** The BUILD HOST's OS tag. Reached only through `resolveTargetOsArch` on the producing paths,

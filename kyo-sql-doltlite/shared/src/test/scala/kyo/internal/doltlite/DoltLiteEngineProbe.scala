@@ -23,6 +23,10 @@ private[kyo] object DoltLiteEngineProbe:
       * are not one type: an `FfiLoadError` from the loader, a `LinkageError` from a generated companion's class
       * initialization, a `JavaScriptException` from a null dispatch table. A probe that throws is worse than one
       * that over-catches.
+      *
+      * A Native binary whose shim compiled its stubs answers version 0 rather than throwing, and counts as available
+      * on purpose. This build always links the engine where the shim compiles, so stubs here are a build defect, and
+      * counting them available makes DoltLiteLibraryTest's version floor report it instead of every suite cancelling.
       */
     val available: Boolean =
         try

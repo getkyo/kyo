@@ -752,16 +752,17 @@ work:
 
 - **Driver registration.** Every driver ships a `META-INF/services/kyo.db.Backend` entry, which fully covers
   the JVM. On JS and Wasm each driver registers itself at module load (the shipped drivers already do). On
-  Scala Native the application enlists the backend class in `nativeConfig.withServiceProviders`, and a
-  program opening several engines by computed URL also calls each driver's `register()`, because Native
-  embeds a single services file. Literal URLs resolve at compile time and need none of this. The driver
-  READMEs carry the snippets.
-- **The FFI plugin, on Scala Native.** Every connection goes through kyo-net, whose C shims are linked into
-  the binary rather than loaded, so a Native build also needs `addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" %
-  kyoVersion)`, `.nativeConfigure(_.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin))`, and the two
-  `ffiNativeDependency*Options` tasks folded into `nativeConfig`. Without them the link fails on undefined
-  symbols before any of the above matters. See kyo-net's
-  [Scala Native builds](../kyo-net/README.md#scala-native-builds) for the exact block.
+  Scala Native the backend class has to be enlisted for the link, which `kyo-natives-plugin` does from that
+  same services entry, and a program opening several engines by computed URL also calls each driver's
+  `register()`, because Native embeds a single services file. Literal URLs resolve at compile time and need
+  none of this. The driver READMEs carry the snippets.
+- **TLS, on Scala Native.** Every connection goes through kyo-net, whose C shims are compiled into the binary.
+  Without further setup a Native build links and plaintext connections work, but TLS reports unavailable, so a
+  URL that requires TLS fails. TLS comes from the BoringSSL library kyo-net's artifact carries, delivered by
+  `addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)` and
+  `.nativeConfigure(_.enablePlugins(KyoNativesPlugin))`, and needs nothing installed on the machine. See kyo-net's
+  [Scala Native builds](../kyo-net/README.md#scala-native-builds), which also covers running TLS on the machine's
+  own OpenSSL instead.
 - **A third engine is one artifact.** `db.Backend` (a scheme, a dialect, an `open`), a dialect written by
   overriding only what diverges from standard SQL (four members are abstract), and the registration above.
   Nothing in kyo-sql names an engine, so an out-of-tree driver is an ordinary dependency.
@@ -880,11 +881,13 @@ reached through `Backend.dialect`, never registered on its own. The rest is per 
 - **JVM**: nothing further, `ServiceLoader` covers runtime discovery.
 - **JS and Wasm**: one `@JSExportTopLevel` object whose initializer calls `Backend.register`, because linker
   dead-code elimination drops an initializer nothing references.
-- **Native**: the application enlists the class in
-  `nativeConfig.withServiceProviders(Map("kyo.db.Backend" -> Seq("com.vendor.VendorBackend")))`, since Scala
-  Native resolves service providers at link time. Native also embeds a single `META-INF/services/kyo.db.Backend`
-  file when several jars declare the service rather than concatenating them, so a program that opens more than
-  one flavor by computed URL calls each additional backend's own `register()` as well.
+- **Native**: the class has to be enlisted for the link, since Scala Native resolves service providers at link
+  time. `kyo-natives-plugin` enlists every provider the classpath declares, a third-party driver included, so a
+  vendor backend needs only its services entry; without the plugin the application writes
+  `nativeConfig.withServiceProviders(Map("kyo.db.Backend" -> Seq("com.vendor.VendorBackend")))` itself. Native
+  also embeds a single `META-INF/services/kyo.db.Backend` file when several jars declare the service rather than
+  concatenating them, so a program that opens more than one flavor by computed URL calls each additional
+  backend's own `register()` as well.
 
 > **A missing platform registration fails silently in one direction.** The backend stays reachable through a
 > literal URL, which resolves against the compile classpath, and is invisible to a computed one, which resolves

@@ -12,6 +12,8 @@ class AeronBindingsTest extends Test:
       * and neither JS nor Native has portable runtime reflection over the trait's methods.
       */
     val symbols = Chunk(
+        // link probe
+        "kyo_aeron_linked",
         // driver + client lifecycle
         "kyo_aeron_driver_start",
         "kyo_aeron_driver_close",
@@ -61,14 +63,26 @@ class AeronBindingsTest extends Test:
 
     "the symbol set is complete and free of duplicates" in {
         assert(symbols.distinct == symbols)
-        // 27 = the count of abstract methods on the AeronBindings trait; bump both together.
-        assert(symbols.size == 27)
+        // 28 = the count of abstract methods on the AeronBindings trait; bump both together.
+        assert(symbols.size == 28)
+    }
+
+    "this build links Aeron into the shim" in {
+        // The shim compiles its real branch only under the KYO_FFI_LINKED_KYO_AERON define kyo-ffi emits alongside the Aeron link
+        // flags. A build that dropped the define would compile stubs and every transport would refuse to start.
+        import AllowUnsafe.embrace.danger
+        assert(kyo.ffi.Ffi.load[AeronBindings].linked())
     }
 
     "companion Ffi.Config fields" in {
         assert(AeronBindings.library == "kyo_aeron")
         assert(AeronBindings.symbolPrefix == "kyo_aeron_")
-        assert(AeronBindings.headers == Chunk("aeronc.h", "aeronmd.h"))
+    }
+
+    "declares no headers gate, so the publishing host cannot bake throwing stubs into the published binding" in {
+        // kyo_aeron.c defines every entry point in its linked, external and stub states, so the binding links everywhere and the
+        // shim, not the codegen, decides whether Aeron is there.
+        assert(AeronBindings.headers.isEmpty, s"${AeronBindings.headers}")
     }
 
 end AeronBindingsTest

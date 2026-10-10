@@ -32,7 +32,20 @@ Add `kyo-stats-otlp` to the classpath of any module that already uses `kyo-core`
 
 On the JVM, kyo-stats-registry discovers exporter implementations through `META-INF/services/kyo.stats.internal.ExporterFactory`, and the HTTP runtime independently discovers `META-INF/services/kyo.HttpFilter$Factory`. Both files ship in this module's jar, so dropping the jar on the classpath is enough.
 
-On Scala Native, `java.util.ServiceLoader` is resolved at LINK time: the same `META-INF/services` files ship in the jar, but a provider is linked into the binary ONLY when it is also enlisted in the final application's `nativeConfig`. Enlist both providers there, or OTLP export and the trace-propagation filters are silently inert:
+On Scala Native, `java.util.ServiceLoader` is resolved at LINK time: the same `META-INF/services` files ship in the jar, but a provider is linked into the binary ONLY when it is also enlisted in the final application's `nativeConfig`. Without that enlistment, OTLP export and the trace-propagation filters are silently inert.
+
+`kyo-natives-plugin` enlists both, read from the same `META-INF/services` files the JVM reads at run time:
+
+```
+// project/plugins.sbt
+addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
+```
+```
+// the Native application project
+.enablePlugins(KyoNativesPlugin)
+```
+
+`sbt show kyoNativesServiceProviders` lists what it enlisted. Without the plugin, name both providers yourself:
 
 ```scala doctest:expect=skipped
 // build.sbt, in the Scala Native application project

@@ -1,0 +1,19 @@
+# The engine reaches Node through the package `NativeLoader.jsResolve` asks `require.resolve` for, so Node is the judge
+# of the path rather than a stat this test could write itself: it resolves the exact specifier from the linked output's
+# directory, the way the application does. Then the query is answered rather than refused, which is what says the
+# library koffi opened is the real engine.
+> kyoNativesReport
+> fastLinkJS
+$ exec sh -c 'set -eu; test -f target/node_modules/koffi/package.json'
+# DoltLite keeps SQLite's sqlite3_* names, so a Node built against the system SQLite has them in the process's global
+# scope before koffi loads this library, and the library binds its own sqlite3_* to itself, which is true of the file on
+# every Linux, whatever Node this machine has. The control first shows the check refusing a library that does not.
+$ exec sh elf-self-binding.sh control
+$ exec sh elf-self-binding.sh check kyo_doltlite
+# Resolution from a DEPLOYED position, which `run` below does not cover: `run` inherits the NODE_PATH the plugin sets,
+# while a deployed application finds the package by walking up from the linked output. The anchor is that output, and
+# the specifier is built from the directory the delivery actually wrote rather than from a second copy of
+# `NativeLoader.detectOsWith`'s rule; that the tag it wrote is the one the loader asks for is what `run` proves.
+$ exec node -e "const path=require('path'),fs=require('fs');const native=path.resolve('target','node_modules','@kyo','ffi-native','native');const tags=fs.readdirSync(native);if(tags.length!==1)throw new Error('expected one delivered target, found '+tags.join(', '));const libs=fs.readdirSync(path.join(native,tags[0])).filter(f=>f.startsWith('libkyo_doltlite.'));if(libs.length!==1)throw new Error('expected one doltlite library, found '+libs.join(', '));const dirs=fs.readdirSync('target').filter(d=>d.startsWith('scala-'));if(dirs.length!==1)throw new Error('expected one scala- output directory, found '+dirs.join(', '));const out=fs.readdirSync(path.join('target',dirs[0])).filter(d=>d.endsWith('-fastopt'));if(out.length!==1)throw new Error('expected one -fastopt directory, found '+out.join(', '));const anchor=path.resolve('target',dirs[0],out[0],'main.js');const spec='@kyo/ffi-native/native/'+tags[0]+'/'+libs[0];console.log('resolved',require('module').createRequire(anchor).resolve(spec));"
+> run
+$ exec sh -c 'cat out.txt; grep -q "CONSUMER doltlite=2" out.txt'

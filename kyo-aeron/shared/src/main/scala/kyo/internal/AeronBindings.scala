@@ -1,7 +1,6 @@
 package kyo.internal
 
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.Fiber
 import kyo.Maybe
 import kyo.ffi.Buffer
@@ -31,6 +30,12 @@ import kyo.ffi.Ffi
   * ffiGenerate cache is keyed on TASTy and silently drops new methods otherwise.
   */
 private[kyo] trait AeronBindings extends Ffi:
+    /** False when the shim compiled its stubs because the build that linked this binary did not link Aeron. On Scala Native the shim
+      * compiles in the application's build, so this is the only way to tell a binary without Aeron from one with it; every other call
+      * in a stubbed shim returns a failure sentinel.
+      */
+    def linked()(using AllowUnsafe): Boolean
+
     /** Timeouts are nanoseconds; `0` leaves the driver's own default in place. */
     @Ffi.blocking
     def driverStart(dir: String, clientLivenessNs: Long, publicationUnblockNs: Long)(using
@@ -84,7 +89,6 @@ end AeronBindings
 private[kyo] object AeronBindings extends Ffi.Config(
         library = "kyo_aeron",
         symbolPrefix = "kyo_aeron_",
-        headers = Chunk("aeronc.h", "aeronmd.h"),
         // The C sources are statically folded into the Native binary, so the codegen must not emit
         // @link("kyo_aeron"): that sends the linker looking for a dynamic library that does not exist.
         nativeBundled = true

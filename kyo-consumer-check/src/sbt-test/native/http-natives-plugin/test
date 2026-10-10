@@ -1,0 +1,9 @@
+# kyo-net arrives only through kyo-http, and its BoringSSL is still delivered: linked, staged beside the binary, and
+# serving the HTTPS round trip. The certificate is kyo-net's self-signed localhost test certificate.
+> kyoNativesReport
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; ls "$(dirname "$bin")"/libkyonet_boringssl.* > /dev/null'
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER https=hello" out.txt'
+
+# The delivered library is a real dependency of the binary: without it the program fails naming it.
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); rm -f "$(dirname "$bin")"/libkyonet_boringssl.*; here=$(pwd); cd /; if "$here/$bin" > "$here/missing.txt" 2>&1; then echo "expected the program to fail without its library"; exit 1; fi; cat "$here/missing.txt"; grep -qi "kyonet_boringssl" "$here/missing.txt"'

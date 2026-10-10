@@ -2,7 +2,6 @@ package kyo.internal.doltlite
 
 import kyo.*
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.Fiber
 import kyo.Maybe
 import kyo.ffi.Buffer
@@ -174,6 +173,5 @@ private[kyo] object DoltLiteBindings extends Ffi.Config(
             "txnState"            -> "kyo_sqlite3_txn_state",
             "dbFilename"          -> "kyo_sqlite3_db_filename"
         ),
-        headers = Chunk("doltlite.h"),
         nativeBundled = true
     )

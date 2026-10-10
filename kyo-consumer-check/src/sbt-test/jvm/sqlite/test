@@ -1,0 +1,4 @@
+# The engine loads from the natives the artifact ships and answers with its math extension. On Windows that also
+# proves the DLL exports sqlite3_*, which a lookup would otherwise fail at the first call. The assertion lives in check.sh.
+> run
+$ exec sh check.sh
