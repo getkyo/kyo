@@ -49,7 +49,7 @@ set -uo pipefail
 # and Wasm, and the plan is it on Native. A job whose selection holds none of those modules builds
 # and pulls nothing; a full run selects every module and so provides every image.
 #
-# Reads CI, GITHUB_ACTIONS, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
+# Reads CI, GITHUB_ACTIONS, SBT_TASK_LIMIT, SBT_COMPILE_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
 # NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX,
 # JS_TEST_BATCH, WASM_TEST_BATCH, CONTAINER_SWEEP, CONTAINER_FIXTURES, and FIXTURE_IMAGES_SCRIPT
 # from the environment; mutates none of them except

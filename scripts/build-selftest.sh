@@ -93,13 +93,20 @@ record() {
 
 echo "Running build-selftest.sh..."
 
-# 1. podman-ci exports CI=true and SBT_TASK_LIMIT=1, and no JVM options: ci-test.sh sizes each driver
+# 1. podman-ci exports CI=true, SBT_TASK_LIMIT=1 and SBT_COMPILE_LIMIT=2, and no JVM options: ci-test.sh sizes each driver
 make_podman_stub 0; reset_logs
-run_build --env podman-ci test JVM >/dev/null 2>&1 || true
-if podman_log_has "-e CI=true" && podman_log_has "-e SBT_TASK_LIMIT=1" \
+(unset SBT_COMPILE_LIMIT; run_build --env podman-ci test JVM >/dev/null 2>&1) || true
+if podman_log_has "-e CI=true" && podman_log_has "-e SBT_TASK_LIMIT=1" && podman_log_has "-e SBT_COMPILE_LIMIT=2" \
    && podman_log_lacks "JAVA_OPTS=" && podman_log_lacks "JVM_OPTS="
-then record ok "podman-ci exports CI=true and SBT_TASK_LIMIT=1, and no JVM options"
-else record no "podman-ci exports CI=true and SBT_TASK_LIMIT=1, and no JVM options"; fi
+then record ok "podman-ci exports CI=true, SBT_TASK_LIMIT=1 and SBT_COMPILE_LIMIT=2, and no JVM options"
+else record no "podman-ci exports CI=true, SBT_TASK_LIMIT=1 and SBT_COMPILE_LIMIT=2, and no JVM options"; fi
+
+# 1e. a host SBT_COMPILE_LIMIT reaches the podman-ci container, so SBT_COMPILE_LIMIT=1 reproduces serial compiles
+make_podman_stub 0; reset_logs
+SBT_COMPILE_LIMIT=1 run_build --env podman-ci test JVM >/dev/null 2>&1 || true
+if podman_log_has "-e SBT_COMPILE_LIMIT=1" && podman_log_lacks "-e SBT_COMPILE_LIMIT=2"
+then record ok "a host SBT_COMPILE_LIMIT wins over the podman-ci default"
+else record no "a host SBT_COMPILE_LIMIT wins over the podman-ci default"; fi
 
 # 1a. a raw direct command runs through scripts/sbt.sh with the compile role unless --role says otherwise
 make_podman_stub 0; reset_logs

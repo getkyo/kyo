@@ -5,7 +5,8 @@ name: build
 # matrix job on its own runner, so they never share a runner's memory or daemons.
 #
 # Serial within a target: SBT_TASK_LIMIT=1 (set in env below) runs one sbt task at a time inside
-# each job, bounding peak memory to a single module's compile/link/test on the 16GB runners.
+# each job, bounding peak memory to a single module's link/test on the 16GB runners. Compiles alone
+# go two at a time (SBT_COMPILE_LIMIT below).
 #
 # Parallel across os poles: the calling workflow (ci.yml, or ci-dispatch.yml) calls this once per pole.
 # Those calls have no `needs:` between them so the poles run as independent CI jobs.
@@ -58,12 +59,16 @@ jobs:
         target: ${{ fromJSON(inputs.targets) }}
     runs-on: ${{ inputs.runner-image }}
     env:
-      # Serialize the whole CI build: one sbt task at a time. Compile and Scala.js/Wasm link run
-      # in-process in the sbt driver heap, and the Native optimizer plus forked LLVM/podman/chrome
-      # run alongside it; on the 16GB runners two of those at once either exhaust the driver heap
-      # (java.lang.OutOfMemoryError) or overcommit the box (kernel OOM-kill, exit 143). max-parallel:4
-      # still runs the four targets on separate runners, so this costs no wall-clock on the JVM pole.
+      # Serialize the CI build: one sbt task at a time, apart from the compiles SBT_COMPILE_LIMIT admits.
+      # Scala.js/Wasm link runs in-process in the sbt driver heap, and the Native optimizer plus forked
+      # LLVM/podman/chrome run alongside it; on the 16GB runners two of those at once either exhaust the
+      # driver heap (java.lang.OutOfMemoryError) or overcommit the box (kernel OOM-kill, exit 143).
       SBT_TASK_LIMIT: 1
+      # Compile tasks alone may run two at a time, and testKyo then sends each compile phase as one `all`
+      # command so independent modules overlap; a link or test task still runs alone (project/TaskLimits.scala).
+      # One module at a time, the compile phases ran at a load average of 1.59 to 2.05 on 4 vCPUs. Setting
+      # this to 1 restores the serial compile phases exactly.
+      SBT_COMPILE_LIMIT: 2
       # No heavy-module pre-link on Native: the previous heavy (kyo-schema-tests, whose whole-program
       # optimize needed its own ~12G driver) is dropped from the Native leg via NATIVE_SKIP below, and the
       # link pool already gives every remaining (KEPT) module a driver carrying at most NATIVE_LINK_BATCH

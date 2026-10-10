@@ -746,17 +746,27 @@ object TestKyo {
     /** Submit every pass as one `;`-chained command string: switch, tasks, completion marker, and
       * the restore switch after the last pass that moved off the primary version. A pass that
       * selects nothing contributes no tasks, so it prints its marker here.
+      *
+      * A compile phase sends its modules as one `all` command when compiles may run concurrently
+      * (TaskLimits.compile above 1): sbt runs `;`-separated commands one after another whatever the
+      * task limit, so only a single command lets independent modules overlap. The order inside it
+      * is not a schedule: sbt starts each task once its dependencies finish. A failed compile names
+      * its module in sbt's `(module / Test / compileIncremental) Compilation failed` line.
       */
     private def execute(state: State, a: Args, scala3: String, passes: Seq[(String, Seq[String])]): State = {
-        val chain   = collection.mutable.ListBuffer.empty[String]
-        var current = scala3
+        val chain    = collection.mutable.ListBuffer.empty[String]
+        var current  = scala3
+        val together = a.phase.startsWith("compile-") && TaskLimits.compile > 1
         passes.foreach { case (version, modules) =>
             if (modules.isEmpty) {
                 log(s"Scala $version: no modules selected")
                 log("completed")
             } else {
                 val switch = if (version == current) Nil else Seq(s"++$version")
-                val parts  = (switch ++ modules.map(taskFor(a.phase, _, a.isQuick))) :+ doneCommandName
+                val tasks  =
+                    if (together) Seq(modules.map(taskFor(a.phase, _, a.isQuick)).mkString("all ", " ", ""))
+                    else modules.map(taskFor(a.phase, _, a.isQuick))
+                val parts = (switch ++ tasks) :+ doneCommandName
                 current = version
                 log(s"Scala $version, ${phaseLabel(a.phase)} ${modules.size} modules: ${modules.mkString(", ")}")
                 log(s"pass: ${parts.mkString("; ")}")

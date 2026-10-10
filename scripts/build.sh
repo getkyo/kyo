@@ -9,7 +9,7 @@ set -uo pipefail
 # --env  direct     host sbt
 #        podman      a Linux container running ci-test.sh over a clean snapshot
 #        podman-ci   the podman container plus CI memory/CPU caps + CI=true +
-#                    SBT_TASK_LIMIT=1, reproducing CI
+#                    SBT_TASK_LIMIT=1 + SBT_COMPILE_LIMIT=2, reproducing CI
 # --arch native|x86|arm  container architecture (podman/podman-ci only); sets
 #        podman --platform. native = host arch, x86 = linux/amd64, arm =
 #        linux/arm64; qemu-emulated when it differs from the host arch.
@@ -474,7 +474,8 @@ run_in_container() {
     [ -n "${KYO_NET_SUCCESS_ONLY:-}" ] && envs+=(-e "KYO_NET_SUCCESS_ONLY=$KYO_NET_SUCCESS_ONLY")
     if [ "$ENV_KIND" = "podman-ci" ]; then
         args+=(--memory "$CI_MEMORY" --cpus "$CI_CPUS")
-        envs+=(-e CI=true -e SBT_TASK_LIMIT=1)
+        # The compile limit carries build.yml's value; a host value wins, so SBT_COMPILE_LIMIT=1 reproduces serial compiles.
+        envs+=(-e CI=true -e SBT_TASK_LIMIT=1 -e "SBT_COMPILE_LIMIT=${SBT_COMPILE_LIMIT-2}")
         # Mirror build.yml's Native env so a podman-ci Native run reproduces the row's link staging:
         # the link CPU cap and the pool batch sizes carry the workflow's values. NATIVE_SKIP (the
         # app/integration tier dropped from the Native leg) is forwarded so a host value reproduces the
