@@ -171,6 +171,8 @@ class EffectTraceTest extends AnyFreeSpec:
         assert(carrier(ex).nonEmpty)
         assert(carrier(ex).get.elements.forall(_.getFileName == "EffectTraceTest.scala"))
         assert(carrier(ex).get.elements.forall(_.getClassName.startsWith("map @ ")))
+        assert(ex.getStackTrace.exists(_.getClassName.startsWith("kyo.kernel.internal.EffectTraceTest")))
+        // Only JVM physical frames carry Scala source files: JS frames name the linked main.js and Native frames carry none.
         assert(!kyo.internal.Platform.isJVM || ex.getStackTrace.exists(_.getFileName == "EffectTraceTest.scala"))
     }
 
@@ -245,6 +247,8 @@ class EffectTraceTest extends AnyFreeSpec:
         val ex = intercept[RuntimeException](boomAt(deep(10000)).eval)
         assert(carrier(ex).forall(_.elements.isEmpty))
         val top = ex.getStackTrace.head
+        assert(top.getClassName.startsWith("kyo.kernel.internal.EffectTraceTest"))
+        // Only JVM physical frames carry Scala source files and lines: JS frames name the linked main.js and Native frames carry none.
         assert(!kyo.internal.Platform.isJVM || (top.getFileName == "EffectTraceTest.scala" && top.getLineNumber == site))
     }
 
@@ -311,7 +315,7 @@ class EffectTraceTest extends AnyFreeSpec:
             if i == 0 then boomHere else (0: Int < Any).map(_ => deep(i - 1))
         val ex = intercept[Boom](deep(600).eval)
         assert(carrier(ex).forall(_.elements.isEmpty))
-        assert(!kyo.internal.Platform.isJVM || ex.getStackTrace.exists(_.getMethodName.contains("boomHere")))
+        assert(ex.getStackTrace.exists(_.getMethodName.contains("boomHere")))
     }
 
     "region nesting" - {

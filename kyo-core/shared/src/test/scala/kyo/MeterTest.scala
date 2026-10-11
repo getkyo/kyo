@@ -170,7 +170,7 @@ class MeterTest extends kyo.test.Test[Any]:
                     .unit
             }
 
-            "sustained contention never resumes a parked slice twice".notJs.notWasm in {
+            "sustained contention never resumes a parked slice twice" in {
                 // The window is open only while a fiber unwinds into a park and another completes what it waits on in
                 // that instant, so the loop counts here are what make contention reach it.
                 val permits    = 2
@@ -228,7 +228,7 @@ class MeterTest extends kyo.test.Test[Any]:
             // to a promise no reservation stands behind, so the waiter it was owed to keeps waiting and the
             // meter runs one permit short from then on. The last release then sees free permits in the
             // ledger, skips the handoff, and leaves that waiter parked for good.
-            "sustained contention never strands a queued waiter".notJs.notWasm in {
+            "sustained contention never strands a queued waiter" in {
                 val permits    = 2
                 val callers    = 8
                 val iterations = 10000
@@ -252,7 +252,7 @@ class MeterTest extends kyo.test.Test[Any]:
                     .unit
             }
 
-            "with interruptions".notJs.notWasm in {
+            "with interruptions" in {
                 (for
                     size      <- Choice.eval(1, 2, 3, 50)
                     meter     <- Meter.initSemaphore(size)
@@ -266,7 +266,6 @@ class MeterTest extends kyo.test.Test[Any]:
                         Async.foreach(runFibers.take(50), 50)(_.interrupt(panic))
                     ))
                     _           <- started.await
-                    _           <- Async.sleep(100.millis)
                     _           <- latch.release
                     interrupted <- interruptFiber.get
                     completed   <- Kyo.foreach(runFibers)(_.getResult)
@@ -392,7 +391,7 @@ class MeterTest extends kyo.test.Test[Any]:
         // live waiter behind it was never woken. Many contenders are interrupted mid-approach (racing
         // the reserve-before-park window), then settled; the victim queued behind them must always be
         // granted the permit the holder frees.
-        "interrupt racing the acquisition never strands a later waiter".notJs.notWasm in {
+        "interrupt racing the acquisition never strands a later waiter" in {
             val contenders = 30
             (for
                 meter   <- Meter.initSemaphore(1)
@@ -425,7 +424,8 @@ class MeterTest extends kyo.test.Test[Any]:
         // public API cannot: the interrupted waiter's give-back runs AFTER the holder's release AND
         // after a fresh victim has registered. On the current impl the release drops the permit into
         // the dead entry and the victim strands forever; a correct impl hands it to the victim.
-        "a permit released while an interrupted waiter's teardown is pending reaches the next waiter".notJs.notWasm in {
+        // notJs: spinUntilOpen holds the one JS thread in a Sync finalizer, so the fiber that opens the gate never runs.
+        "a permit released while an interrupted waiter's teardown is pending reaches the next waiter".notJs in {
             (for
                 meter      <- Meter.initSemaphore(1)
                 gateOpen   <- AtomicInt.init(0)
@@ -472,7 +472,7 @@ class MeterTest extends kyo.test.Test[Any]:
         // storm of interrupts over a ring of fibers churning acquire/release on one permit samples
         // every such gap at uniform phase (paced by a channel take per strike, no sleeps), so the
         // ledger must always return to full. Reliably red on any build that leaves a window open.
-        "an interrupt storm over churning acquisitions never leaks a permit".notJs.notWasm in {
+        "an interrupt storm over churning acquisitions never leaks a permit" in {
             val loopers = 4
             val strikes = 10000
             (for
@@ -524,8 +524,8 @@ class MeterTest extends kyo.test.Test[Any]:
     val panic = Result.Panic(new Exception)
 
     // Test-only synchronous gate: holds a fiber's finalizer open until `flag` flips to 1, so a test
-    // can force the interrupted waiter's ledger give-back to run after a release. JVM-only: it spins
-    // a scheduler worker and needs a second worker to make progress.
+    // can force the interrupted waiter's ledger give-back to run after a release. It spins a scheduler
+    // worker, so it needs a second worker to make progress.
     def spinUntilOpen(flag: AtomicInt)(using Frame): Unit < Sync =
         flag.get.map(v => if v == 1 then () else spinUntilOpen(flag))
 

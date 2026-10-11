@@ -434,13 +434,11 @@ object Fiber:
           *   1. Empty effect context. The carrier runs with an EMPTY context (Context.empty). Any Local / context-dependent effect inside
           *      `v` observes its DEFAULT, not the spawning fiber's bindings. Capturing the live context requires a suspension (it is
           *      reachable only inside a running computation), which an unsafe entry has none of. Do not assume inherited Local values.
-          *   2. Trace captured. The current execution trace IS snapshotted for diagnostics, so a failure inside `v` enriches its stack
-          *      trace with the spawning frame chain.
-          *   3. Fire-and-forget scheduling. The carrier is scheduled the instant `init` returns; the caller need do nothing with the
+          *   2. Fire-and-forget scheduling. The carrier is scheduled the instant `init` returns; the caller need do nothing with the
           *      returned fiber for it to run.
-          *   4. Cooperative interruption. The returned Fiber.Unsafe is interruptible exactly like initUnscoped's product:
+          *   3. Cooperative interruption. The returned Fiber.Unsafe is interruptible exactly like initUnscoped's product:
           *      `fiber.interrupt(error)` / `fiber.onInterrupt` work, honored at safepoints.
-          *   5. Throw becomes Panic. A throw in `v` becomes a Result.Panic in the fiber result, never propagated to the spawner; observe
+          *   4. Throw becomes Panic. A throw in `v` becomes a Result.Panic in the fiber result, never propagated to the spawner; observe
           *      it by registering onComplete.
           *
           * WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe.

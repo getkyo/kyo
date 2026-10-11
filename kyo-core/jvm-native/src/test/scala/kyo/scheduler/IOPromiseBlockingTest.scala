@@ -17,13 +17,13 @@ class IOPromiseBlockingTest extends kyo.test.Test[Any]:
             assert(result == Result.succeed(42))
         }
 
-        "timeout".notJs in {
+        "timeout" in {
             val p      = new IOPromise[Nothing, Int]()
             val result = p.block(deadline(10.millis))
             assert(result.isFailure)
         }
 
-        "block with very short timeout".notJs in {
+        "block with very short timeout" in {
             val p      = new IOPromise[Nothing, Int]()
             val result = p.block(deadline(10.millis))
             assert(result.isFailure)
@@ -53,7 +53,7 @@ class IOPromiseBlockingTest extends kyo.test.Test[Any]:
                     assert(result.isPanic)
                 }
             }
-            "linked".notJs in {
+            "linked" in {
                 val p = new IOPromise[Nothing, Int]()
                 p.becomeDiscard(new IOPromise[Nothing, Int]())
                 threadInterruption(p) { result =>

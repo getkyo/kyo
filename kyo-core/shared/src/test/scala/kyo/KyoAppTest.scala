@@ -69,6 +69,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
         Async.fromFuture(promise.future)
     }
 
+    // notJs: runAndBlock parks the calling thread, which the single JS thread cannot do ("fiber.block is not supported in ScalaJS").
     "effects".notJs in {
         def run: Int < (Async & Scope & Abort[Throwable]) =
             for
@@ -101,6 +102,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
         Async.fromFuture(promise.future).map(_ => succeed("all effects complete without error"))
     }
 
+    // notJs: on JS main only schedules the run blocks and returns, so it cannot rethrow their failure.
     "exit on error".notJs in {
         var exitCode                   = -1
         def app(fail: Boolean): KyoApp = new KyoApp:
@@ -114,6 +116,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
         assert(exitCode == -1)
     }
 
+    // notJs: runAndBlock parks the calling thread, which the single JS thread cannot do.
     "failing effects".notJs in {
         def run: Unit < (Async & Scope & Abort[Throwable]) =
             for
@@ -128,6 +131,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
             case _                                           => fail("Unexpected Success...")
     }
 
+    // notJs: on JS main only schedules the run blocks and returns, so it cannot rethrow their failure.
     "non-throwable aborts".notJs in {
         val app = new KyoApp:
             run(Abort.fail("Aborts!"))
@@ -135,6 +139,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
         assert(Result.catching[KyoApp.FailureException](app.main(Array.empty)).isFailure)
     }
 
+    // notJs: runAndBlock parks the calling thread, which the single JS thread cannot do.
     "unsafe non-throwable aborts".notJs in {
         def run: Unit < (Async & Scope & Abort[String]) =
             for
@@ -149,13 +154,13 @@ class KyoAppTest extends kyo.test.Test[Any]:
             case _                                                  => fail("Unexpected Success...")
     }
 
-    // An application's stdout is its output contract, so a failure the run block did not catch belongs on stderr. It used to be rendered
-    // to stdout, which put a non-JSON line on the channel a stdio server's host was parsing, and made the host's first read of the
-    // connection garbage. No discipline in the run block avoided it: this is the framework's own terminal reporting.
-    // notJs / notWasm: on those platforms KyoApp.main cannot block, so it returns before the run block writes anything and the redirect
-    // scope has already closed. The reporting itself is shared, platform-independent code in KyoAppRunner.onResult; only observing it from
-    // inside the same process needs main to have finished.
-    "an uncaught failure renders to stderr, leaving stdout untouched".notJs.notWasm in {
+    // An application's stdout is its output contract, so a failure the run block did not catch belongs on stderr: a non-JSON line on
+    // stdout corrupts the channel a stdio server's host parses. This is the framework's own terminal reporting, which no discipline in
+    // the run block can avoid.
+    // notJs: on JS KyoApp.main cannot block, so it returns before the run block writes anything and the redirect scope has already
+    // closed. The reporting itself is shared, platform-independent code in KyoAppRunner.onResult; only observing it from inside the same
+    // process needs main to have finished.
+    "an uncaught failure renders to stderr, leaving stdout untouched".notJs in {
         assume(!Platform.isNative, "KyoApp.main too slow on Native")
         val out = new java.io.ByteArrayOutputStream
         val err = new java.io.ByteArrayOutputStream
@@ -168,7 +173,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
         assert(err.toString.contains("no url"))
     }
 
-    "a run block's value still renders to stdout".notJs.notWasm in {
+    "a run block's value still renders to stdout".notJs in {
         assume(!Platform.isNative, "KyoApp.main too slow on Native")
         val out = new java.io.ByteArrayOutputStream
         val err = new java.io.ByteArrayOutputStream
@@ -199,8 +204,8 @@ class KyoAppTest extends kyo.test.Test[Any]:
 
     // The body releases a latch as it starts and owes
     // a finalizer, so the check is on that finalizer once the body has started. The timeout is a real one because the
-    // block parks the calling thread (nothing asserts on elapsed time).
-    "runAndBlock's timeout does not leave the forked computation running".notJs.notWasm in {
+    // block parks the calling thread (nothing asserts on elapsed time), which is also why it cannot run on JS.
+    "runAndBlock's timeout does not leave the forked computation running".notJs in {
         for
             gate     <- Promise.init[Unit, Any]
             started  <- Latch.init(1)

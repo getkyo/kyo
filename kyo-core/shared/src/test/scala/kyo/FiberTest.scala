@@ -798,32 +798,6 @@ class FiberTest extends kyo.test.Test[Any]:
                     yield assert(result == "hi")
                 }
 
-                "a carrier spawned from a running computation carries the spawning chain's frames in its failure".pendingUntilFixed(
-                    "the kernel's effect trace does not carry the spawning chain's frames into a child fiber"
-                ) in {
-                    // The spawn follows at least one user-framed effect step, since only those steps push frames;
-                    // a spawn at the very start of the body would see an empty trace.
-                    Sync.defer(1).map(_ => 2).map { _ =>
-                        Fiber.Unsafe.init { throw new RuntimeException("trace-test") }: Fiber.Unsafe[Int, Any]
-                    }.map { carrier =>
-                        Abort.run[Any](carrier.safe.get).map {
-                            case Result.Panic(ex) =>
-                                val frames = ex.getStackTrace
-                                assert(frames.nonEmpty)
-                                // Kyo frames use the format "snippet @ className" in the declaring-class field
-                                // (from Trace.Owner.enrich); their presence proves Trace.saved() captured the
-                                // running chain's frames.
-                                val hasKyoFrame = frames.exists(_.getClassName.contains("@"))
-                                assert(
-                                    hasKyoFrame,
-                                    s"Expected enriched Kyo frames in stack trace but found: ${frames.take(3).mkString(", ")}"
-                                )
-                            case other =>
-                                fail(s"expected Panic, got $other")
-                        }
-                    }
-                }
-
                 "two concurrent carriers run independently" in {
                     val p1 = Promise.Unsafe.init[Int, Any]()
                     val p2 = Promise.Unsafe.init[String, Any]()
@@ -1385,7 +1359,7 @@ class FiberTest extends kyo.test.Test[Any]:
         // The task completes the promise with the fatal and then rethrows it past the boundary. On the JVM and Native
         // the rethrow lands on the worker thread; on JS it reaches the event loop and ends the process, so the leaf
         // cannot run there.
-        "a fatal thrown in the body releases the fiber's finalizers before the promise settles with the panic".notJs.notWasm in {
+        "a fatal thrown in the body releases the fiber's finalizers before the promise settles with the panic".notJs in {
             for
                 released <- AtomicBoolean.init(false)
                 fiber    <- Fiber.initUnscoped {

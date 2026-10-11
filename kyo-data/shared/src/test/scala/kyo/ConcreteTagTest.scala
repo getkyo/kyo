@@ -983,9 +983,9 @@ class ConcreteTagTest extends kyo.test.Test[Any]:
             }
 
             "String array" in {
-                assume(!Platform.isNative)
                 val tag = ConcreteTag.fromArray(new Array[String](1))
-                assert(tag == ConcreteTag[String])
+                if Platform.isNative then assert(tag.toClass eq classOf[AnyRef])
+                else assert(tag == ConcreteTag[String])
             }
 
             "roundtrip: fromArray -> newArray preserves type" in {

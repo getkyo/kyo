@@ -124,7 +124,7 @@ class LogTest extends kyo.test.Test[Any]:
         val output = errOut.toString
         assert(output.contains("kaboom"))
         assert(output.trim.contains("\n"))
-        if kyo.internal.Platform.isJVM then assert(output.contains("at "))
+        assert(output.contains("at "))
     }
 
     "ConsoleLogger splits warn/error to stderr, info-and-below to stdout, line carries timestamp" in {

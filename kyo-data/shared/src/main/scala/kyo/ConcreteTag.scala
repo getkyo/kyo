@@ -69,6 +69,9 @@ object ConcreteTag:
 
     /** Derives a ConcreteTag from an existing array's component type.
       *
+      * On Scala Native every reference array is an `ObjectArray` whose component type is `Object`, so a reference array yields the tag
+      * of `AnyRef` there rather than the tag of its declared element type. Primitive arrays keep their exact tag on every platform.
+      *
       * @param array
       *   the array to inspect
       * @return

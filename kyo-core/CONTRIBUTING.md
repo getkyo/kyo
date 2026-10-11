@@ -78,10 +78,13 @@ or any other blocking primitive. Use Async suspension instead:
 A `synchronized` block is tolerated only when it guards a short constant-time update
 and never waits inside the lock.
 
-The one blocking wait in the module is the log drain's `CountDownLatch.await` in the
-JVM and Native shutdown hook (`jvm-native/.../internal/LogPlatformSpecific.scala`): it
-runs on a raw hook thread where no fiber suspension is reachable, and it is bounded by
-`Log.asyncLogging.shutdownDrainBudget`. A new wait needs the same justification in a comment at the site.
+The module has two blocking waits, both on raw threads where no fiber suspension is
+reachable. The log drain's `CountDownLatch.await` in the JVM and Native shutdown hook
+(`jvm-native/.../internal/LogPlatformSpecific.scala`) is bounded by
+`Log.asyncLogging.shutdownDrainBudget`. The Native signal dispatcher thread
+(`native/.../internal/OSSignalPlatformSpecific.scala`) blocks reading the signal
+self-pipe through a `@blocking` extern, so the GC does not wait on it. A new wait needs
+the same justification in a comment at the site.
 
 `IOPromise.block` parks the calling thread through `LockSupport.park`; it is what
 `Fiber.block` runs on. The js-wasm `LockSupport` stub (`js-wasm/src/main/scala/kyo/AsyncStubs.scala`)
@@ -213,7 +216,11 @@ Platform code takes one of three shapes:
 fallback. Each platform leaf defines `OsSignalPlatformSpecific` with a `handle: Handler`
 (files named `OSSignalPlatformSpecific.scala`): JVM uses `sun.misc.Signal` via
 reflection with a `Noop` fallback on missing classes, Native uses POSIX signals, JS-Wasm
-is `Noop`. A kyo-core internal that needs a per-platform implementation follows this
+is `Noop`. A Native signal handler runs in signal context, where only async-signal-safe
+calls are allowed, so the C handler in `kyo_signal.c` only writes the signal number to a
+self-pipe and the registered callback runs on a dispatcher thread. Never run Scala code
+in the handler itself: it can land inside an allocation or a GC safepoint wait, which
+deadlocks the GC. A kyo-core internal that needs a per-platform implementation follows this
 template; OS capabilities for applications belong in kyo-system.
 
 ---
