@@ -413,9 +413,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
         // Bounded because the symptom is non-termination: a stranded request has nobody left to end it, and
         // the suite's per-leaf default is Duration.Infinity. The bound is not the pass condition, and it fires
         // only while the defect stands; once the reader drains pending, the assertion decides the leaf at once.
-        "a panic ends the pending requests instead of stranding them".pendingUntilFixed(
-            "the reader's panic arm closes the channel and re-raises without completing the done promise or draining pending"
-        ).timeout(5.seconds) in {
+        "a panic ends the pending requests instead of stranding them".timeout(5.seconds) in {
             // decode is the caller's code, so it can panic, and that ends the reader for good. A request already
             // registered has nobody else left to complete it, so the reader owes the pending map the same drain
             // on this arm as on the two that end it normally.
@@ -1088,9 +1086,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "an awaiting caller's interrupt leaves the exchange whole".pendingUntilFixed(
-            "the termination promise is handed to every awaitDone caller, so one caller's interrupt completes it for all of them"
-        ) in {
+        "an awaiting caller's interrupt leaves the exchange whole" in {
             // The termination promise is the exchange's own terminal state, not any one caller's fiber. A caller
             // giving up on awaitDone must reach that caller alone: the exchange goes on serving requests, and a
             // caller still awaiting sees the real termination reason rather than the other one's interrupt.
