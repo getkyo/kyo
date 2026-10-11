@@ -68,6 +68,28 @@ abstract class Test extends kyo.test.Test[Any]:
     )(using Frame): Unit =
         backendLeaves(skipCell)(scenario)
 
+    /** Like [[eachBackend]], but each leaf builds a transport of its own whose connections time their close-flush and peer-close graces on a
+      * virtual clock, and hands the scenario that clock's [[Clock.TimeControl]]. A grace expires only when the scenario advances the clock, so
+      * a scenario that never advances it runs with every grace frozen. The scenario itself runs on the live clock, so its own waits are not
+      * frozen with the graces. The transport's drivers are closed after the scenario's own finalizers.
+      */
+    def eachBackendOnVirtualClock(
+        scenario: (Transport, Clock.TimeControl) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
+        TestBackends.all.foreach { entry =>
+            s"[${entry.name}]" in {
+                if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
+                else
+                    Clock.withTimeControl { control =>
+                        Clock.get.map { clock =>
+                            Clock.let(Clock.live) {
+                                entry.ownedTransport(clock).map(transport => Scope.run(scenario(transport, control)))
+                            }
+                        }
+                    }
+            }
+        }
+
     /** Like [[eachBackend]], but each leaf is judged by its progress instead of the module's per-leaf time budget.
       *
       * The scenario reports every unit of work it completes through the [[ProgressWatchdog.Progress]] it receives. The leaf has no time limit:

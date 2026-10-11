@@ -126,10 +126,10 @@ class PollerIoDriverTest extends Test:
                         readVia(driver, acceptedH).map { outcome =>
                             driver.closeHandle(acceptedH)
                             outcome match
-                                case ReadOutcome.Bytes(s) if s.isEmpty => succeed // empty Bytes: EOF as a zero-length read
-                                case ReadOutcome.PeerFin | ReadOutcome.CleanClose | ReadOutcome.LocalShutdown => succeed
-                                case ReadOutcome.Bytes(s) => fail(s"expected EOF, got ${s.size} bytes")
-                                case other                => fail(s"expected EOF, got $other")
+                                case ReadOutcome.Bytes(s) if s.isEmpty            => succeed // empty Bytes: EOF as a zero-length read
+                                case ReadOutcome.PeerFin | ReadOutcome.CleanClose => succeed
+                                case ReadOutcome.Bytes(s)                         => fail(s"expected EOF, got ${s.size} bytes")
+                                case other                                        => fail(s"expected EOF, got $other")
                             end match
                         }
                     }
@@ -159,10 +159,8 @@ class PollerIoDriverTest extends Test:
                             // reaps the RST errno; some kernels deliver the RST only after an EOF read. All are non-data terminal outcomes,
                             // never live bytes.
                             result match
-                                case Result.Failure(_: Closed) => succeed
-                                case Result.Success(ReadOutcome.PeerFin) | Result.Success(ReadOutcome.CleanClose) | Result.Success(
-                                        ReadOutcome.LocalShutdown
-                                    ) => succeed
+                                case Result.Failure(_: Closed)                                                    => succeed
+                                case Result.Success(ReadOutcome.PeerFin) | Result.Success(ReadOutcome.CleanClose) => succeed
                                 case Result.Success(ReadOutcome.Bytes(s)) if s.isEmpty => succeed // empty Bytes: EOF as a zero-length read
                                 case Result.Success(ReadOutcome.Failed(_)) => succeed // recv reaped the RST as a typed receive failure
                                 case other => fail(s"expected Closed, EOF, or a typed receive failure, got $other")

@@ -54,7 +54,9 @@ import scala.util.control.NonFatal
   * Note: TCP_NODELAY is set on all non-Unix-domain connections to disable Nagle's algorithm and reduce latency.
   */
 final private[kyo] class NioTransport private (
-    val driver: NioIoDriver
+    val driver: NioIoDriver,
+    // The time source of every connection's close-flush and peer-close graces.
+    clock: Clock
 ) extends TransportImpl[NioHandle]:
 
     /** The driver pool powering this transport. A single-driver pool wrapping `driver`: connect, listen, accept, and the TLS handshake all run
@@ -150,7 +152,7 @@ final private[kyo] class NioTransport private (
     end applySocketBuffers
 
     private def initTracked(handle: NioHandle, channelCapacity: Int)(using AllowUnsafe, Frame): Connection[NioHandle] =
-        Connection.init(handle, driver, channelCapacity, handle.peerCloseGrace, handle.closeFlushGrace)
+        Connection.init(handle, driver, channelCapacity, handle.peerCloseGrace, handle.closeFlushGrace, clock = clock)
 
     /** The NIO floor terminates TLS inline with the JDK SSLEngine, so it can serve only the "jdk" implementation. A connection pinning any
       * other [[NetTlsConfig.tlsProvider]] fails closed (see `startTlsHandshake`). The cross-backend test matrix reads this to skip non-jdk
@@ -1677,13 +1679,17 @@ end NioTransport
 /** Factory and SSL helpers for `NioTransport`. */
 private[kyo] object NioTransport:
     def init()(using AllowUnsafe, Frame): NioTransport =
+        init(Clock.live)
+
+    /** Build the NIO transport, timing every connection's close-flush and peer-close graces on `clock`. */
+    def init(clock: Clock)(using AllowUnsafe, Frame): NioTransport =
         // Build the concrete NioIoDriver via the floor backend (NioBackend is the registry's Nio entry). NioTransport
         // needs the concrete NioIoDriver (it calls NIO-specific channel-registration methods), so it is constructed
         // directly here; the registry-level backend selection (-Dkyo.net.backend, the posix/Nio choice) happens in
         // IoBackendPlatform.transport, which invokes this init only when the Nio floor is the selected entry.
         val driver = kyo.net.internal.backend.NioBackend.createDriver()
         discard(driver.start())
-        new NioTransport(driver)
+        new NioTransport(driver, clock)
     end init
 
     /** Create an SSLContext from NetTlsConfig.

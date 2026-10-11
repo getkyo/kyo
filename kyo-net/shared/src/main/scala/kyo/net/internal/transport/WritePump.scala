@@ -60,6 +60,11 @@ final private[kyo] class WritePump[Handle](
       */
     def current(using AllowUnsafe): WriteState = state.get()
 
+    /** Ends the pump on `parked`, the parked instance [[current]] returned, without resuming it. False when the pump moved on since, so a
+      * write in progress is never abandoned.
+      */
+    def abandon(parked: WriteState)(using AllowUnsafe): Boolean = state.compareAndSet(parked, WriteState.TornDown)
+
     /** Take callback: a span arrived (or the channel closed). Idle -> Flushing CAS, then write. */
     private def onTake(result: Result[Closed, Span[Byte]])(using AllowUnsafe, Frame): Unit =
         result match
@@ -70,7 +75,8 @@ final private[kyo] class WritePump[Handle](
                 val flushing: WriteState.Flushing = WriteState.Flushing(bytes, 0)
                 if state.compareAndSet(WriteState.Idle, flushing) then
                     doWrite(flushing)
-                // else: state is TornDown (a concurrent close won); drop the span, teardown already ran.
+                // else: state is TornDown; drop the span, teardown already ran. A close never tears down an Idle pump, so a span the channel
+                // handed to this take before the close is always written.
             case Result.Failure(_: Closed) =>
                 teardown()
             case Result.Panic(t) =>
@@ -105,11 +111,11 @@ final private[kyo] class WritePump[Handle](
 
     // `current` is the STORED WriteState.Flushing instance. It must be passed through to every CAS
     // so that AtomicReference.compareAndSet (which uses reference equality) finds the right object.
-    // A lost CAS at any of the three capture sites (onTake, onWritable, doWrite) means teardown() won: it is the only unconditional
-    // WriteState writer (state.set(WriteState.TornDown)), so the socket is being torn down and the captured bytes are undeliverable. The drop
-    // is correct and never retried: a re-CAS would resurrect a torn-down pump and write into a handle whose teardown is freeing resources (a
-    // use-after-free). A graceful local close never reaches a losing CAS here; its tail is flushed by closeFn/closeAwaitEmpty through the
-    // normal onWritable -> doWrite flow before teardown.
+    // A lost CAS at any of the three capture sites (onTake, onWritable, doWrite) means the pump was torn down: by teardown(), the only
+    // unconditional WriteState writer (state.set(WriteState.TornDown)), or by the close-flush grace's abandon of a parked instance. The
+    // socket is being torn down and the captured bytes are undeliverable. The drop is correct and never retried: a re-CAS would resurrect a
+    // torn-down pump and write into a handle whose teardown is freeing resources (a use-after-free). A graceful local close never reaches a
+    // losing CAS here; its tail is flushed by closeFn/closeAwaitEmpty through the normal onWritable -> doWrite flow before teardown.
     private def doWrite(current: WriteState.Flushing)(using AllowUnsafe, Frame): Unit =
         driver.write(handle, current.pending, current.offset) match
             case WriteResult.Done =>

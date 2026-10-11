@@ -38,8 +38,7 @@ abstract private[kyo] class IoDriver[Handle]:
       *
       *   - `Success(ReadOutcome.Bytes(span))`: data read
       *   - `Success(ReadOutcome.WouldBlock)`: EAGAIN, re-arm (NOT EOF)
-      *   - `Success(ReadOutcome.PeerFin)`: orderly peer EOF (`recv == 0`, no local shutdown)
-      *   - `Success(ReadOutcome.LocalShutdown)`: `recv == 0` after our own `shutdown(SHUT_RD)`
+      *   - `Success(ReadOutcome.PeerFin)`: orderly peer EOF (`recv == 0`)
       *   - `Success(ReadOutcome.CleanClose)`: a TLS close_notify was consumed
       *   - `Success(ReadOutcome.Failed(cause))`: a typed hard error
       *   - `Failure(Closed)`: the read was cancelled (detach/close)

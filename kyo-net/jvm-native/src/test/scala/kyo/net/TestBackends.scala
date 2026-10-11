@@ -29,8 +29,15 @@ object TestBackends:
     final case class Entry(
         name: String,
         isAvailable: Boolean,
-        private val make: Frame => Transport
+        private val make: Frame => Transport,
+        private val makeOn: (Clock, Frame) => Transport
     ):
+        /** A transport of this leaf's own, timing its connections' graces on `clock`. Its drivers are closed when the enclosing scope ends. */
+        def ownedTransport(clock: Clock)(using frame: Frame): Transport < (Sync & Scope) =
+            Sync.defer(makeOn(clock, frame)).map { transport =>
+                Scope.ensure(Sync.Unsafe.defer(TestBackends.closeDrivers(transport))).andThen(transport)
+            }
+
         // One transport per backend, built on first use and never torn down, mirroring production: a transport is process-lifetime, so the
         // harness holds one per backend for the run rather than building and discarding one per leaf. Cells share it exactly as every client
         // and server in a process shares NetPlatform.transport; per-connection settings travel with each operation, so sharing costs a cell
@@ -68,9 +75,14 @@ object TestBackends:
             Entry(
                 name = entry.name,
                 isAvailable = entry.probe.isAvailable,
-                make = frame => entry.build()(using summon[AllowUnsafe], frame)
+                make = frame => entry.build()(using summon[AllowUnsafe], frame),
+                makeOn = (clock, frame) => entry.build(clock)(using summon[AllowUnsafe], frame)
             )
         }
     end all
+
+    private[net] def closeDrivers(transport: Transport)(using AllowUnsafe, Frame): Unit =
+        val pool = transport.asInstanceOf[kyo.net.internal.transport.TransportImpl[?]].pool
+        Seq.fill(pool.size)(pool.next()).foreach(_.close())
 
 end TestBackends

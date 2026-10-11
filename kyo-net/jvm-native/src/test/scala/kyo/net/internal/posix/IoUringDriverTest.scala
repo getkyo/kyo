@@ -118,8 +118,8 @@ class IoUringDriverTest extends Test:
                             Abort.run[Closed](promise.safe.get).map { result =>
                                 discard(sock.close(client))
                                 result match
-                                    case Result.Failure(_: Closed) => Loop.continue(i + 1)
-                                    case Result.Success(ReadOutcome.PeerFin | ReadOutcome.LocalShutdown | ReadOutcome.CleanClose) =>
+                                    case Result.Failure(_: Closed)                                    => Loop.continue(i + 1)
+                                    case Result.Success(ReadOutcome.PeerFin | ReadOutcome.CleanClose) =>
                                         Loop.continue(i + 1) // a same-cycle EOF reap is also terminal
                                     case other => Loop.done(fail(s"expected Closed/EOF, got $other"))
                                 end match
@@ -156,8 +156,8 @@ class IoUringDriverTest extends Test:
                             discard(sock.close(client))
                             discard(sock.close(accepted))
                             result match
-                                case Result.Failure(_: Closed) => Loop.continue(i + 1)
-                                case Result.Success(ReadOutcome.PeerFin | ReadOutcome.LocalShutdown | ReadOutcome.CleanClose) =>
+                                case Result.Failure(_: Closed)                                    => Loop.continue(i + 1)
+                                case Result.Success(ReadOutcome.PeerFin | ReadOutcome.CleanClose) =>
                                     Loop.continue(i + 1) // a same-cycle EOF reap is also terminal
                                 case other => Loop.done(fail(s"expected Closed/EOF on driver close, got $other"))
                             end match
