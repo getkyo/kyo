@@ -251,11 +251,11 @@ class CommitBufferTest extends kyo.test.Test[Any]:
                 val otherRef = TRef.Unsafe.init[Any](2)
                 val freshRef = TRef.Unsafe.init[Any](3)
                 CommitBuffer.withBuffer { b =>
-                    b.append(staleRef, TRefLog.Write[Any](tick, 1))
-                    b.append(otherRef, TRefLog.Write[Any](tick, 2))
+                    b.append(staleRef, TRefLog.Write[Any](tick, 1, 1))
+                    b.append(otherRef, TRefLog.Write[Any](tick, 2, 2))
                 }
                 val freshAtZero = CommitBuffer.withBuffer { b =>
-                    b.append(freshRef, TRefLog.Write[Any](tick, 3))
+                    b.append(freshRef, TRefLog.Write[Any](tick, 3, 3))
                     b.ref(0) eq freshRef
                 }
                 assert(freshAtZero, "withBuffer did not clear the buffer: a prior cycle's TRef survived into the next commit")

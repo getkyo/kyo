@@ -457,6 +457,115 @@ class STMTest extends kyo.test.Test[Any]:
                 finalValue <- STM.run(ref.get)
             yield assert(result == (1, true, 1) && finalValue == 3)
         }
+
+        "failed nested transaction" - {
+
+            // The parent reads x inside a nested block that fails and writes y (to -1) only when it did; the writer
+            // reads y and writes x + 5 between the two. The parent spends its polite attempts first so its commit
+            // barges: otherwise the writer's readTick on y makes the parent yield and the missing validation of x is
+            // never exercised. The zero-delay schedule keeps the burned attempts off the real clock.
+            def race(
+                nested: (TRef[Int], Latch, Latch) => Boolean < STM
+            )(using Frame): (Int, Int) < (Async & Abort[FailedTransaction]) =
+                for
+                    x          <- TRef.init(0)
+                    y          <- TRef.init(0)
+                    nestedDone <- Latch.init(1)
+                    writerDone <- Latch.init(1)
+                    attempts   <- AtomicInt.init
+                    parent     <- Fiber.initUnscoped(STM.run(Schedule.repeat(bargeThreshold() + 2)) {
+                        for
+                            attempt <- attempts.getAndIncrement
+                            _       <- STM.retryIf(attempt < bargeThreshold())
+                            failed  <- nested(x, nestedDone, writerDone)
+                            _       <- nestedDone.release
+                            _       <- writerDone.await
+                            _       <- y.set(if failed then -1 else 1)
+                        yield ()
+                    })
+                    _      <- nestedDone.await
+                    _      <- STM.run(y.get.map(v => x.set(v + 5)))
+                    _      <- writerDone.release
+                    _      <- parent.get
+                    result <- STM.run(x.get.map(xv => y.get.map(yv => (xv, yv))))
+                yield result
+
+            "parent commit validates reads made only inside the rolled-back block" in {
+                race { (x, _, _) =>
+                    Abort.run[String](STM.run(x.get.map(v => Abort.when(v == 0)("zero")))).map(_.isFailure)
+                }.map(result => assert(result == (5, 1), s"neither serial order yields $result"))
+            }
+
+            "parent commit validates a read the rolled-back block overwrote" in {
+                race { (x, _, _) =>
+                    Abort.run[String] {
+                        STM.run(x.get.map(v => x.set(v + 100).andThen(Abort.when(v == 0)("zero"))))
+                    }.map(_.isFailure)
+                }.map(result => assert(result == (105, 1), s"neither serial order yields $result"))
+            }
+
+            "parent commit validates a read the rolled-back block overwrote and another transaction changed before the rollback" in {
+                race { (x, nestedDone, writerDone) =>
+                    Abort.run[String] {
+                        STM.run {
+                            x.get.map { v =>
+                                x.set(v + 100)
+                                    .andThen(nestedDone.release)
+                                    .andThen(writerDone.await)
+                                    .andThen(Abort.when(v == 0)("zero"))
+                            }
+                        }
+                    }.map(_.isFailure)
+                }.map(result => assert(result == (105, 1), s"neither serial order yields $result"))
+            }
+
+            "parent commit validates reads of a block whose STM.retry the parent caught" in {
+                race { (x, _, _) =>
+                    Abort.run[FailedTransaction](STM.run(x.get.map(v => STM.retryIf(v == 0)))).map(_.isFailure)
+                }.map(result => assert(result == (5, 1), s"neither serial order yields $result"))
+            }
+
+            "parent commit validates reads of a rolled-back block nested in a block that caught it and failed" in {
+                race { (x, _, _) =>
+                    Abort.run[String] {
+                        STM.run {
+                            Abort.run[String](STM.run(x.get.map(v => Abort.when(v == 0)("zero"))))
+                                .map(inner => Abort.when(inner.isFailure)("middle"))
+                        }
+                    }.map(_.isFailure)
+                }.map(result => assert(result == (5, 1), s"neither serial order yields $result"))
+            }
+
+            "a parent that catches the failure and reads the ref again sees the value the block saw" in {
+                for
+                    x          <- TRef.init(0)
+                    nestedDone <- Latch.init(1)
+                    writerDone <- Latch.init(1)
+                    seen       <- AtomicRef.init(Chunk.empty[(String, Int)])
+                    parent     <- Fiber.initUnscoped(STM.run(Schedule.repeat(10)) {
+                        for
+                            inner <- Abort.run[String | FailedTransaction] {
+                                STM.run {
+                                    x.get.map { v =>
+                                        x.set(v + 100)
+                                            .andThen(nestedDone.release)
+                                            .andThen(writerDone.await)
+                                            .andThen(Abort.fail(s"saw $v"))
+                                    }
+                                }
+                            }
+                            after <- x.get
+                            _     <- seen.updateAndGet(_.append((inner.failure.fold("no failure")(_.toString), after)))
+                        yield ()
+                    })
+                    _    <- nestedDone.await
+                    _    <- STM.run(x.set(5))
+                    _    <- writerDone.release
+                    _    <- parent.get
+                    seen <- seen.get
+                yield assert(seen == Chunk(("saw 0", 0), ("saw 5", 5)), s"each attempt must observe one version of x: $seen")
+            }
+        }
     }
 
     "Error handling" - {

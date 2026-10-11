@@ -245,7 +245,7 @@ val withdraw: Int < (Async & Abort[FailedTransaction]) =
 
 ### Nested STM.run
 
-An `STM.run` call inside another `STM.run` does NOT start a new transaction. It shares the parent's transaction context and only isolates the ref log: success of the inner block propagates to the parent, failure rolls back only the inner log.
+An `STM.run` call inside another `STM.run` does NOT start a new transaction. It shares the parent's transaction context and only isolates the ref log: success of the inner block propagates to the parent, failure discards only the inner block's writes.
 
 ```scala
 val composite: Int < (Async & Abort[FailedTransaction]) =
@@ -260,7 +260,7 @@ val composite: Int < (Async & Abort[FailedTransaction]) =
     yield r
 ```
 
-> **Note:** kyo-stm has no `orElse` operator. Nested composition works through two mechanisms: `Abort` (an inner block's failure can be caught with `Abort.run` without affecting the outer transaction's commit) and the shared transaction log (everything the inner block writes is visible to the rest of the outer body and commits with it). A nested `STM.run` call joins the parent transaction rather than committing independently.
+> **Note:** kyo-stm has no `orElse` operator. Nested composition works through two mechanisms: `Abort` (an inner block's failure can be caught with `Abort.run`; its writes are discarded, but the refs it read are still validated when the outer transaction commits, since the outer body continues based on that failure) and the shared transaction log (everything the inner block writes is visible to the rest of the outer body and commits with it). A nested `STM.run` call joins the parent transaction rather than committing independently.
 
 ## What may run inside a transaction
 

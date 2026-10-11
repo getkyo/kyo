@@ -179,9 +179,17 @@ object STM:
                 loop(retrySchedule, 0)
             case _ =>
                 // Nested transaction inherits parent's transaction context but isolates RefLog.
-                // On success: changes propagate to parent. On failure: changes are rolled back
-                // without affecting parent's state.
-                val result = TRefLog.isolate.run(v)
+                // On success: changes propagate to parent. On failure: writes are rolled back
+                // and reads are kept, since the parent continues based on the failure.
+                val result =
+                    Var.use[TRefLog] { parent =>
+                        Var.runTuple(parent)(Abort.run[E | FailedTransaction](v)).map { (log, result) =>
+                            result.foldError(
+                                Var.setWith(log)(_),
+                                error => Var.setWith(parent.rollback(log))(Abort.error(error))
+                            )
+                        }
+                    }
                 // Safe to cast: the parent STM.run higher in the call stack handles the pending STM effect
                 result.asInstanceOf[A < (Async & Abort[E | FailedTransaction])]
         }

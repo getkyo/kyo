@@ -31,14 +31,35 @@ private[kyo] object TRefLog:
             Maybe.when(self.contains(refAny))(self(refAny).asInstanceOf[Entry[A]])
 
         def toMap: Map[TRef[Any], TRefLog.Entry[Any]] = self
-    end extension
 
-    val isolate = Var.isolate.update[TRefLog]
+        /** This log after a nested block that started from it failed with `inner` as its log.
+          *
+          * The block's writes are discarded but every ref it touched that this log does not hold stays as a `Read` of what the block
+          * observed: the parent continues based on the failure, so it must keep seeing that version of the ref and its commit must
+          * validate it.
+          */
+        def rollback(inner: TRefLog): TRefLog =
+            inner.foldLeft(self) { case (log, (ref, entry)) =>
+                if log.contains(ref) then log
+                else
+                    entry match
+                        case read: Read[Any]   => log.updated(ref, read)
+                        case write: Write[Any] => log.updated(ref, Read(write.tick, write.observed))
+            }
+    end extension
 
     sealed abstract class Entry[A] extends Serializable:
         def tick: STM.Tick
         def value: A
 
-    case class Read[A](tick: STM.Tick, value: A)  extends Entry[A]
-    case class Write[A](tick: STM.Tick, value: A) extends Entry[A]
+        /** The committed value at `tick`, which the transaction saw before it wrote anything. */
+        def observed: A
+    end Entry
+
+    /** Also the committed state of a `TRef`, so a first read logs that object instead of allocating an entry. */
+    case class Read[A](tick: STM.Tick, value: A) extends Entry[A]:
+        def observed: A = value
+
+    /** `observed` lets a rolled-back write become the `Read` it was based on. */
+    case class Write[A](tick: STM.Tick, value: A, observed: A) extends Entry[A]
 end TRefLog

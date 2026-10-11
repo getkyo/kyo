@@ -11,7 +11,7 @@ import scala.annotation.tailrec
   * @param initEntry
   *   The initial value and tick for this reference
   */
-final class TRef[A] private[kyo] (initEntry: Write[A])
+final class TRef[A] private[kyo] (initEntry: Read[A])
     extends TRef.State.Owner
     with Serializable:
 
@@ -67,8 +67,8 @@ final class TRef[A] private[kyo] (initEntry: Write[A])
                         else
                             // Register read interest - writers with lower tick will yield
                             updateReadTick(tick)
-                            // Append Read to the log and return value
-                            Var.setWith(log.put(this, Read(e.tick, e.value)))(f(e.value))
+                            // The committed entry is itself the Read to log, so a first read allocates no entry
+                            Var.setWith(log.put(this, e))(f(e.value))
                         end if
                     }
             end match
@@ -78,7 +78,7 @@ final class TRef[A] private[kyo] (initEntry: Write[A])
         Var.use[TRefLog] { log =>
             log.get(this) match
                 case Present(prev) =>
-                    Var.setDiscard(log.put(this, Write(prev.tick, v)))
+                    Var.setDiscard(log.put(this, Write(prev.tick, v, prev.observed)))
                 case Absent =>
                     STM.withCurrentTransaction { tick =>
                         val e = entry
@@ -90,7 +90,7 @@ final class TRef[A] private[kyo] (initEntry: Write[A])
                             STM.retry
                         else
                             // Append Write to the log
-                            Var.setDiscard(log.put(this, Write(e.tick, v)))
+                            Var.setDiscard(log.put(this, Write(e.tick, v, e.value)))
                         end if
                     }
         }
@@ -145,9 +145,9 @@ final class TRef[A] private[kyo] (initEntry: Write[A])
 
     private[kyo] def commit(tick: STM.Tick, entry: Entry[A])(using AllowUnsafe): Unit =
         entry match
-            case Write(_, value) =>
+            case Write(_, value, _) =>
                 // Only need to commit Write entries
-                this.entry = Write(tick, value)
+                this.entry = Read(tick, value)
                 // Reset readTick since value changed - old readers no longer relevant
                 // Keep write lock in place (will be released by unlock)
                 setState(getState().withoutReadTick)
@@ -208,10 +208,10 @@ object TRef:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         def init[A](value: A)(using AllowUnsafe): TRef[A] =
-            new TRef(Write(STM.Tick.next(), value))
+            new TRef(Read(STM.Tick.next(), value))
 
         private[kyo] def init[A](tick: STM.Tick, value: A)(using AllowUnsafe): TRef[A] =
-            new TRef(Write(tick, value))
+            new TRef(Read(tick, value))
     end Unsafe
 
     /** Packed atomic state for TRef containing both lock state and readTick.

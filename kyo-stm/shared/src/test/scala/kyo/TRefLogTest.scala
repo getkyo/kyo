@@ -15,8 +15,8 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "put" in {
             Sync.Unsafe.defer {
                 val tick  = STM.Tick.next()
-                val ref   = new TRef[Int](Write(tick, 0))
-                val entry = Write(tick, 42)
+                val ref   = new TRef[Int](Read(tick, 0))
+                val entry = Write(tick, 42, 0)
                 val log   = TRefLog.empty.put(ref, entry)
                 assert(log.toMap.size == 1)
                 assert(log.toMap.head._1 == ref)
@@ -27,20 +27,20 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "get" in {
             Sync.Unsafe.defer {
                 val tick  = STM.Tick.next()
-                val ref   = new TRef[Int](Write(tick, 0))
-                val entry = Write(tick, 42)
+                val ref   = new TRef[Int](Read(tick, 0))
+                val entry = Write(tick, 42, 0)
                 val log   = TRefLog.empty.put(ref, entry)
                 assert(log.get(ref) == Maybe(entry))
-                assert(log.get(new TRef[Int](Write(tick, 0))).isEmpty)
+                assert(log.get(new TRef[Int](Read(tick, 0))).isEmpty)
             }
         }
 
         "toSeq" in {
             Sync.Unsafe.defer {
                 val tick   = STM.Tick.next()
-                val ref1   = new TRef[Int](Write(tick, 0))
-                val ref2   = new TRef[Int](Write(tick, 0))
-                val entry1 = Write(tick, 42)
+                val ref1   = new TRef[Int](Read(tick, 0))
+                val ref2   = new TRef[Int](Read(tick, 0))
+                val entry1 = Write(tick, 42, 0)
                 val entry2 = Read(tick, 24)
 
                 val log = TRefLog.empty
@@ -58,7 +58,7 @@ class TRefLogTest extends kyo.test.Test[Any]:
             Sync.Unsafe.defer {
                 val log: TRefLog      = TRefLog.empty
                 val read: Entry[Int]  = Read(STM.Tick.next(), 1)
-                val write: Entry[Int] = Write(STM.Tick.next(), 2)
+                val write: Entry[Int] = Write(STM.Tick.next(), 2, 1)
                 assert(log.toMap.isEmpty)
                 assert(read.value == 1)
                 assert(write.value == 2)
@@ -82,14 +82,46 @@ class TRefLogTest extends kyo.test.Test[Any]:
                 assert(entries.keySet.exists(_ eq ref2))
         }
 
+        "a first read logs the ref's committed entry until a write replaces it" in {
+            for
+                ref    <- TRef.init(1)
+                first  <- STM.run(ref.get.andThen(Var.use[TRefLog](_.get(ref))))
+                second <- STM.run(ref.get.andThen(Var.use[TRefLog](_.get(ref))))
+                _      <- STM.run(ref.set(2))
+                third  <- STM.run(ref.get.andThen(Var.use[TRefLog](_.get(ref))))
+            yield
+                assert(first.get eq second.get)
+                assert(!(third.get eq first.get))
+                assert(third.map(_.value) == Present(2))
+        }
+
+        "set records the value the transaction saw before writing as observed" in {
+            for
+                fresh   <- TRef.init(3)
+                read    <- TRef.init(7)
+                entries <- STM.run {
+                    for
+                        _   <- fresh.set(4)
+                        _   <- fresh.set(5)
+                        _   <- read.get
+                        _   <- read.set(8)
+                        log <- Var.get[TRefLog]
+                    yield (log.get(fresh), log.get(read))
+                }
+            yield
+                val (freshEntry, readEntry) = entries
+                assert(freshEntry.map(e => (e.value, e.observed)) == Present((5, 3)))
+                assert(readEntry.map(e => (e.value, e.observed)) == Present((8, 7)))
+        }
+
         "log holds entries of distinct type parameters via Any erasure" in {
             Sync.Unsafe.defer {
                 val tick      = STM.Tick.next()
-                val intRef    = new TRef[Int](Write(tick, 0))
-                val strRef    = new TRef[String](Write(tick, ""))
-                val boolRef   = new TRef[Boolean](Write(tick, false))
-                val intEntry  = Write(tick, 42)
-                val strEntry  = Write(tick, "hello")
+                val intRef    = new TRef[Int](Read(tick, 0))
+                val strRef    = new TRef[String](Read(tick, ""))
+                val boolRef   = new TRef[Boolean](Read(tick, false))
+                val intEntry  = Write(tick, 42, 0)
+                val strEntry  = Write(tick, "hello", "")
                 val boolEntry = Read(tick, true)
                 val log       = TRefLog.empty
                     .put(intRef, intEntry)
@@ -111,10 +143,10 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "empty is the same instance across reads and is unchanged by put on derivatives" in {
             Sync.Unsafe.defer {
                 val tick    = STM.Tick.next()
-                val ref     = new TRef[Int](Write(tick, 0))
+                val ref     = new TRef[Int](Read(tick, 0))
                 val a       = TRefLog.empty
                 val b       = TRefLog.empty
-                val derived = a.put(ref, Write(tick, 1))
+                val derived = a.put(ref, Write(tick, 1, 0))
                 assert(a.toMap eq b.toMap)
                 assert(TRefLog.empty.toMap.isEmpty)
                 assert(a.toMap.isEmpty)
@@ -125,9 +157,9 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "put replaces a Read with a Write under the same ref" in {
             Sync.Unsafe.defer {
                 val tick    = STM.Tick.next()
-                val ref     = new TRef[Int](Write(tick, 0))
+                val ref     = new TRef[Int](Read(tick, 0))
                 val read    = Read(tick, 7)
-                val write   = Write(tick, 13)
+                val write   = Write(tick, 13, 7)
                 val initial = TRefLog.empty.put(ref, read)
                 val updated = initial.put(ref, write)
                 assert(initial.toMap.size == 1)
@@ -141,8 +173,8 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "put replaces a Write with a Read under the same ref" in {
             Sync.Unsafe.defer {
                 val tick    = STM.Tick.next()
-                val ref     = new TRef[Int](Write(tick, 0))
-                val write   = Write(tick, 99)
+                val ref     = new TRef[Int](Read(tick, 0))
+                val write   = Write(tick, 99, 0)
                 val read    = Read(tick, 50)
                 val initial = TRefLog.empty.put(ref, write)
                 val updated = initial.put(ref, read)
@@ -156,7 +188,7 @@ class TRefLogTest extends kyo.test.Test[Any]:
             Sync.Unsafe.defer {
                 val t1     = STM.Tick.next()
                 val t2     = STM.Tick.next()
-                val ref    = new TRef[Int](Write(t1, 0))
+                val ref    = new TRef[Int](Read(t1, 0))
                 val first  = Read(t1, 1)
                 val second = Read(t2, 2)
                 val l1     = TRefLog.empty.put(ref, first)
@@ -171,9 +203,9 @@ class TRefLogTest extends kyo.test.Test[Any]:
             Sync.Unsafe.defer {
                 val t1  = STM.Tick.next()
                 val t2  = STM.Tick.next()
-                val ref = new TRef[Int](Write(t1, 0))
-                val w1  = Write(t1, 11)
-                val w2  = Write(t2, 22)
+                val ref = new TRef[Int](Read(t1, 0))
+                val w1  = Write(t1, 11, 0)
+                val w2  = Write(t2, 22, 0)
                 val l1  = TRefLog.empty.put(ref, w1)
                 val l2  = l1.put(ref, w2)
                 assert(l2.toMap.size == 1)
@@ -185,8 +217,8 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "put with null value round-trips through get" in {
             Sync.Unsafe.defer {
                 val tick                     = STM.Tick.next()
-                val ref                      = new TRef[String](Write(tick, ""))
-                val nullWrite: Write[String] = Write(tick, null.asInstanceOf[String])
+                val ref                      = new TRef[String](Read(tick, ""))
+                val nullWrite: Write[String] = Write(tick, null.asInstanceOf[String], "")
                 val log                      = TRefLog.empty.put(ref, nullWrite)
                 val got                      = log.get(ref)
                 assert(log.toMap.size == 1)
@@ -202,8 +234,8 @@ class TRefLogTest extends kyo.test.Test[Any]:
                 import kyo.*
                 import kyo.TRefLog.*
                 val tick     = STM.Tick.next()(using AllowUnsafe.embrace.danger)
-                val intRef   = new TRef[Int](Write(tick, 0))
-                val strEntry = Write(tick, "hello")
+                val intRef   = new TRef[Int](Read(tick, 0))
+                val strEntry = Write(tick, "hello", "")
                 TRefLog.empty.put(intRef, strEntry)
                 """
             )("String")
@@ -212,8 +244,8 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "put stores the exact ref instance as the map key" in {
             Sync.Unsafe.defer {
                 val tick  = STM.Tick.next()
-                val ref   = new TRef[Int](Write(tick, 0))
-                val entry = Write(tick, 42)
+                val ref   = new TRef[Int](Read(tick, 0))
+                val entry = Write(tick, 42, 0)
                 val log   = TRefLog.empty.put(ref, entry)
                 val key   = log.toMap.head._1
                 assert((key: AnyRef) eq (ref: AnyRef))
@@ -223,8 +255,8 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "put stores the exact Entry instance as the map value" in {
             Sync.Unsafe.defer {
                 val tick  = STM.Tick.next()
-                val ref   = new TRef[Int](Write(tick, 0))
-                val entry = Write(tick, 42)
+                val ref   = new TRef[Int](Read(tick, 0))
+                val entry = Write(tick, 42, 0)
                 val log   = TRefLog.empty.put(ref, entry)
                 val value = log.toMap.head._2
                 assert(value eq entry)
@@ -235,7 +267,7 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "get from empty log returns Absent" in {
             Sync.Unsafe.defer {
                 val tick = STM.Tick.next()
-                val ref  = new TRef[Int](Write(tick, 0))
+                val ref  = new TRef[Int](Read(tick, 0))
                 val log  = TRefLog.empty
                 val got  = log.get(ref)
                 assert(got.isEmpty)
@@ -246,9 +278,9 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "get returns the latest entry after the same ref is put twice" in {
             Sync.Unsafe.defer {
                 val tick   = STM.Tick.next()
-                val ref    = new TRef[Int](Write(tick, 0))
-                val first  = Write(tick, 1)
-                val second = Write(tick, 2)
+                val ref    = new TRef[Int](Read(tick, 0))
+                val first  = Write(tick, 1, 0)
+                val second = Write(tick, 2, 0)
                 val log    = TRefLog.empty.put(ref, first).put(ref, second)
                 val got    = log.get(ref)
                 assert(got == Maybe(second))
@@ -260,8 +292,8 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "get retrieves the correct entry from a 10-entry log" in {
             Sync.Unsafe.defer {
                 val tick    = STM.Tick.next()
-                val refs    = (0 until 10).map(i => new TRef[Int](Write(tick, i)))
-                val entries = (0 until 10).map(i => Write(tick, i * 100))
+                val refs    = (0 until 10).map(i => new TRef[Int](Read(tick, i)))
+                val entries = (0 until 10).map(i => Write(tick, i * 100, i))
                 val log     = refs.zip(entries).foldLeft(TRefLog.empty) {
                     case (acc, (r, e)) => acc.put(r, e)
                 }
@@ -275,12 +307,12 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "get uses ref identity for lookup not equality" in {
             Sync.Unsafe.defer {
                 val tick        = STM.Tick.next()
-                val original    = new TRef[Int](Write(tick, 42))
-                val twin        = new TRef[Int](Write(tick, 42))
-                val log         = TRefLog.empty.put(original, Write(tick, 100))
+                val original    = new TRef[Int](Read(tick, 42))
+                val twin        = new TRef[Int](Read(tick, 42))
+                val log         = TRefLog.empty.put(original, Write(tick, 100, 42))
                 val gotOriginal = log.get(original)
                 val gotTwin     = log.get(twin)
-                assert(gotOriginal == Maybe(Write(tick, 100)))
+                assert(gotOriginal == Maybe(Write(tick, 100, 42)))
                 assert(gotTwin.isEmpty)
             }
         }
@@ -288,11 +320,11 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "get returns Entry[A] whose value compiles against A" in {
             Sync.Unsafe.defer {
                 val tick   = STM.Tick.next()
-                val intRef = new TRef[Int](Write(tick, 0))
-                val strRef = new TRef[String](Write(tick, ""))
+                val intRef = new TRef[Int](Read(tick, 0))
+                val strRef = new TRef[String](Read(tick, ""))
                 val log    = TRefLog.empty
-                    .put(intRef, Write(tick, 7))
-                    .put(strRef, Write(tick, "abc"))
+                    .put(intRef, Write(tick, 7, 0))
+                    .put(strRef, Write(tick, "abc", ""))
                 val ig: Maybe[TRefLog.Entry[Int]]    = log.get(intRef)
                 val sg: Maybe[TRefLog.Entry[String]] = log.get(strRef)
                 val iv: Int                          = ig.get.value
@@ -305,8 +337,8 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "toMap returns the underlying map by identity" in {
             Sync.Unsafe.defer {
                 val tick = STM.Tick.next()
-                val ref  = new TRef[Int](Write(tick, 0))
-                val log  = TRefLog.empty.put(ref, Write(tick, 1))
+                val ref  = new TRef[Int](Read(tick, 0))
+                val log  = TRefLog.empty.put(ref, Write(tick, 1, 0))
                 val m1   = log.toMap
                 val m2   = log.toMap
                 assert(m1 eq m2)
@@ -316,50 +348,124 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "toMap returns an immutable Map subtype" in {
             Sync.Unsafe.defer {
                 val tick = STM.Tick.next()
-                val ref  = new TRef[Int](Write(tick, 0))
-                val log  = TRefLog.empty.put(ref, Write(tick, 1))
+                val ref  = new TRef[Int](Read(tick, 0))
+                val log  = TRefLog.empty.put(ref, Write(tick, 1, 0))
                 val m    = log.toMap
                 // Build a derived map through the TRefLog API (no raw Map.updated /
                 // no asInstanceOf widening of the invariant TRef/Entry types).
                 val derived = log.put(ref, Read(tick, 2)).toMap
-                assert(log.toMap.head._2 == Write(tick, 1))
+                assert(log.toMap.head._2 == Write(tick, 1, 0))
                 assert(derived ne m)
                 assert(derived.head._2 == Read(tick, 2))
             }
         }
 
-        "isolate rolls back log changes when the inner computation aborts" in {
+        "failed nested STM.run restores the parent's entries and keeps what it read" in {
             for
                 ref     <- TRef.init(0)
-                outcome <- Abort.run[String] {
-                    STM.run {
-                        for
-                            _               <- ref.set(1)
-                            parentLogBefore <- Var.get[TRefLog]
-                            _               <- TRefLog.isolate.run {
+                other   <- TRef.init(5)
+                outcome <- STM.run {
+                    for
+                        _ <- ref.set(1)
+                        r <- Abort.run[String] {
+                            STM.run {
                                 for
                                     _ <- ref.set(2)
+                                    _ <- other.get
                                     _ <- Abort.fail("boom")
                                 yield ()
                             }
-                            parentLogAfter <- Var.get[TRefLog]
-                            v              <- ref.get
-                        yield (parentLogBefore.toMap.size, parentLogAfter.toMap.size, v)
-                    }
+                        }
+                        log <- Var.get[TRefLog]
+                        v   <- ref.get
+                    yield (r, log.get(ref).map(_.value), log.get(other), v)
                 }
             yield
-                assert(outcome.isFailure)
-                assert(outcome.failure.contains("boom"))
+                val (r, refValue, otherEntry, v) = outcome
+                assert(r.failure.contains("boom"))
+                assert(refValue == Present(1))
+                assert(otherEntry.exists(e => e.isInstanceOf[Read[?]] && e.value == 5))
+                assert(v == 1)
         }
 
-        "isolate on empty inner log preserves parent log identity" in {
+        "a failed block nested in a block that catches it and succeeds leaves its reads in the outermost log" in {
+            for
+                x     <- TRef.init(3)
+                entry <- STM.run {
+                    for
+                        _   <- STM.run(Abort.run[String](STM.run(x.set(4).andThen(Abort.fail("inner")))))
+                        log <- Var.get[TRefLog]
+                    yield log.get(x)
+                }
+            yield assert(entry.exists(e => e.isInstanceOf[Read[?]] && e.value == 3))
+        }
+
+        "a failed block nested in a block that catches it and then fails leaves its reads in the outermost log" in {
+            for
+                x       <- TRef.init(3)
+                outcome <- STM.run {
+                    for
+                        r <- Abort.run[String] {
+                            STM.run {
+                                Abort.run[String](STM.run(x.set(4).andThen(Abort.fail("inner"))))
+                                    .andThen(Abort.fail("middle"))
+                            }
+                        }
+                        log <- Var.get[TRefLog]
+                    yield (r, log.get(x))
+                }
+            yield
+                val (r, entry) = outcome
+                assert(r.failure.contains("middle"))
+                assert(entry.exists(e => e.isInstanceOf[Read[?]] && e.value == 3))
+        }
+
+        "rollback keeps the parent's entry for a ref the failed block also wrote" in {
+            Sync.Unsafe.defer {
+                val tick       = STM.Tick.next()
+                val ref        = new TRef[Int](Read(tick, 0))
+                val parent     = TRefLog.empty.put(ref, Write(tick, 1, 0))
+                val rolledBack = parent.rollback(parent.put(ref, Write(tick, 2, 0)))
+                assert(rolledBack.get(ref) == Present(Write(tick, 1, 0)))
+            }
+        }
+
+        "rollback keeps a Read for a ref only the failed block read" in {
+            Sync.Unsafe.defer {
+                val tick       = STM.Tick.next()
+                val ref        = new TRef[Int](Read(tick, 3))
+                val rolledBack = TRefLog.empty.rollback(TRefLog.empty.put(ref, Read(tick, 3)))
+                assert(rolledBack.get(ref) == Present(Read(tick, 3)))
+            }
+        }
+
+        "rollback turns a Write only the failed block made into a Read of the value it observed" in {
+            Sync.Unsafe.defer {
+                val tick       = STM.Tick.next()
+                val ref        = new TRef[Int](Read(tick, 3))
+                val rolledBack = TRefLog.empty.rollback(TRefLog.empty.put(ref, Write(tick, 9, 3)))
+                assert(rolledBack.get(ref) == Present(Read(tick, 3)))
+            }
+        }
+
+        "rollback turns a Write whose ref has moved into a Read of the observed value that fails validation" in {
+            Sync.Unsafe.defer {
+                val base       = STM.Tick.next()
+                val ref        = new TRef[Int](Read(STM.Tick.next(), 4))
+                val rolledBack = TRefLog.empty.rollback(TRefLog.empty.put(ref, Write(base, 9, 3)))
+                assert(rolledBack.get(ref) == Present(Read(base, 3)))
+                assert(!ref.validate(rolledBack.get(ref).get))
+            }
+        }
+
+        "nested STM.run on empty inner log preserves parent log identity" in {
             for
                 ref    <- TRef.init(7)
                 result <- STM.run {
                     for
                         _      <- ref.set(8)
                         before <- Var.get[TRefLog]
-                        _      <- TRefLog.isolate.run {
+                        _      <- STM.run {
                             (): Unit
                         }
                         after <- Var.get[TRefLog]
@@ -368,17 +474,17 @@ class TRefLogTest extends kyo.test.Test[Any]:
                 }
             yield
                 val (beforeMap, afterMap, v) = result
-                assert(beforeMap == afterMap)
+                assert(beforeMap eq afterMap)
                 assert(v == 8)
         }
 
-        "isolate merges nested Write over parent Read for same ref" in {
+        "nested STM.run merges nested Write over parent Read for same ref" in {
             for
                 ref      <- TRef.init(0)
                 logState <- STM.run {
                     for
                         _ <- ref.get
-                        _ <- TRefLog.isolate.run {
+                        _ <- STM.run {
                             ref.set(42)
                         }
                         parent <- Var.get[TRefLog]
@@ -397,7 +503,7 @@ class TRefLogTest extends kyo.test.Test[Any]:
             Sync.Unsafe.defer {
                 val tick                         = STM.Tick.next()
                 val asEntry1: TRefLog.Entry[Int] = Read(tick, 10)
-                val asEntry2: TRefLog.Entry[Int] = Write(tick, 20)
+                val asEntry2: TRefLog.Entry[Int] = Write(tick, 20, 10)
                 val t1                           = asEntry1.tick
                 val v1                           = asEntry1.value
                 val t2                           = asEntry2.tick
@@ -406,6 +512,8 @@ class TRefLogTest extends kyo.test.Test[Any]:
                 assert(v1 == 10)
                 assert(t2 == tick)
                 assert(v2 == 20)
+                assert(asEntry1.observed == 10)
+                assert(asEntry2.observed == 10)
             }
         }
 
@@ -452,7 +560,7 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "Write tolerates a null value field" in {
             Sync.Unsafe.defer {
                 val tick             = STM.Tick.next()
-                val w: Write[String] = Write(tick, null.asInstanceOf[String])
+                val w: Write[String] = Write(tick, null.asInstanceOf[String], null.asInstanceOf[String])
                 val v                = w.value
                 val s                = w.toString
                 assert(w.tick == tick)
@@ -465,26 +573,27 @@ class TRefLogTest extends kyo.test.Test[Any]:
             Sync.Unsafe.defer {
                 val t1 = STM.Tick.next()
                 val t2 = STM.Tick.next()
-                val w0 = Write(t1, 42)
+                val w0 = Write(t1, 42, 1)
                 val w1 = w0.copy(value = 99)
                 val w2 = w0.copy(tick = t2)
                 val w3 = w0.copy()
-                assert(w1 == Write(t1, 99))
-                assert(w2 == Write(t2, 42))
+                assert(w1 == Write(t1, 99, 1))
+                assert(w2 == Write(t2, 42, 1))
                 assert(w3 == w0)
                 assert(w3 ne w0)
             }
         }
 
-        "Write pattern match extracts tick and value" in {
+        "Write pattern match extracts tick, value and observed" in {
             Sync.Unsafe.defer {
-                val tick                            = STM.Tick.next()
-                val w: TRefLog.Entry[Int]           = Write(tick, 88)
-                val (extractedTick, extractedValue) = w match
-                    case Write(t, v) => (t, v)
-                    case _           => fail("expected Write")
+                val tick                                    = STM.Tick.next()
+                val w: TRefLog.Entry[Int]                   = Write(tick, 88, 1)
+                val (extractedTick, extractedValue, before) = w match
+                    case Write(t, v, o) => (t, v, o)
+                    case _              => fail("expected Write")
                 assert(extractedTick == tick)
                 assert(extractedValue == 88)
+                assert(before == 1)
             }
         }
 
@@ -492,7 +601,7 @@ class TRefLogTest extends kyo.test.Test[Any]:
             Sync.Unsafe.defer {
                 val tick                  = STM.Tick.next()
                 val r: TRefLog.Entry[Int] = Read(tick, 42)
-                val w: TRefLog.Entry[Int] = Write(tick, 42)
+                val w: TRefLog.Entry[Int] = Write(tick, 42, 42)
                 val eqResult              = (r == w) || (w == r)
                 assert(!eqResult)
                 assert(r != w)
@@ -516,14 +625,16 @@ class TRefLogTest extends kyo.test.Test[Any]:
             }
         }
 
-        "Write with identical tick/value satisfies equals and hashCode contract" in {
+        "Write with identical fields satisfies equals and hashCode contract" in {
             Sync.Unsafe.defer {
                 val tick = STM.Tick.next()
-                val a    = Write(tick, "x")
-                val b    = Write(tick, "x")
-                val c    = Write(tick, "y")
+                val a    = Write(tick, "x", "o")
+                val b    = Write(tick, "x", "o")
+                val c    = Write(tick, "y", "o")
+                val d    = Write(tick, "x", "p")
                 assert(a == b)
                 assert(!(a == c))
+                assert(!(a == d))
                 assert(a.hashCode == b.hashCode)
             }
         }
@@ -550,7 +661,7 @@ class TRefLogTest extends kyo.test.Test[Any]:
                             mapInside = inner.toMap
                             _      <- ref.get
                             inner2 <- Var.get[TRefLog]
-                            afterPut = inner2.put(ref, Write(STM.Tick.next(), 9))
+                            afterPut = inner2.put(ref, Write(STM.Tick.next(), 9, 5))
                         yield (gotInside.isDefined, mapInside.size, afterPut.get(ref).map(_.value))
                     }
                 yield
@@ -564,23 +675,23 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "repeated put on the same ref collapses to a single entry" in {
             Sync.Unsafe.defer {
                 val tick = STM.Tick.next()
-                val ref  = new TRef[Int](Write(tick, 0))
+                val ref  = new TRef[Int](Read(tick, 0))
                 val log  = (1 to 5).foldLeft(TRefLog.empty) { case (l, i) =>
-                    l.put(ref, Write(tick, i))
+                    l.put(ref, Write(tick, i, 0))
                 }
                 val got = log.get(ref)
                 val sz  = log.toMap.size
                 assert(sz == 1)
-                assert(got == Maybe(Write(tick, 5)))
+                assert(got == Maybe(Write(tick, 5, 0)))
             }
         }
 
         "two distinct refs each retain their entry in toMap" in {
             Sync.Unsafe.defer {
                 val tick = STM.Tick.next()
-                val r1   = new TRef[Int](Write(tick, 0))
-                val r2   = new TRef[Int](Write(tick, 0))
-                val e1   = Write(tick, 11)
+                val r1   = new TRef[Int](Read(tick, 0))
+                val r2   = new TRef[Int](Read(tick, 0))
+                val e1   = Write(tick, 11, 0)
                 val e2   = Read(tick, 22)
                 val log  = TRefLog.empty.put(r1, e1).put(r2, e2)
                 val got1 = log.get(r1)
@@ -594,7 +705,7 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "get returns Absent rather than throwing on a missing ref" in {
             Sync.Unsafe.defer {
                 val tick      = STM.Tick.next()
-                val unrelated = new TRef[Int](Write(tick, 0))
+                val unrelated = new TRef[Int](Read(tick, 0))
                 val log       = TRefLog.empty
                 val got       = scala.util.Try(log.get(unrelated))
                 assert(got.isSuccess)
@@ -602,11 +713,11 @@ class TRefLogTest extends kyo.test.Test[Any]:
             }
         }
 
-        "isolate propagates Abort.fail from inner to outer" in {
+        "nested STM.run propagates Abort.fail from inner to outer" in {
             for
                 result <- Abort.run[String] {
                     STM.run {
-                        TRefLog.isolate.run {
+                        STM.run {
                             Abort.fail("inner-fail")
                         }
                     }
@@ -616,11 +727,11 @@ class TRefLogTest extends kyo.test.Test[Any]:
                 assert(result.failure.contains("inner-fail"))
         }
 
-        "isolate returns the inner value when it succeeds" in {
+        "nested STM.run returns the inner value when it succeeds" in {
             for
                 ref    <- TRef.init(0)
                 result <- STM.run {
-                    TRefLog.isolate.run {
+                    STM.run {
                         ref.set(1).andThen(ref.get).map(v => v + 100)
                     }
                 }
@@ -630,10 +741,10 @@ class TRefLogTest extends kyo.test.Test[Any]:
         "sealed Entry hierarchy is exhaustively matchable as Read and Write" in {
             Sync.Unsafe.defer {
                 val tick                              = STM.Tick.next()
-                val entries: List[TRefLog.Entry[Int]] = List(Read(tick, 1), Write(tick, 2))
+                val entries: List[TRefLog.Entry[Int]] = List(Read(tick, 1), Write(tick, 2, 1))
                 val labels                            = entries.map {
-                    case Read(_, v)  => s"R$v"
-                    case Write(_, v) => s"W$v"
+                    case Read(_, v)     => s"R$v"
+                    case Write(_, v, _) => s"W$v"
                 }
                 assert(labels == List("R1", "W2"))
             }
