@@ -589,6 +589,27 @@ class FocusableTest extends UITest:
         }
     }
 
+    "seeding a focus-auto element does not scroll its container to reveal it" in {
+        // The panel appears below the visible area of a scroll container. Focusing it with the browser's default
+        // would scroll the container down to it. The spacer uses `minHeight`: a flex child with only a `height` shrinks
+        // to fit the container, leaving nothing to scroll.
+        val app: UI < Async =
+            for showPanel <- Signal.initRef(false)
+            yield UI.div(
+                UI.button("Open").id("open").onClick(showPanel.set(true)),
+                UI.div("spacer").style(Style.minHeight(Length.Px(2000))),
+                UI.when(showPanel)(UI.div("panel").id("panel").tabIndex(-1).focusAuto(true))
+            ).id("scroller").style(Style.height(Length.Px(200)).overflowY(_.auto))
+        withUI(app) {
+            for
+                // Synthetic click, so the click itself does not scroll anything.
+                _        <- Browser.evalDiscard("document.getElementById('open').click()")
+                _        <- Browser.assertFocused(Selector.id("panel"))
+                scrolled <- Browser.evalInt("document.getElementById('scroller').scrollTop")
+            yield assert(scrolled == 0)
+        }
+    }
+
     "closing a focus-restore panel returns focus to the previously focused element" in {
         val app: UI < Async =
             for showPanel <- Signal.initRef(false)
