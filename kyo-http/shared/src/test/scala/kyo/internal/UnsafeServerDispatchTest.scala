@@ -66,13 +66,12 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         def closed(using Frame): Boolean < Async = done.safe.get.andThen(inbound.closed())
     end CloseProbe
 
-    /** Waits until the keep-alive idle timer for the next idle period is armed.
+    /** Waits until the keep-alive restart has left the parser waiting for the next request head.
       *
-      * `restartParserKeepAlive` arms the timer then restarts the parser, so a parser take on inbound is proof the
-      * timer exists. Tests need this before advancing virtual time against the deadline: the already-collected
-      * response was written while the handler ran and says nothing about the arm.
+      * The idle timer armed while the answer is written is replaced by the restart's, of the same duration, so a fence on the idle timer is
+      * unambiguous only after the restart. The restart arms its timer before the parser takes from inbound.
       */
-    private def awaitIdleTimerArmed(inbound: Channel.Unsafe[Span[Byte]])(using Frame): Boolean < Async =
+    private def awaitKeepAliveRestart(inbound: Channel.Unsafe[Span[Byte]])(using Frame): Boolean < Async =
         pollUntil(inbound.pendingTakes().contains(1))
 
     // A leaf on the wall clock would otherwise leave a live 60 s idle timer armed past its end; a leaf about the timer sets its own.
@@ -870,7 +869,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         // connection is torn down.
                         pollUntil(inbound.pendingTakes().contains(1)).map { draining =>
                             assert(draining, "the rest of the request is drained before the connection ends")
-                            tc.advance(idleTimeout).andThen {
+                            armedThenAdvance(tc, "idle timer", idleTimeout).andThen {
                                 probe.closed.map(closed => assert(closed, "the connection must be torn down after an unframeable request"))
                             }
                         }
@@ -1229,7 +1228,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         )
                         pollUntil(inbound.pendingTakes().contains(1)).map { draining =>
                             assert(draining, "the rest of the body is drained before the close")
-                            tc.advance(200.millis).andThen {
+                            armedThenAdvance(tc, "idle timer", 200.millis).andThen {
                                 probe.closed.map(closed => assert(closed, "a silent peer is closed at the idle timeout"))
                             }
                         }
@@ -1750,10 +1749,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     collectResponse(outbound).map { response =>
                         assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $response")
 
-                        awaitIdleTimerArmed(inbound).map { armed =>
-                            assert(armed, "the keep-alive restart must arm the idle timer")
-                            // Elapse the whole idle period: the timer fires and the connection is torn down.
-                            tc.advance(idleTimeout).andThen {
+                        awaitKeepAliveRestart(inbound).map { restarted =>
+                            assert(restarted, "the keep-alive restart must leave the parser waiting for the next request")
+                            armedThenAdvance(tc, "idle timer", idleTimeout).andThen {
                                 pollUntil(inbound.closed()).map { closed =>
                                     assert(closed, "the idle timer must close the connection once the idle period elapses")
                                     inbound.offer(Span.fromUnsafe("test".getBytes)) match
@@ -1820,9 +1818,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     // connection start would expire in the second round; only a per-request rearm keeps it alive.
                     def round(previous: String): String < (Async & Abort[Closed]) =
                         assert(previous.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $previous")
-                        awaitIdleTimerArmed(inbound).map { armed =>
-                            assert(armed, "the keep-alive restart must arm the idle timer")
-                            tc.advance(idleTimeout * 0.75).andThen {
+                        awaitKeepAliveRestart(inbound).map { restarted =>
+                            assert(restarted, "the keep-alive restart must leave the parser waiting for the next request")
+                            armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout * 0.75).andThen {
                                 sendRequest(inbound, keepAlive)
                                 collectResponse(outbound)
                             }
@@ -1832,9 +1830,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     collectResponse(outbound).map(round).map(round).map(round).map { last =>
                         assert(last.contains("HTTP/1.1 200 OK"), s"Expected 200 after three idle rounds, got: $last")
                         // The timer that survived every round is still live: a full idle period with no request closes it.
-                        awaitIdleTimerArmed(inbound).map { armed =>
-                            assert(armed, "the keep-alive restart must arm the idle timer")
-                            tc.advance(idleTimeout).andThen {
+                        awaitKeepAliveRestart(inbound).map { restarted =>
+                            assert(restarted, "the keep-alive restart must leave the parser waiting for the next request")
+                            armedThenAdvance(tc, "idle timer", idleTimeout).andThen {
                                 pollUntil(inbound.closed()).map { closed =>
                                     assert(closed, "a full idle period with no request must still close the connection")
                                 }
@@ -1865,13 +1863,11 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     collectResponse(outbound).map { response =>
                         assert(response.contains("HTTP/1.1 200 OK"))
 
-                        awaitIdleTimerArmed(inbound).map { armed =>
-                            assert(armed, "the keep-alive restart must arm the idle timer")
-                            // One millisecond short of the configured period, so the connection must still be open.
-                            tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                        awaitKeepAliveRestart(inbound).map { restarted =>
+                            assert(restarted, "the keep-alive restart must leave the parser waiting for the next request")
+                            armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout.minusOrZero(1.milli)).andThen {
                                 assert(!inbound.closed(), s"connection closed before the configured $idleTimeout elapsed")
-                                // The remaining millisecond reaches the deadline.
-                                tc.advance(1.milli).andThen {
+                                armedThenAdvance(tc, "idle timer", idleTimeout, by = 1.milli).andThen {
                                     pollUntil(inbound.closed()).map { closed =>
                                         assert(closed, s"connection still open after the configured $idleTimeout elapsed")
                                     }
@@ -1904,7 +1900,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
                         // The parser take proves the keep-alive restart ran; with the timeout disabled it armed
                         // nothing, so no elapsed time can close the connection.
-                        awaitIdleTimerArmed(inbound).map { restarted =>
+                        awaitKeepAliveRestart(inbound).map { restarted =>
                             assert(restarted, "the keep-alive restart must leave the parser waiting for the next request")
                             tc.advance(1.hour).andThen {
                                 assert(!inbound.closed(), "a disabled idle timeout must never close the connection")
@@ -1940,10 +1936,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     collectResponse(outbound).map { response1 =>
                         assert(response1.contains("HTTP/1.1 200 OK"))
 
-                        awaitIdleTimerArmed(inbound).map { armed =>
-                            assert(armed, "the keep-alive restart must arm the idle timer")
+                        awaitKeepAliveRestart(inbound).map { restarted =>
+                            assert(restarted, "the keep-alive restart must leave the parser waiting for the next request")
                             // The idle period elapses before the next request is written.
-                            tc.advance(idleTimeout).andThen {
+                            armedThenAdvance(tc, "idle timer", idleTimeout).andThen {
                                 pollUntil(inbound.closed()).map { closed =>
                                     assert(closed, "the idle timer must close the connection once the idle period elapses")
                                     // A keep-alive follow-up sent after the expiry is refused rather than served.
@@ -1990,10 +1986,11 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         collectResponse(outbound2).map { r2 =>
                             assert(r2.contains("HTTP/1.1 200 OK"))
 
-                            awaitIdleTimerArmed(inbound1).map { armed1 =>
-                                awaitIdleTimerArmed(inbound2).map { armed2 =>
-                                    assert(armed1 && armed2, "both connections must arm their own idle timer")
-                                    tc.advance(idleTimeout).andThen {
+                            // Both restarts have armed their timer once both parsers wait, so one fence on the duration covers both.
+                            awaitKeepAliveRestart(inbound1).map { restarted1 =>
+                                awaitKeepAliveRestart(inbound2).map { restarted2 =>
+                                    assert(restarted1 && restarted2, "both connections must restart for the next request")
+                                    armedThenAdvance(tc, "idle timers", idleTimeout).andThen {
                                         pollUntil(inbound1.closed() && inbound2.closed()).map { closed =>
                                             assert(closed, "both idle connections must be closed by their own timer")
                                             assert(
@@ -2038,9 +2035,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     collectResponse(outbound).map { response =>
                         assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $response")
 
-                        awaitIdleTimerArmed(inbound).map { armed =>
-                            assert(armed, "the keep-alive restart must arm the idle timer after a streamed response")
-                            tc.advance(idleTimeout).andThen {
+                        awaitKeepAliveRestart(inbound).map { restarted =>
+                            assert(restarted, "the keep-alive restart must leave the parser waiting after a streamed response")
+                            armedThenAdvance(tc, "idle timer", idleTimeout).andThen {
                                 pollUntil(inbound.closed()).map { closed =>
                                     assert(closed, "the idle timer must close the connection once the idle period elapses")
                                     inbound.offer(Span.fromUnsafe("test".getBytes)) match
@@ -2074,9 +2071,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
                         pollUntil(inbound.pendingTakes().contains(1)).map { waiting =>
                             assert(waiting, "the parser must be waiting for the rest of the head")
-                            tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                            armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout.minusOrZero(1.milli)).andThen {
                                 assert(!inbound.closed(), "the connection must stay open until the idle timeout elapses")
-                                tc.advance(1.milli).andThen {
+                                armedThenAdvance(tc, "idle timer", idleTimeout, by = 1.milli).andThen {
                                     probe.closed.map { closed =>
                                         assert(closed, "a head that never completes must not hold the connection past the idle timeout")
                                     }
@@ -2254,7 +2251,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                                     assert(text(head).startsWith("HTTP/1.1 200 OK"), s"observed head: ${text(head)}")
                                     outbound.safe.take.map { first =>
                                         assert(text(first) == "first", s"observed: ${text(first)}")
-                                        tc.advance(idleTimeout).andThen(tc.advance(idleTimeout)).andThen {
+                                        armedThenAdvance(tc, "idle timer", idleTimeout).andThen {
                                             assert(
                                                 !inbound.closed(),
                                                 "the idle timer must not close a connection whose answer is still streaming"
@@ -2312,9 +2309,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
                         pollUntil(outbound.pendingPuts().exists(_ > 0)).map { parked =>
                             assert(parked, s"a chunk must be waiting for the peer to read, observed ${outbound.pendingPuts()} queued spans")
-                            tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                            armedThenAdvance(tc, "put's idle timeout", idleTimeout, by = idleTimeout.minusOrZero(1.milli)).andThen {
                                 assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
-                                tc.advance(1.milli).andThen {
+                                armedThenAdvance(tc, "put's idle timeout", idleTimeout, by = 1.milli).andThen {
                                     probe.closed.map(closed =>
                                         assert(closed, "a peer that stops reading a streamed response must be closed")
                                     )
@@ -2348,9 +2345,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
                         pollUntil(inbound.pendingTakes().contains(1)).map { waiting =>
                             assert(waiting, "the body read must be waiting for the rest of the body")
-                            tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                            armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout.minusOrZero(1.milli)).andThen {
                                 assert(!inbound.closed(), "the connection must stay open until the idle timeout elapses")
-                                tc.advance(1.milli).andThen {
+                                armedThenAdvance(tc, "idle timer", idleTimeout, by = 1.milli).andThen {
                                     probe.closed.map { closed =>
                                         assert(closed, "a body that stops arriving must not hold the connection past the idle timeout")
                                         assert(!ran.get(), "the handler must not run on a body that never completed")
@@ -2384,12 +2381,12 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
                         pollUntil(inbound.pendingTakes().contains(1)).map { waiting =>
                             assert(waiting, "the body read must be waiting for the rest of the body")
-                            tc.advance(idleTimeout * 0.75).andThen {
+                            armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout * 0.75).andThen {
                                 sendRequest(inbound, "def")
                                 // The reader has taken the new bytes once it waits on the channel again.
                                 pollUntil(inbound.pendingTakes().contains(1)).map { waitingAgain =>
                                     assert(waitingAgain, "the body read must take the bytes and wait for more")
-                                    tc.advance(idleTimeout * 0.75).andThen {
+                                    armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout * 0.75).andThen {
                                         assert(!inbound.closed(), "a body that keeps arriving must not be closed by the idle timeout")
                                         sendRequest(inbound, "ghij")
                                         collectResponse(outbound).map { response =>
@@ -2429,11 +2426,11 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
                         pollUntil(inbound.pendingTakes().contains(1)).map { waiting =>
                             assert(waiting, "the decoder must be waiting for the next chunk")
-                            tc.advance(idleTimeout * 0.75).andThen {
+                            armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout * 0.75).andThen {
                                 sendRequest(inbound, "1\r\nb\r\n")
                                 pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { again =>
                                     assert(again, "the decoder must take the chunk and wait for the next")
-                                    tc.advance(idleTimeout * 0.75).andThen {
+                                    armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout * 0.75).andThen {
                                         assert(
                                             !inbound.closed(),
                                             "a chunked body that keeps arriving must not be closed by the idle timeout"
@@ -2527,13 +2524,13 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                             pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drained =>
                                 assert(drained, "the bytes the peer keeps sending must be read and discarded")
                                 assert(!inbound.closed(), "the connection stays open while the peer's body still arrives")
-                                tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                                armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout.minusOrZero(1.milli)).andThen {
                                     sendRequest(inbound, "1\r\nc\r\n")
                                     pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drainedAgain =>
                                         assert(drainedAgain, "the drain continues while bytes arrive")
-                                        tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                                        armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout.minusOrZero(1.milli)).andThen {
                                             assert(!inbound.closed(), "bytes read within the window keep the connection open")
-                                            tc.advance(idleTimeout).andThen {
+                                            armedThenAdvance(tc, "re-armed idle timer", idleTimeout).andThen {
                                                 probe.closed.map { closed =>
                                                     assert(closed, "a peer that stops sending is closed once the idle timeout elapses")
                                                 }
@@ -2584,7 +2581,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             "the drain is bounded in total: a peer that keeps trickling within the idle window is closed at lingeringTimeout" in
                 drainOf(idleTimeout = 200.millis, lingeringTimeout = 500.millis) { (tc, inbound, probe) =>
                     def trickle(): Unit < (Async & Abort[Any]) =
-                        tc.advance(150.millis).andThen {
+                        armedThenAdvance(tc, "lingering bound", 500.millis, by = 150.millis).andThen {
                             sendRequest(inbound, "1\r\nb\r\n")
                             pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drained =>
                                 assert(drained, "the trickle is read and discarded")
@@ -2592,7 +2589,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         }
                     trickle().andThen(trickle()).andThen(trickle()).andThen {
                         assert(!inbound.closed(), "within the lingering bound a trickling peer keeps the connection")
-                        tc.advance(150.millis).andThen {
+                        armedThenAdvance(tc, "lingering bound", 500.millis, by = 150.millis).andThen {
                             probe.closed.map { closed =>
                                 assert(closed, "the lingering bound closes a peer that keeps sending, whatever the idle timer says")
                             }
@@ -2602,9 +2599,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             "the drain is bounded in total even with the idle timeout disabled" in
                 drainOf(idleTimeout = Duration.Infinity, lingeringTimeout = 500.millis) { (tc, inbound, probe) =>
-                    tc.advance(499.millis).andThen {
+                    armedThenAdvance(tc, "lingering bound", 500.millis, by = 499.millis).andThen {
                         assert(!inbound.closed(), "the connection stays open until the lingering bound elapses")
-                        tc.advance(1.milli).andThen {
+                        armedThenAdvance(tc, "lingering bound", 500.millis, by = 1.milli).andThen {
                             probe.closed.map { closed =>
                                 assert(closed, "with no idle timer the lingering bound alone closes the drained connection")
                             }
@@ -2648,8 +2645,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                             // The decoder has filled its output and parked; nothing of the body is left on the connection.
                             pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(0)).map { parked =>
                                 assert(parked, s"the body must be in hand, size ${inbound.size()} takes ${inbound.pendingTakes()}")
-                                tc.advance(idleTimeout).andThen {
-                                    tc.advance(idleTimeout).andThen {
+                                // Each window that finds the body in hand arms the next, so both fences find a timer.
+                                armedThenAdvance(tc, "idle timer", idleTimeout).andThen {
+                                    armedThenAdvance(tc, "re-armed idle timer", idleTimeout).andThen {
                                         assert(!inbound.closed(), "a body already in hand is the handler's wait, not the peer's: no close")
                                         gate.release.andThen {
                                             collectResponse(outbound).map { response =>
@@ -2703,8 +2701,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                             // The decoder stops taking once its output is full and the handler has not started reading.
                             pollUntil(inbound.size().exists(n => n > 0 && n < chunks) && inbound.pendingTakes().contains(0)).map { parked =>
                                 assert(parked, s"the peer's remaining chunks must be waiting on the connection, size ${inbound.size()}")
-                                tc.advance(idleTimeout).andThen {
-                                    tc.advance(idleTimeout).andThen {
+                                // Each window that finds bytes waiting arms the next, so both fences find a timer.
+                                armedThenAdvance(tc, "idle timer", idleTimeout).andThen {
+                                    armedThenAdvance(tc, "re-armed idle timer", idleTimeout).andThen {
                                         assert(!inbound.closed(), "bytes waiting on the connection are the peer's progress: no close")
                                         gate.release.andThen {
                                             collectResponse(outbound).map { response =>
@@ -2930,7 +2929,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             kyo.test.AssertScope
         ) =
             def trickle(): Unit < (Async & Abort[Any]) =
-                tc.advance(150.millis).andThen {
+                armedThenAdvance(tc, "lingering bound", 500.millis, by = 150.millis).andThen {
                     sendRequest(inbound, "more of what the peer was sending")
                     pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drained =>
                         assert(drained, "what the peer keeps sending is read and discarded")
@@ -2938,16 +2937,16 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 }
             trickle().andThen(trickle()).andThen(trickle()).andThen {
                 assert(!inbound.closed(), "within the lingering bound a sending peer keeps the connection")
-                tc.advance(150.millis).andThen {
+                armedThenAdvance(tc, "lingering bound", 500.millis, by = 150.millis).andThen {
                     probe.closed.map(closed => assert(closed, "the lingering bound closes a peer that keeps sending"))
                 }
             }
         end drainedUntilTheBound
 
         def closedWhenSilent(tc: Clock.TimeControl, inbound: Channel.Unsafe[Span[Byte]], probe: CloseProbe)(using kyo.test.AssertScope) =
-            tc.advance(199.millis).andThen {
+            armedThenAdvance(tc, "idle timer", 200.millis, by = 199.millis).andThen {
                 assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
-                tc.advance(1.milli).andThen {
+                armedThenAdvance(tc, "idle timer", 200.millis, by = 1.milli).andThen {
                     probe.closed.map(closed => assert(closed, "a peer that stops sending is closed at the idle timeout"))
                 }
             }
@@ -3028,6 +3027,21 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             (inbound, outbound, probe)
         end serveWith
 
+        // The drain has read what the peer sent once it waits on the connection again, so the first idle window sees that progress and
+        // arms a second, and the second, with nothing read, closes the connection.
+        def closedAfterTwoWindows(tc: Clock.TimeControl, inbound: Channel.Unsafe[Span[Byte]], idleTimeout: Duration, probe: CloseProbe)(
+            using
+            Frame,
+            kyo.test.AssertScope
+        ): Boolean < Async =
+            pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drained =>
+                assert(drained, "the bytes behind the answer are read and discarded")
+                armedThenAdvance(tc, "idle timer", idleTimeout).andThen {
+                    assert(!inbound.closed(), "a window in which the drain read bytes arms another")
+                    armedThenAdvance(tc, "re-armed idle timer", idleTimeout).andThen(probe.closed)
+                }
+            }
+
         "a body decoded to its terminal chunk keeps the connection alive, and the bytes after it are the next request" in {
             Clock.withTimeControl { _ =>
                 Clock.use { clock =>
@@ -3054,18 +3068,16 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     sendRequest(inbound, chunkedHead("sink") + "5\r\nhello\r\n")
                     collectResponse(outbound).map { response =>
                         assert(response.startsWith("HTTP/1.1 200 OK"), s"observed: $response")
-                        sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n")
-                        pollUntil(inbound.size().contains(0)).map { drained =>
-                            assert(drained, "bytes after the answer are the body still owed, read and discarded")
-                            // The drained bytes were progress inside the first window; the second window sees none.
-                            tc.advance(idleTimeout).andThen(tc.advance(idleTimeout)).andThen {
-                                probe.closed.map { closed =>
-                                    assert(closed, "the connection must be closed once the handler settles with the body still undecoded")
-                                    assert(
-                                        outbound.size().contains(0) || outbound.closed(),
-                                        "nothing after the body is parsed as a request"
-                                    )
-                                }
+                        // The drain arms its lingering bound as it begins, after the settle stopped the decode, so the bytes sent from
+                        // here are the drain's to read.
+                        awaitTimer(tc, "lingering bound", defaultConfig.lingeringTimeout).andThen {
+                            sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n")
+                            closedAfterTwoWindows(tc, inbound, idleTimeout, probe).map { closed =>
+                                assert(closed, "the connection must be closed once the handler settles with the body still undecoded")
+                                assert(
+                                    outbound.size().contains(0) || outbound.closed(),
+                                    "nothing after the body is parsed as a request"
+                                )
                             }
                         }
                     }
@@ -3089,18 +3101,13 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     sendRequest(inbound, chunkedHead("sink"))
                     collectResponse(outbound).map { first =>
                         assert(first.startsWith("HTTP/1.1 200 OK") && first.endsWith("sunk"), s"observed: $first")
-                        tc.awaitPendingSleeper(lingering).andThen {
+                        awaitTimer(tc, "lingering bound", lingering).andThen {
                             sendRequest(inbound, "5\r\nhello\r\n0\r\n\r\n" + "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n")
                         }
                     }.andThen {
-                        pollUntil(inbound.size().contains(0)).map { drained =>
-                            assert(drained, "the bytes behind the answer are read and discarded")
-                            tc.advance(idleTimeout).andThen(tc.advance(idleTimeout)).andThen {
-                                probe.closed.map { closed =>
-                                    assert(closed, "the connection must be closed once the peer stops sending")
-                                    assert(outbound.size().contains(0) || outbound.closed(), "the GET behind the body is never answered")
-                                }
-                            }
+                        closedAfterTwoWindows(tc, inbound, idleTimeout, probe).map { closed =>
+                            assert(closed, "the connection must be closed once the peer stops sending")
+                            assert(outbound.size().contains(0) || outbound.closed(), "the GET behind the body is never answered")
                         }
                     }
                 }
@@ -3147,7 +3154,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drained =>
                             assert(drained, "what the peer keeps sending is read and discarded")
                             assert(!inbound.closed(), "the connection stays open while the peer's body still arrives")
-                            tc.advance(idleTimeout).andThen(tc.advance(idleTimeout)).andThen {
+                            armedThenAdvance(tc, "idle timer", idleTimeout).andThen(
+                                armedThenAdvance(tc, "re-armed idle timer", idleTimeout)
+                            ).andThen {
                                 probe.closed.map { closed =>
                                     assert(closed, "the connection must be closed once the peer's body stops arriving")
                                 }
@@ -3350,7 +3359,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         assert(!inbound.closed(), "the drain waits for the peer before the close")
                         pollUntil(inbound.pendingTakes().contains(1)).map { draining =>
                             assert(draining, "the drain must be waiting on the connection")
-                            tc.advance(200.millis).andThen {
+                            armedThenAdvance(tc, "idle timer", 200.millis).andThen {
                                 probe.closed.map(closed => assert(closed, "a silent peer is closed at the idle timeout"))
                             }
                         }
@@ -3396,9 +3405,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
                     pollUntil(outbound.pendingPuts().contains(2)).map { parked =>
                         assert(parked, s"the parser must be waiting for the peer to read, observed ${outbound.pendingPuts()} queued spans")
-                        tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                        armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout.minusOrZero(1.milli)).andThen {
                             assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
-                            tc.advance(1.milli).andThen {
+                            armedThenAdvance(tc, "idle timer", idleTimeout, by = 1.milli).andThen {
                                 probe.closed.map(closed => assert(closed, "a peer that never reads its answers must be closed"))
                             }
                         }
@@ -3419,9 +3428,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
                     pollUntil(outbound.pendingPuts().exists(_ > 0)).map { parked =>
                         assert(parked, s"a response must be waiting for the peer to read, observed ${outbound.pendingPuts()} queued spans")
-                        tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                        // The handler's fiber parks its response before it completes, and the idle timer is armed at that completion.
+                        armedThenAdvance(tc, "idle timer", idleTimeout, by = idleTimeout.minusOrZero(1.milli)).andThen {
                             assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
-                            tc.advance(1.milli).andThen {
+                            armedThenAdvance(tc, "idle timer", idleTimeout, by = 1.milli).andThen {
                                 probe.closed.map(closed => assert(closed, "a peer that never reads its responses must be closed"))
                             }
                         }

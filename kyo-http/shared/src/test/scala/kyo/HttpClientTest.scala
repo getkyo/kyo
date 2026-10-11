@@ -1541,38 +1541,31 @@ class HttpClientTest extends BaseHttpTest:
                     HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(base, 2.0).take(5)))) {
                         withClient { client =>
                             val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
-                            // Advances a full delay at a time until the next attempt lands. The check precedes each advance,
-                            // so once an attempt is seen no further time is added and the next delay is measured from here.
-                            def releaseInto(n: Int) =
-                                Loop.indexed { i =>
-                                    if attempts.get() >= n then Loop.done(true)
-                                    else if i >= 50 then Loop.done(false)
-                                    else tc.advance(base).map(_ => Loop.continue)
-                                }
+                            // Each delay is armed only once its attempt's answer arrives, so each step fences on the delay it crosses.
                             Fiber.initUnscoped(client.sendWith(route, request)(_.status)).map { call =>
-                                pollUntil(attempts.get() >= 1).map { started =>
-                                    assert(started, "the client must make the first attempt")
-                                    tc.advance(base.minusOrZero(1.milli)).andThen {
-                                        assert(
-                                            attempts.get() == 1,
-                                            s"a retry fired before the first ${base.show} delay elapsed: ${attempts.get()}"
-                                        )
-                                        releaseInto(2).map { retried =>
-                                            assert(retried, "the first retry must fire once its delay elapses")
-                                            tc.advance((base * 2.0).minusOrZero(1.milli)).andThen {
-                                                assert(
-                                                    attempts.get() == 2,
-                                                    s"the second retry fired before its ${(base * 2.0).show} delay elapsed: ${attempts.get()}"
-                                                )
-                                                releaseInto(3).map { retriedAgain =>
-                                                    assert(retriedAgain, "the second retry must fire once its longer delay elapses")
-                                                    call.get.map { status =>
-                                                        assert(status == HttpStatus.OK)
-                                                        assert(
-                                                            attempts.get() == 3,
-                                                            s"Expected exactly three attempts, got: ${attempts.get()}"
-                                                        )
-                                                    }
+                                armedThenAdvance(tc, "first retry delay", base, by = base.minusOrZero(1.milli)).andThen {
+                                    assert(
+                                        attempts.get() == 1,
+                                        s"a retry fired before the first ${base.show} delay elapsed: ${attempts.get()}"
+                                    )
+                                    armedThenAdvance(tc, "first retry delay", base, by = 1.milli).andThen {
+                                        armedThenAdvance(
+                                            tc,
+                                            "second retry delay",
+                                            base * 2.0,
+                                            by = (base * 2.0).minusOrZero(1.milli)
+                                        ).andThen {
+                                            assert(
+                                                attempts.get() == 2,
+                                                s"the second retry fired before its ${(base * 2.0).show} delay elapsed: ${attempts.get()}"
+                                            )
+                                            armedThenAdvance(tc, "second retry delay", base * 2.0, by = 1.milli).andThen {
+                                                call.get.map { status =>
+                                                    assert(status == HttpStatus.OK)
+                                                    assert(
+                                                        attempts.get() == 3,
+                                                        s"Expected exactly three attempts, got: ${attempts.get()}"
+                                                    )
                                                 }
                                             }
                                         }

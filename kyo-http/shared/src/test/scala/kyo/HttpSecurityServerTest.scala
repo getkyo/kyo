@@ -620,21 +620,21 @@ class HttpSecurityServerTest extends BaseHttpTest:
         // handler that answers without reading leaves the body's later bytes on the connection, where a keep-alive restart reads
         // them as the next request. RFC 9112 section 9.3 requires the close here as much as on the buffered paths above.
         // A server that closes a connection whose body may still be arriving first reads and discards it until the peer's EOF or
-        // `lingeringTimeout`; the peer here never closes. The server runs on a controlled clock with no idle timer, so a drain's bound is
-        // its one pending sleep: the read races that sleep's registration, advancing exactly the bound once it exists, and so ends on the
-        // server's close whether or not the server drained, never on a clock. The leaf timeouts bound only the failing state, a server that
-        // never closes.
+        // `lingeringTimeout`; the peer here never closes. The server runs on a controlled clock with no idle timer: the read races the
+        // drain's bound, advancing exactly the bound once it is armed, and so ends on the server's close whether or not the server drained,
+        // never on a clock. A server that neither closes nor arms the bound fails the fence, which names it.
         val lingering = 1.hour
         val drainable = loopback.idleTimeout(Duration.Infinity).lingeringTimeout(lingering)
 
-        def readUntilClosedAdvancing(tc: Clock.TimeControl, conn: kyo.net.Connection)(using Frame): String < Async =
+        def readUntilClosedAdvancing(tc: Clock.TimeControl, conn: kyo.net.Connection)(using Frame, kyo.test.AssertScope): String < Async =
             Fiber.initUnscoped(readUntilClosed(conn, "")).map { reader =>
-                Async.race(reader.get, tc.awaitPendingSleepers(1).andThen(tc.advance(lingering)).andThen(reader.get))
+                Async.race(reader.get, armedThenAdvance(tc, "lingering bound", lingering).andThen(reader.get))
             }
 
         // Writes `request` and reads everything the server sends until it closes.
         def closedExchange(request: String)(check: String => Unit < (Async & Abort[Any]))(using
-            Frame
+            Frame,
+            kyo.test.AssertScope
         ): Unit < (Async & Abort[Any] & Scope) =
             Clock.withTimeControl { tc =>
                 withEchoServer(drainable) { (host, port) =>
@@ -646,7 +646,8 @@ class HttpSecurityServerTest extends BaseHttpTest:
         // sends until it closes. The answer is read before the marker goes out: a server that closes after its answer resets a peer
         // still writing, and the reset can discard the answer before the peer reads it.
         def drainedExchange(first: String)(check: (String, String) => Unit < (Async & Abort[Any]))(using
-            Frame
+            Frame,
+            kyo.test.AssertScope
         ): Unit < (Async & Abort[Any] & Scope) =
             val smuggled = "GET /marker HTTP/1.1\r\nHost: localhost\r\n\r\n"
             Clock.withTimeControl { tc =>
@@ -660,7 +661,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
             }
         end drainedExchange
 
-        "a streamed chunked body the handler did not read is not parsed as the next request".timeout(30.seconds) in {
+        "a streamed chunked body the handler did not read is not parsed as the next request" in {
             drainedExchange("POST /sink HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n") {
                 (answer, rest) =>
                     assert(answer.startsWith("HTTP/1.1 200"), s"the handler's own answer comes first:\n${answer.take(300)}")
@@ -671,7 +672,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
         // The same class after a framing fault: the decoder refused a chunk, so where the body ends is unknown, yet the handler was
         // answered as if the body were complete and the connection kept alive. The fault is a 400 (as on the buffered path) and the
         // bytes after it are never a request.
-        "a malformed chunk in a streamed body is answered 400, and the request behind it is not served".timeout(30.seconds) in {
+        "a malformed chunk in a streamed body is answered 400, and the request behind it is not served" in {
             drainedExchange("POST /drain HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\nZZ\r\n") {
                 (answer, rest) =>
                     assert(answer.startsWith("HTTP/1.1 400"), s"a refused body is a 400, not the handler's answer:\n${answer.take(300)}")
@@ -682,7 +683,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
         // RFC 9112 section 7.1: the trailer section's lines end in CRLF. A decoder that takes a bare LF as the end of the section
         // ends the body one byte early against an upstream that does not, and the bytes it then hands to the next parse, in the same
         // write, are served as a request.
-        "a bare LF ending a chunked body's trailer section does not end the body early".timeout(30.seconds) in {
+        "a bare LF ending a chunked body's trailer section does not end the body early" in {
             val request  = "POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\n"
             val smuggled = "GET /marker HTTP/1.1\r\nHost: localhost\r\n\r\n"
             closedExchange(request + smuggled) { response =>
@@ -695,7 +696,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
         }
 
         // RFC 9112 section 7.1: chunk-size = 1*HEXDIG. An empty size line is not the last chunk.
-        "an empty chunk-size line does not end a chunked body".timeout(30.seconds) in {
+        "an empty chunk-size line does not end a chunked body" in {
             val request  = "POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n\r\n"
             val smuggled = "GET /marker HTTP/1.1\r\nHost: localhost\r\n\r\n"
             closedExchange(request + smuggled) { response =>
@@ -708,7 +709,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
         }
 
         // RFC 9112 section 6.1: an HTTP/1.0 message carrying Transfer-Encoding has faulty framing and the connection is closed after it.
-        "an HTTP/1.0 request carrying Transfer-Encoding is refused".timeout(30.seconds) in {
+        "an HTTP/1.0 request carrying Transfer-Encoding is refused" in {
             closedExchange(
                 "POST /echo HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
             ) {
