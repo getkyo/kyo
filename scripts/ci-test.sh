@@ -687,6 +687,20 @@ echo "Tests: succeeded 100, failed 0"; exit 0'
     else record no "a jar 404 (FetchError not found) is retried after its Coursier error marker is purged"; fi
     rm -rf "$SELFDIR/coursier"
 
+    # A resolution failure in the same session as a failed test is not retried: the retry would re-run the
+    # failed test and could pass it.
+    run_runner JVM test 'case "$*" in
+*"--phase"*) echo "Tests: succeeded 100, failed 0"; exit 0 ;;
+*) echo "[error] Failed: Total 100, Failed 1, Errors 0, Passed 99"
+echo "[error] Failed tests:"
+echo "[error] 	kyo.SomeFlakyTest"
+echo "[error] (Zero / scalaJSLinkerImpl / fullClasspath) sbt.librarymanagement.ResolveException: Error downloading org.scala-js:scalajs-linker_2.12:1.22.0"
+echo "[error]   download error: Server returned HTTP response code: 429 for URL: https://repo1.maven.org/x.pom"; exit 1 ;;
+esac'
+    if exit_is 1 && [ "$(grep -c -- 'testKyo --all JVM' "$CALLS")" = 1 ]
+    then record ok "a run-phase resolution failure beside a failed test is not retried"
+    else record no "a run-phase resolution failure beside a failed test is not retried"; fi
+
     # The run phase's cross-pass re-resolve can fail the same way, as a FetchError with no ResolveException.
     rm -f "$SELFDIR/runfetch"
     run_runner JVM test 'case "$*" in

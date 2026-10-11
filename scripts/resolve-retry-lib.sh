@@ -50,10 +50,14 @@ resolve_transient_failure() {
 
 # The same signature in a log that also carries test output. A test can print a 429, a 404 URL or "download
 # error" on its own (a Chrome download, a container image pull, an HTTP test), so the log must also carry one of
-# sbt's or Coursier's resolution-failure classes, which test output never emits.
+# sbt's or Coursier's resolution-failure classes, which test output never emits. A retry re-runs every test the
+# attempt did not record as passing, so an attempt that also reported a failed test is never retried: the retry
+# would give that test a second chance. The failure summaries are sbt's own; kyo-test's per-suite lines are
+# unusable here because its self-tests print failing suites on purpose.
 resolve_run_transient_failure() {
     grep -qE 'sbt\.librarymanagement\.ResolveException|coursier\.error\.(FetchError|ResolutionError)' "$1" &&
-        grep -qE 'Server returned HTTP response code: (403|429|50[0-9])|Error downloading|Error fetching artifacts|[Nn]ot found: https?://|download error' "$1"
+        grep -qE 'Server returned HTTP response code: (403|429|50[0-9])|Error downloading|Error fetching artifacts|[Nn]ot found: https?://|download error' "$1" &&
+        ! grep -qE 'Tests: succeeded [0-9]+, failed [1-9]|Failed: Total [0-9]+, Failed [1-9]|Failed tests:|Error during tests:' "$1"
 }
 
 # resolve_tee <attempt> <log> <cmd...>: a runner for resolve_retry that streams the command and copies its
