@@ -1,8 +1,11 @@
 package kyo.internal
 
+import EventDispatch.*
+import MountRegions.*
 import kyo.*
 import kyo.Svg
 import kyo.UI.*
+import kyo.kernel.ContextEffect
 
 /** Normalized reactive UI node. */
 private[kyo] case class ReactiveUI(
@@ -14,7 +17,14 @@ private[kyo] case class ReactiveUI(
     region: ReactiveRegion,
     contentContext: ReactiveRegion.RegionIdentity,
     parentContext: ReactiveRegion.ParentContext,
-    discoverContentRootBound: Boolean
+    discoverContentRootBound: Boolean,
+    mounted: Maybe[MountedSpec] = Absent,
+    mountDispatch: Maybe[MountDispatch] = Absent,
+    // The call site of the node a region comes from and the row-key depths of its path since the enclosing region (see `rowKeys`):
+    // what places a region's mount table, independently of the region's position among its siblings.
+    origin: Maybe[Frame] = Absent,
+    rows: Long = 0L,
+    deepRows: Chunk[Int] = Chunk.empty
 )
 
 private[kyo] object ReactiveUI:
@@ -29,7 +39,10 @@ private[kyo] object ReactiveUI:
         svgContext: Boolean,
         regionIdentity: ReactiveRegion.RegionIdentity,
         contentContext: ReactiveRegion.RegionIdentity,
-        parentContext: ReactiveRegion.ParentContext
+        parentContext: ReactiveRegion.ParentContext,
+        origin: Maybe[Frame] = Absent,
+        rows: Long = 0L,
+        deepRows: Chunk[Int] = Chunk.empty
     )(
         handle: (Seq[String], UIEvent) => Boolean < Async
     ): ReactiveUI =
@@ -42,18 +55,55 @@ private[kyo] object ReactiveUI:
             ReactiveRegion.from(regionIdentity, svgContext),
             contentContext,
             parentContext,
-            discoverContentRootBound = true
+            discoverContentRootBound = true,
+            origin = origin,
+            rows = rows,
+            deepRows = deepRows
         )
 
+    /** The root of a mount session: creates the session's [[MountDispatch]] and records it on the returned node for `subscribe`. */
     def normalize(ui: UI, path: Seq[String], svg: Boolean = false): ReactiveUI < Sync =
-        normalizeAt(ui, path, svg, ReactiveRegion.RegionIdentity.root(path), ReactiveRegion.ParentContext.Other)
+        given Frame = ui.frame
+        for
+            dispatch <- MountDispatch.init
+            root     <- normalizeAt(
+                ui,
+                path,
+                svg,
+                ReactiveRegion.RegionIdentity.root(path),
+                ReactiveRegion.ParentContext.Other,
+                dispatch,
+                rows = 0L,
+                deepRows = Chunk.empty
+            )
+        yield root.copy(mountDispatch = Present(dispatch))
+        end for
+    end normalize
+
+    /* Normalization and the tree walk carry, for the mounted nodes and regions they meet, the session's dispatch table and which
+     * depths of the path, since the enclosing reactive region, hold the key of a keyed list row: a bit per depth below 63 in `rows`,
+     * and the rare deeper ones in `deepRows`. Both are read out of the path only when a mount or a region's table needs them, so the
+     * walk itself allocates nothing for them.
+     */
+
+    /** The row keys `rows` and `deepRows` mark in `path`, innermost first. */
+    private[internal] def rowKeys(path: Seq[String], rows: Long, deepRows: Chunk[Int]): Chunk[String] =
+        if rows == 0L && deepRows.isEmpty then Chunk.empty
+        else
+            path.iterator.zipWithIndex.foldLeft(Chunk.empty[String]) { case (acc, (segment, depth)) =>
+                val isRow = if depth < 63 then (rows & (1L << depth)) != 0L else deepRows.contains(depth)
+                if isRow then acc.append(segment) else acc
+            }.reverse
 
     private def normalizeAt(
         ui: UI,
         path: Seq[String],
         svg: Boolean,
         regionIdentity: ReactiveRegion.RegionIdentity,
-        parentContext: ReactiveRegion.ParentContext
+        parentContext: ReactiveRegion.ParentContext,
+        cells: MountDispatch,
+        rows: Long,
+        deepRows: Chunk[Int]
     ): ReactiveUI < Sync =
         given Frame = ui.frame
         ui match
@@ -62,14 +112,37 @@ private[kyo] object ReactiveUI:
                 for
                     current <- ui.signal.current
                     contentParentContext = nestedParentContext(parentContext, current)
-                    (kids, _) <- walkStatic(current, path, svg, contentContext, contentParentContext)
-                yield init(path, ui.signal, isConst = false, kids, svg, regionIdentity, contentContext, parentContext) {
+                    (kids, _) <-
+                        walkStatic(current, path, svg, contentContext, contentParentContext, cells, rows = 0L, deepRows = Chunk.empty)
+                yield init(
+                    path,
+                    ui.signal,
+                    isConst = false,
+                    kids,
+                    svg,
+                    regionIdentity,
+                    contentContext,
+                    parentContext,
+                    Present(ui.frame),
+                    rows,
+                    deepRows
+                ) {
                     (targetPath, event) =>
                         for
                             currentUI <- ui.signal.current
                             contentParentContext = nestedParentContext(parentContext, currentUI)
-                            (_, freshHdl) <- walkStatic(currentUI, path, svg, contentContext, contentParentContext)
-                            result        <- freshHdl(targetPath, event)
+                            (_, freshHdl) <-
+                                walkStatic(
+                                    currentUI,
+                                    path,
+                                    svg,
+                                    contentContext,
+                                    contentParentContext,
+                                    cells,
+                                    rows = 0L,
+                                    deepRows = Chunk.empty
+                                )
+                            result <- freshHdl(targetPath, event)
                         yield result
                 }
                 end for
@@ -87,14 +160,37 @@ private[kyo] object ReactiveUI:
                 for
                     current <- sig.current
                     contentParentContext = nestedParentContext(parentContext, current)
-                    (kids, _) <- walkStatic(current, path, svg, contentContext, contentParentContext)
-                yield init(path, sig, isConst = false, kids, svg, regionIdentity, contentContext, parentContext) {
+                    (kids, _) <-
+                        walkStatic(current, path, svg, contentContext, contentParentContext, cells, rows = 0L, deepRows = Chunk.empty)
+                yield init(
+                    path,
+                    sig,
+                    isConst = false,
+                    kids,
+                    svg,
+                    regionIdentity,
+                    contentContext,
+                    parentContext,
+                    Present(ui.frame),
+                    rows,
+                    deepRows
+                ) {
                     (targetPath, event) =>
                         for
                             currentUI <- sig.current
                             contentParentContext = nestedParentContext(parentContext, currentUI)
-                            (_, freshHdl) <- walkStatic(currentUI, path, svg, contentContext, contentParentContext)
-                            result        <- freshHdl(targetPath, event)
+                            (_, freshHdl) <-
+                                walkStatic(
+                                    currentUI,
+                                    path,
+                                    svg,
+                                    contentContext,
+                                    contentParentContext,
+                                    cells,
+                                    rows = 0L,
+                                    deepRows = Chunk.empty
+                                )
+                            result <- freshHdl(targetPath, event)
                         yield result
                 }
                 end for
@@ -111,7 +207,21 @@ private[kyo] object ReactiveUI:
                 // re-renders without the value-dedup ever suppressing a real edit. An element with no bound ref is const.
                 val (elementSignal, isConstNode) =
                     collectSignalRef(ui).fold((Signal.initConst(ui: UI), true))(ref => (ref.map(_ => ui: UI), false))
-                for (kids, hdl) <- walkStatic(ui, path, svg, regionIdentity, parentContext, discoverRootBound = false)
+                // A constant element belongs to the enclosing region; a bound one is a region of its own.
+                val contentRows     = if isConstNode then rows else 0L
+                val contentDeepRows = if isConstNode then deepRows else Chunk.empty
+                for
+                    (kids, hdl) <- walkStatic(
+                        ui,
+                        path,
+                        svg,
+                        regionIdentity,
+                        parentContext,
+                        cells,
+                        contentRows,
+                        contentDeepRows,
+                        discoverRootBound = false
+                    )
                 yield ReactiveUI(
                     path,
                     elementSignal,
@@ -121,13 +231,57 @@ private[kyo] object ReactiveUI:
                     ReactiveRegion.from(regionIdentity, svg),
                     regionIdentity,
                     parentContext,
-                    discoverContentRootBound = false
+                    discoverContentRootBound = false,
+                    origin = Present(ui.frame),
+                    rows = rows,
+                    deepRows = deepRows
+                )
+
+            case ui: Mounted =>
+                val spec           = MountedSpec(ui, path, rowKeys(path, rows, deepRows))
+                val contentContext = regionIdentity.transparent
+                // The node value is fresh on every dispatch, so the handler finds the live instance through the dispatch table.
+                val handle: Handler = (targetPath, event) =>
+                    cells.lookup(path).map {
+                        case Absent        => true
+                        case Present(cell) =>
+                            cell.current.map {
+                                case MountState.Pending(Present(_)) => true
+                                case state                          =>
+                                    val content = state.content(spec)
+                                    for
+                                        (_, freshHdl) <- walkStatic(
+                                            content,
+                                            path,
+                                            svg,
+                                            contentContext,
+                                            nestedParentContext(parentContext, content),
+                                            cells,
+                                            rows = 0L,
+                                            deepRows = Chunk.empty
+                                        )
+                                        result <- freshHdl(targetPath, event)
+                                    yield result
+                                    end for
+                            }
+                    }
+                ReactiveUI(
+                    path = path,
+                    signal = Signal.initConst(spec.placeholder),
+                    isConst = false,
+                    children = Seq.empty,
+                    handle = handle,
+                    region = ReactiveRegion.from(regionIdentity, svg),
+                    contentContext = contentContext,
+                    parentContext = parentContext,
+                    discoverContentRootBound = true,
+                    mounted = Present(spec)
                 )
 
             case ui =>
                 // Catch-all for static leaf nodes: Text, Fragment, KeyedChild.
                 // All interactive types extend Element (handled above) and all reactive types are
-                // Reactive or Foreach (also handled above). If a new UI subtype is added, the
+                // Reactive, Foreach or Mounted (also handled above). If a new UI subtype is added, the
                 // exhaustiveness checker will NOT warn here; any new type that is interactive must
                 // be added as an explicit case above before this catch-all.
                 ReactiveUI(
@@ -161,14 +315,10 @@ private[kyo] object ReactiveUI:
         end match
     end collectSignalRef
 
-    private def nestedParentContext(parentContext: ReactiveRegion.ParentContext, current: UI): ReactiveRegion.ParentContext =
+    private[internal] def nestedParentContext(parentContext: ReactiveRegion.ParentContext, current: UI): ReactiveRegion.ParentContext =
         (parentContext, ReactiveRegion.tableContent(current)) match
             case (ReactiveRegion.ParentContext.HtmlTable, ReactiveRegion.TableContent.Rows) => ReactiveRegion.ParentContext.Other
             case _                                                                          => parentContext
-
-    private type Handler = (Seq[String], UIEvent) => Boolean < Async
-
-    private type ValidatedHandler = (Seq[String], DragProtocol.ValidatedEvent) => Boolean < Async
 
     private type DragResolver = Maybe[(String, Drag.Decision) => Unit < Async]
 
@@ -189,17 +339,20 @@ private[kyo] object ReactiveUI:
     end DragSessionLimits
 
     /** Walk a static UI tree. Collect reactive children, build handle. */
-    private def walkStatic(
+    private[internal] def walkStatic(
         ui: UI,
         basePath: Seq[String],
         svg: Boolean = false,
         context: ReactiveRegion.RegionIdentity,
         parentContext: ReactiveRegion.ParentContext,
+        cells: MountDispatch,
+        rows: Long,
+        deepRows: Chunk[Int],
         discoverRootBound: Boolean = true
     )(using Frame): (Seq[ReactiveUI], Handler) < Sync =
         ui match
             case elem: Element if discoverRootBound && collectSignalRef(elem).nonEmpty =>
-                for rui <- normalizeAt(elem, basePath, svg, context, parentContext)
+                for rui <- normalizeAt(elem, basePath, svg, context, parentContext, cells, rows, deepRows)
                 yield (Seq(rui), rui.handle)
 
             case elem: Element =>
@@ -216,16 +369,19 @@ private[kyo] object ReactiveUI:
                         val childPath    = basePath :+ i.toString
                         val childContext = context.child(i.toString)
                         child match
-                            case _: Reactive[?] | _: Foreach[?, ?] =>
-                                for rui <- normalizeAt(child, childPath, childSvg, childContext, childParentContext)
+                            case _: Reactive[?] | _: Foreach[?, ?] | _: Mounted =>
+                                for rui <- normalizeAt(child, childPath, childSvg, childContext, childParentContext, cells, rows, deepRows)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case childElem: Element if collectSignalRef(childElem).nonEmpty =>
                                 // Element with SignalRef-bound attributes is reactive over those signals;
                                 // normalize it so subscribeNode wires updates.
-                                for rui <- normalizeAt(childElem, childPath, childSvg, childContext, childParentContext)
+                                for rui <-
+                                        normalizeAt(childElem, childPath, childSvg, childContext, childParentContext, cells, rows, deepRows)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case _ =>
-                                for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg, childContext, childParentContext)
+                                for
+                                    (innerKids, innerHandle) <-
+                                        walkStatic(child, childPath, childSvg, childContext, childParentContext, cells, rows, deepRows)
                                 yield (innerKids, Seq((i, innerHandle)))
                         end match
                     }
@@ -233,7 +389,7 @@ private[kyo] object ReactiveUI:
                     val reactiveChildren = childWalks.flatMap(_._1)
                     val staticHandlers   = childWalks.flatMap(_._2)
                     val handle: Handler  = (targetPath, event) =>
-                        dispatch(elem, basePath, targetPath, event, reactiveChildren, staticHandlers)
+                        dispatch(elem, basePath, targetPath, event, reactiveChildren, staticHandlers, cells)
                     (reactiveChildren, handle)
                 end for
 
@@ -245,10 +401,15 @@ private[kyo] object ReactiveUI:
                         val childContext = child match
                             case kc: KeyedChild[?] => context.child(kc.key)
                             case _                 => context.child(i.toString)
-                        val inner = child match
-                            case kc: KeyedChild[?] => kc.child
-                            case _                 => child
-                        walkStatic(inner, childPath, svg, childContext, parentContext)
+                        child match
+                            case kc: KeyedChild[?] =>
+                                val depth = basePath.size
+                                if depth < 63 then
+                                    walkStatic(kc.child, childPath, svg, childContext, parentContext, cells, rows | (1L << depth), deepRows)
+                                else walkStatic(kc.child, childPath, svg, childContext, parentContext, cells, rows, deepRows.append(depth))
+                                end if
+                            case _ => walkStatic(child, childPath, svg, childContext, parentContext, cells, rows, deepRows)
+                        end match
                     }
                 yield
                     val allKids    = childWalks.flatMap(_._1)
@@ -265,515 +426,17 @@ private[kyo] object ReactiveUI:
                         else true
                     (allKids, handle)
 
-            case _: Reactive[?] | _: Foreach[?, ?] =>
-                // When walkStatic is called with a Reactive or Foreach as the top-level node
+            case _: Reactive[?] | _: Foreach[?, ?] | _: Mounted =>
+                // When walkStatic is called with a Reactive, Foreach or Mounted as the top-level node
                 // (not as a child of an Element), normalize it at basePath so subscribeNode
                 // sets up a subscription for it. This handles the case where an outer reactive's
                 // signal value is itself a Reactive or Foreach (e.g. outer.map { _ => inner.map(UI.span(_)) }).
-                for rui <- normalizeAt(ui, basePath, svg, context, parentContext)
+                for rui <- normalizeAt(ui, basePath, svg, context, parentContext, cells, rows, deepRows)
                 yield (Seq(rui), rui.handle)
 
             case _ =>
                 val noHandle: Handler = (_, _) => true
                 (Seq.empty[ReactiveUI], noHandle)
-
-    /** Dispatch an event through an element. */
-    private def dispatch(
-        elem: Element,
-        myPath: Seq[String],
-        targetPath: Seq[String],
-        event: UIEvent,
-        reactiveChildren: Seq[ReactiveUI],
-        staticHandlers: Seq[(Int, Handler)]
-    )(using Frame): Boolean < Async =
-        if targetPath == myPath then
-            dispatchToElement(elem, event, isTarget = true)
-        else if targetPath.startsWith(myPath) && targetPath.size > myPath.size then
-            val childSegment = targetPath(myPath.size)
-            val childIdx     = childSegment.toIntOption
-
-            // Find the reactive child whose path is a prefix of (or equals) targetPath. Matching by
-            // `lastOption.contains(childSegment)` is incorrect when reactive children are nested
-            // multiple levels deep; their last segment may collide with a sibling's index at the
-            // current level. Using prefix-match correctly routes only when the target lies inside.
-            val reactiveChild = reactiveChildren.find(rc => targetPath.startsWith(rc.path))
-
-            for
-                // Disabled-target (Form submit suppression), Button-target (only Button clicks submit
-                // forms), and Select-target (Enter on Select must not submit) all resolve through any
-                // Reactive/Foreach boundary wrapping the target, so signal-typed setters do not hide it.
-                targetDisabled <- event match
-                    case _: UIEvent.Click => isTargetDisabled(elem, myPath, targetPath)
-                    case _                => Kyo.lift(false)
-                targetIsButton <- event match
-                    case _: UIEvent.Click => isTargetButton(elem, myPath, targetPath)
-                    case _                => Kyo.lift(false)
-                targetIsSelect <- event match
-                    case _: UIEvent.KeyDown => isTargetSelect(elem, myPath, targetPath)
-                    case _                  => Kyo.lift(false)
-                bubble = dispatchToElement(
-                    elem,
-                    event,
-                    isTarget = false,
-                    disabledTarget = targetDisabled,
-                    submitOrigin = targetIsButton,
-                    selectTarget = targetIsSelect
-                )
-                result <- Maybe.fromOption(reactiveChild) match
-                    case Present(child) =>
-                        safeDispatch(child.handle, targetPath, event).map(keep => if keep then bubble else false)
-                    case Absent =>
-                        Maybe.fromOption(childIdx).flatMap(i => Maybe.fromOption(staticHandlers.find(_._1 == i)).map(_._2))
-                            .fold(Kyo.lift(false))(childHandle =>
-                                safeDispatch(childHandle, targetPath, event).map(keep => if keep then bubble else false)
-                            )
-            yield result
-            end for
-        else
-            true
-
-    /** Invoke a Maybe[Any < Async] handler, discarding the result. */
-    private def invoke(handler: Maybe[Any < Async])(using Frame): Unit < Async =
-        if handler.isEmpty then () else handler.get.unit
-
-    /** Invoke a Maybe[A => Any < Async] handler with a value, discarding the result. */
-    private def invokeWith[A](handler: Maybe[A => Any < Async], value: A)(using Frame): Unit < Async =
-        if handler.isEmpty then () else handler.get(value).unit
-
-    /** Dispatch an event safely, logging and recovering from handler errors without stopping the bubble chain. */
-    private def safeDispatch(handle: (Seq[String], UIEvent) => Boolean < Async, path: Seq[String], event: UIEvent)(using
-        Frame
-    ): Boolean < Async =
-        DragCommands.current.use { context =>
-            val decisions = context.flatMap(_.decisions)
-            Abort.recover[Throwable](
-                onFail = err =>
-                    Log.error(s"Handler error during ${event.getClass.getSimpleName} at ${path.mkString(".")}: ${err.getMessage}")
-                        .andThen(markDecisionFailure(event, decisions))
-                        .andThen(true), // continue bubbling
-                onPanic = thr =>
-                    Log.error(s"Handler panic during ${event.getClass.getSimpleName} at ${path.mkString(".")}: ${thr.getMessage}")
-                        .andThen(markDecisionFailure(event, decisions))
-                        .andThen(true) // continue bubbling
-            )(handle(path, event))
-        }
-
-    private def markDecisionFailure(event: UIEvent, decisions: Maybe[AtomicRef[DragCommands.DecisionState]])(using
-        Frame
-    ): Unit < Async =
-        event match
-            case _: UIEvent.Drop     => failDecision(decisions, "The drop handler failed.")
-            case _: UIEvent.SortMove => failDecision(decisions, "The sort handler failed.")
-            case _                   => ()
-
-    /** Read current checked value from Maybe[Bound[Boolean]]. */
-    private def readChecked(checked: Maybe[Bound[Boolean]])(using Frame): Boolean < Sync =
-        checked match
-            case Present(Bound.Const(b)) => b
-            case Present(Bound.Ref(ref)) => ref.get
-            case _                       => false
-
-    /** Toggle checked and auto-set SignalRef if bound. Returns the new value. */
-    private def toggleChecked(checked: Maybe[Bound[Boolean]])(using Frame): Boolean < Sync =
-        checked match
-            case Present(Bound.Ref(ref)) =>
-                ref.getAndUpdate(!_).map(!_)
-            case Present(Bound.Const(b)) => !b
-            case _                       => true
-
-    /** Cycle a Select to the next or previous option. Updates SignalRef and fires onChange. */
-    private def cycleSelectOption(sel: Select, forward: Boolean)(using Frame): Unit < Async =
-        val options = sel.children.toSeq.collect { case opt: Opt => opt }
-        val values  = options.flatMap(_.value.toList)
-        if values.isEmpty then Kyo.lift(())
-        else
-            for
-                current <- sel.value match
-                    case Present(Bound.Ref(ref)) => ref.get
-                    case Present(Bound.Const(s)) => Kyo.lift(s)
-                    case _                       => Kyo.lift("")
-                currentIdx = values.indexOf(current).max(0)
-                nextIdx    =
-                    if forward then (currentIdx + 1)    % values.size
-                    else (currentIdx - 1 + values.size) % values.size
-                newValue = values(nextIdx)
-                _ <- sel.value match
-                    case Present(Bound.Ref(ref)) => ref.set(newValue)
-                    case _                       => Kyo.lift(())
-                _ <- invokeWith(sel.onChange, newValue)
-            yield ()
-        end if
-    end cycleSelectOption
-
-    private def formatDouble(v: Double): String = NumberFormat.double(v)
-
-    /** Check if element is disabled. */
-    private def isDisabled(elem: Element): Boolean =
-        elem match
-            case hd: HasDisabled => hd.disabled.getOrElse(false)
-            case _               => false
-
-    /** Check if element is readOnly. */
-    private def isReadOnly(elem: Element): Boolean =
-        elem match
-            case ti: TextInput => ti.readOnly.getOrElse(false)
-            case _             => false
-
-    /** Check if element is hidden. */
-    private def isHidden(elem: Element): Boolean =
-        elem.attrs.hidden.getOrElse(false)
-
-    /** Resolve the (possibly reactive) node at `targetPath` and test `predicate` against the concrete element there.
-      *
-      * Mirrors the renderer's path scheme: element children are index-addressed, a `Reactive`'s rendered content occupies the same path as
-      * the boundary, `Foreach` items live at `path :+ key` (or `:+ index`), and `Fragment` children at `path :+ index`. Resolving through
-      * these boundaries is what lets an element wrapped by a signal-typed setter (e.g. `.disabled(Signal)`, which wraps it in a `Reactive`)
-      * still be recognized by its concrete type, so button-click form submit and disabled detection keep working through such wrappers.
-      */
-    private def targetSatisfies(node: UI, nodePath: Seq[String], targetPath: Seq[String], predicate: Element => Boolean)(using
-        Frame
-    ): Boolean < Sync =
-        node match
-            case kc: KeyedChild[?] =>
-                targetSatisfies(kc.child, nodePath, targetPath, predicate)
-            case r: Reactive[?] =>
-                // A Reactive's rendered content occupies the same path as the boundary, so re-test at nodePath.
-                r.signal.current(using r.frame).map(cur => targetSatisfies(cur, nodePath, targetPath, predicate))
-            case Fragment(children) =>
-                if targetPath.size <= nodePath.size then false
-                else
-                    val seg = targetPath(nodePath.size)
-                    Maybe.fromOption(seg.toIntOption) match
-                        case Present(i) if i >= 0 && i < children.size =>
-                            targetSatisfies(children(i), nodePath :+ seg, targetPath, predicate)
-                        case _ => false
-                    end match
-            case fe: Foreach[?, ?] @unchecked =>
-                if targetPath.size <= nodePath.size then false
-                else
-                    val seg = targetPath(nodePath.size)
-                    fe.applyTyped {
-                        [T] => (signal, keyFn, renderFn) =>
-                            signal.current(using fe.frame).map { items =>
-                                val idx = keyFn match
-                                    case Present(f) => items.indexWhere(it => f(it) == seg)
-                                    case Absent     => Maybe.fromOption(seg.toIntOption).getOrElse(-1)
-                                if idx >= 0 && idx < items.size then
-                                    targetSatisfies(renderFn(idx, items(idx)), nodePath :+ seg, targetPath, predicate)
-                                else false
-                            }
-                    }
-            case e: Element =>
-                if targetPath.size <= nodePath.size then predicate(e)
-                else
-                    val seg = targetPath(nodePath.size)
-                    Maybe.fromOption(seg.toIntOption) match
-                        case Present(i) if i >= 0 && i < e.children.size =>
-                            targetSatisfies(e.children(i), nodePath :+ seg, targetPath, predicate)
-                        case _ => false
-                    end match
-            // Text, RawHtml and StyleElement are leaf content with no kyo-addressable Element children, so no event
-            // target can resolve through them: none can satisfy an Element predicate.
-            case _: Text | _: RawHtml | _: StyleElement => false
-
-    private def isTargetDisabled(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
-        targetSatisfies(elem, myPath, targetPath, isDisabled)
-
-    private def isTargetButton(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
-        targetSatisfies(elem, myPath, targetPath, _.isInstanceOf[Button])
-
-    private def isTargetSelect(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
-        targetSatisfies(elem, myPath, targetPath, _.isInstanceOf[Select])
-
-    /** Bubble-continue value after an element handled `event`: `false` (consume) only when the element set
-      * `stopPropagation(true)` AND actually declared a handler for this event's type (`declared`). The result flows up the
-      * dispatch recursion, so a `false` makes every element ABOVE this one skip its own handler.
-      */
-    private def keepBubbling(elem: Element, declared: Boolean): Boolean =
-        !(declared && elem.attrs.stopPropagation.getOrElse(false))
-
-    /** Dispatch event to element. isTarget=true when element is the click target, false on bubble. disabledTarget=true when the original
-      * click target was disabled (prevents Form onSubmit on bubble).
-      */
-    private def dispatchToElement(
-        elem: Element,
-        event: UIEvent,
-        isTarget: Boolean,
-        disabledTarget: Boolean = false,
-        submitOrigin: Boolean = false,
-        selectTarget: Boolean = false
-    )(
-        using Frame
-    ): Boolean < Async =
-        val attrs = elem.attrs
-        event match
-            case ev: UIEvent.Click =>
-                // Disabled or hidden elements ignore their own click handler, but allow bubbling
-                if isTarget && (isDisabled(elem) || isHidden(elem)) then true
-                else
-                    val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
-                    val self  = if isTarget then
-                        invoke(attrs.onClickSelf).andThen(invokeWith(attrs.onClickSelfEvt, mouse))
-                    else Kyo.lift(())
-                    // Checkbox/radio toggle is handled by UIControlSession.click() which dispatches
-                    // ChangeChecked after Click. Don't toggle here to avoid double-toggle.
-                    val activateToggle = Kyo.lift(())
-                    // When a Click on a Button bubbles to a Form, trigger onSubmit (browser behavior)
-                    // Only Button clicks submit forms (not radio, checkbox, or input clicks)
-                    val formSubmit = if !isTarget && !disabledTarget && submitOrigin then
-                        elem match
-                            case f: Form =>
-                                invoke(f.onSubmit).andThen(invokeWith(f.onSubmitEvt, mouse))
-                            case _ => Kyo.lift(())
-                    else Kyo.lift(())
-                    // Self handlers only count as "declared" when they actually fired (isTarget).
-                    val declared = attrs.onClick.nonEmpty || attrs.onClickEvt.nonEmpty ||
-                        (isTarget && (attrs.onClickSelf.nonEmpty || attrs.onClickSelfEvt.nonEmpty))
-                    self
-                        .andThen(invokeWith(attrs.onClickEvt, mouse))
-                        .andThen(invoke(attrs.onClick))
-                        .andThen(activateToggle)
-                        .andThen(formSubmit)
-                        .andThen(keepBubbling(elem, declared))
-            case ev: UIEvent.Focus =>
-                val isFocusable = elem.isInstanceOf[Focusable] || elem.attrs.tabIndex.nonEmpty
-                if isTarget && isFocusable then
-                    val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
-                    invoke(attrs.onFocus).andThen(invokeWith(attrs.onFocusEvt, mouse)).andThen(true)
-                else if isTarget then Kyo.lift(false) // not focusable; reject
-                else true
-                end if
-            case ev: UIEvent.Blur =>
-                if isTarget then
-                    val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
-                    invoke(attrs.onBlur).andThen(invokeWith(attrs.onBlurEvt, mouse)).andThen(true)
-                else true
-            case e: UIEvent.KeyDown =>
-                if isTarget && isDisabled(elem) then true
-                else
-                    val kbEvent = UI.KeyboardEvent(
-                        key = Keyboard.fromString(e.keyboard.key),
-                        modifiers = e.keyboard.modifiers,
-                        targetId = e.keyboard.targetId
-                    )
-                    val keyHandler = invokeWith(attrs.onKeyDown, kbEvent)
-                    // Enter/Space on button/anchor triggers onClick (browser behavior)
-                    val activateClick = if isTarget && (e.keyboard.key == "Enter" || e.keyboard.key == " ") then
-                        elem match
-                            case _: Button => invoke(attrs.onClick)
-                            case _: Anchor => invoke(attrs.onClick)
-                            case _         => Kyo.lift(())
-                    else Kyo.lift(())
-                    // Enter/Space on checkbox/radio triggers onChange (browser behavior)
-                    val activateToggle = if isTarget && (e.keyboard.key == "Enter" || e.keyboard.key == " ") then
-                        elem match
-                            case cb: Checkbox =>
-                                toggleChecked(cb.checked).map(newVal => invokeWith(cb.onChange, newVal))
-                            case rb: Radio =>
-                                val autoSet = rb.checked match
-                                    case Present(Bound.Ref(ref)) => ref.set(true)
-                                    case _                       => Kyo.lift(())
-                                autoSet.andThen(invokeWith(rb.onChange, true))
-                            case _ => Kyo.lift(())
-                    else Kyo.lift(())
-                    // ArrowDown/ArrowUp/Space/Enter on Select cycles through options (browser behavior)
-                    val selectCycle =
-                        if isTarget &&
-                            (e.keyboard.key == "ArrowDown" || e.keyboard.key == "ArrowUp" || e.keyboard.key == " " ||
-                                e.keyboard.key == "Enter")
-                        then
-                            elem match
-                                case sel: Select => cycleSelectOption(sel, forward = e.keyboard.key != "ArrowUp")
-                                case _           => Kyo.lift(())
-                        else Kyo.lift(())
-                    // Enter key bubbling to Form triggers onSubmit (browser behavior)
-                    // Enter on Select should NOT submit; it interacts with the dropdown
-                    val formSubmit = if !isTarget && e.keyboard.key == "Enter" && !selectTarget then
-                        elem match
-                            case f: Form => invoke(f.onSubmit)
-                            case _       => Kyo.lift(())
-                    else Kyo.lift(())
-                    keyHandler.andThen(activateClick).andThen(activateToggle).andThen(selectCycle).andThen(formSubmit)
-                        .andThen(keepBubbling(elem, attrs.onKeyDown.nonEmpty))
-            case e: UIEvent.KeyUp =>
-                val kbEvent = UI.KeyboardEvent(
-                    key = Keyboard.fromString(e.keyboard.key),
-                    modifiers = e.keyboard.modifiers,
-                    targetId = e.keyboard.targetId
-                )
-                invokeWith(attrs.onKeyUp, kbEvent).andThen(keepBubbling(elem, attrs.onKeyUp.nonEmpty))
-            case e: UIEvent.Input =>
-                if isTarget && (isDisabled(elem) || isReadOnly(elem)) then true
-                else
-                    elem match
-                        case ti: TextInput =>
-                            val autoSet = ti.value match
-                                case Present(Bound.Ref(ref)) => ref.set(e.value)
-                                case _                       => Kyo.lift(())
-                            autoSet.andThen(invokeWith(ti.onInput, e.value)).andThen(true)
-                        case _ => true
-            case e: UIEvent.Change =>
-                if isTarget && (isDisabled(elem) || isReadOnly(elem)) then true
-                else
-                    elem match
-                        case ti: TextInput =>
-                            val autoSet = ti.value match
-                                case Present(Bound.Ref(ref)) => ref.set(e.value)
-                                case _                       => Kyo.lift(())
-                            autoSet.andThen(invokeWith(ti.onChange, e.value)).andThen(true)
-                        case dd: Dropdown =>
-                            val autoSet = dd.value match
-                                case Present(Bound.Ref(ref)) => ref.set(e.value)
-                                case _                       => Kyo.lift(())
-                            autoSet.andThen(invokeWith(dd.onChange, e.value)).andThen(true)
-                        case pi: PickerInput =>
-                            val autoSet = pi.value match
-                                case Present(Bound.Ref(ref)) => ref.set(e.value)
-                                case _                       => Kyo.lift(())
-                            autoSet.andThen(invokeWith(pi.onChange, e.value)).andThen(true)
-                        case fi: FileInput => invokeWith(fi.onChange, e.value).andThen(true)
-                        case _             => true
-            case e: UIEvent.ChangeChecked =>
-                if isTarget && isDisabled(elem) then true
-                else
-                    elem match
-                        case bi: BooleanInput =>
-                            val autoSet = bi.checked match
-                                case Present(Bound.Ref(ref)) => ref.set(e.checked)
-                                case _                       => Kyo.lift(())
-                            autoSet.andThen(invokeWith(bi.onChange, e.checked)).andThen(true)
-                        case _ => true
-            case e: UIEvent.ChangeNumeric =>
-                if isTarget && isDisabled(elem) then true
-                else
-                    elem match
-                        case ni: NumberInput =>
-                            val autoSet = ni.value match
-                                case Present(Bound.Ref(ref)) => ref.set(formatDouble(e.value))
-                                case _                       => Kyo.lift(())
-                            autoSet.andThen(invokeWith(ni.onChangeNumeric, e.value)).andThen(true)
-                        case ri: RangeInput =>
-                            val autoSet = ri.value match
-                                case Present(Bound.Ref(ref)) => ref.set(e.value)
-                                case _                       => Kyo.lift(())
-                            autoSet.andThen(invokeWith(ri.onChange, e.value)).andThen(true)
-                        case _ => true
-            case ev: UIEvent.Submit =>
-                elem match
-                    case f: Form =>
-                        val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
-                        invoke(f.onSubmit).andThen(invokeWith(f.onSubmitEvt, mouse)).andThen(true)
-                    case _ => true
-            case ev: UIEvent.Hover =>
-                val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
-                invoke(attrs.onHover).andThen(invokeWith(attrs.onHoverEvt, mouse))
-                    .andThen(keepBubbling(elem, attrs.onHover.nonEmpty || attrs.onHoverEvt.nonEmpty))
-            case ev: UIEvent.Unhover =>
-                val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
-                invoke(attrs.onUnhover).andThen(invokeWith(attrs.onUnhoverEvt, mouse))
-                    .andThen(keepBubbling(elem, attrs.onUnhover.nonEmpty || attrs.onUnhoverEvt.nonEmpty))
-            case ev: UIEvent.Scroll =>
-                val wheel = UI.WheelEvent(ev.deltaX, ev.deltaY, ev.targetId, ev.modifiers)
-                invoke(attrs.onScroll).andThen(invokeWith(attrs.onScrollEvt, wheel))
-                    .andThen(keepBubbling(elem, attrs.onScroll.nonEmpty || attrs.onScrollEvt.nonEmpty))
-            case _: UIEvent.DragStart =>
-                if !isTarget then true
-                else
-                    DragCommands.current.use {
-                        case Present(DragCommands.Dispatch(DragCommands.Payload.Event(value), _)) =>
-                            invokeDrag(attrs.onDragStart, attrs.onDragStartEvt.map(_(value)), "drag start")
-                                .andThen(keepBubbling(elem, attrs.onDragStart.nonEmpty || attrs.onDragStartEvt.nonEmpty))
-                        case _ => true
-                    }
-            case _: UIEvent.DragEnd =>
-                if !isTarget then true
-                else
-                    DragCommands.current.use {
-                        case Present(DragCommands.Dispatch(DragCommands.Payload.End(value), _)) =>
-                            invokeDrag(attrs.onDragEnd, attrs.onDragEndEvt.map(_(value)), "drag end")
-                                .andThen(keepBubbling(elem, attrs.onDragEnd.nonEmpty || attrs.onDragEndEvt.nonEmpty))
-                        case _ => true
-                    }
-            case _: UIEvent.DragEnter => dispatchDragEvent(elem, attrs.onDragEnter, attrs.onDragEnterEvt, "drag enter")
-            case _: UIEvent.DragLeave => dispatchDragEvent(elem, attrs.onDragLeave, attrs.onDragLeaveEvt, "drag leave")
-            case _: UIEvent.DragOver  => dispatchDragEvent(elem, attrs.onDragOver, attrs.onDragOverEvt, "drag over")
-            case _: UIEvent.Drop      =>
-                DragCommands.current.use {
-                    case Present(DragCommands.Dispatch(DragCommands.Payload.Event(value), decisions)) =>
-                        invokeDecision(attrs.onDrop, decisions, "The drop handler failed.")
-                            .andThen(invokeDecision(attrs.onDropEvt.map(_(value)), decisions, "The drop handler failed."))
-                            .andThen(keepBubbling(elem, attrs.onDrop.nonEmpty || attrs.onDropEvt.nonEmpty))
-                    case _ => true
-                }
-            case _: UIEvent.SortMove =>
-                DragCommands.current.use {
-                    case Present(DragCommands.Dispatch(DragCommands.Payload.Move(value), decisions)) =>
-                        invokeDecision(attrs.onSortMove, decisions, "The sort handler failed.")
-                            .andThen(invokeDecision(attrs.onSortMoveEvt.map(_(value)), decisions, "The sort handler failed."))
-                            .andThen(keepBubbling(elem, attrs.onSortMove.nonEmpty || attrs.onSortMoveEvt.nonEmpty))
-                    case _ => true
-                }
-            case _ => true
-        end match
-    end dispatchToElement
-
-    private def invokeDrag(action: Maybe[Any < Async], typed: Maybe[Any < Async], label: String)(using Frame): Unit < Async =
-        def safe(handler: Maybe[Any < Async]): Unit < Async =
-            handler.fold((): Unit < Async) { effect =>
-                Abort.recover[Throwable](
-                    err => Log.error(s"Handler error during $label: ${err.getMessage}"),
-                    panic => Log.error(s"Handler panic during $label: ${panic.getMessage}")
-                )(effect.unit)
-            }
-        safe(action).andThen(safe(typed))
-    end invokeDrag
-
-    private def dispatchDragEvent(
-        elem: Element,
-        action: Maybe[Any < Async],
-        typed: Maybe[Drag.Event => Any < Async],
-        label: String
-    )(using Frame): Boolean < Async =
-        DragCommands.current.use {
-            case Present(DragCommands.Dispatch(DragCommands.Payload.Event(value), _)) =>
-                invokeDrag(action, typed.map(_(value)), label)
-                    .andThen(keepBubbling(elem, action.nonEmpty || typed.nonEmpty))
-            case _ => true
-        }
-
-    private def invokeDecision(
-        handler: Maybe[Drag.Decision < Async],
-        decisions: Maybe[AtomicRef[DragCommands.DecisionState]],
-        failure: String
-    )(using Frame): Unit < Async =
-        handler.fold((): Unit < Async) { effect =>
-            for
-                result <- Abort.run[Any](effect)
-                _      <- result match
-                    case Result.Success(decision) => recordDecision(decisions, decision)
-                    case Result.Failure(err)      =>
-                        Log.error(s"Drag decision handler error: $err").andThen(failDecision(decisions, failure))
-                    case Result.Panic(panic) =>
-                        Log.error(s"Drag decision handler panic: ${panic.getMessage}").andThen(failDecision(decisions, failure))
-            yield ()
-        }
-
-    private def recordDecision(ref: Maybe[AtomicRef[DragCommands.DecisionState]], decision: Drag.Decision)(using
-        Frame
-    ): Unit < Sync =
-        ref.fold((): Unit < Sync)(_.getAndUpdate {
-            case failed: DragCommands.DecisionState.Failed     => failed
-            case rejected: DragCommands.DecisionState.Rejected => rejected
-            case _                                             =>
-                decision match
-                    case Drag.Decision.Accept         => DragCommands.DecisionState.Accepted
-                    case reject: Drag.Decision.Reject => DragCommands.DecisionState.Rejected(reject)
-        }.unit)
-
-    private def failDecision(ref: Maybe[AtomicRef[DragCommands.DecisionState]], reason: String)(using Frame): Unit < Sync =
-        ref.fold((): Unit < Sync)(_.getAndUpdate(_ =>
-            DragCommands.DecisionState.Failed(Drag.Decision.Reject(Drag.Rejection.Application(reason)))
-        ).unit)
 
     // ---- Subscribe ----
 
@@ -804,7 +467,7 @@ private[kyo] object ReactiveUI:
         case Closed
     end OwnedFiberState
 
-    private def startOwnedFiber(task: => Unit < Async)(using Frame): Unit < (Async & Scope) =
+    private[internal] def startOwnedFiber(task: => Unit < Async)(using Frame): Unit < (Async & Scope) =
         for
             state <- AtomicRef.init[OwnedFiberState](OwnedFiberState.Waiting)
             start <- Promise.init[Unit, Any]
@@ -867,7 +530,14 @@ private[kyo] object ReactiveUI:
                     Sync.ensure(expiryWorkers.set(0))(expiryScheduler(dragSessions, dragMutex, expiryWake))
                 }.unit
             )
-            _ <- subscribeScoped(rui, exchange, signalChangeTime)
+            // Absent only for a ReactiveUI a test builds by hand; `normalize` always records the table.
+            dispatch <- rui.mountDispatch match
+                case Present(d) => Kyo.lift(d)
+                case Absent     => MountDispatch.init
+            rootMounts = MountTableRef.init()
+            _ <- Scope.ensure(rootMounts.evictAll)
+            _ <- subscribeScoped(rui, exchange, signalChangeTime, rootMounts, dispatch, RegionKeys(Seq(rui)))
+            _ <- rootMounts.endWalk
             validatedHandle = dragHandle(rui.handle, dragSessions, dragMutex, expiryWake, dragLimits)
         yield Subscription(
             (path, event) =>
@@ -880,6 +550,16 @@ private[kyo] object ReactiveUI:
             () => expiryWorkers.get,
             dragMutex
         )
+
+    /** Runs `ui` under `exchange` in a scope of its own and hands over the subscription. What runs a tree for its effects, and what a test
+      * drives one with.
+      */
+    private[kyo] def subscribed[A, S](
+        ui: UI,
+        exchange: UIExchange,
+        dragLimits: DragSessionLimits = DragSessionLimits()
+    )(f: Subscription => A < (Async & Scope & S))(using Frame): A < (Async & S) =
+        Scope.run(normalize(ui, Seq.empty).map(root => subscribe(root, exchange, dragLimits).map(f)))
 
     private def dragHandle(
         handle: Handler,
@@ -1118,21 +798,43 @@ private[kyo] object ReactiveUI:
             case DragCommands.DecisionState.Failed(value)   => value
         }
 
+    /** The tail of a walked value: its kids subscribed against `table`, then the end of the table's pass. A region and a mount share it. */
+    private[internal] def subscribeWalked(
+        kids: Seq[ReactiveUI],
+        keys: RegionKeys,
+        table: MountTableRef,
+        exchange: UIExchange,
+        signalChangeTime: AtomicRef[Instant],
+        dispatch: MountDispatch
+    )(using Frame): Unit < (Async & Scope) =
+        Kyo.foreachDiscard(kids)(subscribeScoped(_, exchange, signalChangeTime, table, dispatch, keys)).andThen(table.endWalk)
+
     // Each reactive region starts an observer fiber as one scoped resource. Its finalizer interrupts the observer and
     // awaits the fiber's terminal result. Signal.observe runs each value in a fresh Scope; each value renders, re-walks,
     // and starts its children in that Scope, so the next value or an interrupt closes them transitively. A const node
-    // has no signal: it subscribes its children in the enclosing scope.
-    private def subscribeScoped(rui: ReactiveUI, exchange: UIExchange, signalChangeTime: AtomicRef[Instant])(using
-        Frame
-    ): Unit < (Async & Scope) =
-        if rui.isConst then
-            Kyo.foreachDiscard(rui.children)(subscribeScoped(_, exchange, signalChangeTime))
+    // has no signal: it subscribes its children in the enclosing scope. `mounts` is the mount table of the enclosing
+    // region; keyed instances live in that tree of tables, outside every subscription's scopes.
+    private[internal] def subscribeScoped(
+        rui: ReactiveUI,
+        exchange: UIExchange,
+        signalChangeTime: AtomicRef[Instant],
+        mounts: MountTableRef,
+        dispatch: MountDispatch,
+        pass: RegionKeys
+    )(using Frame): Unit < (Async & Scope) =
+        if rui.mounted.nonEmpty then
+            subscribeMounted(rui, rui.mounted.get, exchange, signalChangeTime, mounts, dispatch)
+        else if rui.isConst then
+            val children = RegionKeys(rui.children)
+            Kyo.foreachDiscard(rui.children)(subscribeScoped(_, exchange, signalChangeTime, mounts, dispatch, children))
         else
             // The tree this region last rendered, so the exchange can send only what moved instead of the
             // whole region.
             // Unsafe: region-scoped, single-writer state created before the observe loop is forked, where no
             // effect context exists to supply AllowUnsafe; only this region's own loop reads or writes it.
             val rendered = AtomicRef.Unsafe.init(Maybe.empty[UI])(using AllowUnsafe.embrace.danger)
+            // Unsafe: as for `rendered`, the region's reference is made before its loop is forked, where no proof is at hand.
+            val regionMounts = mounts.child(pass, rui)(using AllowUnsafe.embrace.danger)
             // Per-value setup, run inside each value's fresh Scope: render the region and fork its children into
             // that scope, so the next value (or an interrupt) tears them down by cascade.
             def renderValue(current: UI): Unit < (Async & Scope) =
@@ -1151,9 +853,14 @@ private[kyo] object ReactiveUI:
                         svgContext,
                         rui.contentContext,
                         contentParentContext,
+                        dispatch,
+                        rows = 0L,
+                        deepRows = Chunk.empty,
                         discoverRootBound = rui.discoverContentRootBound
                     )
-                    _ <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
+                    keys = RegionKeys(newKids)
+                    _ <- regionMounts.beginWalk(newKids, keys)
+                    _ <- subscribeWalked(newKids, keys, regionMounts, exchange, signalChangeTime, dispatch)
                 yield ()
 
             startOwnedFiber {
