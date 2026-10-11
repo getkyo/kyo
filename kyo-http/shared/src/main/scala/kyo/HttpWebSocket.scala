@@ -66,9 +66,10 @@ final class HttpWebSocket private[kyo] (
 
     /** Completes when the remote peer closes the WebSocket (graceful close frame or transport EOF).
       *
-      * The backend does NOT automatically close the outbound channel on peer close. Applications that
-      * compose long-lived sender/receiver fibers (e.g. via `Async.race`) should include `onPeerClose`
-      * in the race to terminate promptly when the peer goes away:
+      * The peer's close closes the outbound channel at once, and a later `put` fails with `Closed`. After a Close frame the frames already
+      * put are sent, then the Close frame that answers it (RFC 6455 section 5.5.1); after a transport EOF nothing more is sent.
+      * Applications that compose long-lived fibers waiting on something other than this WebSocket (e.g. via `Async.race`) should include
+      * `onPeerClose` in the race to terminate promptly when the peer goes away:
       *
       * {{{
       * Async.race(sender, receiver, ws.onPeerClose).unit
@@ -97,16 +98,18 @@ object HttpWebSocket:
       * @param bufferSize
       *   Channel capacity for inbound and outbound message queues. Controls backpressure — when a channel is full, the sender suspends.
       * @param maxFrameSize
-      *   Maximum size of a single HttpWebSocket frame, narrowed where it is used as kyo-core's stream reads narrow their buffers: zero
-      *   becomes one byte and a size beyond `Int.MaxValue` becomes `Int.MaxValue`, the most one frame payload can hold. Frames exceeding
-      *   this limit cause the connection to close. Default is 16 MiB,
+      *   Maximum size of a single HttpWebSocket data frame, and of a message reassembled from fragments, narrowed where it is used as kyo-core's
+      *   stream reads narrow their buffers: zero becomes one byte and a size beyond `Int.MaxValue` becomes `Int.MaxValue`, the most one
+      *   frame payload can hold. A frame or message exceeding this limit closes the connection with code 1009. Default is 16 MiB,
       *   which comfortably handles realistic single-frame payloads (Chrome CDP screenshots up to ~4K, large RPC responses, base64-encoded
       *   binary uploads) while still capping pathological remotes. Lower it for memory-sensitive deployments; raise it for clients that need
       *   to receive larger frames in one go.
       * @param autoPingInterval
-      *   If set, the backend sends ping frames at this interval to keep the connection alive through proxies.
+      *   If set to a positive, finite interval, the backend sends a ping frame at this interval to keep the connection alive through
+      *   proxies.
       * @param closeTimeout
-      *   Maximum time to wait for a clean close handshake before forcibly closing the connection.
+      *   Maximum time to wait for a clean close handshake before forcibly closing the connection: the queued frames and the Close frame
+      *   being written, then the peer's Close.
       * @param subprotocols
       *   HttpWebSocket subprotocols to advertise during the handshake (e.g. "graphql-transport-ws").
       */

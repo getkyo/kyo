@@ -15,6 +15,10 @@ private[kyo] trait TransportStream:
     /** Stream of raw bytes received from the remote end. Completes when the connection closes. */
     def read(using Frame): Stream[Span[Byte], Async]
 
-    /** Write raw bytes to the remote end. Silently ignores Closed — see type contract above. */
+    /** Write raw bytes to the remote end. Silently ignores Closed, per the type contract above.
+      *
+      * The bytes of one write reach the peer contiguous, never interleaved with those of a concurrent write. WebSocketCodec writes each
+      * frame as one write and relies on this: a session's writer, its auto-Pong and its keep-alive Ping share the stream without a lock.
+      */
     def write(data: Span[Byte])(using Frame): Unit < Async
 end TransportStream

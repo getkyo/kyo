@@ -6,10 +6,10 @@ import kyo.internal.transport.*
 /** Adapts a pair of Channel.Unsafe[Span[Byte]] to the TransportStream interface.
   *
   * Used by UnsafeServerDispatch.dispatchWebSocket to bridge the HTTP/1.1 connection channels into WebSocketCodec's stream-based API. Unlike
-  * ConnectionBackedStream (which wraps a full Connection), this class takes inbound and outbound channels directly — useful when the
-  * channels are not owned by a Connection (e.g., test channels or after upgrade).
+  * ConnectionBackedStream (which wraps a full Connection), this class takes inbound and outbound channels directly, for channels a
+  * Connection does not own (the server dispatch's, test channels).
   */
-final class ChannelBackedStream(
+final private[kyo] class ChannelBackedStream(
     inbound: Channel.Unsafe[Span[Byte]],
     outbound: Channel.Unsafe[Span[Byte]]
 ) extends TransportStream:

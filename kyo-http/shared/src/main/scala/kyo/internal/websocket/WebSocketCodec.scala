@@ -18,35 +18,47 @@ import scala.annotation.tailrec
   *
   * Frame types (RFC 6455 §5.2): 0x0 = Continuation, 0x1 = Text, 0x2 = Binary, 0x8 = Close, 0x9 = Ping, 0xA = Pong
   *
-  * readFrame handles Ping/Pong control frames transparently (auto-pong, skip-pong) and fails with Abort[Closed] on Close frames. Fragmented
-  * messages are not reassembled — the caller receives each fragment as a separate frame.
+  * readFrame handles Ping/Pong control frames transparently (auto-pong, skip-pong), reassembles a fragmented message from its continuation
+  * frames (RFC 6455 §5.4), and fails with Abort[Closed] on Close frames and on frames that fail the connection.
   *
   * Server frames are unmasked (mask=false); client frames are masked (mask=true) per RFC 6455 §5.3. The shared Sha1 implementation is used
   * for accept key computation because java.security.MessageDigest is unavailable on Scala Native.
   */
 private[kyo] object WebSocketCodec:
 
-    private val Utf8     = StandardCharsets.UTF_8
-    private val WsGuid   = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-    private val OpText   = 0x1
-    private val OpBinary = 0x2
-    private val OpClose  = 0x8
-    private val OpPing   = 0x9
-    private val OpPong   = 0xa
+    private val Utf8           = StandardCharsets.UTF_8
+    private val WsGuid         = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    private val OpContinuation = 0x0
+    private val OpText         = 0x1
+    private val OpBinary       = 0x2
+    private val OpClose        = 0x8
+    private val OpPing         = 0x9
+    private val OpPong         = 0xa
+
+    private val CloseProtocolError = 1002
+    private val CloseInvalidData   = 1007
+    private val CloseTooBig        = 1009
 
     case class FrameHeader(fin: Boolean, opcode: Int, masked: Boolean, payloadLen: Int)
 
+    /** What fails the connection over a frame read, with the Close code RFC 6455 section 7.4.1 names for it. */
+    final private case class ConnectionFailure(code: Int, reason: String)
+
     // ── Public API ──────────────────────────────────────────────
 
-    /** Read one complete frame in the server role: no frame-size cap, no close hook, and an unmasked auto-Pong (RFC 6455 §5.1). Handles
-      * Ping by auto-sending Pong; on a Close frame, aborts `Closed`. A client must use the full overload with `mask = true`.
+    /** Read one complete message in the server role: no size cap, no close or failure hook, and an unmasked auto-Pong (RFC 6455 §5.1).
+      * Handles Ping by auto-sending Pong; on a Close frame, aborts `Closed`. A client must use the full overload with `mask = true`.
       */
     def readFrameWith[A, S](src: Stream[Span[Byte], Async], dst: TransportStream)(
         f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
     )(using Frame): A < (S & Async & Abort[Closed]) =
         readFrameWith(src, dst, Int.MaxValue, _ => Kyo.unit, mask = false)(f)
 
-    /** Read one complete frame; on receipt of a Close frame, invoke `onClose` with the parsed (code, reason) before aborting.
+    /** Read one complete message; on receipt of a Close frame, invoke `onClose` with the parsed (code, reason) before aborting.
+      *
+      * `maxFrameSize` bounds each data frame and the reassembled message alike. A frame that fails the connection (a protocol error, a message
+      * over the bound, text that is not UTF-8) invokes `onFail` with the Close code and reason the endpoint owes its peer, then aborts
+      * `Closed`; a stream that ends mid-frame aborts `Closed` alone, since there is no peer left to tell.
       *
       * `mask` is the caller's role (client `true` / server `false`); it governs whether the auto-Pong reply to a server Ping is masked,
       * which RFC 6455 §5.1 requires of a client.
@@ -56,28 +68,19 @@ private[kyo] object WebSocketCodec:
         dst: TransportStream,
         maxFrameSize: Int,
         onClose: ((Int, String)) => Unit < (S & Async),
-        mask: Boolean
+        mask: Boolean,
+        onFail: ((Int, String)) => Unit < (S & Async) = (_: (Int, String)) => Kyo.unit
     )(
         f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
     )(using Frame): A < (S & Async & Abort[Closed]) =
-        Abort.recover[HttpException](_ => Abort.fail(new Closed("HttpWebSocket", summon[Frame]))) {
-            readRawFrameWith(src, maxFrameSize, expectMasked = !mask) { (opcode, payload, remaining) =>
-                opcode match
-                    case OpText   => f(HttpWebSocket.Payload.Text(new String(payload.toArrayUnsafe, Utf8)), remaining)
-                    case OpBinary => f(HttpWebSocket.Payload.Binary(payload), remaining)
-                    case OpClose  =>
-                        val (code, reason) = decodeClosePayload(payload)
-                        onClose((code, reason)).andThen(
-                            Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Close frame received: $code $reason"))
-                        )
-                    case OpPing =>
-                        writeRawFrame(dst, OpPong, payload, mask).andThen(readFrameWith(remaining, dst, maxFrameSize, onClose, mask)(f))
-                    case OpPong =>
-                        readFrameWith(remaining, dst, maxFrameSize, onClose, mask)(f)
-                    case other =>
-                        Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Unknown opcode: $other"))
-                end match
-            }
+        Abort.runWith[HttpException | ConnectionFailure](readMessage(src, dst, maxFrameSize, onClose, mask)) {
+            case Result.Success((payload, remaining))       => f(payload, remaining)
+            case Result.Failure(failure: ConnectionFailure) =>
+                onFail((failure.code, failure.reason)).andThen(
+                    Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Connection failed: ${failure.code} ${failure.reason}"))
+                )
+            case Result.Failure(_) => Abort.fail(new Closed("HttpWebSocket", summon[Frame]))
+            case Result.Panic(t)   => Abort.panic(t)
         }
     end readFrameWith
 
@@ -91,9 +94,16 @@ private[kyo] object WebSocketCodec:
         end match
     end writeFrame
 
-    /** Write a Close frame (opcode 0x8). */
+    /** Write a Close frame (opcode 0x8). The codes that only report a close (1005 no status, 1006 abnormal, 1015 TLS failure) are never
+      * sent in a Close frame (RFC 6455 section 7.4.1), so for those the frame carries no payload.
+      */
     def writeClose(dst: TransportStream, code: Int, reason: String, mask: Boolean)(using Frame): Unit < Async =
-        writeRawFrame(dst, OpClose, encodeClosePayload(code, reason), mask)
+        if code == 1005 || code == 1006 || code == 1015 then writeRawFrame(dst, OpClose, Span.empty[Byte], mask)
+        else writeRawFrame(dst, OpClose, encodeClosePayload(code, reason), mask)
+
+    /** Write an empty Ping frame (opcode 0x9), the keep-alive of `HttpWebSocket.Config.autoPingInterval`. */
+    def writePing(dst: TransportStream, mask: Boolean)(using Frame): Unit < Async =
+        writeRawFrame(dst, OpPing, Span.empty[Byte], mask)
 
     /** Closes a session's frame channel without losing what is in it: puts are refused at once, and its taker still receives every frame
       * already queued before a take fails with `Closed`. `closeDiscard` would drop frames put just before a close, which a peer sees as
@@ -206,8 +216,8 @@ private[kyo] object WebSocketCodec:
             discard(request.append("Sec-WebSocket-Key: ").append(clientKey).append("\r\n"))
             // Advertise configured subprotocols (RFC 6455 §1.9 / §4.2.2). When the caller's `headers` parameter also carries
             // Sec-WebSocket-Protocol we suppress the duplicate so the upgrade request has exactly one such header.
-            val callerSuppliedProtocol = headers.get("Sec-WebSocket-Protocol")
-            if config.subprotocols.nonEmpty && callerSuppliedProtocol.isEmpty then
+            val callerSuppliedProtocols = listValues(headers.getAll("Sec-WebSocket-Protocol"))
+            if config.subprotocols.nonEmpty && headers.getAll("Sec-WebSocket-Protocol").isEmpty then
                 discard(request.append("Sec-WebSocket-Protocol: ").append(config.subprotocols.mkString(", ")).append("\r\n"))
             headers.foreach { (name, value) =>
                 if !isRequiredClientUpgradeHeader(name) then
@@ -225,26 +235,14 @@ private[kyo] object WebSocketCodec:
                                 case Present(status) => Abort.fail(HttpWebSocketHandshakeException(url.full, status))
                                 case Absent          => Abort.fail(HttpProtocolException(upgradeRefusalDetail(responseStr)))
                         else
-                            val expectedAccept = computeAcceptKey(clientKey)
-                            if !responseStr.contains(expectedAccept) then
-                                Abort.fail(HttpProtocolException("HttpWebSocket upgrade: invalid Sec-WebSocket-Accept"))
-                            else
-                                // RFC 6455 §4.1: if the client offered subprotocols, the server's selected subprotocol (if any)
-                                // MUST be one of them. Fail the connection on a mismatched echo. The "offered" list is whatever
-                                // we put on the wire: a caller-supplied header takes precedence over config.subprotocols.
-                                val offered: Chunk[String] =
-                                    callerSuppliedProtocol match
-                                        case Present(v) => Chunk.from(v.split(',')).map(_.trim)
-                                        case Absent     => Chunk.from(config.subprotocols)
-                                val selected = parseResponseSubprotocol(responseStr)
-                                selected match
-                                    case Present(s) if offered.nonEmpty && !offered.contains(s) =>
-                                        Abort.fail(HttpProtocolException(
-                                            s"HttpWebSocket upgrade: server selected subprotocol '$s' that was not offered"
-                                        ))
-                                    case _ => f(remaining)
-                                end match
-                            end if
+                            // The "offered" subprotocols are whatever went on the wire: caller-supplied fields, on as many lines as the
+                            // caller wrote, take precedence over config.subprotocols.
+                            val offered: Chunk[String] =
+                                if headers.getAll("Sec-WebSocket-Protocol").nonEmpty then callerSuppliedProtocols
+                                else Chunk.from(config.subprotocols)
+                            upgradeRefusal(responseStr, computeAcceptKey(clientKey), offered) match
+                                case Present(detail) => Abort.fail(HttpProtocolException(s"HttpWebSocket upgrade: $detail"))
+                                case Absent          => f(remaining)
                         end if
                 }
             }
@@ -338,16 +336,48 @@ private[kyo] object WebSocketCodec:
         s"HttpWebSocket upgrade failed: expected 101, $status"
     end upgradeRefusalDetail
 
-    /** Extract the value of the `Sec-WebSocket-Protocol` response header from a raw HTTP/1.1 upgrade response, if present. Case-insensitive
-      * header-name match per RFC 7230 §3.2.
+    /** Why a 101 answer does not complete the handshake (RFC 6455 section 4.1), or `Absent` when it does: an Upgrade field that is not
+      * `websocket`, a Connection field without the `Upgrade` option, a Sec-WebSocket-Accept field that is not exactly `expectedAccept`, any
+      * extension, or a subprotocol the client did not offer. kyo-http implements no extension, so a 101 that selects one, requested or not,
+      * would fail on the first frame that uses it; refusing it here fails where the caller can read why. The reason names the field, never
+      * the value, which is the peer's and is logged.
       */
-    private[internal] def parseResponseSubprotocol(responseStr: String): Maybe[String] =
-        val needle = "sec-websocket-protocol:"
-        Maybe.fromOption(responseStr.linesIterator.drop(1).collectFirst {
-            case line if line.toLowerCase.startsWith(needle) =>
-                line.substring(needle.length).trim
-        })
-    end parseResponseSubprotocol
+    private[internal] def upgradeRefusal(responseStr: String, expectedAccept: String, offered: Chunk[String]): Maybe[String] =
+        responseFields(responseStr) match
+            case Absent          => Present("malformed header field in the 101 answer")
+            case Present(fields) =>
+                def values(name: String): Chunk[String] = fields.filter(_._1.equalsIgnoreCase(name)).map(_._2)
+                val protocols                           = values("Sec-WebSocket-Protocol")
+                if listValues(values("Upgrade")).map(_.toLowerCase) != Chunk("websocket") then
+                    Present("the 101 does not upgrade to websocket")
+                else if !listValues(values("Connection")).exists(_.equalsIgnoreCase("upgrade")) then
+                    Present("the 101 has no Connection: Upgrade")
+                else if values("Sec-WebSocket-Accept") != Chunk(expectedAccept) then Present("invalid Sec-WebSocket-Accept")
+                else if listValues(values("Sec-WebSocket-Extensions")).nonEmpty then Present("the 101 selects an extension")
+                else if protocols.size > 1 then Present("the 101 selects more than one subprotocol")
+                else if protocols.exists(s => !offered.contains(s)) then Present("the 101 selects a subprotocol the client did not offer")
+                else Absent
+                end if
+        end match
+    end upgradeRefusal
+
+    /** The header fields of a raw HTTP/1.1 response head as (name, value) with the value's surrounding whitespace removed, or `Absent`
+      * when a line after the status line is not a field (RFC 9112 section 5: a token name directly followed by a colon).
+      */
+    private[internal] def responseFields(responseStr: String): Maybe[Chunk[(String, String)]] =
+        val lines  = Chunk.from(responseStr.split("\r\n", -1)).drop(1).filter(_.nonEmpty)
+        val parsed = lines.map { line =>
+            val colon = line.indexOf(':')
+            if colon > 0 && HttpHeaders.isToken(line.substring(0, colon)) then
+                Present((line.substring(0, colon), line.substring(colon + 1).trim))
+            else Absent
+        }
+        if parsed.exists(_.isEmpty) then Absent else Present(parsed.flatMap(_.toChunk))
+    end responseFields
+
+    /** The elements of comma-separated field values (RFC 9110 section 5.6.1), without their surrounding whitespace or empty elements. */
+    private def listValues(values: Seq[String]): Chunk[String] =
+        Chunk.from(values).flatMap(v => Chunk.from(v.split(','))).map(_.trim).filter(_.nonEmpty)
 
     /** Decode the payload of a Close frame (opcode 0x8): first 2 bytes big-endian code, remaining bytes UTF-8 reason. Returns (1005, "") if
       * the frame had no payload (per RFC 6455 section 7.1.5, "no status received").
@@ -363,10 +393,13 @@ private[kyo] object WebSocketCodec:
             (code, reason)
     end decodeClosePayload
 
+    /** A Close payload: the code, then as much of the reason as fits in 123 bytes, cut on a character boundary so it stays UTF-8. */
     private[internal] def encodeClosePayload(code: Int, reason: String): Span[Byte] =
-        val reasonBytes  = reason.getBytes(Utf8)
-        val maxReasonLen = 123 // 125 - 2 for code
-        val truncatedLen = math.min(reasonBytes.length, maxReasonLen)
+        val reasonBytes                      = reason.getBytes(Utf8)
+        val maxReasonLen                     = 123 // 125 - 2 for code
+        @tailrec def boundary(len: Int): Int =
+            if len < reasonBytes.length && len > 0 && (reasonBytes(len) & 0xc0) == 0x80 then boundary(len - 1) else len
+        val truncatedLen = boundary(math.min(reasonBytes.length, maxReasonLen))
         val payload      = new Array[Byte](2 + truncatedLen)
         payload(0) = ((code >> 8) & 0xff).toByte
         payload(1) = (code & 0xff).toByte
@@ -377,64 +410,153 @@ private[kyo] object WebSocketCodec:
 
     // ── Internal I/O ────────────────────────────────────────────
 
-    /** Read a single raw frame (handles extended length + masking). */
-    private inline def readRawFrameWith[A, S2](src: Stream[Span[Byte], Async], maxFrameSize: Int, expectMasked: Boolean)(
-        inline f: (Int, Span[Byte], Stream[Span[Byte], Async]) => A < S2
-    )(using inline frame: Frame): A < (S2 & Async & Abort[HttpException]) =
+    /** The (code, reason) of a received Close frame's payload, or the failure it is: a one-byte payload or a code no endpoint sends is a
+      * protocol error, and a reason that is not UTF-8 is invalid data (RFC 6455 sections 5.5.1, 7.4 and 8.1).
+      */
+    private def closeStatus(payload: Span[Byte]): Result[ConnectionFailure, (Int, String)] =
+        if payload.size == 1 then Result.fail(ConnectionFailure(CloseProtocolError, "Close frame payload of one byte"))
+        else
+            val (code, reason) = decodeClosePayload(payload)
+            if payload.size >= 2 && !receivableCloseCode(code) then Result.fail(ConnectionFailure(CloseProtocolError, s"Close code $code"))
+            else if payload.size > 2 && !isUtf8(payload.toArrayUnsafe, 2) then
+                Result.fail(ConnectionFailure(CloseInvalidData, "Close reason is not UTF-8"))
+            else Result.succeed((code, reason))
+            end if
+
+    /** Whether a peer may send `code` in a Close frame: the codes RFC 6455 section 7.4.1 defines for use in one, those registered since
+      * (1012 to 1014), and the ranges for libraries (3000 to 3999) and applications (4000 to 4999).
+      */
+    private def receivableCloseCode(code: Int): Boolean =
+        (code >= 1000 && code <= 1003) ||
+            (code >= 1007 && code <= 1014) ||
+            (code >= 3000 && code <= 4999)
+
+    /** Whether `bytes` from `from` are well-formed UTF-8 (RFC 3629): no overlong form, no surrogate, nothing past U+10FFFF. */
+    private[internal] def isUtf8(bytes: Array[Byte], from: Int = 0): Boolean =
+        def continuation(i: Int, lo: Int = 0x80, hi: Int = 0xbf): Boolean =
+            i < bytes.length && (bytes(i) & 0xff) >= lo && (bytes(i) & 0xff) <= hi
+        @tailrec def loop(i: Int): Boolean =
+            if i >= bytes.length then true
+            else
+                val b = bytes(i) & 0xff
+                if b < 0x80 then loop(i + 1)
+                else if b >= 0xc2 && b <= 0xdf then continuation(i + 1) && loop(i + 2)
+                else if b >= 0xe0 && b <= 0xef then
+                    val (lo, hi) = if b == 0xe0 then (0xa0, 0xbf) else if b == 0xed then (0x80, 0x9f) else (0x80, 0xbf)
+                    continuation(i + 1, lo, hi) && continuation(i + 2) && loop(i + 3)
+                else if b >= 0xf0 && b <= 0xf4 then
+                    val (lo, hi) = if b == 0xf0 then (0x90, 0xbf) else if b == 0xf4 then (0x80, 0x8f) else (0x80, 0xbf)
+                    continuation(i + 1, lo, hi) && continuation(i + 2) && continuation(i + 3) && loop(i + 4)
+                else false
+                end if
+        loop(from)
+    end isUtf8
+
+    /** The message a complete data payload is: text must be UTF-8 (RFC 6455 section 8.1). */
+    private def message(opcode: Int, payload: Span[Byte])(using Frame): HttpWebSocket.Payload < Abort[ConnectionFailure] =
+        if opcode == OpBinary then HttpWebSocket.Payload.Binary(payload)
+        else if isUtf8(payload.toArrayUnsafe) then HttpWebSocket.Payload.Text(new String(payload.toArrayUnsafe, Utf8))
+        else Abort.fail(ConnectionFailure(CloseInvalidData, "text message is not UTF-8"))
+
+    /** Reads frames until one completes a message, answering Pings and skipping Pongs met on the way, inside a fragmented message too
+      * (RFC 6455 section 5.4). The state carried between frames is the opcode of the message in progress (`OpContinuation` for none), its
+      * fragments so far and their total size.
+      */
+    private def readMessage[S](
+        src: Stream[Span[Byte], Async],
+        dst: TransportStream,
+        maxFrameSize: Int,
+        onClose: ((Int, String)) => Unit < (S & Async),
+        mask: Boolean
+    )(using
+        Frame
+    ): (HttpWebSocket.Payload, Stream[Span[Byte], Async]) < (S & Async & Abort[Closed | HttpException | ConnectionFailure]) =
+        Loop(src, OpContinuation, Chunk.empty[Span[Byte]], 0) { (stream, messageOpcode, fragments, size) =>
+            val inMessage = messageOpcode != OpContinuation
+            readRawFrameWith(stream, maxFrameSize - size, expectMasked = !mask) { (fin, opcode, payload, remaining) =>
+                opcode match
+                    case OpPing =>
+                        writeRawFrame(dst, OpPong, payload, mask).andThen(Loop.continue(remaining, messageOpcode, fragments, size))
+                    case OpPong =>
+                        Loop.continue(remaining, messageOpcode, fragments, size)
+                    case OpClose =>
+                        closeStatus(payload) match
+                            case Result.Success((code, reason)) =>
+                                onClose((code, reason)).andThen(
+                                    Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Close frame received: $code $reason"))
+                                )
+                            case Result.Failure(failure) => Abort.fail(failure)
+                            case Result.Panic(t)         => Abort.panic(t)
+                    case OpText | OpBinary if inMessage =>
+                        Abort.fail(ConnectionFailure(CloseProtocolError, "data frame inside a fragmented message"))
+                    case OpText | OpBinary =>
+                        if fin then message(opcode, payload).map(m => Loop.done((m, remaining)))
+                        else Loop.continue(remaining, opcode, Chunk(payload), payload.size)
+                    case OpContinuation if !inMessage =>
+                        Abort.fail(ConnectionFailure(CloseProtocolError, "continuation frame outside a fragmented message"))
+                    case OpContinuation =>
+                        val all = fragments.append(payload)
+                        if fin then message(messageOpcode, Span.concat(all.toSeq*)).map(m => Loop.done((m, remaining)))
+                        else Loop.continue(remaining, messageOpcode, all, size + payload.size)
+                    case other =>
+                        Abort.fail(ConnectionFailure(CloseProtocolError, s"unknown opcode $other"))
+                end match
+            }
+        }
+    end readMessage
+
+    /** Read a single raw frame (handles extended length + masking). A data frame is bounded by `dataLimit`, what is left of the bound on
+      * its message; a control frame only by the 125 bytes RFC 6455 section 5.5 allows it, so a small message bound never refuses a Ping.
+      */
+    private inline def readRawFrameWith[A, S2](
+        src: Stream[Span[Byte], Async],
+        dataLimit: Int,
+        expectMasked: Boolean
+    )(
+        inline f: (Boolean, Int, Span[Byte], Stream[Span[Byte], Async]) => A < S2
+    )(using inline frame: Frame): A < (S2 & Async & Abort[HttpException | ConnectionFailure]) =
         ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, src, 2) { (header, rem1) =>
             val fh          = parseFrameHeader(header(0), header(1))
             val payloadLen  = fh.payloadLen
             val extLenBytes = if payloadLen == 126 then 2 else if payloadLen == 127 then 8 else 0
             val isControl   = fh.opcode >= OpClose
+            val limit       = if isControl then 125 else dataLimit
 
-            if fh.masked != expectMasked then
+            if (header(0) & 0x70) != 0 then
+                // No extension is negotiated, so every reserved bit must be clear (RFC 6455 section 5.2).
+                Abort.fail(ConnectionFailure(CloseProtocolError, "reserved bit set with no extension negotiated"))
+            else if fh.masked != expectMasked then
                 // A server MUST receive masked frames and a client MUST receive unmasked ones (RFC 6455 section 5.1);
                 // the wrong masking direction is a protocol violation and (server side) a smuggling lever.
-                Abort.fail(HttpProtocolException("HttpWebSocket frame masking violates role (RFC 6455 section 5.1)"))
+                Abort.fail(ConnectionFailure(CloseProtocolError, "frame masking violates role"))
             else if isControl && payloadLen > 125 then
                 // A control frame's payload MUST be <= 125 bytes, so its length is never the 126/127 extended form
                 // (RFC 6455 section 5.5).
-                Abort.fail(HttpProtocolException("HttpWebSocket control frame payload exceeds 125 bytes (RFC 6455 section 5.5)"))
+                Abort.fail(ConnectionFailure(CloseProtocolError, "control frame payload exceeds 125 bytes"))
             else if isControl && !fh.fin then
                 // A control frame MUST NOT be fragmented (RFC 6455 section 5.5).
-                Abort.fail(HttpProtocolException("HttpWebSocket control frame is fragmented (RFC 6455 section 5.5)"))
-            else if extLenBytes == 0 then
-                val actualLen = payloadLen.toLong
-                if actualLen > maxFrameSize.toLong then
-                    Abort.fail(HttpProtocolException("HttpWebSocket frame exceeds max frame size"))
-                else if fh.masked then
-                    ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem1, 4) { (maskKey, rem2) =>
-                        ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem2, actualLen.toInt) {
-                            (payload, rem3) =>
-                                f(fh.opcode, unmask(payload, maskKey), rem3)
-                        }
-                    }
-                else
-                    ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem1, actualLen.toInt) { (payload, rem2) =>
-                        f(fh.opcode, payload, rem2)
-                    }
-                end if
+                Abort.fail(ConnectionFailure(CloseProtocolError, "control frame is fragmented"))
             else
                 ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem1, extLenBytes) { (ext, rem2) =>
                     val actualLen =
-                        if extLenBytes == 2 then ((ext(0) & 0xff) << 8) | (ext(1) & 0xff).toLong
+                        if extLenBytes == 0 then payloadLen.toLong
+                        else if extLenBytes == 2 then ((ext(0) & 0xff) << 8) | (ext(1) & 0xff).toLong
                         else
                             @tailrec def readLong(i: Int, acc: Long): Long =
                                 if i >= 8 then acc else readLong(i + 1, (acc << 8) | (ext(i) & 0xff))
                             readLong(0, 0L)
-                    if actualLen < 0 || actualLen > maxFrameSize.toLong || actualLen > Int.MaxValue.toLong then
-                        Abort.fail(HttpProtocolException("HttpWebSocket frame exceeds max frame size"))
-                    else if fh.masked then
-                        ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem2, 4) { (maskKey, rem3) =>
-                            ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem3, actualLen.toInt) {
-                                (payload, rem4) =>
-                                    f(fh.opcode, unmask(payload, maskKey), rem4)
-                            }
-                        }
+                    if actualLen < 0 then
+                        // The most significant bit of a 64-bit length MUST be 0 (RFC 6455 section 5.2).
+                        Abort.fail(ConnectionFailure(CloseProtocolError, "frame length has its most significant bit set"))
+                    else if actualLen > limit.toLong then
+                        Abort.fail(ConnectionFailure(CloseTooBig, "message exceeds max frame size"))
                     else
-                        ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem2, actualLen.toInt) {
-                            (payload, rem3) =>
-                                f(fh.opcode, payload, rem3)
+                        ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem2, if fh.masked then 4 else 0) {
+                            (maskKey, rem3) =>
+                                ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem3, actualLen.toInt) {
+                                    (payload, rem4) =>
+                                        f(fh.fin, fh.opcode, if fh.masked then unmask(payload, maskKey) else payload, rem4)
+                                }
                         }
                     end if
                 }
@@ -442,22 +564,24 @@ private[kyo] object WebSocketCodec:
         }
     end readRawFrameWith
 
-    /** Write a raw frame with header + optional masking. */
+    /** Write a raw frame with header + optional masking, as one write: a frame is never split around another writer's (see
+      * `TransportStream.write`).
+      */
     private def writeRawFrame(dst: TransportStream, opcode: Int, payload: Span[Byte], mask: Boolean)(using Frame): Unit < Async =
+        dst.write(encodeFrame(opcode, payload, mask))
+
+    /** A whole frame: its header, then its payload, masked with the header's key when `mask`. */
+    private[internal] def encodeFrame(opcode: Int, payload: Span[Byte], mask: Boolean): Span[Byte] =
         val header = encodeFrameHeader(opcode, payload.size.toLong, mask)
-        if mask then
-            // Extract mask key from last 4 bytes of header, apply to payload
-            val maskKey = header.slice(header.size - 4, header.size)
-            val masked  = unmask(payload, maskKey) // XOR is symmetric
-            dst.write(header).andThen(
-                if masked.isEmpty then Kyo.unit else dst.write(masked)
-            )
-        else
-            dst.write(header).andThen(
-                if payload.isEmpty then Kyo.unit else dst.write(payload)
-            )
-        end if
-    end writeRawFrame
+        val frame  = new Array[Byte](header.size + payload.size)
+        discard(header.copyToArray(frame))
+        @tailrec def copy(i: Int): Unit =
+            if i < payload.size then
+                frame(header.size + i) = if mask then (payload(i) ^ header(header.size - 4 + i % 4)).toByte else payload(i)
+                copy(i + 1)
+        copy(0)
+        Span.fromUnsafe(frame)
+    end encodeFrame
 
     private def randomBytes(n: Int): Array[Byte] =
         val bytes = new Array[Byte](n)

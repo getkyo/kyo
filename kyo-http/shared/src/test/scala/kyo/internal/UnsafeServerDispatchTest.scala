@@ -1572,6 +1572,275 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
+        /** Serves an upgrade whose read also carries the frame "first", with the read carrying "second" already queued behind it, and
+          * returns the echoes in arrival order. A first echo other than "first" ends the read, since what is lost never arrives.
+          */
+        def echoesOfFramesSentWithTheUpgrade(inbound: Channel.Unsafe[Span[Byte]])(queueSecond: Span[Byte] => Unit)(using
+            Frame,
+            kyo.test.AssertScope
+        ): Chunk[String] < Async =
+            val router   = routerOf(Seq(HttpHandler.webSocket("ws")(wsEcho)), Absent)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            val upgrade  = wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII) ++ encodeClientTextFrame("first")
+            discard(inbound.offer(Span.fromUnsafe(upgrade)))
+            queueSecond(Span.fromUnsafe(encodeClientTextFrame("second")))
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            collectWsUpgradeResponse(outbound).map { response =>
+                assert(response.contains("101"), s"Expected 101, got: $response")
+                readWsFrame(outbound).map { echoed =>
+                    val first = decodeServerTextFrame(echoed)
+                    if first != "first" then Chunk(first)
+                    else readWsFrame(outbound).map(second => Chunk(first, decodeServerTextFrame(second)))
+                }
+            }
+        end echoesOfFramesSentWithTheUpgrade
+
+        "bytes that arrive with the upgrade are read before the reads queued behind them" in {
+            val inbound = Channel.Unsafe.init[Span[Byte]](64)
+            echoesOfFramesSentWithTheUpgrade(inbound)(second => discard(inbound.offer(second))).map { echoes =>
+                assert(echoes == Chunk("first", "second"), s"echoes in arrival order: $echoes")
+                discard(inbound.close())
+                succeed
+            }
+        }
+
+        "bytes that arrive with the upgrade are kept when the inbound channel is full" in {
+            val inbound = Channel.Unsafe.init[Span[Byte]](1)
+            echoesOfFramesSentWithTheUpgrade(inbound) { second =>
+                // The parser's take of the upgrade read moves this parked put into the freed slot, so the channel is full again
+                // when the upgrade is dispatched.
+                discard(inbound.putFiber(second))
+            }.map { echoes =>
+                assert(echoes == Chunk("first", "second"), s"echoes in arrival order: $echoes")
+                discard(inbound.close())
+                succeed
+            }
+        }
+
+        /** Server frames under 126 bytes as "Close <code>" or "opcode <n>", ending with what does not parse. */
+        def serverFrames(wire: Array[Byte]): Chunk[String] =
+            @scala.annotation.tailrec
+            def loop(at: Int, acc: Chunk[String]): Chunk[String] =
+                if at == wire.length then acc
+                else if wire.length - at < 2 || wire.length - at - 2 < (wire(at + 1) & 0x7f) then
+                    acc.append(s"${wire.length - at} bytes that are not a whole frame")
+                else
+                    val opcode = wire(at) & 0x0f
+                    val len    = wire(at + 1) & 0x7f
+                    val shown  =
+                        if opcode == 0x8 && len >= 2 then s"Close ${((wire(at + 2) & 0xff) << 8) | (wire(at + 3) & 0xff)}"
+                        else s"opcode $opcode"
+                    loop(at + 2 + len, acc.append(shown))
+            loop(0, Chunk.empty)
+        end serverFrames
+
+        /** Reads the server's frames from `outbound` until its Close frame. */
+        def readUntilServerClose(outbound: Channel.Unsafe[Span[Byte]], wire: Array[Byte])(using Frame): Array[Byte] < Async =
+            if serverFrames(wire).lastMaybe.exists(_.startsWith("Close")) then wire
+            else
+                Abort.run[Closed](outbound.safe.take).map {
+                    case Result.Success(span) => readUntilServerClose(outbound, wire ++ span.toArray)
+                    case _                    => wire
+                }
+
+        /** Serves an upgrade followed by `frames`, reads what the server writes until its Close frame, answers it with the client's Close
+          * (RFC 6455 section 5.5.1), and returns each frame the server wrote until it closed the connection, as "Close <code>" or
+          * "opcode <n>". On these bare channels the server's close of the connection is the close of its inbound channel; the outbound one
+          * stays open, so what it wrote is still there to read.
+          */
+        def framesUntilClosed(
+            handler: (HttpRequest[Any], HttpWebSocket) => Unit < (Async & Abort[Closed]),
+            config: HttpWebSocket.Config,
+            frames: Array[Byte],
+            clock: Clock = Clock.live,
+            afterUpgrade: Unit < Async = Kyo.unit
+        )(using Frame): Chunk[String] < Async =
+            val router   = routerOf(Seq(HttpHandler.webSocket("ws", config)(handler)), Absent)
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII) ++ frames)))
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, clock = clock)
+            collectWsUpgradeResponse(outbound).andThen(afterUpgrade).andThen(readUntilServerClose(outbound, Array.emptyByteArray)).map {
+                wire =>
+                    discard(inbound.offer(Span.fromUnsafe(encodeClientCloseFrame(1000))))
+                    pollUntil(inbound.closed()).map { closed =>
+                        val rest = outbound.drain().getOrElse(Chunk.empty).flatMap(s => Chunk.from(s.toArray))
+                        val sent = serverFrames(wire ++ rest.toArray)
+                        if closed then sent else sent.append("and the connection is still open")
+                    }
+            }
+        end framesUntilClosed
+
+        // RFC 6455 section 7.1.2: an endpoint closes the connection once it has both sent and received a Close frame.
+        "a server that sent its Close keeps the connection open until the client's Close" in {
+            Clock.withTimeControl { control =>
+                Clock.get.map { clock =>
+                    val config   = HttpWebSocket.Config(closeTimeout = 9.seconds)
+                    val router   = routerOf(Seq(HttpHandler.webSocket("ws", config)((_, _) => Kyo.unit)), Absent)
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](64)
+                    discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
+                    UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, clock = clock)
+                    for
+                        _      <- collectWsUpgradeResponse(outbound)
+                        wire   <- readUntilServerClose(outbound, Array.emptyByteArray)
+                        _      <- control.awaitPendingSleeper(9.seconds)
+                        open   <- Sync.defer(!inbound.closed())
+                        _      <- Sync.defer(discard(inbound.offer(Span.fromUnsafe(encodeClientCloseFrame(1000)))))
+                        closed <- pollUntil(inbound.closed())
+                    yield
+                        assert(serverFrames(wire) == Chunk("Close 1000"), s"frames the server sent: ${serverFrames(wire)}")
+                        assert(open, "the server closed the connection before the client's Close")
+                        assert(closed, "the server left the connection open after the closing handshake")
+                    end for
+                }
+            }
+        }
+
+        "a server that sent its Close closes the connection after closeTimeout when the client never answers" in {
+            Clock.withTimeControl { control =>
+                Clock.get.map { clock =>
+                    val config   = HttpWebSocket.Config(closeTimeout = 9.seconds)
+                    val router   = routerOf(Seq(HttpHandler.webSocket("ws", config)((_, _) => Kyo.unit)), Absent)
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](64)
+                    discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
+                    UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, clock = clock)
+                    for
+                        _      <- collectWsUpgradeResponse(outbound)
+                        _      <- readUntilServerClose(outbound, Array.emptyByteArray)
+                        _      <- control.awaitPendingSleeper(9.seconds)
+                        _      <- control.advance(9.seconds)
+                        closed <- pollUntil(inbound.closed())
+                    yield assert(closed, "the server left the connection open")
+                    end for
+                }
+            }
+        }
+
+        "a session whose handler returns sends Close 1000 and closes the connection" in {
+            framesUntilClosed((_, _) => Kyo.unit, HttpWebSocket.Config(), Array.emptyByteArray).map { frames =>
+                assert(frames == Chunk("Close 1000"), s"frames the server sent before closing: $frames")
+            }
+        }
+
+        "a client frame over maxFrameSize is answered with Close 1009 and the connection closes" in {
+            framesUntilClosed(wsEcho, HttpWebSocket.Config(maxFrameSize = 4.bytes), encodeClientTextFrame("hello")).map { frames =>
+                assert(frames == Chunk("Close 1009"), s"frames the server sent after a 5-byte frame over a 4-byte limit: $frames")
+            }
+        }
+
+        "an unmasked client frame is answered with Close 1002 and the connection closes" in {
+            val unmasked = Array[Byte]((0x80 | 0x1).toByte, 5) ++ "hello".getBytes(StandardCharsets.US_ASCII)
+            framesUntilClosed(wsEcho, HttpWebSocket.Config(), unmasked).map { frames =>
+                assert(frames == Chunk("Close 1002"), s"frames the server sent after an unmasked client frame: $frames")
+            }
+        }
+
+        // RFC 6455 section 5.5.1: an endpoint that receives a Close frame sends one in response as soon as practical, and sends no data
+        // frame after it.
+        "a Close from the client is echoed while the handler still runs, and a put after it fails" in {
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            for
+                echoed    <- Latch.init(1)
+                putDone   <- Latch.init(1)
+                putResult <- AtomicRef.init(Absent: Maybe[Result[Closed, Unit]])
+                handler = (_: HttpRequest[Any], ws: HttpWebSocket) =>
+                    echoed.await.andThen(Abort.run[Closed](ws.put(HttpWebSocket.Payload.Text("late"))))
+                        .map(r => putResult.set(Present(r)).andThen(putDone.release))
+                router = routerOf(Seq(HttpHandler.webSocket("ws")(handler)), Absent)
+                _      = discard(inbound.offer(Span.fromUnsafe(
+                    wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII) ++ encodeClientCloseFrame(4001, "bye")
+                )))
+                _ = UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+                _     <- collectWsUpgradeResponse(outbound)
+                echo  <- readWsFrame(outbound)
+                _     <- echoed.release
+                _     <- putDone.await
+                put   <- putResult.get
+                ended <- pollUntil(inbound.closed())
+            yield
+                val (opcode, payload) = decodeServerFrame(echo)
+                val code              = ((payload(0) & 0xff) << 8) | (payload(1) & 0xff)
+                assert((opcode, code) == (0x8, 4001), s"the server's first frame after the client's Close 4001: opcode $opcode, code $code")
+                assert(put.exists(_.isFailure), s"the handler's put after the echo: $put")
+                assert(ended, "the server left the connection open")
+            end for
+        }
+
+        // RFC 6455 section 5.5.1: after sending a Close frame an endpoint sends nothing more, so a Ping that arrives after it goes
+        // unanswered.
+        "a Ping that arrives after the server's Close is not answered" in {
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            val handler  = (_: HttpRequest[Any], ws: HttpWebSocket) => ws.close().andThen(ws.onPeerClose)
+            val router   = routerOf(Seq(HttpHandler.webSocket("ws")(handler)), Absent)
+            discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            for
+                _     <- collectWsUpgradeResponse(outbound)
+                close <- readWsFrame(outbound)
+                _ = discard(inbound.offer(Span.fromUnsafe(encodeClientPingFrame("p".getBytes(StandardCharsets.US_ASCII)))))
+                _ = discard(inbound.offer(Span.fromUnsafe(encodeClientCloseFrame(1000))))
+                ended <- pollUntil(inbound.closed())
+                after = outbound.drain().getOrElse(Chunk.empty).flatMap(s => Chunk.from(s.toArray))
+            yield
+                assert(decodeServerFrame(close)._1 == 0x8, s"the server's first frame: opcode ${decodeServerFrame(close)._1}")
+                assert(ended, "the server left the connection open")
+                assert(after.isEmpty, s"bytes the server wrote after its Close: ${after.map(b => f"${b & 0xff}%02x").mkString(" ")}")
+            end for
+        }
+
+        // RFC 6455 section 4.2.2: a server that does not speak the requested version answers 426 naming the one it speaks.
+        "an upgrade with a Sec-WebSocket-Version other than 13 is answered 426 naming version 13" in {
+            val router   = routerOf(Seq(HttpHandler.webSocket("ws")(wsEcho)), Absent)
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            val request  = wsUpgradeRequest("ws").replace("Sec-WebSocket-Version: 13", "Sec-WebSocket-Version: 8")
+            discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            collectResponse(outbound).map { response =>
+                assert(response.startsWith("HTTP/1.1 426"), s"response: $response")
+                assert(response.contains("Sec-WebSocket-Version: 13\r\n"), s"response: $response")
+            }
+        }
+
+        // RFC 6455 section 4.2.1: a handshake without a Sec-WebSocket-Key is not one, and is answered 400.
+        "an upgrade without a Sec-WebSocket-Key is answered 400" in {
+            val router   = routerOf(Seq(HttpHandler.webSocket("ws")(wsEcho)), Absent)
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            val request  = wsUpgradeRequest("ws").replace("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n", "")
+            discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            collectResponse(outbound).map { response =>
+                assert(response.startsWith("HTTP/1.1 400"), s"response: $response")
+            }
+        }
+
+        "autoPingInterval sends a Ping every interval" in {
+            Clock.withTimeControl { control =>
+                Clock.get.map { clock =>
+                    Latch.init(1).map { pinged =>
+                        val config  = HttpWebSocket.Config(autoPingInterval = Present(7.seconds))
+                        val handler = (_: HttpRequest[Any], _: HttpWebSocket) => pinged.await
+                        // Each fence waits for the pinger's next sleep, which it arms only after writing the Ping before it.
+                        val twoIntervals =
+                            control.awaitPendingSleeper(7.seconds)
+                                .andThen(control.advance(7.seconds))
+                                .andThen(control.awaitPendingSleeper(7.seconds))
+                                .andThen(control.advance(7.seconds))
+                                .andThen(control.awaitPendingSleeper(7.seconds))
+                                .andThen(pinged.release)
+                        framesUntilClosed(handler, config, Array.emptyByteArray, clock, twoIntervals).map { frames =>
+                            assert(frames == Chunk("opcode 9", "opcode 9", "Close 1000"), s"frames the server sent: $frames")
+                        }
+                    }
+                }
+            }
+        }
+
         "WS connection cleanup tears down pumps" in {
             // Handler that returns immediately — pumps should be torn down
             val handler = HttpHandler.webSocket("ws") { (_, _) => Kyo.unit }

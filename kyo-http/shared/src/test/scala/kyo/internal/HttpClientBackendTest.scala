@@ -5,8 +5,11 @@ import kyo.*
 import kyo.internal.client.*
 import kyo.internal.http1.*
 import kyo.internal.util.*
+import kyo.internal.websocket.WebSocketCodec
 import kyo.net.DeferredConnectTransport
+import kyo.net.OutboundKeepingConnection
 import kyo.net.RecordingConnection
+import kyo.net.TestChannelTransport
 import kyo.net.internal.transport.Connection as TransportConnection
 
 /** Integration and unit tests for HttpClientBackend.
@@ -1076,6 +1079,276 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // RFC 6455 section 7.4.1: an endpoint that fails the connection over what it received names the reason in its Close frame, 1009 for
+    // a message too big to process, 1007 for text that is not UTF-8 and 1002 for a protocol error.
+    "a WebSocket client session against a scripted server" - {
+
+        val url = HttpUrl.parse("http://test.invalid/ws").getOrThrow
+
+        /** Runs a session against a peer that answers the upgrade with a valid 101 followed by `frame`, with a handler that takes once,
+          * and returns each frame the client wrote after its upgrade request, as "Close <code>" or "opcode <n>".
+          */
+        def framesSentAfter(frame: Array[Byte], config: HttpWebSocket.Config)(using Frame): Chunk[String] < (Async & Abort[Any]) =
+            val (clientConn, peer) = TransportConnection.inMemoryPair()
+            val backend = HttpClientBackend.init(new TestChannelTransport(Seq(new OutboundKeepingConnection(clientConn))), 2, 60.seconds)
+            def readHead(acc: String): String < (Async & Abort[Closed]) =
+                if acc.contains("\r\n\r\n") then acc
+                else peer.inbound.safe.take.map(span => readHead(acc + new String(span.toArray, StandardCharsets.ISO_8859_1)))
+            val answer = Fiber.initUnscoped(readHead("").map { head =>
+                val key      = "Sec-WebSocket-Key: (\\S+)\r\n".r.findFirstMatchIn(head).map(_.group(1)).getOrElse("")
+                val accept   = WebSocketCodec.computeAcceptKey(key)
+                val upgraded =
+                    s"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: $accept\r\n\r\n"
+                peer.outbound.safe.put(Span.fromUnsafe(upgraded.getBytes(StandardCharsets.US_ASCII) ++ frame))
+                    .andThen(head.substring(head.indexOf("\r\n\r\n") + 4).getBytes(StandardCharsets.ISO_8859_1))
+            })
+            answer.map { answering =>
+                Abort.run[HttpException](backend.connectWebSocket(url, HttpHeaders.empty, config)(ws => Abort.run[Closed](ws.take()).unit))
+                    .andThen(answering.get)
+                    .map { afterHead =>
+                        val written = Chunk.from(afterHead) ++
+                            peer.inbound.drain().getOrElse(Chunk.empty).flatMap(s => Chunk.from(s.toArray))
+                        backend.closeFiber(Duration.Zero).safe.get.andThen(maskedFrames(written.toArray))
+                    }
+            }
+        end framesSentAfter
+
+        def maskedFrames(wire: Array[Byte]): Chunk[String] =
+            @scala.annotation.tailrec
+            def loop(at: Int, acc: Chunk[String]): Chunk[String] =
+                if at == wire.length then acc
+                else if wire.length - at < 6 || (wire(at + 1) & 0x7f) > 125 || wire.length - at - 6 < (wire(at + 1) & 0x7f) then
+                    acc.append(s"${wire.length - at} bytes that are not a whole masked frame")
+                else
+                    val opcode = wire(at) & 0x0f
+                    val len    = wire(at + 1) & 0x7f
+                    val bytes  = Array.tabulate(len)(i => (wire(at + 6 + i) ^ wire(at + 2 + i % 4)).toByte)
+                    val shown  =
+                        if opcode == 0x8 && len >= 2 then s"Close ${((bytes(0) & 0xff) << 8) | (bytes(1) & 0xff)}" else s"opcode $opcode"
+                    loop(at + 6 + len, acc.append(shown))
+            loop(0, Chunk.empty)
+        end maskedFrames
+
+        "a frame over maxFrameSize is answered with Close 1009" in {
+            val oversized = Array[Byte]((0x80 | 0x1).toByte, 5) ++ "hello".getBytes(StandardCharsets.US_ASCII)
+            framesSentAfter(oversized, HttpWebSocket.Config(maxFrameSize = 4.bytes)).map { frames =>
+                assert(frames == Chunk("Close 1009"), s"frames the client sent after a 5-byte frame over a 4-byte limit: $frames")
+            }
+        }
+
+        "a masked server frame is answered with Close 1002" in {
+            val key    = Array[Byte](1, 2, 3, 4)
+            val masked = Array[Byte]((0x80 | 0x1).toByte, (0x80 | 5).toByte) ++ key ++
+                "hello".getBytes(StandardCharsets.US_ASCII).zipWithIndex.map((b, i) => (b ^ key(i % 4)).toByte)
+            framesSentAfter(masked, HttpWebSocket.Config()).map { frames =>
+                assert(frames == Chunk("Close 1002"), s"frames the client sent after a masked server frame: $frames")
+            }
+        }
+
+        def serverFrame(b0: Int, payload: Array[Byte]): Array[Byte] = Array[Byte](b0.toByte, payload.length.toByte) ++ payload
+
+        def ascii(s: String): Array[Byte] = s.getBytes(StandardCharsets.US_ASCII)
+
+        "a fragmented message whose fragments together exceed maxFrameSize is answered with Close 1009" in {
+            val fragments = serverFrame(0x01, ascii("abc")) ++ serverFrame(0x80, ascii("de"))
+            framesSentAfter(fragments, HttpWebSocket.Config(maxFrameSize = 4.bytes)).map { frames =>
+                assert(frames == Chunk("Close 1009"), s"frames the client sent after 3- and 2-byte fragments over a 4-byte limit: $frames")
+            }
+        }
+
+        "a continuation frame with no message in progress is answered with Close 1002" in {
+            framesSentAfter(serverFrame(0x80, ascii("abc")), HttpWebSocket.Config()).map { frames =>
+                assert(frames == Chunk("Close 1002"), s"frames the client sent after a lone continuation frame: $frames")
+            }
+        }
+
+        "a data frame inside a fragmented message is answered with Close 1002" in {
+            val frames = serverFrame(0x01, ascii("ab")) ++ serverFrame(0x81, ascii("cd"))
+            framesSentAfter(frames, HttpWebSocket.Config()).map { sent =>
+                assert(sent == Chunk("Close 1002"), s"frames the client sent after a text frame interrupting a fragmented message: $sent")
+            }
+        }
+
+        "a frame with a reserved bit set and no extension negotiated is answered with Close 1002" in {
+            framesSentAfter(serverFrame(0x80 | 0x40 | 0x01, ascii("hello")), HttpWebSocket.Config()).map { frames =>
+                assert(frames == Chunk("Close 1002"), s"frames the client sent after a frame with RSV1 set: $frames")
+            }
+        }
+
+        "a text message that is not UTF-8 is answered with Close 1007" in {
+            framesSentAfter(serverFrame(0x81, Array[Byte](0x68, 0xff.toByte, 0xfe.toByte)), HttpWebSocket.Config()).map { frames =>
+                assert(frames == Chunk("Close 1007"), s"frames the client sent after a text frame that is not UTF-8: $frames")
+            }
+        }
+
+        "a Close frame with a one-byte payload is answered with Close 1002" in {
+            framesSentAfter(serverFrame(0x88, Array[Byte](0x03)), HttpWebSocket.Config()).map { frames =>
+                assert(frames == Chunk("Close 1002"), s"frames the client sent after a Close frame with a one-byte payload: $frames")
+            }
+        }
+
+        "a Close frame with a code no endpoint may send is answered with Close 1002" in {
+            framesSentAfter(serverFrame(0x88, Array[Byte](0x03, 0xed.toByte)), HttpWebSocket.Config()).map { frames =>
+                assert(frames == Chunk("Close 1002"), s"frames the client sent after a Close frame carrying 1005: $frames")
+            }
+        }
+
+        // RFC 6455 section 7.4.1: 1005 reports that a Close frame carried no code, and is never sent in one.
+        "a Close frame with no code is answered with a Close frame with no code" in {
+            framesSentAfter(serverFrame(0x88, Array.emptyByteArray), HttpWebSocket.Config()).map { frames =>
+                assert(frames == Chunk("opcode 8"), s"frames the client sent after an empty Close frame: $frames")
+            }
+        }
+
+        /** A session opened on a fiber against a scripted peer that has answered the upgrade with a valid 101. `wire` holds the bytes the
+          * client wrote after its upgrade request that were read so far.
+          */
+        case class Scripted[A](
+            peer: kyo.net.Connection,
+            backend: HttpClientBackend,
+            session: Fiber[Result[HttpException, A], Any],
+            wire: Array[Byte]
+        )
+
+        def openSession[A](config: HttpWebSocket.Config)(handler: HttpWebSocket => A < (Async & Abort[Closed]))(using
+            Frame
+        ): Scripted[Result[Closed, A]] < (Async & Abort[Closed]) =
+            val (clientConn, peer) = TransportConnection.inMemoryPair()
+            val backend = HttpClientBackend.init(new TestChannelTransport(Seq(new OutboundKeepingConnection(clientConn))), 2, 60.seconds)
+            def readHead(acc: String): String < (Async & Abort[Closed]) =
+                if acc.contains("\r\n\r\n") then acc
+                else peer.inbound.safe.take.map(span => readHead(acc + new String(span.toArray, StandardCharsets.ISO_8859_1)))
+            for
+                session <- Fiber.initUnscoped(Abort.run[HttpException](
+                    backend.connectWebSocket(url, HttpHeaders.empty, config)(ws => Abort.run[Closed](handler(ws)))
+                ))
+                head <- readHead("")
+                key = "Sec-WebSocket-Key: (\\S+)\r\n".r.findFirstMatchIn(head).map(_.group(1)).getOrElse("")
+                _ <- peer.outbound.safe.put(Span.fromUnsafe(ascii(
+                    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                        s"Sec-WebSocket-Accept: ${WebSocketCodec.computeAcceptKey(key)}\r\n\r\n"
+                )))
+            yield Scripted(peer, backend, session, head.substring(head.indexOf("\r\n\r\n") + 4).getBytes(StandardCharsets.ISO_8859_1))
+            end for
+        end openSession
+
+        /** Reads from the peer until the client has written `count` whole frames, and returns them with the session's updated wire. */
+        def readFrames[A](s: Scripted[A], count: Int)(using Frame): (Chunk[String], Scripted[A]) < (Async & Abort[Closed]) =
+            val frames = maskedFrames(s.wire)
+            if frames.size >= count && !frames.last.contains("not a whole") then (frames, s)
+            else s.peer.inbound.safe.take.map(span => readFrames(s.copy(wire = s.wire ++ span.toArray), count))
+        end readFrames
+
+        def send[A](s: Scripted[A], frame: Array[Byte])(using Frame): Unit < (Async & Abort[Closed]) =
+            s.peer.outbound.safe.put(Span.fromUnsafe(frame))
+
+        def serverClose(code: Int): Array[Byte] = serverFrame(0x88, Array[Byte]((code >> 8).toByte, code.toByte))
+
+        def finish[A](s: Scripted[A])(using Frame): Result[HttpException, A] < Async =
+            s.session.get.map(result => s.backend.closeFiber(Duration.Zero).safe.get.andThen(result))
+
+        "autoPingInterval sends a Ping every interval" in {
+            Clock.withTimeControl { control =>
+                for
+                    release       <- Latch.init(1)
+                    opened        <- openSession(HttpWebSocket.Config(autoPingInterval = Present(7.seconds)))(_ => release.await)
+                    _             <- control.awaitPendingSleeper(7.seconds)
+                    _             <- control.advance(7.seconds)
+                    (first, s1)   <- readFrames(opened, 1)
+                    _             <- control.awaitPendingSleeper(7.seconds)
+                    _             <- control.advance(7.seconds)
+                    (second, s2)  <- readFrames(s1, 2)
+                    _             <- release.release
+                    (closing, s3) <- readFrames(s2, 3)
+                    _             <- send(s3, serverClose(1000))
+                    _             <- finish(s3)
+                yield
+                    assert(first == Chunk("opcode 9"), s"frames the client sent after one interval: $first")
+                    assert(second == Chunk("opcode 9", "opcode 9"), s"frames the client sent after two intervals: $second")
+                    assert(closing == Chunk("opcode 9", "opcode 9", "Close 1000"), s"frames the client sent: $closing")
+                end for
+            }
+        }
+
+        // RFC 6455 section 5.5.1: an endpoint that receives a Close frame sends one in response as soon as practical, and sends no data
+        // frame after it.
+        "a Close from the server is echoed while the handler still runs, and a put after it fails" in {
+            for
+                echoed  <- Latch.init(1)
+                opened  <- openSession(HttpWebSocket.Config())(ws => echoed.await.andThen(ws.put(HttpWebSocket.Payload.Text("late"))))
+                _       <- send(opened, serverClose(4001))
+                (fr, s) <- readFrames(opened, 1)
+                _       <- echoed.release
+                result  <- finish(s)
+            yield
+                assert(fr == Chunk("Close 4001"), s"frames the client sent after the server's Close 4001: $fr")
+                assert(result.map(_.isFailure) == Result.succeed(true), s"the handler's put after the echo: $result")
+            end for
+        }
+
+        "a put after the server drops the connection without a Close fails" in {
+            for
+                opened <- openSession(HttpWebSocket.Config())(ws => ws.onPeerClose.andThen(ws.put(HttpWebSocket.Payload.Text("late"))))
+                _      <- Sync.defer(discard(opened.peer.outbound.close()))
+                result <- finish(opened)
+                rest   <- Sync.defer(opened.peer.inbound.drain().getOrElse(Chunk.empty))
+            yield
+                val sent = maskedFrames(opened.wire ++ rest.flatMap(sp => Chunk.from(sp.toArray)).toArray)
+                assert(result.map(_.isFailure) == Result.succeed(true), s"the handler's put after the transport ended: $result")
+                assert(sent.isEmpty, s"frames the client sent to a server that is gone: $sent")
+            end for
+        }
+
+        // RFC 6455 section 5.5.1: after sending a Close frame an endpoint sends nothing more, so a Ping that arrives after it goes
+        // unanswered.
+        "a Ping that arrives after the client's Close is not answered" in {
+            for
+                opened  <- openSession(HttpWebSocket.Config())(ws => ws.close().andThen(ws.onPeerClose))
+                (_, s1) <- readFrames(opened, 1)
+                _       <- send(s1, serverFrame(0x89, ascii("p")) ++ serverClose(1000))
+                _       <- finish(s1)
+                rest    <- Sync.defer(s1.peer.inbound.drain().getOrElse(Chunk.empty))
+            yield
+                val all = maskedFrames(s1.wire ++ rest.flatMap(sp => Chunk.from(sp.toArray)).toArray)
+                assert(all == Chunk("Close 1000"), s"frames the client sent: $all")
+            end for
+        }
+
+        // RFC 6455 section 7.1.1: the client waits for the server to close the connection after the closing handshake, and closes it
+        // itself only after a bound.
+        "the client keeps the connection open after its Close until the server's Close" in {
+            Clock.withTimeControl { control =>
+                for
+                    opened  <- openSession(HttpWebSocket.Config(closeTimeout = 9.seconds))(_ => Kyo.unit)
+                    (fr, s) <- readFrames(opened, 1)
+                    _       <- control.awaitPendingSleeper(9.seconds)
+                    open    <- Sync.defer(!s.peer.outbound.closed())
+                    _       <- send(s, serverClose(1000))
+                    _       <- finish(s)
+                    closed  <- Sync.defer(s.peer.outbound.closed())
+                yield
+                    assert(fr == Chunk("Close 1000"), s"frames the client sent: $fr")
+                    assert(open, "the client closed the connection before the server's Close")
+                    assert(closed, "the client left the connection open after the closing handshake")
+                end for
+            }
+        }
+
+        "the client closes the connection after closeTimeout when the server never sends its Close" in {
+            Clock.withTimeControl { control =>
+                for
+                    opened <- openSession(HttpWebSocket.Config(closeTimeout = 9.seconds))(_ => Kyo.unit)
+                    (_, s) <- readFrames(opened, 1)
+                    _      <- control.awaitPendingSleeper(9.seconds)
+                    _      <- control.advance(9.seconds)
+                    _      <- finish(s)
+                    closed <- Sync.defer(s.peer.outbound.closed())
+                yield assert(closed, "the client left the connection open")
+                end for
             }
         }
     }

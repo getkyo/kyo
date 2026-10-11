@@ -18,31 +18,37 @@ class ByteStreamTest extends kyo.BaseHttpTest:
     private def drainStream(stream: Stream[Span[Byte], Async]): Seq[Span[Byte]] < Async =
         stream.run.map(_.toSeq)
 
-    "indexOf" - {
+    "advanceMatch" - {
 
-        "finds pattern at start" in {
-            val result = ByteStream.indexOf("hello".getBytes, "hel".getBytes)
-            assert(result == 0)
+        def advance(delimiter: String, matched: Int, s: String): Int =
+            ByteStream.advanceMatch(bytes(delimiter), ByteStream.delimiterFallback(bytes(delimiter)), matched, span(s))
+
+        "the negated index just past a delimiter found at the start" in {
+            assert(advance("\r\n", 0, "\r\nabc") == -2)
         }
 
-        "finds pattern in middle" in {
-            val result = ByteStream.indexOf("hello world".getBytes, "world".getBytes)
-            assert(result == 6)
+        "the negated index just past a delimiter found in the middle" in {
+            assert(advance("world", 0, "hello world!") == -11)
         }
 
-        "not found returns -1" in {
-            val result = ByteStream.indexOf("hello".getBytes, "xyz".getBytes)
-            assert(result == -1)
+        "the length of the delimiter prefix a read ends with when the delimiter is absent" in {
+            assert(advance("\r\n\r\n", 0, "abc") == 0)
+            assert(advance("\r\n\r\n", 0, "abc\r\n\r") == 3)
         }
 
-        "empty needle returns 0" in {
-            val result = ByteStream.indexOf("hello".getBytes, Array.emptyByteArray)
-            assert(result == 0)
+        "a delimiter completed by a later read from the prefix the earlier one ended with" in {
+            assert(advance("\r\n\r\n", 3, "\nxyz") == -1)
+            assert(advance("\r\n\r\n", 2, "\r\n") == -2)
         }
 
-        "needle longer than haystack returns -1" in {
-            val result = ByteStream.indexOf("hi".getBytes, "hello world".getBytes)
-            assert(result == -1)
+        "a mismatch inside a partial match falls back to the longest prefix still matched" in {
+            assert(advance("\r\n\r\n", 0, "\r\n\r\r\n\r\n") == -7)
+            assert(advance("aab", 0, "aaab") == -4)
+            assert(advance("\r\n\r\n", 3, "\r\n\r\n") == -4)
+        }
+
+        "an empty read leaves the match as it was" in {
+            assert(advance("\r\n", 1, "") == 1)
         }
     }
 
@@ -100,6 +106,46 @@ class ByteStreamTest extends kyo.BaseHttpTest:
             }
             Abort.run[HttpException](result).map { r =>
                 assert(r.getOrThrow == "hello")
+            }
+        }
+
+        "the bytes before the delimiter and its limit are the same wherever the reads split the input" in {
+            val input = "hello\r\n\r\nrest"
+            Kyo.foreach(Chunk.from(0 to input.length)) { split =>
+                Kyo.foreach(Chunk(5, 4)) { maxSize =>
+                    val stream = streamFromChunks(Seq(input.take(split), input.drop(split)).filter(_.nonEmpty))
+                    Abort.run[HttpException] {
+                        ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, ByteStream.CRLF_CRLF, maxSize) {
+                            (before, rest) => rest.run.map(after => (str(before), after.toSeq.map(str).mkString))
+                        }
+                    }.map {
+                        case Result.Success((before, after)) => s"$before|$after"
+                        case Result.Failure(_)               => "refused"
+                        case Result.Panic(t)                 => s"panic: $t"
+                    }
+                }
+            }.map { outcomes =>
+                assert(outcomes.forall(_ == Chunk("hello|rest", "refused")), s"(under a limit of 5, of 4) per split point: $outcomes")
+            }
+        }
+
+        "an empty delimiter is found before the first byte, leaving the stream unread" in {
+            val stream = streamFromChunks(Seq("abc"))
+            val result = ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, Array.emptyByteArray, 1024) {
+                (before, rest) => rest.run.map(after => (str(before), after.toSeq.map(str).mkString))
+            }
+            Abort.run[HttpException](result).map { r =>
+                assert(r == Result.succeed(("", "abc")), s"observed: $r")
+            }
+        }
+
+        "a delimiter that straddles several reads" in {
+            val stream = streamFromChunks(Seq("ab", "c\r", "\n", "\r", "\nd"))
+            val result = ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, ByteStream.CRLF_CRLF, 1024) {
+                (before, rest) => rest.run.map(after => (str(before), after.toSeq.map(str).mkString))
+            }
+            Abort.run[HttpException](result).map { r =>
+                assert(r.getOrThrow == ("abc", "d"))
             }
         }
 
