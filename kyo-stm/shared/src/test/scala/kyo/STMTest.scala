@@ -558,7 +558,7 @@ class STMTest extends kyo.test.Test[Any]:
         val repeats = 10
         val sizes   = Choice.eval(1, 10, 100, 1000)
 
-        "concurrent updates".notJs in {
+        "concurrent updates" in {
             (for
                 size  <- sizes
                 ref   <- TRef.init(0)
@@ -569,7 +569,7 @@ class STMTest extends kyo.test.Test[Any]:
                 .unit
         }
 
-        "concurrent reads and writes".notJs in {
+        "concurrent reads and writes" in {
             (for
                 size       <- sizes
                 ref        <- TRef.init(0)
@@ -589,7 +589,7 @@ class STMTest extends kyo.test.Test[Any]:
                 .unit
         }
 
-        "concurrent nested transactions".notJs in {
+        "concurrent nested transactions" in {
             // Under high contention, nested transactions generate many conflicts.
             // Use unlimited retries so contention is resolved instead of failing.
             val retrySchedule = STM.defaultRetrySchedule.forever
@@ -795,7 +795,7 @@ class STMTest extends kyo.test.Test[Any]:
         }
     }
 
-    "bug #925".onlyJvm in {
+    "bug #925" in {
         def unsafeToFuture[A](a: => A < (Async & Abort[Throwable])): Future[A] =
             import kyo.AllowUnsafe.embrace.danger
             Sync.Unsafe.evalOrThrow(
@@ -810,13 +810,11 @@ class STMTest extends kyo.test.Test[Any]:
             r.get
         }
 
-        val task = KyoApp.runAndBlock(Duration.Infinity)(Async.fromFuture(unsafeToFuture(STM.run(faultyTransaction))))
-
-        Abort.run(task).map { result =>
+        Abort.run(Async.fromFuture(unsafeToFuture(STM.run(faultyTransaction)))).map { result =>
             assert(result == Result.panic(ex))
         }
     }
-    "bug #1172".onlyJvm in {
+    "bug #1172" in {
         Abort.run { // trap non-fatal exceptions (AssertionError)
             for
                 // initially they contain equal values:
@@ -848,7 +846,7 @@ class STMTest extends kyo.test.Test[Any]:
 
     "opacity" - {
 
-        "bug #1411".onlyJvm in {
+        "bug #1411" in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 r1         <- STM.run(TRef.init("a"))
@@ -880,7 +878,7 @@ class STMTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "division by zero".onlyJvm in {
+        "division by zero" in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 numerator   <- TRef.init(0)
@@ -914,7 +912,7 @@ class STMTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "double read consistency".onlyJvm in {
+        "double read consistency" in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 ref    <- TRef.init(0L)
@@ -939,7 +937,7 @@ class STMTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "even odd".onlyJvm in {
+        "even odd" in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 even   <- TRef.init(0)
@@ -975,7 +973,7 @@ class STMTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "sum invariant".onlyJvm in {
+        "sum invariant" in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 a      <- TRef.init(500)
@@ -1058,7 +1056,7 @@ class STMTest extends kyo.test.Test[Any]:
             }
         }
 
-        "concurrent transactions with large ticks".notJs in {
+        "concurrent transactions with large ticks" in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
@@ -1093,7 +1091,7 @@ class STMTest extends kyo.test.Test[Any]:
             }
         }
 
-        "opacity with large ticks".onlyJvm in {
+        "opacity with large ticks" in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
@@ -1124,7 +1122,7 @@ class STMTest extends kyo.test.Test[Any]:
     }
 
     "early writer abort optimization" - {
-        "writers yield to fresher readers under contention".onlyJvm in {
+        "writers yield to fresher readers under contention" in {
             // This tests that writers with older ticks abort early when
             // fresher readers have registered their readTick, avoiding
             // wasted work building transaction logs that would fail at commit
@@ -1157,7 +1155,7 @@ class STMTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "high contention read-heavy workload".onlyJvm in {
+        "high contention read-heavy workload" in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 refs <- Kyo.fill(5)(TRef.init(0))
@@ -1215,7 +1213,7 @@ class STMTest extends kyo.test.Test[Any]:
             }
         }
 
-        "Tick.next from 200 concurrent fibers produces 200 distinct values".notJs in {
+        "Tick.next from 200 concurrent fibers produces 200 distinct values" in {
             val n = 200
             Sync.Unsafe.defer { STM.Tick.testOnlySet(0L) }.andThen {
                 Async.fill(n, n) {
@@ -1565,7 +1563,7 @@ class STMTest extends kyo.test.Test[Any]:
             yield assert((v1, v2) == (1, 2), s"both disjoint commits should succeed: got ($v1, $v2)")
         }
 
-        "two concurrent STM.run-write transactions on the same TRef do not produce a lost update".notJs in {
+        "two concurrent STM.run-write transactions on the same TRef do not produce a lost update" in {
             val n = 200
             for
                 ref <- TRef.init(0)
@@ -1593,7 +1591,7 @@ class STMTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "two transactions writing in opposite source order both commit (lock-ordering prevents deadlock)".notJs in {
+        "two transactions writing in opposite source order both commit (lock-ordering prevents deadlock)" in {
             for
                 r1 <- TRef.init(0)
                 r2 <- TRef.init(0)
@@ -1609,7 +1607,7 @@ class STMTest extends kyo.test.Test[Any]:
             )
         }
 
-        "writer with older tick than recorded readTick aborts (validated by attempt count)".notJs in {
+        "writer with older tick than recorded readTick aborts (validated by attempt count)" in {
             for
                 ref      <- TRef.init(0)
                 attempts <- AtomicInt.init
@@ -1666,7 +1664,7 @@ class STMTest extends kyo.test.Test[Any]:
             yield assert(v == 42, s"post-commit side effect should observe 42, got $v")
         }
 
-        "writer-induced retry forces reader to attempt >= 2 times".notJs in {
+        "writer-induced retry forces reader to attempt >= 2 times" in {
             for
                 ref      <- TRef.init(0)
                 latch1   <- Latch.init(1)
@@ -1706,7 +1704,7 @@ class STMTest extends kyo.test.Test[Any]:
                 case other                                => fail(s"expected FailedTransaction, got $other")
         }
 
-        "concurrent updates: every reader observes a value in [0, n]".notJs in {
+        "concurrent updates: every reader observes a value in [0, n]" in {
             val n = 100
             for
                 ref     <- TRef.init(0)
@@ -1726,7 +1724,7 @@ class STMTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "opacity reader records mismatched (v1, v2) snapshots; sink should remain 0".notJs in {
+        "opacity reader records mismatched (v1, v2) snapshots; sink should remain 0" in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 ref      <- TRef.init(0L)
@@ -1814,7 +1812,7 @@ class STMTest extends kyo.test.Test[Any]:
                 assert(result.isFailure, s"abort should surface; result=$result")
         }
 
-        "Tick.next from 200 concurrent fibers produces 200 distinct values (mirror)".notJs in {
+        "Tick.next from 200 concurrent fibers produces 200 distinct values (mirror)" in {
             val n = 200
             Sync.Unsafe.defer { STM.Tick.testOnlySet(0L) }.andThen {
                 Async.fill(n, n) { Sync.Unsafe.defer { STM.Tick.next(): Long } }
@@ -2026,7 +2024,7 @@ class STMTest extends kyo.test.Test[Any]:
             yield assert(finals == Seq(100, 100, 100), s"100 sequential commits should leave refs at 100; got $finals")
         }
 
-        "multi-ref commit returning false via boundary.break does not leak the Break exception".notJs in {
+        "multi-ref commit returning false via boundary.break does not leak the Break exception" in {
             for
                 r1     <- TRef.init(0)
                 r2     <- TRef.init(0)
@@ -2105,7 +2103,7 @@ class STMTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "STM.run with 1000 forced retries does not StackOverflowError".onlyJvm in {
+        "STM.run with 1000 forced retries does not StackOverflowError" in {
             val k = 1000
             for
                 attempts <- AtomicInt.init
@@ -2263,7 +2261,7 @@ class STMTest extends kyo.test.Test[Any]:
             Env.run(99)(handled).map { v => assert(v == 99, s"Env-carrying body should see 99; got $v") }
         }
 
-        "50 fibers each running STM.run on disjoint refs complete (no global lock)".notJs in {
+        "50 fibers each running STM.run on disjoint refs complete (no global lock)" in {
             val n = 50
             for
                 refs   <- Kyo.fill(n)(TRef.init(0))
@@ -2273,7 +2271,7 @@ class STMTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "STM.run admits 200 concurrent callers without a built-in concurrency cap".notJs in {
+        "STM.run admits 200 concurrent callers without a built-in concurrency cap" in {
             val n = 200
             for
                 ref <- TRef.init(0)
@@ -2629,7 +2627,7 @@ class STMTest extends kyo.test.Test[Any]:
                 assert(child > 0L, s"child should allocate its own tick; got $child")
         }
 
-        "100 concurrent STM.run fibers complete (no thread-pool deadlock)".notJs in {
+        "100 concurrent STM.run fibers complete (no thread-pool deadlock)" in {
             val n = 100
             for
                 ref <- TRef.init(0)
@@ -2674,7 +2672,7 @@ class STMTest extends kyo.test.Test[Any]:
             yield assert(a == 5 && c == 5, s"side effect count $c should equal attempts $a")
         }
 
-        "two transactions writing to (r1, r2) and (r2, r1) commit without deadlock".notJs in {
+        "two transactions writing to (r1, r2) and (r2, r1) commit without deadlock" in {
             for
                 r1 <- TRef.init(0)
                 r2 <- TRef.init(0)
@@ -2719,7 +2717,7 @@ class STMTest extends kyo.test.Test[Any]:
                 assert(v == 0, s"outer write should be rolled back; got $v")
         }
 
-        "500 concurrent fibers calling Tick.next return 500 distinct values".notJs in {
+        "500 concurrent fibers calling Tick.next return 500 distinct values" in {
             val n = 500
             Sync.Unsafe.defer { STM.Tick.testOnlySet(0L) }.andThen {
                 Async.fill(n, n) { Sync.Unsafe.defer { STM.Tick.next(): Long } }
@@ -2849,7 +2847,7 @@ class STMTest extends kyo.test.Test[Any]:
             yield assert(v == 7, s"outer write preserved; got $v (inner write leaked?)")
         }
 
-        "TRef.init outside STM.run produces a TRef immediately observable from another fiber".notJs in {
+        "TRef.init outside STM.run produces a TRef immediately observable from another fiber" in {
             for
                 ref   <- TRef.init(42)
                 v1    <- STM.run(ref.get)

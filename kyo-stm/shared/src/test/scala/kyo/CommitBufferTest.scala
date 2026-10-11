@@ -12,7 +12,7 @@ class CommitBufferTest extends kyo.test.Test[Any]:
 
     "CommitBuffer (via STM.run multi-ref commits)" - {
 
-        "concurrent inverted-order multi-ref commits do not deadlock".notJs in {
+        "concurrent inverted-order multi-ref commits do not deadlock" in {
             for
                 r0 <- TRef.init(0)
                 r1 <- TRef.init(0)
@@ -63,7 +63,7 @@ class CommitBufferTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "buffer is reset after a conflicting commit that returns false".notJs in {
+        "buffer is reset after a conflicting commit that returns false" in {
             for
                 r0 <- TRef.init(0)
                 r1 <- TRef.init(0)
@@ -170,7 +170,7 @@ class CommitBufferTest extends kyo.test.Test[Any]:
             yield assert(values == (300, 100, 300))
         }
 
-        "multi-ref commit with last-index conflict exits within the retry budget".notJs in {
+        "multi-ref commit with last-index conflict exits within the retry budget" in {
             for
                 refs <- Kyo.foreach(1 to 4)(_ => TRef.init(0))
                 // Background contention on the highest-id ref (post-sort, this is the last lock acquired).
@@ -206,7 +206,7 @@ class CommitBufferTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "normal STM.run pipeline always sorts before lock (no-deadlock under inverted-order contention)".notJs in {
+        "normal STM.run pipeline always sorts before lock (no-deadlock under inverted-order contention)" in {
             for
                 r0 <- TRef.init(0)
                 r1 <- TRef.init(0)
