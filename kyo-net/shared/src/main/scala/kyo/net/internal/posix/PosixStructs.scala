@@ -329,7 +329,7 @@ private[net] object SockAddr:
         buf.set(offset, ((port >> 8) & 0xff).toByte)
         buf.set(offset + 1, (port & 0xff).toByte)
 
-    private def parseIpv4(host: String): Maybe[Array[Byte]] =
+    private[net] def parseIpv4(host: String): Maybe[Array[Byte]] =
         val parts = host.split('.')
         if parts.length != 4 then Absent
         else
@@ -353,7 +353,7 @@ private[net] object SockAddr:
       * zero-compression (the most common literals like "::1"). An embedded IPv4 tail (e.g. "::ffff:127.0.0.1") and scope-id suffixes are not
       * accepted; those are rejected with `Absent` rather than mis-parsed. Returns `Absent` on any malformed input.
       */
-    private def parseIpv6(host: String): Maybe[Array[Byte]] =
+    private[net] def parseIpv6(host: String): Maybe[Array[Byte]] =
         if host.contains('.') || host.contains('%') then Absent
         else
             val doubleColonAt = host.indexOf("::")

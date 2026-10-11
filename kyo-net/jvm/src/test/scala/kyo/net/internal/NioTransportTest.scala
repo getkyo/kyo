@@ -177,6 +177,42 @@ class NioTransportTest extends Test:
         }
     }
 
+    /** Whether the OS socket table holds a TCP socket whose remote end is 192.0.2.77:80. On Linux a dual-stack NIO socket lists it in
+      * tcp6 as an IPv4-mapped address, which ends in the same hex; elsewhere `netstat -an` prints it as `192.0.2.77.80` (macOS) or
+      * `192.0.2.77:80` (Windows).
+      */
+    private def blackHoleSocketOpen(): Boolean =
+        val procTables = Seq("/proc/net/tcp", "/proc/net/tcp6").map(java.nio.file.Paths.get(_)).filter(java.nio.file.Files.exists(_))
+        if procTables.nonEmpty then procTables.exists(p => new String(java.nio.file.Files.readAllBytes(p)).contains("4D0200C0:0050"))
+        else
+            val netstat = new String(new ProcessBuilder("netstat", "-an").redirectErrorStream(true).start().getInputStream.readAllBytes())
+            netstat.contains("192.0.2.77.80") || netstat.contains("192.0.2.77:80")
+        end if
+    end blackHoleSocketOpen
+
+    // 192.0.2.77 is RFC 5737 TEST-NET-1, routable and unanswered, and no other test connects to it, so its socket-table row is this
+    // connect's. The connect parks in SYN_SENT, and before the kernel gives up on the SYN (about 2 minutes on Linux) only the deadline's
+    // failure can release the socket. The row is seen while the connect is pending, so its absence afterwards is the release.
+    "a connect failed by its deadline releases its socket at once, plaintext and TLS" in {
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            val tls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
+            def released(connect: Fiber.Unsafe[kyo.net.Connection, Abort[NetException]]) =
+                for
+                    seen    <- awaitCondition(5.seconds)(blackHoleSocketOpen())
+                    outcome <- Abort.run[NetException](connect.safe.get)
+                    gone    <- awaitCondition(5.seconds)(!blackHoleSocketOpen())
+                yield (seen, outcome.failure.map(_.getClass.getSimpleName), gone)
+            for
+                plain  <- released(transport.connect("192.0.2.77", 80, 1.second))
+                secure <- released(transport.connectTls("192.0.2.77", 80, tls, 1.second))
+            yield
+                assert(plain == (true, Present("NetConnectTimeoutException"), true), s"plaintext: $plain")
+                assert(secure == (true, Present("NetConnectTimeoutException"), true), s"TLS: $secure")
+            end for
+        }
+    }
+
     // -----------------------------------------------------------------------
     // listen: TCP server
     // -----------------------------------------------------------------------
@@ -222,6 +258,101 @@ class NioTransportTest extends Test:
                         case _                         => ()
                     assert(result2.isFailure)
                     succeed
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // host name resolution
+    // -----------------------------------------------------------------------
+
+    /** Calls `start` with a host only [[ParkingResolverProvider]] answers, and reports whether `start` returned while that host's lookup was
+      * still parked: a transport that resolves on the calling carrier cannot return before the resolver answers. The lookup is released
+      * afterwards, so whatever `start` began completes.
+      */
+    private def startWhileResolving[A](name: String)(start: String => A)(using Frame, kyo.test.AssertScope): (Boolean, A) < Async =
+        val host     = name + ParkingResolverProvider.Domain
+        val lookup   = ParkingResolverProvider.lookup(host)
+        val returned = new java.util.concurrent.atomic.AtomicBoolean(false)
+        for
+            starting <- Fiber.initUnscoped(Sync.defer {
+                val started = start(host)
+                returned.set(true)
+                started
+            })
+            parked <- awaitCondition(10.seconds)(lookup.started.getCount == 0)
+            early = returned.get()
+            _     = lookup.released.countDown()
+            a <- starting.get
+        yield
+            assert(parked, s"the transport never asked the resolver for $host")
+            (early, a)
+        end for
+    end startWhileResolving
+
+    "host name resolution" - {
+        "connect returns while the host name is still resolving, then connects to the address it resolves to" in {
+            given Frame = Frame.internal
+            mkTransport().map { transport =>
+                transport.listen("127.0.0.1", 0, 50)(_ => ()).safe.get.map { listener =>
+                    startWhileResolving("connect")(host => transport.connect(host, listener.port)).map { (early, connecting) =>
+                        connecting.safe.get.map { conn =>
+                            assert(early, "connect resolved its host on the calling carrier, holding it for the whole lookup")
+                            assert(conn.isOpen)
+                            conn.close()
+                            listener.close()
+                            succeed
+                        }
+                    }
+                }
+            }
+        }
+
+        "connectTls returns while the host name is still resolving, then completes the handshake" in {
+            given Frame = Frame.internal
+            mkTransport().map { transport =>
+                transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(_ => ()).safe.get.map { listener =>
+                    startWhileResolving("connect-tls") { host =>
+                        transport.connectTls(host, listener.port, NetTlsConfig(trustAll = true))
+                    }.map { (early, connecting) =>
+                        connecting.safe.get.map { conn =>
+                            assert(early, "connectTls resolved its host on the calling carrier, holding it for the whole lookup")
+                            assert(conn.isOpen)
+                            conn.close()
+                            listener.close()
+                            succeed
+                        }
+                    }
+                }
+            }
+        }
+
+        "listen returns while the host name is still resolving, then binds the address it resolves to" in {
+            given Frame = Frame.internal
+            mkTransport().map { transport =>
+                startWhileResolving("listen")(host => transport.listen(host, 0, 50)(_ => ())).map { (early, binding) =>
+                    binding.safe.get.map { listener =>
+                        assert(early, "listen resolved its host on the calling carrier, holding it for the whole lookup")
+                        assert(listener.port > 0)
+                        listener.close()
+                        succeed
+                    }
+                }
+            }
+        }
+
+        "listenTls returns while the host name is still resolving, then binds the address it resolves to" in {
+            given Frame = Frame.internal
+            mkTransport().map { transport =>
+                startWhileResolving("listen-tls")(host => transport.listenTls(host, 0, 50, serverTlsConfig)(_ => ())).map {
+                    (early, binding) =>
+                        binding.safe.get.map { listener =>
+                            assert(early, "listenTls resolved its host on the calling carrier, holding it for the whole lookup")
+                            assert(listener.port > 0)
+                            listener.close()
+                            succeed
+                        }
                 }
             }
         }
