@@ -105,12 +105,11 @@ private[kyo] object ReactiveUI:
                 // (read afresh at render time), not by the rendered value's identity: the value is always the same `ui`
                 // object, kept with its `Bound.Ref` attributes so the rendered HTML carries the auto-binding event markers
                 // `data-kyo-ev="input"/"change"` the client needs and the dispatch handler resolves the ref. The region's
-                // signal is that ref mapped to the constant `ui`; mapping the leaf `SignalRef` keeps the signal exact, so
-                // subscribeScoped's `observe` delegates to the ref's register-before-read leaf loop (lossless, no
-                // deferred next-capture, no repair timer / idle churn), and each ref edit is a distinct ref VALUE that
-                // re-renders without the value-dedup ever suppressing a real edit. An element with no bound ref is const.
+                // signal is therefore `changesTo`, not `map(_ => ui)`: observation deduplicates on the emitted value, which
+                // never changes here, while `changesTo` detects change on the ref's own values and keeps its exact
+                // protocol. An element with no bound ref is const.
                 val (elementSignal, isConstNode) =
-                    collectSignalRef(ui).fold((Signal.initConst(ui: UI), true))(ref => (ref.map(_ => ui: UI), false))
+                    collectSignalRef(ui).fold((Signal.initConst(ui: UI), true))(ref => (ref.changesTo(ui: UI), false))
                 for (kids, hdl) <- walkStatic(ui, path, svg, regionIdentity, parentContext, discoverRootBound = false)
                 yield ReactiveUI(
                     path,
