@@ -143,17 +143,21 @@ jobs:
           os: linux-x64
           mode: restore
           browser: false
+          apt-set: JVM
       - uses: coursier/setup-action@v3.0.4
         with:
           jvm: corretto:25
           apps: sbt
       # uuid-dev is the Aeron driver's -luuid link target and is not preinstalled; the rest serve
       # kyo-net's shims. ffiCompileAll compiles every FFI module, so every module's build-time
-      # dependency belongs here.
+      # dependency belongs here. One call per list, each the ci legs' own (setup's liburing-dev,
+      # stage-natives' uuid-dev and toolchain): the .deb cache holds a list only as a ci leg installed it.
       - name: Install vendored-native build dependencies
         shell: bash
         run: |
-          bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev uuid-dev
+          bash scripts/apt-install.sh --if-missing liburing-dev
+          bash scripts/apt-install.sh --if-missing uuid-dev
+          bash scripts/apt-install.sh --if-missing cmake go:golang-go
       # Outside the retried compile: the fetches carry their own retries, so a reset in sbt does not
       # need to restage anything.
       - uses: ./.github/actions/stage-natives
@@ -270,17 +274,18 @@ jobs:
           os: linux-arm64
           mode: restore
           browser: false
+          apt-set: JVM
       - uses: coursier/setup-action@v3.0.4
         with:
           jvm: corretto:25
           apps: sbt
-      # uuid-dev is the Aeron driver's -luuid link target and is not preinstalled; the rest serve
-      # kyo-net's shims. ffiCompileAll compiles every FFI module, so every module's build-time
-      # dependency belongs here.
+      # As the linux-x86_64 producer: one call per list the ci legs cache.
       - name: Install vendored-native build dependencies
         shell: bash
         run: |
-          bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev uuid-dev
+          bash scripts/apt-install.sh --if-missing liburing-dev
+          bash scripts/apt-install.sh --if-missing uuid-dev
+          bash scripts/apt-install.sh --if-missing cmake go:golang-go
       # Outside the retried compile: the fetches carry their own retries, so a reset in sbt does not
       # need to restage anything.
       - uses: ./.github/actions/stage-natives

@@ -39,6 +39,7 @@ runs:
       with:
         os: ${{ inputs.os }}
         mode: restore
+        apt-set: ${{ inputs.target }}
 
     - name: Add supplementary swap (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
@@ -64,11 +65,6 @@ runs:
     # apt installs go through scripts/apt-install.sh (bounded retries under `sudo timeout`), not
     # nick-fields/retry: that action's kill of a timed-out sudo-owned child dies with EPERM,
     # turning an apt mirror hang into a hard job failure. See the script header.
-    - name: Install native dependencies (Linux)
-      if: ${{ inputs.target == 'Native' && contains(inputs.os, 'linux') }}
-      shell: bash
-      run: bash scripts/apt-install.sh libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
-
     # liburing is a build-time-only dependency of the kyo-net io_uring shim (kyo_uring.c), statically
     # linked so the shipped artifact has no runtime liburing dependency. Every platform target compiles the
     # shim on Linux (JVM/JS/Wasm via the kyo-ffi plugin's cc, Native via the Scala Native linker), so this

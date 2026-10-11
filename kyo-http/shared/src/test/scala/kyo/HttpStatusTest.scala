@@ -262,9 +262,6 @@ class HttpStatusTest extends BaseHttpTest:
         }
     }
 
-    // HttpStatus has no `reason` field currently — reason phrases are set by the backend
-    // (Netty uses HttpResponseStatus.valueOf with correct phrases; h2o Native does not).
-    // This test validates all standard codes resolve to named enum values, not Custom.
     "reason phrases" - {
         "all standard status codes resolve to named enum values" in {
             val standardCodes = Seq(
