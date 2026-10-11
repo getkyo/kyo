@@ -312,6 +312,51 @@ val unkeyedLosesFocusOnReorder: UI < Async =
     yield ul(items.foreach(t => li(input.id(s"row-${t.id}"))))
 ```
 
+### Components that run an effect: `UI.mounted`
+
+The boundaries above re-render pure `UI` values. A component that has to run an effect to produce its UI (load data, open a subscription, start a feed) is a `UI.mounted` node: it takes a `UI < (Abort[Throwable] & Async & Scope)`, shows a placeholder until the effect publishes, and renders a failure in place while the rest of the page keeps working. The effect runs inside a `Scope` that lives as long as the node's instance, so what it acquires or forks is released when the instance goes away.
+
+```scala
+import UI.*
+import kyo.*
+
+def profileCard(userId: Int): UI < (Abort[Throwable] & Async & Scope) =
+    for name <- Signal.initRef(s"user #$userId")
+    yield div(h2(name))
+
+def profile(selected: Signal[Int]): UI =
+    selected.render(id =>
+        UI.mounted(profileCard(id))
+            .keyed(id)
+            .placeholder(div("loading..."))
+            .onError(e => div(s"failed: ${e.message}"))
+    )
+```
+
+| Modifier | Effect |
+| --- | --- |
+| `.keyed(k)` | Keeps the instance (its `Scope`, resources and content) across re-renders of the regions around it, as long as each re-render shows the node from the same `.keyed` call, in the same row of any keyed list around it, with an equal key. Otherwise the old instance is released before the new one starts. |
+| `.placeholder(ui)` | Shown until the effect publishes. Defaults to an empty node. |
+| `.onError(f)` | Renders a failure from a `UI.MountError`: the error, a ready `message`, and a `source` saying whether the effect failed (`Effect`, `Panic`) or a feed it forked died later (`Fork`). Defaults to an inline error node. |
+| `.whilePending(p)` | What a node shows while a new instance is pending: `KeepLatest` (the default) keeps an inert snapshot of the previous content, with no live regions and no handlers; `Placeholder` shows the placeholder, the better choice for a form. |
+
+A node without a key gets a fresh instance every time its enclosing region re-renders. Siblings that appear or disappear around a keyed node do not affect it, and two `.keyed` calls never share an instance, even with equal keys. When one render shows the same call with the same key in several places, each place gets an instance of its own. Inputs that should update a live instance belong in `Signal` parameters; a plain value the effect captures belongs in the key. A helper that applies `.keyed` itself to effects its callers pass in can take a `(using UI.MountSite)`, so that each of its callers counts as a call of its own.
+
+A mount effect returns once it has set things up, so a feed it starts keeps running after the content is on screen. Start it with `UI.fork` instead of `Fiber.init`, and a failure of the feed switches the node to its error rendering:
+
+```scala
+import UI.*
+import kyo.*
+
+def liveTicker(quotes: Stream[String, Async]): UI < (Abort[Throwable] & Async & Scope) =
+    for
+        price <- Signal.initRef("...")
+        _     <- UI.fork(quotes.foreach(price.set(_)))
+    yield div(span(price))
+```
+
+A plain `Fiber.init` still runs on the node's `Scope`, but its failure does not reach the node, which is what a feed whose failure the component handles itself wants.
+
 ### Signal-typed setters return `UI`, not `Self`
 
 Several attribute setters have a signal overload:

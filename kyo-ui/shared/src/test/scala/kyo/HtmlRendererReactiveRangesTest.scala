@@ -3,6 +3,7 @@ package kyo
 import kyo.Browser.*
 import kyo.UI.Ast.Text
 import kyo.UI.foreach
+import kyo.UI.foreachIndexed
 import kyo.UI.foreachKeyed
 
 class HtmlRendererReactiveRangesTest extends UITest:
@@ -41,6 +42,29 @@ class HtmlRendererReactiveRangesTest extends UITest:
             assert(html.indexOf("id=\"before\"") < html.indexOf(host))
             assert(html.indexOf("id=\"after\"") > html.indexOf(s"$end</tbody>"))
             assert(!html.contains("<span data-kyo-reactive"))
+    }
+
+    "reactive rows built from mounts still render inside one explicit tbody" in {
+        for
+            rows <- Signal.initRef(Chunk("dynamic"))
+            html <- kyo.internal.HtmlRenderer.render(
+                UI.table(
+                    UI.tr(UI.td("head").id("head")),
+                    rows.foreachIndexed((_, value) =>
+                        UI.mounted(Sync.defer(UI.tr(UI.td(value).id(value)))).keyed(value).placeholder(UI.tr(UI.td("...")))
+                    )
+                ),
+                Seq.empty
+            )
+        yield
+            // Each row mount is a region of its own whose placeholder is a `tr`, so a loose match would find some host; the
+            // assertion pins the outer region that owns the row stream.
+            val outerId = "kyo-rs:([^-]+)-->".r.findFirstMatchIn(html).map(_.group(1)).getOrElse("")
+            assert(outerId.nonEmpty, s"no region rendered: $html")
+            assert(
+                html.contains(s"""<tbody data-kyo-range-host="$outerId"><!--kyo-rs:$outerId-->"""),
+                s"outer row region is not hosted, its anchors are bare in the table: $html"
+            )
     }
 
     "reactive authored tbody remains a table child with sibling anchors" in {

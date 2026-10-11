@@ -43,10 +43,14 @@ private[kyo] object ReactiveRegion:
 
     def tableContent(ui: UI): TableContent =
         ui match
-            case _: Thead | _: Tbody | _: Tfoot         => TableContent.AuthoredSections
-            case _: Tr                                  => TableContent.Rows
-            case _: Reactive[?]                         => TableContent.Transparent
-            case _: Foreach[?, ?]                       => TableContent.Transparent
+            case _: Thead | _: Tbody | _: Tfoot => TableContent.AuthoredSections
+            case _: Tr                          => TableContent.Rows
+            case _: Reactive[?]                 => TableContent.Transparent
+            case _: Foreach[?, ?]               => TableContent.Transparent
+            // A mount renders as its placeholder, so the parser sees the placeholder's shape: a list of mounted rows whose
+            // placeholder is a `tr` is a list of rows, and its anchors belong inside one tbody.
+            case mounted: Mounted =>
+                if mounted.placeholderUI.isEmpty then TableContent.Transparent else tableContent(mounted.placeholderUI.get)
             case KeyedChild(_, child)                   => tableContent(child)
             case Fragment(children) if children.isEmpty => TableContent.Other
             case Fragment(children)                     => tableContent(children)
