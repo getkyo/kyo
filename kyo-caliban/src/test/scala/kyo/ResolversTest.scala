@@ -728,76 +728,72 @@ class ResolverTest extends BaseCalibanTest:
     private def wsSubprotocol(name: String): HttpWebSocket.Config =
         HttpWebSocket.Config(subprotocols = Seq(name))
 
-    /** Collect exactly `expected` text frames, failing loudly with a diagnostic if fewer arrive in time or if the connection closes
-      * prematurely. Returns the collected frames in arrival order.
+    /** Takes text frames into `received` until `done` holds for the frames so far. The waits have no deadline of their own, so the leaf
+      * timeout is the only hang detector. Its report carries only the limit, so an interrupted wait logs the frames it had received.
       */
-    private def collectMessages(ws: HttpWebSocket, expected: Int, deadline: Duration = 3.seconds)(using
-        Frame,
-        kyo.test.AssertScope
-    ): Chunk[String] < Async =
-        AtomicRef.initWith(Chunk.empty[String]) { buf =>
-            val loop = Loop.foreach {
-                buf.get.map { chunk =>
-                    if chunk.length >= expected then Loop.done
-                    else
-                        ws.take().map {
-                            case HttpWebSocket.Payload.Text(s)   => buf.updateAndGet(_ :+ s).andThen(Loop.continue)
-                            case HttpWebSocket.Payload.Binary(_) => Loop.continue
-                        }
-                }
+    private def receiveUntil(ws: HttpWebSocket, received: AtomicRef[Chunk[String]], waitingFor: String)(done: Chunk[String] => Boolean)(
+        using Frame
+    ): Chunk[String] < (Async & Abort[Closed]) =
+        val loop = Loop.foreach {
+            received.get.map { chunk =>
+                if done(chunk) then Loop.done(chunk)
+                else
+                    ws.take().map {
+                        case HttpWebSocket.Payload.Text(s)   => received.updateAndGet(_ :+ s).andThen(Loop.continue)
+                        case HttpWebSocket.Payload.Binary(_) => Loop.continue
+                    }
             }
-            Abort.recover[Closed](e =>
-                buf.get.map(chunk =>
-                    fail(s"collectMessages: ws closed before $expected msgs (got ${chunk.length}): ${chunk.mkString(" | ")}"): Unit
-                )
+        }
+        Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
+            error match
+                case Present(Result.Panic(_)) =>
+                    received.get.map(chunk => Log.warn(s"interrupted while $waitingFor; ${describeFrames(chunk)}"))
+                case _ => ()
+        }(loop)
+    end receiveUntil
+
+    private def describeFrames(frames: Chunk[String]): String =
+        s"received ${frames.length} frames: ${frames.mkString(" | ")}"
+
+    /** Collect exactly `expected` text frames, failing with the frames received if the connection closes first. Returns the frames in
+      * arrival order.
+      */
+    private def collectMessages(ws: HttpWebSocket, expected: Int)(using Frame, kyo.test.AssertScope): Chunk[String] < Async =
+        val waitingFor = s"collectMessages waited for $expected frames"
+        AtomicRef.initWith(Chunk.empty[String]) { received =>
+            Abort.recover[Closed](_ =>
+                received.get.map(chunk => fail(s"ws closed before $waitingFor; ${describeFrames(chunk)}"): Chunk[String])
             ) {
-                Abort.recover[Timeout](_ =>
-                    buf.get.map(chunk =>
-                        fail(
-                            s"collectMessages: timed out after $deadline waiting for $expected msgs (got ${chunk.length}): ${chunk.mkString(" | ")}"
-                        ): Unit
-                    )
-                )(Async.timeout(deadline)(loop))
-            }.andThen(buf.get)
+                receiveUntil(ws, received, waitingFor)(_.length >= expected)
+            }
         }
     end collectMessages
 
-    /** Take frames until one matches `predicate`, ignoring non-matching frames silently. Fails loudly on Timeout or premature Closed. */
-    private def expectMessage(ws: HttpWebSocket, predicate: String => Boolean, deadline: Duration = 3.seconds)(using
-        Frame,
-        kyo.test.AssertScope
-    ): String < Async =
-        val loop = Loop.foreach {
-            ws.take().map {
-                case HttpWebSocket.Payload.Text(s) if predicate(s) => Loop.done(s)
-                case _                                             => Loop.continue
-            }
-        }
-        Abort.recover[Closed](_ => fail("expectMessage: ws closed before predicate matched"): String) {
-            Abort.recover[Timeout](_ => fail(s"expectMessage: timed out after $deadline waiting for matching frame"): String) {
-                Async.timeout(deadline)(loop)
+    /** Take frames until one matches `predicate`, skipping the others. Fails with the frames received if the connection closes first. */
+    private def expectMessage(ws: HttpWebSocket, predicate: String => Boolean)(using Frame, kyo.test.AssertScope): String < Async =
+        val waitingFor = "expectMessage waited for a matching frame"
+        AtomicRef.initWith(Chunk.empty[String]) { received =>
+            Abort.recover[Closed](_ =>
+                received.get.map(chunk => fail(s"ws closed before $waitingFor; ${describeFrames(chunk)}"): String)
+            ) {
+                receiveUntil(ws, received, waitingFor)(_.lastMaybe.exists(predicate)).map(_.last)
             }
         }
     end expectMessage
 
-    /** Poll `ws.closeReason` until Present. Use instead of `Async.sleep + ws.closeReason` to remove timing dependency from tests that
-      * expect the server to close the connection.
-      *
-      * Default deadline of 5 seconds: caliban's pipe takes ~500ms to materialise a `Left(close)` after a hook-failure in `afterInit`; CI
-      * runners with CPU contention and GC pauses regularly add another 1-2 seconds.
-      */
-    private def awaitClose(ws: HttpWebSocket, deadline: Duration = 5.seconds)(using
-        Frame,
-        kyo.test.AssertScope
-    ): (Int, String) < Async =
-        val loop = Loop.foreach {
-            ws.closeReason.map {
-                case Present(cr) => Loop.done(cr)
-                case Absent      => Async.sleep(5.millis).andThen(Loop.continue)
-            }
-        }
-        Abort.recover[Timeout](_ => fail(s"awaitClose: timed out after $deadline with no close received"): (Int, String)) {
-            Async.timeout(deadline)(loop)
+    /** Drain frames until the server closes the connection, then return the close code and reason it sent. */
+    private def awaitClose(ws: HttpWebSocket)(using Frame, kyo.test.AssertScope): (Int, String) < Async =
+        AtomicRef.initWith(Chunk.empty[String]) { received =>
+            Abort.run[Closed](receiveUntil(ws, received, "awaitClose waited for the server to close")(_ => false))
+                .andThen(ws.onPeerClose)
+                .andThen(ws.closeReason)
+                .map {
+                    case Present(cr) => cr
+                    case Absent      =>
+                        received.get.map(chunk =>
+                            fail(s"awaitClose: the server closed without a close frame; ${describeFrames(chunk)}"): (Int, String)
+                        )
+                }
         }
     end awaitClose
 
@@ -847,7 +843,7 @@ class ResolverTest extends BaseCalibanTest:
         end for
     }
 
-    "WS - graphql-transport-ws - ping returns pong".flaky in {
+    "WS - graphql-transport-ws - ping returns pong" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -887,7 +883,7 @@ class ResolverTest extends BaseCalibanTest:
         end for
     }
 
-    "WS - graphql-ws (legacy) - subscription happy path".flaky in {
+    "WS - graphql-ws (legacy) - subscription happy path" in {
         val api = subscriptionApi(10, 20)
         for
             interpreter <- Resolvers.get(api)
@@ -1759,7 +1755,7 @@ class ResolverTest extends BaseCalibanTest:
                         ))
                     }
                     // Each sub emits 3 next + 1 complete = 4 msgs, so n*4 total
-                    m <- collectMessages(ws, n * 4, 5.seconds)
+                    m <- collectMessages(ws, n * 4)
                 yield m
             }
         yield
