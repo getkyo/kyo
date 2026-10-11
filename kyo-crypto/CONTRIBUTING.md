@@ -34,6 +34,10 @@ The two RSA key types are two types because they were checked for different thin
 
 `Rsa.publicOperation` is `private[kyo]`: RSAEP and RSAVP1 are one computation, but a public raw exponentiation invites a hand-rolled padding scheme. The public operations are the padded ones, `RsaPkcs1.verifySha256` and `RsaOaep.encryptSha1`.
 
+The exponentiation under it, `kyo.internal.crypto.Exponentiation`, picks its arithmetic per platform by measuring Wycheproof's 8192-bit RSA file: `Montgomery.modPow` on Native, where the javalib `BigInteger` reduces by long division (28.8 s against 7.3 s), and on Wasm (1.1 s against 0.66 s); `BigInt.modPow` on the JVM, whose `BigInteger` runs on HotSpot intrinsics, and on JS, where every `Long` is emulated. Moving a platform to the other implementation is a measurement on that platform, not a cleanup. `Montgomery` is tested against `BigInt.modPow` on every platform, whichever one `Rsa` uses there.
+
+Neither arithmetic is constant time, and none of it may see a secret exponent. The module has no private-key operation (no signing, no decryption), and that is enforced by types, not by convention: `Montgomery` is `private[crypto]` to `kyo.internal.crypto`, `Exponentiation` takes the exponent only from a `VerificationKey` or an `EncryptionKey`, and both key types cap the exponent at `MaxExponentBits`, so an exponent the size of a private one never becomes a key. A private-key operation, if one is ever added, needs its own constant-time exponentiation (a fixed window, no branch or early exit on the exponent or the intermediate values) and must not route through `Exponentiation`.
+
 An Ed25519 key is decoded once, strictly (RFC 8032 section 5.1.3), by `Ed25519.VerificationKey.fromBytes`, which also refuses a point of small order; the odd multiples of the negated point are held with the bytes, so `verify` decodes nothing: it compares the encoding of `[S]B + [k](-A)` with the bytes of `R`. The SPKI reader in `Rsa` is deliberately lenient (BER lengths, an unchecked algorithm identifier, trailing bytes ignored) because a database server's key arrives in whichever encoding its tool wrote; a leaf pins the leniency so a stricter reader is a deliberate change.
 
 ## Failures are values, and a bad signature is `false`
@@ -50,7 +54,7 @@ A public operation refuses an argument outside its bounds with a value too, neve
 
 `ConstantTime.isEqual` and `Hmac.verifySha256` (whose comparison is `isEqual`) are the only constant-time operations, and the scaladoc states exactly what is promised: no data-dependent exit in the source, the comparison reads every position up to the longer length, a length mismatch is a non-match, and no claim about what the JIT, a JavaScript engine or LLVM does with the loop. That is protection against a network observer timing a webhook or interaction endpoint, not against a co-located observer.
 
-Everything else is not constant time and must say so where a reader could assume otherwise: `RsaPkcs1.verifySha256` and `Ed25519.verify` compare public values; `Hex` is for public values; RSA's `BigInt` arithmetic is what it is. Do not describe an operation as constant time because it has no early return, and do not add a comparison that returns at the first differing byte to any path that touches a tag.
+Everything else is not constant time and must say so where a reader could assume otherwise: `RsaPkcs1.verifySha256` and `Ed25519.verify` compare public values; `Hex` is for public values; RSA's exponentiation, `BigInt.modPow` or `Montgomery.modPow`, branches and returns early on its operands. Do not describe an operation as constant time because it has no early return, and do not add a comparison that returns at the first differing byte to any path that touches a tag.
 
 ## The vendored vectors
 
