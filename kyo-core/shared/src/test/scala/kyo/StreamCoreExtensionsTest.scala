@@ -1296,54 +1296,210 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // Element 1, the one the consumer takes, refuses to finish until the other three have acquired, so the
-        // stop is always observed with exactly three fibers holding rather than however many the scheduler
-        // happened to start.
-        "mapPar releases an element's resource when the consumer stops" in {
-            for
-                started  <- Latch.init(3)
-                released <- AtomicInt.init(0)
-                gate     <- Latch.init(1)
-                // one element per chunk, so each gets its own fiber
-                source: Stream[Int, Any] =
-                    Stream(Emit.valueWith(Chunk(1))(Emit.valueWith(Chunk(2))(Emit.valueWith(Chunk(3))(Emit.value(Chunk(4))))))
-                res <- source.mapPar(8) { v =>
-                    if v == 1 then started.await.andThen(v)
-                    else
-                        Sync.ensure(released.incrementAndGet.unit):
-                            started.release.andThen(gate.await).andThen(v)
-                }.take(1).run
-                _ <- assertEventually(released.get.map(_ == 3))
-                r <- released.get
-            yield
-                assert(res == Chunk(1))
-                assert(r == 3, s"released $r of the 3 element fibers that had acquired")
-            end for
-        }
-
-        // The consumer fiber is interrupted while one element fiber is joined and the others sit buffered in the
-        // output channel: the joined one is reached through the join link, and the buffered ones through the
-        // handler's cleanup, so none runs on unowned. The gate opens only on the leaf's way out: a fiber that was not
-        // interrupted stays parked on it and never counts as released, which the leaf timeout reports.
-        "mapPar interrupted with element fibers buffered interrupts every element fiber" in {
+        // At the interrupt each element fiber is either not yet published, buffered, or joined by the consumer, and
+        // every one of those states must be reached. The gate opens only on the leaf's way out: a fiber that was not
+        // interrupted stays parked on it and never exits, which the leaf timeout reports.
+        def interruptedConsumerInterruptsEveryElement(
+            map: (Stream[Int, Any], Int => Int < Async) => Stream[Int, Abort[Nothing] & Async]
+        )(using kyo.test.AssertScope) =
             for
                 started  <- Latch.init(4)
+                exited   <- Latch.init(4)
                 released <- AtomicInt.init(0)
                 gate     <- Latch.init(1)
                 source: Stream[Int, Any] =
                     Stream(Emit.valueWith(Chunk(1))(Emit.valueWith(Chunk(2))(Emit.valueWith(Chunk(3))(Emit.value(Chunk(4))))))
                 consumer <- Fiber.initUnscoped {
-                    source.mapPar(8) { v =>
-                        Sync.ensure(released.incrementAndGet.unit):
-                            started.release.andThen(gate.await).andThen(v)
-                    }.run
+                    map(
+                        source,
+                        v =>
+                            Sync.ensure(released.incrementAndGet.andThen(exited.release)):
+                                started.release.andThen(gate.await).andThen(v)
+                    ).run
                 }
                 _ <- started.await
                 _ <- consumer.interrupt
                 _ <- consumer.getResult
-                _ <- Sync.ensure(gate.release)(assertEventually(released.get.map(_ == 4)))
-            yield succeed
+                _ <- Sync.ensure(gate.release)(exited.await)
+                r <- released.get
+            yield assert(r == 4)
             end for
+        end interruptedConsumerInterruptsEveryElement
+
+        // Bound to a val so the stream's own effect row is inferred from the source rather than from the helper's
+        // expected type, which would otherwise ask for an isolate of Async.
+        "mapPar interrupted with element fibers buffered interrupts every element fiber" in {
+            interruptedConsumerInterruptsEveryElement { (source, f) =>
+                val mapped = source.mapPar(8)(f)
+                mapped
+            }
+        }
+
+        "mapParUnordered interrupted with element fibers buffered interrupts every element fiber" in {
+            interruptedConsumerInterruptsEveryElement { (source, f) =>
+                val mapped = source.mapParUnordered(8)(f)
+                mapped
+            }
+        }
+
+        "mapChunkPar interrupted with chunk fibers buffered interrupts every chunk fiber" in {
+            interruptedConsumerInterruptsEveryElement { (source, f) =>
+                val mapped = source.mapChunkPar(8)(c => f(c.head).map(Chunk(_)))
+                mapped
+            }
+        }
+
+        "mapChunkParUnordered interrupted with chunk fibers buffered interrupts every chunk fiber" in {
+            interruptedConsumerInterruptsEveryElement { (source, f) =>
+                val mapped = source.mapChunkParUnordered(8)(c => f(c.head).map(Chunk(_)))
+                mapped
+            }
+        }
+
+        // Element 1, the one the consumer takes, refuses to finish until the other three have acquired, so the
+        // stop is always observed with exactly three fibers holding rather than however many the scheduler
+        // happened to start.
+        def stoppedConsumerInterruptsEveryElement(
+            map: (Stream[Int, Any], Int => Int < Async) => Stream[Int, Abort[Nothing] & Async]
+        )(using kyo.test.AssertScope) =
+            for
+                started  <- Latch.init(3)
+                exited   <- Latch.init(3)
+                released <- AtomicInt.init(0)
+                gate     <- Latch.init(1)
+                source: Stream[Int, Any] =
+                    Stream(Emit.valueWith(Chunk(1))(Emit.valueWith(Chunk(2))(Emit.valueWith(Chunk(3))(Emit.value(Chunk(4))))))
+                res <- map(
+                    source,
+                    v =>
+                        if v == 1 then started.await.andThen(v)
+                        else
+                            Sync.ensure(released.incrementAndGet.andThen(exited.release)):
+                                started.release.andThen(gate.await).andThen(v)
+                ).take(1).run
+                _ <- Sync.ensure(gate.release)(exited.await)
+                r <- released.get
+            yield
+                assert(res == Chunk(1))
+                assert(r == 3, s"released $r of the 3 element fibers that had acquired")
+            end for
+        end stoppedConsumerInterruptsEveryElement
+
+        "mapPar releases an element's resource when the consumer stops" in {
+            stoppedConsumerInterruptsEveryElement { (source, f) =>
+                val mapped = source.mapPar(8)(f)
+                mapped
+            }
+        }
+
+        "mapParUnordered releases an element's resource when the consumer stops" in {
+            stoppedConsumerInterruptsEveryElement { (source, f) =>
+                val mapped = source.mapParUnordered(8)(f)
+                mapped
+            }
+        }
+
+        "mapChunkParUnordered releases a chunk's resource when the consumer stops" in {
+            stoppedConsumerInterruptsEveryElement { (source, f) =>
+                val mapped = source.mapChunkParUnordered(8)(c => f(c.head).map(Chunk(_)))
+                mapped
+            }
+        }
+
+        "mapChunkPar releases a chunk's resource when the consumer stops" in {
+            stoppedConsumerInterruptsEveryElement { (source, f) =>
+                val mapped = source.mapChunkPar(8)(c => f(c.head).map(Chunk(_)))
+                mapped
+            }
+        }
+
+        // A zero-capacity channel completes the put only when the consumer takes, so the source's abort follows the take and
+        // the close that the abort runs interrupts the chunk fiber the consumer is joining.
+        "mapPar ended by its source's Closed while joining a chunk ends quietly" in {
+            for
+                gate <- Latch.init(1)
+                source: Stream[Int, Abort[Closed]] =
+                    Stream(Emit.valueWith(Chunk(1))(Abort.fail(Closed("source", summon[Frame]))))
+                result <- Sync.ensure(gate.release) {
+                    val mapped = source.mapPar(1, 0)(v => gate.await.andThen(v))
+                    Abort.run[Closed](mapped.run)
+                }
+            yield assert(result == Result.succeed(Chunk.empty), s"the map's own interrupt of the joined chunk surfaced: $result")
+        }
+
+        "chunk fibers registered when their parallel map's region is abandoned are interrupted" in {
+            for
+                fiber     <- Promise.init[Int, Any]
+                published <- Latch.init(1)
+                never     <- Latch.init(1)
+                owner     <- Fiber.initUnscoped {
+                    StreamCoreExtensions.ChunkFibers.use[Int, Any](4) { fibers =>
+                        fibers.publish(fiber).andThen(published.release).andThen(never.await)
+                    }
+                }
+                _      <- published.await
+                _      <- owner.interrupt
+                _      <- owner.getResult
+                result <- fiber.poll
+            yield assert(result.exists(_.isPanic), s"the registered chunk fiber is still running: $result")
+        }
+
+        "a chunk fiber forked after its parallel map closed is interrupted" in {
+            StreamCoreExtensions.ChunkFibers.use[Int, Any](4) { fibers =>
+                for
+                    fiber     <- Promise.init[Int, Any]
+                    _         <- fibers.close
+                    published <- Abort.run[Closed](fibers.publish(fiber))
+                    result    <- fiber.poll
+                yield
+                    assert(published.isFailure)
+                    assert(result.exists(_.isPanic), s"the refused chunk fiber is still running: $result")
+            }
+        }
+
+        "a chunk fiber taken but not yet joined is interrupted when its parallel map closes" in {
+            StreamCoreExtensions.ChunkFibers.use[Int, Any](4) { fibers =>
+                for
+                    fiber  <- Promise.init[Int, Any]
+                    _      <- fibers.publish(fiber)
+                    taken  <- fibers.take
+                    _      <- fibers.close
+                    result <- fiber.poll
+                yield
+                    assert(taken.asInstanceOf[AnyRef] eq fiber.asInstanceOf[AnyRef])
+                    assert(result.exists(_.isPanic), s"the taken chunk fiber is still running: $result")
+            }
+        }
+
+        "chunk fibers published while their parallel map closes are all interrupted" in {
+            Kyo.foreach(1 to 200) { _ =>
+                StreamCoreExtensions.ChunkFibers.use[Int, Any](8) { fibers =>
+                    for
+                        start     <- Latch.init(1)
+                        published <- AtomicRef.init(Chunk.empty[Promise[Int, Any]])
+                        refused   <- AtomicRef.init(Chunk.empty[Promise[Int, Any]])
+                        publisher <- Fiber.initUnscoped {
+                            start.await.andThen:
+                                Loop.foreach:
+                                    Promise.init[Int, Any].map: fiber =>
+                                        Abort.run[Closed](fibers.publish(fiber)).map:
+                                            case Result.Success(_) => published.updateAndGet(_.append(fiber)).andThen(Loop.continue)
+                                            case _                 => refused.updateAndGet(_.append(fiber)).andThen(Loop.done)
+                        }
+                        closer <- Fiber.initUnscoped(start.await.andThen(fibers.close))
+                        _      <- start.release
+                        _      <- publisher.get
+                        _      <- closer.get
+                        p      <- published.get
+                        r      <- refused.get
+                        pLive  <- Kyo.filter(p)(_.done.map(!_))
+                        rLive  <- Kyo.filter(r)(_.done.map(!_))
+                    yield (pLive.size, rLive.size)
+                }
+            }.map { outcomes =>
+                val running = outcomes.filter(_ != (0, 0))
+                assert(running.isEmpty, s"(published, refused) chunk fibers left running per iteration: $running")
+            }
         }
 
         "the rest of a public peel cannot be forked" in {
