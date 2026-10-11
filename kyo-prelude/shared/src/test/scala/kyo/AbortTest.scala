@@ -976,9 +976,11 @@ class AbortTest extends kyo.test.Test[Any]:
         }
     }
 
-    "Abort.run with parametrized type".pendingUntilFixed("Abort.run type inference does not yet work for a parametrized error type") in {
+    // A ConcreteTag matches errors at run time, where erasure cannot tell Test[Int] from Test[String], so an applied error type is
+    // refused with an actionable message rather than accepted unsoundly.
+    "Abort.run with parametrized type is refused with the ConcreteTag message" in {
         class Test[A]
-        discard(typeCheck("Abort.run(Abort.fail(new Test[Int]))"))
+        typeCheckFailure("Abort.run(Abort.fail(new Test[Int]))")("has type parameters")
     }
 
     "Abort.run with type unions" - {

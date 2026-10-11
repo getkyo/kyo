@@ -107,6 +107,16 @@ object Layer:
             kyo.map { result => TypeMap(result) }
         }
 
+    /** Widens a `from` layer's body to the environment its caller declared.
+      *
+      * Each `from` takes that environment as its own type parameter `R`, tied to the inputs by `R <:< (A & B ...)` evidence, rather
+      * than writing `Env[A & B]` in its result type. An expected type such as `Layer[R2, Env[String & Int]]` would otherwise hand A
+      * and B that intersection as a lower bound, both would be inferred as `String & Int`, and the layer would ask the environment for
+      * a value no environment holds. The evidence is searched after `f` has fixed the inputs, so the expected type reaches only `R`.
+      */
+    private def requiring[C, S, In, R](v: C < (Env[In] & S))(using required: R <:< In): C < (Env[R] & S) =
+        required.substituteContra[[X] =>> C < (Env[X] & S)](v)
+
     /** Creates a layer from a function that takes one input and produces an effect.
       *
       * @param f
@@ -114,9 +124,9 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A and produces B
       */
-    def from[A: Tag, B: Tag, S](f: A => B < S)(using Frame): Layer[B, Env[A] & S] =
+    def from[A: Tag, B: Tag, S, R](f: A => B < S)(using Frame, R <:< A): Layer[B, Env[R] & S] =
         apply {
-            Env.get[A].map(f)
+            requiring(Env.get[A].map(f))
         }
 
     /** Creates a layer from a function that takes two inputs and produces an effect.
@@ -126,11 +136,11 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A and B and produces C
       */
-    def from[A: Tag, B: Tag, C: Tag, S](f: (A, B) => C < S)(using Frame): Layer[C, Env[A & B] & S] =
+    def from[A: Tag, B: Tag, C: Tag, S, R](f: (A, B) => C < S)(using Frame, R <:< (A & B)): Layer[C, Env[R] & S] =
         apply {
-            Env.useAll[A & B] { env =>
+            requiring(Env.useAll[A & B] { env =>
                 f(env.get[A], env.get[B])
-            }
+            })
         }
 
     /** Creates a layer from a function that takes three inputs and produces an effect.
@@ -140,11 +150,11 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A, B, and C and produces D
       */
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, S](f: (A, B, C) => D < S)(using Frame): Layer[D, Env[A & B & C] & S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, S, R](f: (A, B, C) => D < S)(using Frame, R <:< (A & B & C)): Layer[D, Env[R] & S] =
         apply {
-            Env.useAll[A & B & C] { env =>
+            requiring(Env.useAll[A & B & C] { env =>
                 f(env.get[A], env.get[B], env.get[C])
-            }
+            })
         }
 
     /** Creates a layer from a function that takes four inputs and produces an effect.
@@ -154,11 +164,14 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A, B, C, and D and produces E
       */
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, S](f: (A, B, C, D) => E < S)(using Frame): Layer[E, Env[A & B & C & D] & S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, S, R](f: (A, B, C, D) => E < S)(using
+        Frame,
+        R <:< (A & B & C & D)
+    ): Layer[E, Env[R] & S] =
         apply {
-            Env.useAll[A & B & C & D] { env =>
+            requiring(Env.useAll[A & B & C & D] { env =>
                 f(env.get[A], env.get[B], env.get[C], env.get[D])
-            }
+            })
         }
 
     /** Creates a layer from a function that takes five inputs and produces an effect.
@@ -168,13 +181,14 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A, B, C, D, E and produces F
       */
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, S](f: (A, B, C, D, E) => F < S)(using
-        Frame
-    ): Layer[F, Env[A & B & C & D & E] & S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, S, R](f: (A, B, C, D, E) => F < S)(using
+        Frame,
+        R <:< (A & B & C & D & E)
+    ): Layer[F, Env[R] & S] =
         apply {
-            Env.useAll[A & B & C & D & E] { env =>
+            requiring(Env.useAll[A & B & C & D & E] { env =>
                 f(env.get[A], env.get[B], env.get[C], env.get[D], env.get[E])
-            }
+            })
         }
 
     /** Creates a layer from a function that takes six inputs and produces an effect.
@@ -184,13 +198,14 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A, B, C, D, E and produces F
       */
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, S](f: (A, B, C, D, E, F) => G < S)(using
-        Frame
-    ): Layer[G, Env[A & B & C & D & E & F] & S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, S, R](f: (A, B, C, D, E, F) => G < S)(using
+        Frame,
+        R <:< (A & B & C & D & E & F)
+    ): Layer[G, Env[R] & S] =
         apply {
-            Env.useAll[A & B & C & D & E & F] { env =>
+            requiring(Env.useAll[A & B & C & D & E & F] { env =>
                 f(env.get[A], env.get[B], env.get[C], env.get[D], env.get[E], env.get[F])
-            }
+            })
         }
 
     /** Creates a layer from a function that takes seven inputs and produces an effect.
@@ -200,13 +215,14 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A, B, C, D, E and produces F
       */
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, S](f: (A, B, C, D, E, F, G) => H < S)(using
-        Frame
-    ): Layer[H, Env[A & B & C & D & E & F & G] & S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, S, R](f: (A, B, C, D, E, F, G) => H < S)(using
+        Frame,
+        R <:< (A & B & C & D & E & F & G)
+    ): Layer[H, Env[R] & S] =
         apply {
-            Env.useAll[A & B & C & D & E & F & G] { env =>
+            requiring(Env.useAll[A & B & C & D & E & F & G] { env =>
                 f(env.get[A], env.get[B], env.get[C], env.get[D], env.get[E], env.get[F], env.get[G])
-            }
+            })
         }
 
     /** Creates a layer from a function that takes eight inputs and produces an effect.
@@ -216,13 +232,14 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A, B, C, D, E and produces F
       */
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, I: Tag, S](f: (A, B, C, D, E, F, G, H) => I < S)(using
-        Frame
-    ): Layer[I, Env[A & B & C & D & E & F & G & H] & S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, I: Tag, S, R](f: (A, B, C, D, E, F, G, H) => I < S)(using
+        Frame,
+        R <:< (A & B & C & D & E & F & G & H)
+    ): Layer[I, Env[R] & S] =
         apply {
-            Env.useAll[A & B & C & D & E & F & G & H] { env =>
+            requiring(Env.useAll[A & B & C & D & E & F & G & H] { env =>
                 f(env.get[A], env.get[B], env.get[C], env.get[D], env.get[E], env.get[F], env.get[G], env.get[H])
-            }
+            })
         }
 
     /** Creates a layer from a function that takes nine inputs and produces an effect.
@@ -234,7 +251,7 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A, B, C, D, E and produces F
       */
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, I: Tag, J: Tag, S](f: (
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, I: Tag, J: Tag, S, R](f: (
         A,
         B,
         C,
@@ -245,12 +262,13 @@ object Layer:
         H,
         I
     ) => J < S)(using
-        Frame
-    ): Layer[J, Env[A & B & C & D & E & F & G & H & I] & S] =
+        Frame,
+        R <:< (A & B & C & D & E & F & G & H & I)
+    ): Layer[J, Env[R] & S] =
         apply {
-            Env.useAll[A & B & C & D & E & F & G & H & I] { env =>
+            requiring(Env.useAll[A & B & C & D & E & F & G & H & I] { env =>
                 f(env.get[A], env.get[B], env.get[C], env.get[D], env.get[E], env.get[F], env.get[G], env.get[H], env.get[I])
-            }
+            })
         }
 
     /** Creates a layer from a function that takes ten inputs and produces an effect.
@@ -260,7 +278,7 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A, B, C, D, E and produces F
       */
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, I: Tag, J: Tag, K: Tag, S](f: (
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, I: Tag, J: Tag, K: Tag, S, R](f: (
         A,
         B,
         C,
@@ -272,12 +290,13 @@ object Layer:
         I,
         J
     ) => K < S)(using
-        Frame
-    ): Layer[K, Env[A & B & C & D & E & F & G & H & I & J] & S] =
+        Frame,
+        R <:< (A & B & C & D & E & F & G & H & I & J)
+    ): Layer[K, Env[R] & S] =
         apply {
-            Env.useAll[A & B & C & D & E & F & G & H & I & J] { env =>
+            requiring(Env.useAll[A & B & C & D & E & F & G & H & I & J] { env =>
                 f(env.get[A], env.get[B], env.get[C], env.get[D], env.get[E], env.get[F], env.get[G], env.get[H], env.get[I], env.get[J])
-            }
+            })
         }
 
     transparent inline def init[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
