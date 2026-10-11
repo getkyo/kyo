@@ -810,7 +810,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         )
     }
 
-    "read lock release -> write lock acquire transition produces no stale-read observers" in {
+    "write lock acquire under concurrent readers produces no stale-read observers" in {
         for
             ref    <- TRef.init(0)
             torn   <- AtomicInt.init(0)
@@ -1006,6 +1006,49 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
+    "two transactions that each read the ref the other writes never both commit on the same snapshot" in {
+        // Each commit writes one more than the larger ref. Serially every commit raises the maximum by one, so after all commits
+        // the maximum equals the commit count. Two commits on the same snapshot (write skew) raise it by one between them. The
+        // readTick yield alone stops a polite pair, so each transaction commits only once it barges, leaving the commit's
+        // lock-then-validate order as the only guard. Each side also writes refs with lower ids than x and y, which its commit
+        // locks first, so the two commits overlap for longer.
+        val pairs = 8
+        val each  = 300
+
+        def side(own: Chunk[TRef[Int]], other: TRef[Int], mine: TRef[Int]): Unit < (Async & Abort[FailedTransaction]) =
+            Kyo.foreachDiscard(1 to each) { i =>
+                AtomicInt.init(0).map { attempts =>
+                    STM.run(STM.defaultRetrySchedule.forever) {
+                        for
+                            n <- Sync.defer(attempts.incrementAndGet)
+                            _ <- STM.retryIf(n <= bargeThreshold())
+                            _ <- Kyo.foreachDiscard(own)(_.set(i))
+                            v <- other.get
+                            w <- mine.get
+                            _ <- mine.set(math.max(v, w) + 1)
+                        yield ()
+                    }
+                }
+            }
+        Kyo.foreach(1 to pairs) { _ =>
+            for
+                leftOwn  <- Kyo.fill(64)(TRef.init(0))
+                rightOwn <- Kyo.fill(64)(TRef.init(0))
+                x        <- TRef.init(0)
+                y        <- TRef.init(0)
+                start    <- Latch.init(1)
+                left     <- Fiber.initUnscoped(start.await.andThen(side(leftOwn, y, x)))
+                right    <- Fiber.initUnscoped(start.await.andThen(side(rightOwn, x, y)))
+            yield (x, y, start, left, right)
+        }.map { runs =>
+            for
+                _      <- Kyo.foreachDiscard(runs)(_._3.release)
+                _      <- Kyo.foreachDiscard(runs)(r => r._4.get.andThen(r._5.get))
+                maxima <- Kyo.foreach(runs)(r => STM.run(r._1.get.map(a => r._2.get.map(b => math.max(a, b)))))
+            yield assert(maxima.forall(_ == each * 2), s"maxima=$maxima expected=${each * 2}")
+        }
+    }
+
     "observer between writer's first ref-publish and last ref-publish sees no half-state" in {
         for
             refs   <- Kyo.fill(10)(TRef.init(0))
@@ -1139,6 +1182,59 @@ class STMStressTest extends kyo.test.Test[Any]:
         )
     }
 
+    "a writer commits every transaction within bargeThreshold + 1 attempts against readers that also write" in {
+        // The owned refs make each reader's commit a multi-ref commit that checks `hot` while it holds its own write locks.
+        // Each write waits until every reader has committed again since the previous write, so the writer always arrives
+        // into a running stream of readers instead of racing ahead while the readers its commit invalidated are backing off.
+        val readerCount = 8
+        val writes      = 100
+        for
+            hot           <- TRef.init(0)
+            owned         <- Kyo.fill(readerCount)(Kyo.fill(32)(TRef.init(0)))
+            start         <- Latch.init(1)
+            stop          <- AtomicBoolean.init(false)
+            readerCommits <- AtomicInt.init(0)
+            maxAttempts   <- AtomicInt.init(0)
+            failures      <- AtomicInt.init(0)
+            readers       <- Fiber.initUnscoped {
+                Async.foreachDiscard(owned, owned.size) { refs =>
+                    start.await.andThen(Loop.foreach {
+                        stop.get.map {
+                            case true  => Loop.done(())
+                            case false =>
+                                STM.run(STM.defaultRetrySchedule.forever)(hot.get.map(v => Kyo.foreachDiscard(refs)(_.set(v))))
+                                    .andThen(readerCommits.incrementAndGet)
+                                    .andThen(Loop.continue)
+                        }
+                    })
+                }
+            }
+            _ <- start.release
+            _ <- Kyo.foreachDiscard(1 to writes) { i =>
+                for
+                    target <- readerCommits.get.map(_ + readerCount)
+                    _      <- Loop.foreach {
+                        readerCommits.get.map { c =>
+                            if c >= target then Loop.done(())
+                            else Async.sleep(50.micros).andThen(Loop.continue)
+                        }
+                    }
+                    attempts <- AtomicInt.init(0)
+                    result   <- Abort.run(STM.run(Sync.defer(attempts.incrementAndGet).andThen(hot.set(i))))
+                    n        <- attempts.get
+                    _        <- maxAttempts.updateAndGet(math.max(_, n))
+                    _        <- if result.isFailure then failures.incrementAndGet.unit else Kyo.unit
+                yield ()
+            }
+            _ <- stop.set(true)
+            _ <- readers.get
+            m <- maxAttempts.get
+            f <- failures.get
+            v <- STM.run(hot.get)
+        yield assert(f == 0 && m <= bargeThreshold() + 1 && v == writes, s"failures=$f maxAttempts=$m value=$v")
+        end for
+    }
+
     "updateReadTick CAS loop bounded under 100 concurrent readers" in {
         for
             ref       <- TRef.init(0)
@@ -1149,17 +1245,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(d == 100, s"readsDone=$d")
     }
 
-    "TRef.lock CAS loop terminates under 200 concurrent reader-acquire attempts" in {
-        for
-            ref  <- TRef.init(0)
-            done <- AtomicInt.init(0)
-            run = Async.fill(200, 200)(STM.run(ref.get).andThen(done.incrementAndGet))
-            _ <- Abort.run(Async.timeout(10.seconds)(run))
-            d <- done.get
-        yield assert(d == 200, s"done=$d")
-    }
-
-    "unlock reader-release loop terminates under 200 concurrent release attempts" in {
+    "200 concurrent readers of one TRef all commit" in {
         for
             ref  <- TRef.init(0)
             done <- AtomicInt.init(0)
@@ -1694,12 +1780,11 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
-    "sustained reader-acquire spam against one TRef: writer eventually exits via STM.run schedule cap" in {
+    "sustained reader spam against one TRef: the writer commits within its default retry budget" in {
         for
-            ref          <- TRef.init(0)
-            writerExited <- AtomicBoolean.init(false)
-            stop         <- AtomicBoolean.init(false)
-            // 16 readers provide sustained reader-acquire contention; a sub-millisecond
+            ref  <- TRef.init(0)
+            stop <- AtomicBoolean.init(false)
+            // 16 readers provide sustained reader contention; a sub-millisecond
             // yield per iteration keeps them from saturating the scheduler (and thereby
             // starving the writer / timeout fibers) while still keeping `ref`'s readTick
             // perpetually fresher than the writer's start tick.
@@ -1713,16 +1798,12 @@ class STMStressTest extends kyo.test.Test[Any]:
                     }
                 }
             }
-            writer <- Fiber.initUnscoped {
-                Abort.run {
-                    STM.run(STM.defaultRetrySchedule)(ref.set(42))
-                }.andThen(writerExited.set(true))
-            }
-            _      <- Abort.run(Async.timeout(10.seconds)(writer.get))
+            writer <- Fiber.initUnscoped(Abort.run(STM.run(STM.defaultRetrySchedule)(ref.set(42))))
+            result <- Abort.run(Async.timeout(10.seconds)(writer.get))
             _      <- stop.set(true)
             _      <- Abort.run(Async.timeout(10.seconds)(readers.get))
-            exited <- writerExited.get
-        yield assert(exited, s"writerExited=$exited")
+            v      <- STM.run(ref.get)
+        yield assert(result == Result.succeed(Result.succeed(())) && v == 42, s"result=$result value=$v")
     }
 
     "100x repeat of 64-fiber STM increment workload yields exactly 6400 each time" in {

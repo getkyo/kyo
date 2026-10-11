@@ -83,9 +83,6 @@ class TRefTest extends kyo.test.Test[Any]:
             "can acquire writer" in {
                 assert(State.free.acquireWriter(0L).isDefined)
             }
-            "can acquire reader" in {
-                assert(State.free.acquireReader.isDefined)
-            }
             "has zero readTick" in {
                 assert(State.free.readTick == 0L)
             }
@@ -100,41 +97,19 @@ class TRefTest extends kyo.test.Test[Any]:
                 assert(s.readTick == 42L)
             }
             "withReadTick preserves lock state" in {
-                val s = State.free.acquireReader.get.withReadTick(100L)
+                val s = State.free.acquireWriter(0L).get.withReadTick(100L)
                 assert(s.readTick == 100L)
                 assert(s.acquireWriter(100L).isEmpty)
-                assert(s.render == "1 readers")
+                assert(s.render == "writer")
             }
             "withoutReadTick clears tick" in {
                 val s = State.free.withReadTick(42L).withoutReadTick
                 assert(s.readTick == 0L)
             }
             "withoutReadTick preserves lock state" in {
-                val s = State.free.acquireReader.get.withReadTick(100L).withoutReadTick
+                val s = State.free.acquireWriter(0L).get.withReadTick(100L).withoutReadTick
                 assert(s.readTick == 0L)
                 assert(s.acquireWriter(0L).isEmpty)
-            }
-        }
-
-        "reader lock" - {
-            "acquireReader increments count" in {
-                val s = State.free.acquireReader.get
-                assert(s.acquireWriter(0L).isEmpty)
-                assert(s.acquireReader.isDefined)
-                assert(s.render == "1 readers")
-            }
-            "multiple readers stack" in {
-                val s = State.free.acquireReader.get.acquireReader.get.acquireReader.get
-                assert(s.render == "3 readers")
-            }
-            "releaseReader decrements count" in {
-                val s = State.free.acquireReader.get.acquireReader.get.releaseReader
-                assert(s.render == "1 readers")
-            }
-            "releaseReader back to free" in {
-                val s = State.free.acquireReader.get.releaseReader
-                assert(s.acquireWriter(0L).isDefined)
-                assert(s.render == "free")
             }
         }
 
@@ -142,7 +117,7 @@ class TRefTest extends kyo.test.Test[Any]:
             "acquireWriter acquires write lock" in {
                 val s = State.free.acquireWriter(0L).get
                 assert(s.acquireWriter(0L).isEmpty)
-                assert(s.acquireReader.isEmpty)
+                assert(s.isWriteLocked)
                 assert(s.render == "writer")
             }
             "acquireWriter preserves readTick" in {
@@ -172,13 +147,6 @@ class TRefTest extends kyo.test.Test[Any]:
                 assert(s.readTick == tick)
                 assert(s.acquireWriter(tick).isDefined)
             }
-            "large tick preserves reader lock" in {
-                val tick = Int.MaxValue.toLong * 2
-                val s    = State.free.acquireReader.get.acquireReader.get.withReadTick(tick)
-                assert(s.readTick == tick)
-                assert(s.render == "2 readers")
-                assert(s.acquireWriter(tick).isEmpty)
-            }
             "large tick preserves writer lock" in {
                 val tick = Int.MaxValue.toLong * 2
                 val s    = State.free.withReadTick(tick).acquireWriter(tick).get
@@ -187,15 +155,9 @@ class TRefTest extends kyo.test.Test[Any]:
             }
             "withoutReadTick clears large tick" in {
                 val tick = Int.MaxValue.toLong * 3
-                val s    = State.free.acquireReader.get.withReadTick(tick).withoutReadTick
+                val s    = State.free.acquireWriter(0L).get.withReadTick(tick).withoutReadTick
                 assert(s.readTick == 0L)
-                assert(s.render == "1 readers")
-            }
-            "reader operations don't affect large tick" in {
-                val tick = Int.MaxValue.toLong + 12345L
-                val s    = State.free.withReadTick(tick).acquireReader.get.acquireReader.get.releaseReader
-                assert(s.readTick == tick)
-                assert(s.render == "1 readers")
+                assert(s.render == "writer")
             }
         }
 
@@ -867,53 +829,9 @@ class TRefTest extends kyo.test.Test[Any]:
             assert(finalState.readTick == ticks.max, s"max-merge must produce ${ticks.max}; got ${finalState.readTick}")
         }
 
-        "acquireReader — returns Absent at exactly MaxReaders (254)" in {
-            val s254 = (1 to 254).foldLeft(State.free)((s, _) => s.acquireReader.get)
-            assert(s254.acquireReader.isEmpty, "acquireReader on a 254-reader state must return Absent")
-            assert(s254.render == "254 readers", s"render must reflect 254 readers, got ${s254.render}")
-        }
-
-        "acquireWriter — returns Absent when readers are present or a writer is held" in {
-            val rs = State.free.acquireReader.get
-            val w1 = rs.acquireWriter(1000L)
+        "acquireWriter — returns Absent when a writer is held" in {
             val w2 = State.free.acquireWriter(1000L).get.acquireWriter(1000L)
-            assert(w1.isEmpty, "acquireWriter must be Absent when one reader is present")
             assert(w2.isEmpty, "acquireWriter must be Absent when the writer lock is already held")
-        }
-
-        "releaseReader — single reader release returns state to free" in {
-            val s0 = State.free.acquireReader.get.releaseReader
-            assert(s0.render == "free", s"render must be 'free' after the only reader releases, got ${s0.render}")
-            assert(s0.acquireWriter(0L).isDefined, "free state must permit acquireWriter")
-        }
-
-        "releaseReader — on a writer-locked state silently produces 254 readers (misuse oracle)" in {
-            val wState = State.free.acquireWriter(0L).get
-            val after  = wState.releaseReader
-            assert(
-                after.render == "254 readers",
-                s"releaseReader on a writer-locked state silently produces 254 readers (current undefended behavior); got ${after.render}"
-            )
-        }
-
-        "acquireReader — permits exactly 254 readers, then denies" in {
-            val acquired = (1 to 254).foldLeft[Option[State]](Some(State.free)) {
-                case (Some(s), _) => s.acquireReader.toOption
-                case _            => None
-            }
-            val nextAttempt = acquired.get.acquireReader
-            assert(acquired.isDefined, "must permit 254 sequential acquireReader calls")
-            assert(nextAttempt.isEmpty, "must deny the 255th acquireReader call")
-            assert(acquired.get.render == "254 readers", "render must reflect 254 readers")
-        }
-
-        "acquireReader — sequential cap is exactly 254" in {
-            def countMax(s: State, n: Int): Int =
-                s.acquireReader match
-                    case Present(next) => countMax(next, n + 1)
-                    case Absent        => n
-            val cap = countMax(State.free, 0)
-            assert(cap == 254, s"sequential acquireReader cap must be 254; got $cap")
         }
 
         "readTick — preserves a tick at the 56-bit boundary (1L << 56 - 1)" in {
@@ -932,44 +850,9 @@ class TRefTest extends kyo.test.Test[Any]:
             )
         }
 
-        "releaseReader — on writer-locked state silently yields 0xFE (diagnostic)" in {
-            val after = State.free.acquireWriter(0L).get.releaseReader
-            assert(
-                after.render == "254 readers",
-                s"releaseReader on writer-locked is undefended; current behavior yields '254 readers'; got ${after.render}"
-            )
-        }
-
-        "releaseReader — on free state underflows into upper bits (diagnostic)" in {
-            val after = State.free.releaseReader
-            assert(
-                after.render == "writer" || after.render.endsWith("readers"),
-                s"releaseReader on free state silently corrupts; pinning current behavior; got ${after.render}"
-            )
-            assert(after.render != "free", "after the buggy release, state must NOT render as 'free' (asserts the underflow surfaces)")
-        }
-
         "acquireWriter — tick = Long.MaxValue succeeds when readTick fits in 56 bits" in {
             val s = State.free.withReadTick((1L << 55) - 1L)
             assert(s.acquireWriter(Long.MaxValue).isDefined, "acquireWriter(Long.MaxValue) must succeed when readTick fits in 56 bits")
-        }
-
-        "render — at 254 readers shows '254 readers'; pluralization fixed even at 1" in {
-            val s1   = State.free.acquireReader.get
-            val s254 = (1 to 254).foldLeft(State.free)((s, _) => s.acquireReader.get)
-            assert(s1.render == "1 readers", s"render at 1 reader is documented as '1 readers' (no special-case); got '${s1.render}'")
-            assert(s254.render == "254 readers", s"render at MaxReaders must say '254 readers'; got '${s254.render}'")
-        }
-
-        "render — after two acquireReader the count is 2; after one release it is 1" in {
-            val s2 = State.free.acquireReader.get.acquireReader.get
-            assert(s2.render == "2 readers", s"after two acquireReader, count must be 2; got '${s2.render}'")
-            assert(s2.releaseReader.render == "1 readers", s"after one releaseReader, count must be 1; got '${s2.releaseReader.render}'")
-        }
-
-        "acquireReader — at MaxReaders returns Absent (lock Read-branch denial)" in {
-            val s254 = (1 to 254).foldLeft(State.free)((s, _) => s.acquireReader.get)
-            assert(s254.acquireReader.isEmpty, "at MaxReaders, acquireReader must return Absent")
         }
 
         "acquireWriter — Absent distinguishably for 'locked' and 'stale tick'" in {
@@ -985,16 +868,48 @@ class TRefTest extends kyo.test.Test[Any]:
             assert(stale.acquireWriterBarging.isDefined, "barging acquires despite the fresher readTick")
             val writerHeld = State.free.acquireWriter(100L).get
             assert(writerHeld.acquireWriterBarging.isEmpty, "barging must not steal a lock another writer physically holds")
-            val readerHeld = State.free.acquireReader.get
-            assert(readerHeld.acquireWriterBarging.isEmpty, "barging must not take the write lock while a reader holds it")
+        }
+    }
+
+    "TRef.lock" - {
+        import AllowUnsafe.embrace.danger
+
+        def readEntry(ref: TRef[Int])(using Frame): TRefLog.Entry[Int] < (Async & Abort[FailedTransaction]) =
+            STM.run(ref.get.andThen(Var.use[TRefLog](_.get(ref)))).map(_.get)
+
+        "a Read entry takes no lock, so a writer can lock the ref while it is claimed" in {
+            for
+                ref  <- TRef.init(0)
+                read <- readEntry(ref)
+                write = TRefLog.Write(read.tick, 1)
+                (claimed, stateAfterClaim, writerLocked) <- Sync.Unsafe.defer {
+                    val claimed = ref.lock(STM.Tick.next(), read, barge = false)
+                    val state   = ref.toString
+                    val locked  = ref.lock(STM.Tick.next(), write, barge = false)
+                    if locked then ref.unlock(write)
+                    (claimed, state, locked)
+                }
+            yield
+                assert(claimed, "a Read entry of an unchanged, unlocked ref must hold")
+                assert(stateAfterClaim.contains("lock=free"), s"a Read claim must leave the lock free; got $stateAfterClaim")
+                assert(writerLocked, "a writer must lock a ref that only a reader has claimed")
         }
 
-        "acquireReader/releaseReader — N matched acquire/release returns to free" in {
-            val n        = 30
-            val acquired = (1 to n).foldLeft(State.free)((s, _) => s.acquireReader.get)
-            val released = (1 to n).foldLeft(acquired)((s, _) => s.releaseReader)
-            assert(released.render == "free", s"after $n matched acquire/release, state must be 'free'; got '${released.render}'")
-            assert(released.acquireWriter(0L).isDefined, "free state must permit acquireWriter")
+        "a Read entry fails while a writer holds the ref and after the ref changes" in {
+            for
+                ref  <- TRef.init(0)
+                read <- readEntry(ref)
+                write = TRefLog.Write(read.tick, 1)
+                (whileLocked, afterCommit) <- Sync.Unsafe.defer {
+                    discard(ref.lock(STM.Tick.next(), write, barge = false))
+                    val whileLocked = ref.lock(STM.Tick.next(), read, barge = false)
+                    ref.commit(STM.Tick.next(), write)
+                    ref.unlock(write)
+                    (whileLocked, ref.lock(STM.Tick.next(), read, barge = false))
+                }
+            yield
+                assert(!whileLocked, "a Read entry must fail while a writer holds the ref")
+                assert(!afterCommit, "a Read entry must fail once a writer committed a new value")
         }
     }
 end TRefTest

@@ -48,12 +48,22 @@ private[kyo] object CommitBuffer:
             else
                 quickSort(self, size)
 
-        inline def lock(tick: STM.Tick, size: Int, barge: Boolean)(using AllowUnsafe): Int =
-            @tailrec def loop(idx: Int): Int =
+        /** Locks every Write entry, then checks every Read entry with `validateUnlocked`, releasing what it took when either step fails. */
+        inline def lock(tick: STM.Tick, size: Int, barge: Boolean)(using AllowUnsafe): Boolean =
+            @tailrec def lockWrites(idx: Int): Int =
                 if idx == size then size
-                else if !self.ref(idx).lock(tick, self.entry(idx), barge) then idx
-                else loop(idx + 1)
-            loop(0)
+                else if self.entry(idx).isInstanceOf[TRefLog.Write[?]] && !self.ref(idx).lock(tick, self.entry(idx), barge) then idx
+                else lockWrites(idx + 1)
+            @tailrec def checkReads(idx: Int): Boolean =
+                if idx == size then true
+                else if self.entry(idx).isInstanceOf[TRefLog.Read[?]] && !self.ref(idx).validateUnlocked(self.entry(idx)) then false
+                else checkReads(idx + 1)
+            val locked = lockWrites(0)
+            if locked == size && checkReads(0) then true
+            else
+                unlock(locked)
+                false
+            end if
         end lock
 
         inline def unlock(upTo: Int)(using AllowUnsafe): Unit =

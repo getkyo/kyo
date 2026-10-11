@@ -746,6 +746,35 @@ class STMTest extends kyo.test.Test[Any]:
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .unit
         }
+
+        "a writer behind fresher readers commits on its barging attempt while a reader's commit claims its ref" in {
+            // Each writer attempt forks a reader whose fresh tick lands in the ref's readTick, so every polite attempt yields and
+            // only the barging attempt can commit. Meanwhile a reader's commit-time claim on the ref (`lock` on its Read entry)
+            // stays held for the whole run; a held claim must not keep the barging writer from the lock.
+            import AllowUnsafe.embrace.danger
+            for
+                ref  <- TRef.init(0)
+                read <- STM.run(ref.get.andThen(Var.use[TRefLog](_.get(ref))))
+                entry = read.get
+                attempts <- AtomicInt.init(0)
+                claimed  <- Sync.Unsafe.defer(ref.lock(STM.Tick.next(), entry, barge = false))
+                result   <- Abort.run(STM.run {
+                    for
+                        _ <- Sync.defer(attempts.incrementAndGet)
+                        _ <- ref.set(1)
+                        r <- Fiber.initUnscoped(STM.run(ref.get))
+                        _ <- r.get
+                    yield ()
+                })
+                _ <- Sync.Unsafe.defer(if claimed then ref.unlock(entry))
+                n <- attempts.get
+                v <- STM.run(ref.get)
+            yield assert(
+                claimed && result == Result.succeed(()) && n == bargeThreshold() + 1 && v == 1,
+                s"claimed=$claimed result=$result attempts=$n value=$v"
+            )
+            end for
+        }
     }
 
     "async transaction nesting" - {

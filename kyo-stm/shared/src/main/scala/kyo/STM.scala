@@ -22,10 +22,10 @@ import scala.util.boundary
   * The implementation uses optimistic execution with lock-based validation during commit:
   *
   *   - Transactions execute without acquiring locks, tracking reads and writes in a local log
-  *   - During commit, read-write locks are acquired on affected TRefs to ensure consistency:
-  *     - Multiple readers can hold shared locks on a TRef during commit
+  *   - During commit, a transaction locks the TRefs it writes and then validates the ones it only read:
   *     - Writers require an exclusive lock during commit
-  *     - No global locks are used - operations on different refs can commit independently
+  *     - Readers take no lock: a read is valid when its TRef is unchanged and not locked by a writer, so readers never hold off a writer
+  *     - No global locks are used: operations on different refs can commit independently
   *     - Lock acquisition is ordered by TRef identity to prevent deadlocks
   *     - Early conflict detection aborts transactions that would fail validation
   *
@@ -233,12 +233,7 @@ object STM:
                         // Sort references by id to prevent deadlocks
                         buffer.sort(size)
 
-                        val acquired = buffer.lock(tick, size, barge)
-                        if acquired != size then
-                            // Failed to acquire some locks - rollback and retry
-                            buffer.unlock(acquired)
-                            boundary.break(false)
-                        end if
+                        if !buffer.lock(tick, size, barge) then boundary.break(false)
 
                         // Successfully locked all references - commit changes
                         if !probe then buffer.commit(Tick.next(), size)

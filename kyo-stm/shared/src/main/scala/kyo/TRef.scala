@@ -105,42 +105,41 @@ final class TRef[A] private[kyo] (initEntry: Write[A])
     end updateReadTick
 
     private[kyo] def validate(entry: Entry[A])(using AllowUnsafe): Boolean =
-        val current = this.entry
-        current.tick == entry.tick || (
-            entry match
-                // Value-based fallback only for reads: if the same reference was written
-                // back, the read is still valid (reduces spurious aborts). Not safe for
-                // writes since two transactions computing the same value must not both commit.
-                case read: Read[?] => current.asInstanceOf[AnyRef].eq(read.asInstanceOf[AnyRef])
-                case _             => false
-        )
-    end validate
+        this.entry.tick == entry.tick
 
+    /** Checks a Read entry at commit: the ref is unchanged and no writer holds it. It takes no lock, so readers stay invisible and no
+      * stream of overlapping reader commits can keep a writer from the lock, which is what lets barging bound a writer's attempts against
+      * readers. The price is ordering: a commit must run this only after every Write entry is locked, otherwise two transactions that each
+      * read what the other writes can both commit.
+      */
+    private[kyo] def validateUnlocked(entry: Entry[A])(using AllowUnsafe): Boolean =
+        // The second validate rejects a writer that committed and released between the first validate and the state read.
+        validate(entry) && !getState().isWriteLocked && validate(entry)
+
+    /** Claims this ref for a commit: a Write entry takes the exclusive lock, a Read entry is checked with `validateUnlocked`. */
     private[kyo] def lock(tick: STM.Tick, entry: Entry[A], barge: Boolean)(using AllowUnsafe): Boolean =
-        @tailrec def loop(): Boolean =
-            validate(entry) && {
-                val s = getState()
-                entry match
-                    case _: Read[?] =>
-                        // CAS retry: Absent if at max readers. Present tries CAS; retries on concurrent state change.
-                        s.acquireReader.exists(next => casState(s, next) || loop())
-                    case _: Write[?] =>
+        entry match
+            case _: Read[?]  => validateUnlocked(entry)
+            case _: Write[?] =>
+                @tailrec def loop(): Boolean =
+                    validate(entry) && {
+                        val s = getState()
                         // CAS retry: Absent if locked (or, when not barging, readTick > tick).
                         // Present tries CAS; retries on concurrent state change.
                         val acquired = if barge then s.acquireWriterBarging else s.acquireWriter(tick)
                         acquired.exists(next => casState(s, next) || loop())
-                end match
-            }
-        val locked = loop()
-        if locked && !validate(entry) then
-            // This branch handles the race condition where another fiber commits
-            // after the initial validate check but before the lock is acquired.
-            // If that's the case, roll back the lock.
-            unlock(entry)
-            false
-        else
-            locked
-        end if
+                    }
+                val locked = loop()
+                if locked && !validate(entry) then
+                    // This branch handles the race condition where another fiber commits
+                    // after the initial validate check but before the lock is acquired.
+                    // If that's the case, roll back the lock.
+                    unlock(entry)
+                    false
+                else
+                    locked
+                end if
+        end match
     end lock
 
     private[kyo] def commit(tick: STM.Tick, entry: Entry[A])(using AllowUnsafe): Unit =
@@ -155,13 +154,7 @@ final class TRef[A] private[kyo] (initEntry: Write[A])
 
     private[kyo] def unlock(entry: Entry[A])(using AllowUnsafe): Unit =
         entry match
-            case _: Read[?] =>
-                @tailrec def loop(): Unit =
-                    // CAS loop to atomically decrement reader count
-                    val s = getState()
-                    if !casState(s, s.releaseReader) then loop()
-                end loop
-                loop()
+            case _: Read[?]  =>
             case _: Write[?] =>
                 // Writer holds exclusive access, safe to reset directly
                 setState(State.free)
@@ -217,7 +210,7 @@ object TRef:
     /** Packed atomic state for TRef containing both lock state and readTick.
       *
       * Bit layout (64 bits):
-      *   - Lower 8 bits: lock state (0=free, 0xFF=writer, 1-0xFE=reader count)
+      *   - Lower 8 bits: lock state (0=free, 0xFF=writer)
       *   - Upper 56 bits: readTick (highest tick of readers)
       */
     private[kyo] opaque type State = Long
@@ -226,7 +219,6 @@ object TRef:
         private inline def LockMask      = 0xffL
         private inline def ReadTickShift = 8
         private inline def WriteLock     = 0xffL
-        private inline def MaxReaders    = 0xfeL
 
         val free: State = 0L
 
@@ -244,18 +236,13 @@ object TRef:
             inline def withoutReadTick: State          = self & LockMask
 
             // Lock
-            inline def acquireReader: Maybe[State] =
-                Maybe.when((self & LockMask) < MaxReaders)(self + 1)
-
-            inline def releaseReader: State = self - 1
-
             inline def acquireWriter(tick: Long): Maybe[State] =
                 Maybe.when((self & LockMask) == 0 && self.readTick <= tick)((self & ~LockMask) | WriteLock)
 
             /** Acquire the write lock ignoring the `readTick` fairness yield. Used by a transaction that has retried past `bargeThreshold`
-              * so a writer starved by sustained reader pressure can still make progress. Still respects `LockMask == 0` — never steals a
-              * lock another transaction physically holds. Opacity-neutral: correctness is enforced by `validate` in `TRef.lock`, not by the
-              * `readTick` yield this drops.
+              * so a writer starved by sustained reader pressure can still make progress. It still requires a free lock, so it never takes
+              * the lock another writer holds. Opacity-neutral: correctness is enforced by `validate` in `TRef.lock`, not by the `readTick`
+              * yield this drops.
               */
             inline def acquireWriterBarging: Maybe[State] =
                 Maybe.when((self & LockMask) == 0)((self & ~LockMask) | WriteLock)
@@ -263,10 +250,7 @@ object TRef:
             inline def isWriteLocked: Boolean = (self & LockMask) == WriteLock
 
             // Display
-            inline def render: String = (self & LockMask) match
-                case 0                   => "free"
-                case n if n == WriteLock => "writer"
-                case n                   => s"$n readers"
+            inline def render: String = if isWriteLocked then "writer" else "free"
         end extension
     end State
 end TRef
