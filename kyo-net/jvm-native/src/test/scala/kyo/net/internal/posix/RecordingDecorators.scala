@@ -241,8 +241,17 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     def connectNow(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
         real.connectNow(fd, addr, addrlen)
 
+    private val readsOf = new ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
+
+    /** Completes once the next `read` of `fd` has returned from the real binding, before the caller sees its result. */
+    def readReturned(fd: Int)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
+        readsOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]())
+
     def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
-        real.read(fd, buf, count)
+        val r = real.read(fd, buf, count)
+        r.onComplete(_ => Maybe(readsOf.remove(fd)).foreach(_.completeDiscard(Result.succeed(()))))
+        r
+    end read
 
     // fd -> the promise a held close waits on, standing in for a close(2) that has not returned yet.
     private val closeHolds = new ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()

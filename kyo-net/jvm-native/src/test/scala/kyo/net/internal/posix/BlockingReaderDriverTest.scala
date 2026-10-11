@@ -29,6 +29,8 @@ class BlockingReaderDriverTest extends Test:
 
     private val transportConfig = kyo.net.NetConfig.default
 
+    private def sock = Ffi.load[SocketBindings]
+
     /** Drive a single `awaitRead` on `driver` for `handle` and await the deposited promise. */
     private def readVia(driver: BlockingReaderDriver, handle: PosixHandle)(using Frame): ReadOutcome < (Abort[Closed] & Async) =
         val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
@@ -91,6 +93,131 @@ class BlockingReaderDriverTest extends Test:
                 discard(sockets.close(peerFd))
                 discard(sockets.close(clientFd))
                 succeed
+            }
+        }
+
+        "cancel fails a read the driver is blocked in with Closed" in {
+            PosixTestSockets.assumePoller()
+            val real   = PollerIoDriver.init()
+            val driver = BlockingReaderDriver.init(real)
+            Sync.ensure(Sync.defer(driver.close())) {
+                PosixTestSockets.blockingLoopbackPair().map { case (peerFd, readFd) =>
+                    val h    = PosixHandle.socket(readFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val read = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                    driver.awaitRead(h, read)
+                    driver.cancel(h)
+                    val outcome = read.poll()
+                    // The next read is the latch for the blocked read(2): it completes only once that read has returned on the peer's FIN.
+                    val next = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                    driver.awaitRead(h, next)
+                    discard(sock.close(peerFd))
+                    Abort.run[Closed](next.safe.get).map { _ =>
+                        discard(sock.close(readFd))
+                        outcome match
+                            case Present(Result.Failure(_: Closed)) => succeed
+                            case other => fail(s"a cancel left the blocked read pending instead of failing it Closed: $other")
+                        end match
+                    }
+                }
+            }
+        }
+
+        "a close while a read is in flight keeps the read buffer until the read returns" in {
+            PosixTestSockets.assumePoller()
+            val real   = PollerIoDriver.init()
+            val driver = BlockingReaderDriver.init(real)
+            Sync.ensure(Sync.defer(driver.close()))(PosixTestSockets.blockingLoopbackPair().map { case (peerFd, readFd) =>
+                val h = PosixHandle.socket(readFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                driver.awaitRead(h, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
+                // The test holds the fd-close claim so closeHandle does not shut the fd down, which would end the read before the free and
+                // hide the window. The test installs the fd-close credit in its place: it runs once the resources are freed.
+                assert(h.claimFdClose())
+                val released = Promise.Unsafe.init[Boolean, Any]()
+                h.fdCloseSink = Present { () =>
+                    discard(sock.close(readFd))
+                    released.completeDiscard(Result.succeed(h.readBuffer.isClosed))
+                }
+                driver.closeHandle(h)
+                val freedInFlight = h.readBuffer.isClosed
+                discard(sock.close(peerFd))
+                driver.close()
+                released.safe.get.map { freedOnRelease =>
+                    assert(!freedInFlight, "closeHandle freed the read buffer while read(2) was still in flight on it")
+                    assert(freedOnRelease, "the read buffer was not freed once the in-flight read(2) returned")
+                }
+            })
+        }
+
+        "a read armed after a cancel takes the bytes the cancelled read(2) returns" in {
+            PosixTestSockets.assumePoller()
+            val payload                                                         = Array[Byte](1, 2, 3)
+            def once(using Frame): Maybe[ReadOutcome] < (Abort[Closed] & Async) =
+                val real   = PollerIoDriver.init()
+                val driver = BlockingReaderDriver.init(real)
+                Sync.ensure(Sync.defer(driver.close())) {
+                    PosixTestSockets.blockingLoopbackPair().map { case (peerFd, readFd) =>
+                        val h = PosixHandle.socket(readFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        driver.awaitRead(h, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
+                        driver.cancel(h)
+                        val next = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                        driver.awaitRead(h, next)
+                        val out = Buffer.alloc[Byte](payload.length)
+                        payload.indices.foreach(i => out.set(i, payload(i)))
+                        val sent = Sync.ensure(Sync.defer(out.close()))(sock.send(peerFd, out, payload.length.toLong, 0).safe.get)
+                        sent.andThen {
+                            discard(sock.close(peerFd))
+                            next.safe.get.map { outcome =>
+                                discard(sock.close(readFd))
+                                outcome match
+                                    case ReadOutcome.Bytes(span) if span.toArray.sameElements(payload) => Absent
+                                    case other                                                         => Present(other)
+                                end match
+                            }
+                        }
+                    }
+                }
+            end once
+            Kyo.fill(20)(once).map { results =>
+                val lost = results.flatMap(_.toList)
+                assert(lost.isEmpty, s"the bytes the cancelled read(2) consumed never reached the next read: ${lost.size}/20 got $lost")
+            }
+        }
+
+        "bytes a cancelled read(2) returns with no read armed reach the next read" in {
+            PosixTestSockets.assumePoller()
+            val payload                                                         = Array[Byte](4, 5, 6)
+            def once(using Frame): Maybe[ReadOutcome] < (Abort[Closed] & Async) =
+                val real   = PollerIoDriver.init()
+                val spy    = new RecordingSocketBindings(sock)
+                val driver = TestDrivers.blockingReader(real, spy)
+                Sync.ensure(Sync.defer(driver.close())) {
+                    PosixTestSockets.blockingLoopbackPair().map { case (peerFd, readFd) =>
+                        val h        = PosixHandle.socket(readFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val returned = spy.readReturned(readFd)
+                        driver.awaitRead(h, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
+                        driver.cancel(h)
+                        val out = Buffer.alloc[Byte](payload.length)
+                        payload.indices.foreach(i => out.set(i, payload(i)))
+                        val sent = Sync.ensure(Sync.defer(out.close()))(sock.send(peerFd, out, payload.length.toLong, 0).safe.get)
+                        sent.andThen(returned.safe.get).andThen {
+                            // The peer's FIN bounds a second read(2), so a driver that dropped the bytes completes the next read PeerFin.
+                            discard(sock.close(peerFd))
+                            val next = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                            driver.awaitRead(h, next)
+                            next.safe.get.map { outcome =>
+                                discard(sock.close(readFd))
+                                outcome match
+                                    case ReadOutcome.Bytes(span) if span.toArray.sameElements(payload) => Absent
+                                    case other                                                         => Present(other)
+                                end match
+                            }
+                        }
+                    }
+                }
+            end once
+            Kyo.fill(20)(once).map { results =>
+                val lost = results.flatMap(_.toList)
+                assert(lost.isEmpty, s"the bytes a cancelled read(2) returned with no read armed were dropped: ${lost.size}/20 got $lost")
             }
         }
     }
