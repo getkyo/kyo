@@ -3396,7 +3396,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
                     pollUntil(outbound.pendingPuts().contains(2)).map { parked =>
                         assert(parked, s"the parser must be waiting for the peer to read, observed ${outbound.pendingPuts()} queued spans")
-                        tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                        tc.awaitPendingSleeper(idleTimeout).andThen(tc.advance(idleTimeout.minusOrZero(1.milli))).andThen {
                             assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
                             tc.advance(1.milli).andThen {
                                 probe.closed.map(closed => assert(closed, "a peer that never reads its answers must be closed"))
@@ -3419,13 +3419,61 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
                     pollUntil(outbound.pendingPuts().exists(_ > 0)).map { parked =>
                         assert(parked, s"a response must be waiting for the peer to read, observed ${outbound.pendingPuts()} queued spans")
-                        tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                        // The parked put is visible from the moment the handler's fiber writes its response, and the idle timer is armed
+                        // only when that fiber completes: virtual time advanced in between is not counted, so advance only once it is armed.
+                        tc.awaitPendingSleeper(idleTimeout).andThen(tc.advance(idleTimeout.minusOrZero(1.milli))).andThen {
                             assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
                             tc.advance(1.milli).andThen {
                                 probe.closed.map(closed => assert(closed, "a peer that never reads its responses must be closed"))
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // A handler at work owns the connection, so the idle window of a peer that does not read starts when the handler completes, not
+        // when the connection's first write parks on the full outbound channel.
+        "the idle window of a peer that never reads starts when the handler completes, not at the first write that parks" in {
+            val inbound     = Channel.Unsafe.init[Span[Byte]](16)
+            val outbound    = Channel.Unsafe.init[Span[Byte]](4)
+            val idleTimeout = 200.millis
+            val config      = defaultConfig.idleTimeout(idleTimeout)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    for
+                        entered <- Latch.init(1)
+                        release <- Latch.init(1)
+                        router = routerOf(
+                            Seq(
+                                HttpHandler.getText("hello")(_ => "world"),
+                                HttpHandler.getText("slow")(_ => entered.release.andThen(release.await).andThen("done"))
+                            ),
+                            Absent
+                        )
+                        // Two answers fill the outbound channel, so the third request's 100 Continue parks before its handler runs.
+                        _ = sendRequest(
+                            inbound,
+                            "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n" * 2 + "GET /slow HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\n\r\n"
+                        )
+                        probe = CloseProbe(inbound)
+                        _     = UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+                        _           <- entered.await
+                        parked      <- pollUntil(outbound.pendingPuts().exists(_ > 0))
+                        _           <- tc.advance(idleTimeout)
+                        openWorking <- Sync.defer(!inbound.closed())
+                        _           <- release.release
+                        _           <- tc.awaitPendingSleeper(idleTimeout)
+                        _           <- tc.advance(idleTimeout.minusOrZero(1.milli))
+                        openIdle    <- Sync.defer(!inbound.closed())
+                        _           <- tc.advance(1.milli)
+                        closed      <- probe.closed
+                    yield
+                        assert(parked, s"the 100 Continue must be waiting for the peer to read, observed ${outbound.pendingPuts()}")
+                        assert(openWorking, "a connection whose handler is at work is not closed for the peer's silence")
+                        assert(openIdle, "the connection stays open until the idle timeout elapses after the handler completes")
+                        assert(closed, "a peer that never reads its responses must be closed")
+                    end for
                 }
             }
         }
