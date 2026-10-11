@@ -947,7 +947,7 @@ kyo-http supports OpenAPI in both directions: generating a spec from your routes
 
 ### Routes to Spec
 
-The server can generate an OpenAPI 3.x specification from the routes of all registered handlers. Adding a single config option enables a `GET` endpoint that serves the spec:
+The server can generate an OpenAPI 3.1 specification from the routes of all registered handlers. Adding a single config option enables a `GET` endpoint that serves the spec:
 
 ```scala
 HttpServer.init(
@@ -972,6 +972,22 @@ val route = HttpRoute
 ```
 
 Additional metadata options: `.markDeprecated`, `.externalDocs(url)`, `.security(schemeName)`, `.tags("a", "b")`.
+
+`.security(schemeName)` only names a scheme. Its definition is declared once on the server and published under `components.securitySchemes`:
+
+```scala
+HttpServer.init(
+    HttpServerConfig.default
+        .port(8080)
+        .openApi(
+            "/openapi.json",
+            "My API",
+            securitySchemes = Map("bearerAuth" -> HttpOpenApi.SecurityScheme("http", scheme = Some("bearer")))
+        )
+)(handler1, handler2)
+```
+
+A route that names a scheme the server does not declare fails `HttpServer.init` with `HttpRouteException`, since the published document would reference a scheme it never defines.
 
 ### Spec to Routes
 
@@ -1004,14 +1020,14 @@ val api = HttpOpenApi.fromJson("""{
           "name": "petId",
           "in": "path",
           "required": true,
-          "json": {"type": "integer"}
+          "schema": {"type": "integer"}
         }],
         "responses": {
           "200": {
             "description": "ok",
             "content": {
               "application/json": {
-                "json": {"type": "string"}
+                "schema": {"type": "string"}
               }
             }
           }

@@ -13,7 +13,7 @@ import kyo.net.NetException
   * `HttpServer.initUnscoped` when you need manual lifecycle control and must close the server explicitly via `close()`. Both forms accept
   * one or more `HttpHandler` instances as varargs and an optional `HttpServerConfig`.
   *
-  * When `HttpServerConfig.openApi` is configured, the server automatically generates an OpenAPI 3.x spec from all registered handlers and
+  * When `HttpServerConfig.openApi` is configured, the server automatically generates an OpenAPI 3.1 spec from all registered handlers and
   * serves it at the configured path (default: `/openapi.json`).
   *
   * The `initWith` variants combine `init` and a continuation, they bind the server and pass it to a function, which is useful for keeping
@@ -24,8 +24,9 @@ import kyo.net.NetException
   *
   * A bind failure (for example the address is already in use) is an expected, recoverable condition: `init`, `initUnscoped`, and their
   * `initWith` variants surface it as `Abort.fail(HttpBindException)`, so a caller can recover it with `Abort.run[HttpBindException]` rather
-  * than handling it as a defect. A route the server cannot serve, such as one whose `Capture.Rest` is not its last segment, fails the same
-  * calls with `HttpRouteException` before anything is bound.
+  * than handling it as a defect. A route the server cannot serve, such as one whose `Capture.Rest` is not its last segment, or one whose
+  * `security` metadata names a scheme the `openApi` configuration does not declare, fails the same calls with `HttpRouteException` before
+  * anything is bound.
   *
   * The default host is `127.0.0.1`, so a server is reachable only from the local machine unless configured otherwise. WARNING: binding to
   * `0.0.0.0` exposes the server on all network interfaces.
@@ -133,28 +134,30 @@ object HttpServer:
     private def initInto(config: HttpServerConfig, serverCell: AtomicRef.Unsafe[Maybe[HttpServer]])(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < (Async & Abort[HttpBindException | HttpRouteException]) =
-        val allHandlers = config.openApi match
+        val withOpenApi: Result[HttpRouteException, Seq[HttpHandler[?, ?, ?]]] = config.openApi match
             case Present(ep) =>
-                val spec = OpenApiGenerator.generate(
+                OpenApiGenerator.generate(
                     handlers,
-                    OpenApiGenerator.Config(ep.title, ep.version, ep.description)
-                )
-                val json      = HttpOpenApi.toJson(spec)
-                val jsonBytes = Span.fromUnsafe(json.getBytes("UTF-8"))
-                handlers :+ HttpHandler.init(HttpRoute.getRaw(ep.path).response(_.bodyBinary)) { _ =>
-                    HttpResponse.ok(jsonBytes).addHeader("Content-Type", "application/json")
+                    OpenApiGenerator.Config(ep.title, ep.version, ep.description, ep.securitySchemes)
+                ).map { spec =>
+                    val jsonBytes = Span.fromUnsafe(HttpOpenApi.toJson(spec).getBytes("UTF-8"))
+                    handlers :+ HttpHandler.init(HttpRoute.getRaw(ep.path).response(_.bodyBinary)) { _ =>
+                        HttpResponse.ok(jsonBytes).addHeader("Content-Type", "application/json")
+                    }
                 }
             case Absent =>
-                handlers
+                Result.succeed(handlers)
         val serverFilter =
             if config.autoFilters then HttpFilter.Factory.composedServer
             else HttpFilter.noop
-        val filteredHandlers =
-            if serverFilter eq HttpFilter.noop then allHandlers
-            else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
-        Abort.get(HttpRouter.init(filteredHandlers, config.cors)).map { router =>
-            Clock.use { clock =>
-                initRouted(config, serverCell, router, clock)
+        Abort.get(withOpenApi).map { allHandlers =>
+            val filteredHandlers =
+                if serverFilter eq HttpFilter.noop then allHandlers
+                else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
+            Abort.get(HttpRouter.init(filteredHandlers, config.cors)).map { router =>
+                Clock.use { clock =>
+                    initRouted(config, serverCell, router, clock)
+                }
             }
         }
     end initInto

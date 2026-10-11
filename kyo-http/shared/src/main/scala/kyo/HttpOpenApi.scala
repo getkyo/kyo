@@ -5,8 +5,9 @@ import kyo.*
 /** OpenAPI 3.x specification model and bidirectional integration with typed routes.
   *
   * Supports OpenAPI in both directions:
-  *   - **Routes → spec**: The server auto-generates a spec from all registered handlers when `HttpServerConfig.openApi` is configured and
-  *     serves it at the specified path (default `/openapi.json`). No additional code is required beyond configuring the server.
+  *   - **Routes → spec**: The server auto-generates an OpenAPI 3.1 spec from all registered handlers when `HttpServerConfig.openApi` is
+  *     configured and serves it at the specified path (default `/openapi.json`). No additional code is required beyond configuring the
+  *     server.
   *   - **Spec → routes**: `HttpOpenApi.fromJson` and `HttpOpenApi.fromFile` are compile-time macros that parse an OpenAPI spec and produce
   *     an anonymous object with one typed `HttpRoute` field per operation, named by `operationId`. Errors in the spec are reported at
   *     compile time.
@@ -14,6 +15,10 @@ import kyo.*
   * Note: The spec-to-routes macros currently support path, query, and header parameters with primitive types, and JSON response bodies.
   * Request bodies, `$ref` schema resolution, complex schema composition (`allOf` / `oneOf` / `anyOf`), and security schemes are not yet
   * implemented.
+  *
+  * IMPORTANT: A route's `security` metadata only names a scheme. The definition is declared once, in the `securitySchemes` of
+  * `HttpServerConfig.openApi`, and published under `components.securitySchemes`. A server whose routes name a scheme it does not declare
+  * refuses to start with `HttpRouteException`, because its document would reference a scheme it never defines.
   *
   * @see
   *   [[kyo.HttpRoute]] The route type produced by the spec-to-routes macros
@@ -79,14 +84,14 @@ object HttpOpenApi:
     ) derives Schema, CanEqual
 
     case class MediaType(
-        json: SchemaObject
+        schema: SchemaObject
     ) derives Schema, CanEqual
 
     case class Parameter(
         name: String,
         in: String,
         required: Option[Boolean],
-        json: SchemaObject,
+        schema: SchemaObject,
         description: Option[String]
     ) derives Schema, CanEqual
 
@@ -136,7 +141,7 @@ object HttpOpenApi:
         /** A string constrained by a regular expression, published as `pattern`.
           *
           * Pair it with [[HttpCodec.pattern]] so the same expression both rejects
-          * bad input and appears in the document — a constraint that is only
+          * bad input and appears in the document: a constraint that is only
           * documented drifts from the one that is enforced.
           */
         def stringMatching(regex: String, description: Maybe[String] = Absent): SchemaObject =
@@ -150,10 +155,10 @@ object HttpOpenApi:
 
     case class SecurityScheme(
         `type`: String,
-        scheme: Option[String],
-        bearerFormat: Option[String],
-        name: Option[String],
-        in: Option[String]
+        scheme: Option[String] = None,
+        bearerFormat: Option[String] = None,
+        name: Option[String] = None,
+        in: Option[String] = None
     ) derives Schema, CanEqual
 
 end HttpOpenApi

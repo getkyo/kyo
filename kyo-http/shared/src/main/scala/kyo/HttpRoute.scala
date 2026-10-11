@@ -536,8 +536,11 @@ object HttpRoute:
 
     // ==================== Metadata ====================
 
-    /** OpenAPI metadata for a route, used when generating an OpenAPI spec from registered handlers. These values are purely informational —
+    /** OpenAPI metadata for a route, used when generating an OpenAPI spec from registered handlers. These values are purely informational:
       * they enrich the generated spec but are not enforced at runtime.
+      *
+      * `security` names a scheme that `HttpServerConfig.openApi` must declare in its `securitySchemes`; a server publishing a spec refuses
+      * to start when a route names an undeclared one.
       */
     case class Metadata(
         tags: Seq[String] = Seq.empty,

@@ -2901,7 +2901,319 @@ class HttpServerTest extends BaseHttpTest:
                 }
             }
         }
+
+        "the served document has the OpenAPI 3.1 structure" in {
+            case class Pet(id: Long, name: String, tag: Option[String]) derives Schema
+            case class Missing(message: String) derives Schema
+            val show = HttpRoute.getRaw("pets" / Capture[Long]("petId"))
+                .request(_.query[Boolean]("verbose").header[String]("X-Request-Id"))
+                .response(_.bodyJson[Pet].error[Missing](HttpStatus.NotFound))
+                .metadata(_.operationId("showPet").security("bearerAuth"))
+                .handler(req => HttpResponse.ok(Pet(req.fields.petId, "rex", None)))
+            val create = HttpRoute.postRaw("pets")
+                .request(_.bodyJson[Pet])
+                .response(_.bodyText)
+                .handler(_ => HttpResponse.ok("created"))
+            val config = loopback.openApi(
+                "/openapi.json",
+                "Pets",
+                securitySchemes = Map("bearerAuth" -> HttpOpenApi.SecurityScheme("http", scheme = Some("bearer")))
+            )
+            HttpServer.init(config)(show, create).map { server =>
+                val oaRoute = HttpRoute.getRaw("openapi.json").response(_.bodyText)
+                send(
+                    HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow,
+                    oaRoute,
+                    HttpRequest.getRaw(HttpUrl.fromUri("/openapi.json"))
+                ).map { resp =>
+                    val doc        = Json.decode[Structure.Value](resp.fields.body).getOrThrow
+                    val violations = OpenApiShape.violations(doc)
+                    val bearer     = OpenApiShape.at(doc, "components", "securitySchemes", "bearerAuth")
+                    val bodyType   =
+                        OpenApiShape.at(doc, "paths", "/pets", "post", "requestBody", "content", "application/json", "schema", "type")
+                    val expected =
+                        Structure.Value.Record(Chunk("type" -> Structure.Value.Str("http"), "scheme" -> Structure.Value.Str("bearer")))
+                    assert(bearer == Present(expected))
+                    assert(bodyType == Present(Structure.Value.Str("object")))
+                    assert(violations == Chunk.empty, violations.mkString("\n"))
+                }
+            }
+        }
+
+        "a route naming an undeclared security scheme fails server init with HttpRouteException" in {
+            val route = HttpRoute.getRaw("pets").response(_.bodyText).metadata(_.security("bearerAuth"))
+            val ep    = route.handler(_ => HttpResponse.ok("unreachable"))
+            Abort.run[HttpRouteException](HttpServer.init(loopback.openApi())(ep).unit).map {
+                case Result.Failure(e) =>
+                    assert(e.route == "GET /pets")
+                    assert(
+                        e.detail == "its OpenAPI security scheme 'bearerAuth' is not declared in the securitySchemes of HttpServerConfig.openApi"
+                    )
+                case other => fail(s"Expected HttpRouteException, got $other")
+            }
+        }
+
+        "an undeclared security scheme does not stop a server that publishes no document" in {
+            val route = HttpRoute.getRaw("pets").response(_.bodyText).metadata(_.security("bearerAuth"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
+            HttpServer.init(loopback)(ep).map { server =>
+                send(HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow, route, HttpRequest.getRaw(HttpUrl.fromUri("/pets")))
+                    .map(resp => assert(resp.fields.body == "ok"))
+            }
+        }
     }
+
+    /** Checks a decoded document against the OpenAPI 3.1 object model: fixed field names, required fields, enumerated values, security
+      * requirements naming a declared scheme, and `$ref` targets resolving under `#/components/schemas/`. Returns one line per violation.
+      */
+    object OpenApiShape:
+        import Structure.Value
+
+        private val methods = Set("get", "put", "post", "delete", "options", "head", "patch", "trace")
+
+        private val schemaKeywords = Set(
+            "type",
+            "format",
+            "items",
+            "properties",
+            "required",
+            "additionalProperties",
+            "oneOf",
+            "anyOf",
+            "allOf",
+            "enum",
+            "$ref",
+            "minimum",
+            "exclusiveMinimum",
+            "maximum",
+            "exclusiveMaximum",
+            "minLength",
+            "maxLength",
+            "pattern",
+            "minItems",
+            "maxItems",
+            "uniqueItems",
+            "description",
+            "title",
+            "default",
+            "examples"
+        )
+
+        private val jsonTypes = Set("string", "number", "integer", "boolean", "object", "array", "null")
+
+        private def fieldsOf(v: Value): Maybe[Map[String, Value]] =
+            v match
+                case Value.Record(fs) => Present(fs.toMap)
+                case _                => Absent
+
+        def at(v: Value, path: String*): Maybe[Value] =
+            path.foldLeft(Maybe(v))((cur, key) => cur.flatMap(fieldsOf).flatMap(fs => Maybe.fromOption(fs.get(key))))
+
+        private def keysOf(v: Value, key: String): Set[String] =
+            fieldsOf(v).flatMap(fs => Maybe.fromOption(fs.get(key))).flatMap(fieldsOf).map(_.keySet).getOrElse(Set.empty)
+
+        private def obj(path: String, v: Value, allowed: Set[String], required: Set[String])(
+            check: Map[String, Value] => Chunk[String]
+        ): Chunk[String] =
+            fieldsOf(v) match
+                case Absent      => Chunk(s"$path: expected an object, got $v")
+                case Present(fs) =>
+                    val missing = required.diff(fs.keySet)
+                    Chunk.from(fs.keySet.diff(allowed).toSeq.sorted.map(k => s"$path: unknown field '$k'")) ++
+                        Chunk.from(missing.toSeq.sorted.map(k => s"$path: missing required field '$k'")) ++
+                        (if missing.isEmpty then check(fs) else Chunk.empty)
+
+        private def str(path: String, v: Value, oneOf: Set[String] = Set.empty): Chunk[String] =
+            v match
+                case Value.Str(s) if oneOf.isEmpty || oneOf.contains(s) => Chunk.empty
+                case other => Chunk(s"$path: expected a string${if oneOf.isEmpty then "" else s" in $oneOf"}, got $other")
+
+        private def each(fs: Map[String, Value], path: String)(f: (String, String, Value) => Chunk[String]): Chunk[String] =
+            Chunk.from(fs.toSeq.sortBy(_._1)).flatMap((k, v) => f(s"$path.$k", k, v))
+
+        private def map(path: String, v: Value)(f: (String, String, Value) => Chunk[String]): Chunk[String] =
+            fieldsOf(v) match
+                case Absent      => Chunk(s"$path: expected an object, got $v")
+                case Present(fs) => each(fs, path)(f)
+
+        private def list(path: String, v: Value)(f: (String, Value) => Chunk[String]): Chunk[String] =
+            v match
+                case Value.Sequence(elems) => elems.zipWithIndex.flatMap((e, i) => f(s"$path[$i]", e))
+                case other                 => Chunk(s"$path: expected an array, got $other")
+
+        private def number(path: String, v: Value): Chunk[String] =
+            v match
+                case _: Value.Integer | _: Value.Decimal | _: Value.BigNum => Chunk.empty
+                case other                                                 => Chunk(s"$path: expected a number, got $other")
+
+        private def schema(path: String, v: Value, schemaNames: Set[String]): Chunk[String] =
+            obj(path, v, schemaKeywords, Set.empty) { fs =>
+                def sub(key: String)(f: (String, Value) => Chunk[String]): Chunk[String] =
+                    Maybe.fromOption(fs.get(key)).fold(Chunk.empty[String])(f(s"$path.$key", _))
+                sub("type")((p, t) => str(p, t, jsonTypes)) ++
+                    sub("$ref") { (p, r) =>
+                        r match
+                            case Value.Str(target) if target.startsWith("#/components/schemas/") =>
+                                if schemaNames.contains(target.stripPrefix("#/components/schemas/")) then Chunk.empty
+                                else Chunk(s"$p: '$target' names no schema in components.schemas")
+                            case other => Chunk(s"$p: expected a '#/components/schemas/' reference, got $other")
+                    } ++
+                    sub("items")(schema(_, _, schemaNames)) ++
+                    sub("additionalProperties")(schema(_, _, schemaNames)) ++
+                    sub("properties")((p, ps) => map(p, ps)((pp, _, s) => schema(pp, s, schemaNames))) ++
+                    sub("oneOf")((p, l) => list(p, l)(schema(_, _, schemaNames))) ++
+                    sub("exclusiveMinimum")(number) ++
+                    sub("exclusiveMaximum")(number)
+            }
+
+        private def mediaTypes(path: String, v: Value, schemaNames: Set[String]): Chunk[String] =
+            map(path, v) { (p, _, media) =>
+                obj(p, media, Set("schema", "example", "examples", "encoding"), Set("schema"))(fs =>
+                    schema(s"$p.schema", fs("schema"), schemaNames)
+                )
+            }
+
+        private def parameter(path: String, v: Value, schemaNames: Set[String]): Chunk[String] =
+            val allowed =
+                Set("name", "in", "description", "required", "deprecated", "allowEmptyValue", "style", "explode", "allowReserved", "schema")
+            obj(path, v, allowed, Set("name", "in", "schema")) { fs =>
+                str(s"$path.name", fs("name")) ++
+                    str(s"$path.in", fs("in"), Set("query", "header", "path", "cookie")) ++
+                    schema(s"$path.schema", fs("schema"), schemaNames) ++
+                    (if fs("in") == Value.Str("path") && !fs.get("required").contains(Value.Bool(true)) then
+                         Chunk(s"$path: a path parameter must be required")
+                     else Chunk.empty)
+            }
+        end parameter
+
+        private def operation(path: String, v: Value, schemaNames: Set[String], schemes: Set[String]): Chunk[String] =
+            val allowed = Set(
+                "tags",
+                "summary",
+                "description",
+                "externalDocs",
+                "operationId",
+                "parameters",
+                "requestBody",
+                "responses",
+                "callbacks",
+                "deprecated",
+                "security",
+                "servers"
+            )
+            obj(path, v, allowed, Set("responses")) { fs =>
+                Maybe.fromOption(fs.get("parameters")).fold(Chunk.empty[String])(list(
+                    s"$path.parameters",
+                    _
+                )(parameter(_, _, schemaNames))) ++
+                    Maybe.fromOption(fs.get("requestBody")).fold(Chunk.empty[String]) { body =>
+                        obj(s"$path.requestBody", body, Set("description", "content", "required"), Set("content"))(bfs =>
+                            mediaTypes(s"$path.requestBody.content", bfs("content"), schemaNames)
+                        )
+                    } ++
+                    map(s"$path.responses", fs("responses")) { (p, status, resp) =>
+                        (if status == "default" || status.matches("[1-5]([0-9]{2}|XX)") then Chunk.empty
+                         else Chunk(s"$p: '$status' is not a status code")) ++
+                            obj(p, resp, Set("description", "headers", "content", "links"), Set("description")) { rfs =>
+                                str(s"$p.description", rfs("description")) ++
+                                    Maybe.fromOption(rfs.get("content")).fold(Chunk.empty[String])(mediaTypes(
+                                        s"$p.content",
+                                        _,
+                                        schemaNames
+                                    ))
+                            }
+                    } ++
+                    Maybe.fromOption(fs.get("security")).fold(Chunk.empty[String]) { sec =>
+                        list(s"$path.security", sec) { (p, req) =>
+                            map(p, req) { (rp, name, scopes) =>
+                                (if schemes.contains(name) then Chunk.empty
+                                 else Chunk(s"$rp: '$name' names no scheme in components.securitySchemes")) ++
+                                    list(rp, scopes)((sp, s) => str(sp, s))
+                            }
+                        }
+                    }
+            }
+        end operation
+
+        private def securityScheme(path: String, v: Value): Chunk[String] =
+            val allowed = Set("type", "description", "name", "in", "scheme", "bearerFormat", "flows", "openIdConnectUrl")
+            obj(path, v, allowed, Set("type")) { fs =>
+                str(s"$path.type", fs("type"), Set("apiKey", "http", "mutualTLS", "oauth2", "openIdConnect")) ++
+                    (fs("type") match
+                        case Value.Str("http") =>
+                            Maybe.fromOption(fs.get("scheme")).fold(Chunk(s"$path: an http scheme needs 'scheme'"))(str(s"$path.scheme", _))
+                        case Value.Str("apiKey") =>
+                            Maybe.fromOption(fs.get("name")).fold(Chunk(s"$path: an apiKey scheme needs 'name'"))(str(s"$path.name", _)) ++
+                                Maybe.fromOption(fs.get("in")).fold(Chunk(s"$path: an apiKey scheme needs 'in'"))(
+                                    str(s"$path.in", _, Set("query", "header", "cookie"))
+                                )
+                        case _ => Chunk.empty)
+            }
+        end securityScheme
+
+        def violations(doc: Value): Chunk[String] =
+            val allowed =
+                Set(
+                    "openapi",
+                    "info",
+                    "jsonSchemaDialect",
+                    "servers",
+                    "paths",
+                    "webhooks",
+                    "components",
+                    "security",
+                    "tags",
+                    "externalDocs"
+                )
+            obj("#", doc, allowed, Set("openapi", "info")) { fs =>
+                val components  = Maybe.fromOption(fs.get("components"))
+                val schemaNames = components.map(keysOf(_, "schemas")).getOrElse(Set.empty)
+                val schemes     = components.map(keysOf(_, "securitySchemes")).getOrElse(Set.empty)
+                (fs("openapi") match
+                    case Value.Str(v) if v.startsWith("3.1.") => Chunk.empty
+                    case other                                => Chunk(s"#.openapi: expected a 3.1.x version, got $other")
+                ) ++
+                    obj(
+                        "#.info",
+                        fs("info"),
+                        Set("title", "summary", "description", "termsOfService", "contact", "license", "version"),
+                        Set("title", "version")
+                    ) {
+                        ifs => str("#.info.title", ifs("title")) ++ str("#.info.version", ifs("version"))
+                    } ++
+                    components.fold(Chunk.empty[String]) { c =>
+                        val allowedComponents = Set(
+                            "schemas",
+                            "responses",
+                            "parameters",
+                            "examples",
+                            "requestBodies",
+                            "headers",
+                            "securitySchemes",
+                            "links",
+                            "callbacks",
+                            "pathItems"
+                        )
+                        obj("#.components", c, allowedComponents, Set.empty) { cfs =>
+                            Maybe.fromOption(cfs.get("schemas")).fold(Chunk.empty[String])(
+                                map("#.components.schemas", _)((p, _, s) => schema(p, s, schemaNames))
+                            ) ++
+                                Maybe.fromOption(cfs.get("securitySchemes")).fold(Chunk.empty[String])(
+                                    map("#.components.securitySchemes", _)((p, _, s) => securityScheme(p, s))
+                                )
+                        }
+                    } ++
+                    Maybe.fromOption(fs.get("paths")).fold(Chunk.empty[String]) { paths =>
+                        map("#.paths", paths) { (p, template, item) =>
+                            (if template.startsWith("/") then Chunk.empty else Chunk(s"$p: a path must start with '/'")) ++
+                                obj(p, item, methods ++ Set("$ref", "summary", "description", "servers", "parameters"), Set.empty) { ifs =>
+                                    each(ifs.filter((k, _) => methods.contains(k)), p)((op, _, o) => operation(op, o, schemaNames, schemes))
+                                }
+                        }
+                    }
+            }
+        end violations
+    end OpenApiShape
 
     "streaming with delayed chunks" - {
 

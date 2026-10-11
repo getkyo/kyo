@@ -124,7 +124,11 @@ object TaskBoard extends KyoApp:
             (list, create, update, delete) = handlers(storeRef)
             health                         = HttpHandler.health()
             server <- HttpServer.init(
-                HttpServerConfig.default.port(port).openApi("/openapi.json", "TaskBoard")
+                HttpServerConfig.default.port(port).openApi(
+                    "/openapi.json",
+                    "TaskBoard",
+                    securitySchemes = Map("bearerAuth" -> HttpOpenApi.SecurityScheme("http", scheme = Some("bearer")))
+                )
             )(list, create, update, delete, health)
             _ <- Console.printLine(s"TaskBoard running on http://localhost:${server.port}")
             _ <- Console.printLine(

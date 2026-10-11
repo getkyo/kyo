@@ -129,13 +129,13 @@ private[kyo] object OpenApiMacro:
                             .map(resp => (kyo.HttpStatus.OK.code, resp))
                             .getOrElse((kyo.HttpStatus.OK.code, HttpOpenApi.Response("", None)))
                     )
-                val jsonResponseJson =
+                val responseSchema =
                     for
                         content <- successResponse.content
                         media   <- content.get("application/json")
-                    yield media.json
+                    yield media.schema
 
-                val respTerm = buildResponseDef(jsonResponseJson, successCode, opContext)
+                val respTerm = buildResponseDef(responseSchema, successCode, opContext)
 
                 // Assemble HttpRoute
                 innerType(reqTerm) match
@@ -168,7 +168,7 @@ private[kyo] object OpenApiMacro:
         var resultType = innerTypeRepr(pathTerm)
 
         for param <- params do
-            val codecType = resolveCodecType(param.json)
+            val codecType = resolveCodecType(param.schema)
             val optional  = !param.required.getOrElse(false)
             val isQuery   = param.in == "query"
             val location = if isQuery then '{ kyo.HttpRoute.Field.Param.Location.Query } else '{ kyo.HttpRoute.Field.Param.Location.Header }
@@ -248,17 +248,17 @@ private[kyo] object OpenApiMacro:
     end buildRequestDef
 
     /** Builds a ResponseDef, optionally with a JSON body field. */
-    private def buildResponseDef(jsonJson: Option[HttpOpenApi.SchemaObject], code: Int, context: String = "")(using
+    private def buildResponseDef(bodySchema: Option[HttpOpenApi.SchemaObject], code: Int, context: String = "")(using
         Quotes
     ): quotes.reflect.Term =
         import quotes.reflect.*
 
         val statusCode = Expr(code)
-        jsonJson match
+        bodySchema match
             case None =>
                 '{ kyo.HttpRoute.ResponseDef[Any](kyo.HttpStatus($statusCode)) }.asTerm
-            case Some(json) =>
-                val codecType = resolveCodecType(json)
+            case Some(schema) =>
+                val codecType = resolveCodecType(schema)
                 codecType.asType match
                     case '[a] =>
                         val s = Expr.summon[kyo.Schema[a]] match
@@ -330,8 +330,8 @@ private[kyo] object OpenApiMacro:
     ): quotes.reflect.Term =
         import quotes.reflect.*
 
-        val json      = pathParams.find(_.name == paramName).map(_.json)
-        val codecType = json.map(resolveCodecType).getOrElse(TypeRepr.of[String])
+        val schema    = pathParams.find(_.name == paramName).map(_.schema)
+        val codecType = schema.map(resolveCodecType).getOrElse(TypeRepr.of[String])
 
         val nameExpr  = Expr(paramName)
         val nameType  = ConstantType(StringConstant(paramName))
@@ -361,9 +361,9 @@ private[kyo] object OpenApiMacro:
     // ==================== Helpers ====================
 
     /** Resolves an OpenAPI SchemaObject to a Scala TypeRepr. */
-    private def resolveCodecType(json: HttpOpenApi.SchemaObject)(using Quotes): quotes.reflect.TypeRepr =
+    private def resolveCodecType(schema: HttpOpenApi.SchemaObject)(using Quotes): quotes.reflect.TypeRepr =
         import quotes.reflect.*
-        (json.`type`, json.format) match
+        (schema.`type`, schema.format) match
             case (Some("integer"), Some("int64")) => TypeRepr.of[Long]
             case (Some("integer"), _)             => TypeRepr.of[Int]
             case (Some("string"), Some("uuid"))   => TypeRepr.of[java.util.UUID]

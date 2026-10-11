@@ -4,27 +4,47 @@ import kyo.*
 import kyo.Json.JsonSchema
 import scala.collection.mutable
 
-/** Generates OpenAPI 3.0 specification from HttpHandler definitions. */
+/** Generates an OpenAPI 3.1 specification from HttpHandler definitions.
+  *
+  * The version is 3.1 because the schemas carry JSON Schema 2020-12 keywords that 3.0 rejects: numeric `exclusiveMinimum` and
+  * `exclusiveMaximum`, and `type: "null"`.
+  */
 private[kyo] object OpenApiGenerator:
 
     case class Config(
         title: String = "API",
         version: String = "1.0.0",
-        description: Option[String] = None
+        description: Option[String] = None,
+        securitySchemes: Map[String, HttpOpenApi.SecurityScheme] = Map.empty
     )
 
-    def generate(handlers: Seq[HttpHandler[?, ?, ?]], config: Config = Config()): HttpOpenApi =
-        val paths = buildPaths(handlers)
-        HttpOpenApi(
-            openapi = "3.0.0",
-            info = HttpOpenApi.Info(
-                title = config.title,
-                version = config.version,
-                description = config.description
-            ),
-            paths = paths,
-            components = None
-        )
+    /** The specification, or the [[kyo.HttpRouteException]] naming a route whose security requirement names a scheme `config` does not
+      * declare.
+      */
+    def generate(handlers: Seq[HttpHandler[?, ?, ?]], config: Config = Config())(using Frame): Result[HttpRouteException, HttpOpenApi] =
+        val undeclared = handlers.view.flatMap { h =>
+            h.route.metadata.security.toOption.filterNot(config.securitySchemes.contains).map((h, _))
+        }.headOption
+        Maybe.fromOption(undeclared) match
+            case Present((h, scheme)) =>
+                Result.fail(HttpRouteException(
+                    s"${h.route.method.name} ${h.route.request.path.show}",
+                    s"its OpenAPI security scheme '$scheme' is not declared in the securitySchemes of HttpServerConfig.openApi"
+                ))
+            case Absent =>
+                Result.succeed(HttpOpenApi(
+                    openapi = "3.1.0",
+                    info = HttpOpenApi.Info(
+                        title = config.title,
+                        version = config.version,
+                        description = config.description
+                    ),
+                    paths = buildPaths(handlers),
+                    components =
+                        if config.securitySchemes.isEmpty then None
+                        else Some(HttpOpenApi.Components(schemas = None, securitySchemes = Some(config.securitySchemes)))
+                ))
+        end match
     end generate
 
     private def buildPaths(handlers: Seq[HttpHandler[?, ?, ?]]): Map[String, HttpOpenApi.PathItem] =
@@ -73,7 +93,7 @@ private[kyo] object OpenApiGenerator:
                     name = p.fieldName,
                     in = "query",
                     required = if !p.optional && p.default.isEmpty then Some(true) else None,
-                    json = inferCodecJson(p.codec),
+                    schema = inferCodecSchema(p.codec),
                     description = if p.description.nonEmpty then Some(p.description) else None
                 )
             case p: HttpRoute.Field.Param[?, ?, ?] if p.kind == HttpRoute.Field.Param.Location.Header =>
@@ -81,7 +101,7 @@ private[kyo] object OpenApiGenerator:
                     name = p.fieldName,
                     in = "header",
                     required = if !p.optional && p.default.isEmpty then Some(true) else None,
-                    json = inferCodecJson(p.codec),
+                    schema = inferCodecSchema(p.codec),
                     description = if p.description.nonEmpty then Some(p.description) else None
                 )
             case p: HttpRoute.Field.Param[?, ?, ?] if p.kind == HttpRoute.Field.Param.Location.Cookie =>
@@ -89,7 +109,7 @@ private[kyo] object OpenApiGenerator:
                     name = p.fieldName,
                     in = "cookie",
                     required = if !p.optional && p.default.isEmpty then Some(true) else None,
-                    json = inferCodecJson(p.codec),
+                    schema = inferCodecSchema(p.codec),
                     description = if p.description.nonEmpty then Some(p.description) else None
                 )
         }
@@ -101,16 +121,16 @@ private[kyo] object OpenApiGenerator:
         path match
             case HttpPath.Literal(_)                          => Seq.empty
             case HttpPath.Capture(fieldName, wireName, codec) =>
-                val name = if wireName.nonEmpty then wireName else fieldName
-                val json = inferCodecJson(codec)
+                val name   = if wireName.nonEmpty then wireName else fieldName
+                val schema = inferCodecSchema(codec)
                 Seq(HttpOpenApi.Parameter(
                     name = name,
                     in = "path",
                     required = Some(true),
-                    json = json,
+                    schema = schema,
                     // A path capture has no route-level description the way a query
                     // param does, so the codec's is the only one available.
-                    description = json.description
+                    description = schema.description
                 ))
             case HttpPath.Concat(left, right) =>
                 extractPathParams(left) ++ extractPathParams(right)
@@ -119,7 +139,7 @@ private[kyo] object OpenApiGenerator:
                     name = fieldName,
                     in = "path",
                     required = Some(true),
-                    json = HttpOpenApi.SchemaObject.string,
+                    schema = HttpOpenApi.SchemaObject.string,
                     description = None
                 ))
     end extractPathParams
@@ -127,15 +147,15 @@ private[kyo] object OpenApiGenerator:
     /** The codec's own schema when it declares one, otherwise inferred.
       *
       * Probing can only recover a JSON *type*, which is all there is to learn
-      * from a `HttpCodec[String]`. A codec that accepts a constrained subset —
-      * built with `HttpCodec.pattern`, say — knows its `pattern` and description,
+      * from a `HttpCodec[String]`. A codec that accepts a constrained subset
+      * (built with `HttpCodec.pattern`, say) knows its `pattern` and description,
       * and that is strictly better than a guess.
       */
-    private def inferCodecJson(codec: HttpCodec[?]): HttpOpenApi.SchemaObject =
-        codec.schema.getOrElse(inferredCodecJson(codec))
+    private def inferCodecSchema(codec: HttpCodec[?]): HttpOpenApi.SchemaObject =
+        codec.schema.getOrElse(inferredCodecSchema(codec))
 
-    /** Infer OpenAPI json type from HttpCodec by probing with sample values. */
-    private def inferredCodecJson(codec: HttpCodec[?]): HttpOpenApi.SchemaObject =
+    /** Infer OpenAPI schema type from HttpCodec by probing with sample values. */
+    private def inferredCodecSchema(codec: HttpCodec[?]): HttpOpenApi.SchemaObject =
         def tryProbe(input: String)(pf: PartialFunction[Any, HttpOpenApi.SchemaObject]): Maybe[HttpOpenApi.SchemaObject] =
             codec.decode(input).toMaybe.flatMap(result => if pf.isDefinedAt(result) then Present(pf(result)) else kyo.Absent)
 
@@ -162,15 +182,15 @@ private[kyo] object OpenApiGenerator:
                     `$ref` = None
                 )
         }).getOrElse(HttpOpenApi.SchemaObject.string)
-    end inferredCodecJson
+    end inferredCodecSchema
 
     private def buildRequestBody(route: HttpRoute[?, ?, ?]): Option[HttpOpenApi.RequestBody] =
         route.request.fields.toSeq.collectFirst {
             case b: HttpRoute.Field.Body[?, ?] =>
-                contentToMediaType(b.contentType).map { case (ct, json) =>
+                contentToMediaType(b.contentType).map { case (ct, schema) =>
                     HttpOpenApi.RequestBody(
                         required = Some(true),
-                        content = Map(ct -> HttpOpenApi.MediaType(json = json)),
+                        content = Map(ct -> HttpOpenApi.MediaType(schema = schema)),
                         description = if b.description.nonEmpty then Some(b.description) else None
                     )
                 }
@@ -182,10 +202,10 @@ private[kyo] object OpenApiGenerator:
 
         val successResponse = route.response.fields.toSeq.collectFirst {
             case b: HttpRoute.Field.Body[?, ?] =>
-                contentToMediaType(b.contentType).map { case (ct, json) =>
+                contentToMediaType(b.contentType).map { case (ct, schema) =>
                     HttpOpenApi.Response(
                         description = "Success",
-                        content = Some(Map(ct -> HttpOpenApi.MediaType(json = json)))
+                        content = Some(Map(ct -> HttpOpenApi.MediaType(schema = schema)))
                     )
                 }
         }.flatten.getOrElse(
@@ -196,7 +216,7 @@ private[kyo] object OpenApiGenerator:
             mapping.status.code.toString -> HttpOpenApi.Response(
                 description = "Error",
                 content = Some(Map("application/json" -> HttpOpenApi.MediaType(
-                    json = jsonSchemaToHttpOpenApi(mapping.jsonSchema)
+                    schema = jsonSchemaToHttpOpenApi(mapping.jsonSchema)
                 )))
             )
         }

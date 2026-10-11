@@ -29,7 +29,9 @@ import kyo.*
   * @param strictCookieParsing
   *   Whether to enforce strict RFC 6265 cookie parsing. Defaults to false (lenient). When true, malformed cookies cause a 400 response.
   * @param openApi
-  *   When set, auto-generates and serves an OpenAPI 3.x JSON spec at the configured path. Absent by default.
+  *   When set, auto-generates and serves an OpenAPI 3.1 JSON spec at the configured path. Absent by default. Its `securitySchemes`
+  *   define, by name, the schemes that routes reference through their `security` metadata; a route naming an undeclared scheme fails
+  *   the server start with `HttpRouteException`.
   * @param cors
   *   When set, applies a CORS policy globally to all handlers, adding the appropriate `Access-Control-*` headers and handling preflight
   *   OPTIONS requests. Absent by default.
@@ -109,9 +111,10 @@ case class HttpServerConfig(
         path: String = "/openapi.json",
         title: String = "API",
         version: String = "1.0.0",
-        description: Option[String] = None
+        description: Option[String] = None,
+        securitySchemes: Map[String, HttpOpenApi.SecurityScheme] = Map.empty
     ): HttpServerConfig =
-        copy(openApi = Present(HttpServerConfig.OpenApiEndpoint(path, title, version, description)))
+        copy(openApi = Present(HttpServerConfig.OpenApiEndpoint(path, title, version, description, securitySchemes)))
 end HttpServerConfig
 
 object HttpServerConfig:
@@ -144,7 +147,8 @@ object HttpServerConfig:
         path: String = "/openapi.json",
         title: String = "API",
         version: String = "1.0.0",
-        description: Option[String] = None
+        description: Option[String] = None,
+        securitySchemes: Map[String, HttpOpenApi.SecurityScheme] = Map.empty
     ) derives CanEqual
 
     case class Cors(

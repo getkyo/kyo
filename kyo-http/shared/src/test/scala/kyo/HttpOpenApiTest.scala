@@ -24,7 +24,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             name = "limit",
                             in = "query",
                             required = Some(false),
-                            json = HttpOpenApi.SchemaObject.integer,
+                            schema = HttpOpenApi.SchemaObject.integer,
                             description = Some("How many items to return")
                         )
                     )),
@@ -34,7 +34,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             description = "A list of pets",
                             content = Some(Map(
                                 "application/json" -> HttpOpenApi.MediaType(
-                                    json = HttpOpenApi.SchemaObject.array(
+                                    schema = HttpOpenApi.SchemaObject.array(
                                         HttpOpenApi.SchemaObject(
                                             `type` = None,
                                             format = None,
@@ -44,7 +44,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                             additionalProperties = None,
                                             oneOf = None,
                                             `enum` = None,
-                                            `$ref` = Some("#/components/jsons/Pet")
+                                            `$ref` = Some("#/components/schemas/Pet")
                                         )
                                     )
                                 )
@@ -64,7 +64,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                         required = Some(true),
                         content = Map(
                             "application/json" -> HttpOpenApi.MediaType(
-                                json = HttpOpenApi.SchemaObject(
+                                schema = HttpOpenApi.SchemaObject(
                                     `type` = None,
                                     format = None,
                                     items = None,
@@ -73,7 +73,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     additionalProperties = None,
                                     oneOf = None,
                                     `enum` = None,
-                                    `$ref` = Some("#/components/jsons/Pet")
+                                    `$ref` = Some("#/components/schemas/Pet")
                                 )
                             )
                         ),
@@ -105,7 +105,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             name = "petId",
                             in = "path",
                             required = Some(true),
-                            json = HttpOpenApi.SchemaObject.string,
+                            schema = HttpOpenApi.SchemaObject.string,
                             description = Some("The id of the pet to retrieve")
                         )
                     )),
@@ -115,7 +115,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             description = "Expected response to a valid request",
                             content = Some(Map(
                                 "application/json" -> HttpOpenApi.MediaType(
-                                    json = HttpOpenApi.SchemaObject(
+                                    schema = HttpOpenApi.SchemaObject(
                                         `type` = None,
                                         format = None,
                                         items = None,
@@ -124,7 +124,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                         additionalProperties = None,
                                         oneOf = None,
                                         `enum` = None,
-                                        `$ref` = Some("#/components/jsons/Pet")
+                                        `$ref` = Some("#/components/schemas/Pet")
                                     )
                                 )
                             ))
@@ -170,7 +170,9 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
             assert(json.contains("Petstore"))
             assert(json.contains("listPets"))
             assert(json.contains("showPetById"))
-            assert(json.contains("#/components/jsons/Pet"))
+            assert(json.contains("#/components/schemas/Pet"))
+            assert(json.contains("\"schema\":"))
+            assert(!json.contains("\"json\":"))
         }
 
         "roundtrip toJson/decode" in {
@@ -226,9 +228,9 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
             parsed match
                 case Result.Success(spec) =>
                     assert(spec.components.isDefined)
-                    val jsons = spec.components.get.schemas.get
-                    assert(jsons.contains("Pet"))
-                    val pet = jsons("Pet")
+                    val schemas = spec.components.get.schemas.get
+                    assert(schemas.contains("Pet"))
+                    val pet = schemas("Pet")
                     assert(pet.`type` == Some("object"))
                     assert(pet.properties.get.size == 3)
                     assert(pet.required == Some(List("id", "name")))
@@ -255,6 +257,85 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
             end match
         }
 
+        "decodes the schemas of an OpenAPI 3 document" in {
+            val json = """{
+                "openapi": "3.1.0",
+                "info": {"title": "Petstore", "version": "1.0.0"},
+                "servers": [{"url": "https://petstore.example.com/v1"}],
+                "paths": {
+                    "/pets/{petId}": {
+                        "get": {
+                            "operationId": "showPetById",
+                            "tags": ["pets"],
+                            "parameters": [{
+                                "name": "petId",
+                                "in": "path",
+                                "required": true,
+                                "description": "The id of the pet to retrieve",
+                                "schema": {"type": "integer", "format": "int64"}
+                            }],
+                            "responses": {
+                                "200": {
+                                    "description": "Expected response to a valid request",
+                                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}
+                                },
+                                "default": {
+                                    "description": "unexpected error",
+                                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+                                }
+                            }
+                        }
+                    }
+                },
+                "components": {
+                    "schemas": {
+                        "Pet": {
+                            "type": "object",
+                            "required": ["id", "name"],
+                            "properties": {
+                                "id": {"type": "integer", "format": "int64"},
+                                "name": {"type": "string"},
+                                "tag": {"type": "string"}
+                            }
+                        },
+                        "Error": {
+                            "type": "object",
+                            "required": ["code", "message"],
+                            "properties": {
+                                "code": {"type": "integer", "format": "int32"},
+                                "message": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            }"""
+            val spec = Json.decode[HttpOpenApi](json).getOrThrow
+            val op   = spec.paths("/pets/{petId}").get.get
+
+            def ref(target: String) = HttpOpenApi.SchemaObject(None, None, None, None, None, None, None, None, Some(target))
+
+            assert(op.parameters.get.map(_.schema) == List(HttpOpenApi.SchemaObject.long))
+            assert(op.responses("200").content.get("application/json").schema == ref("#/components/schemas/Pet"))
+            assert(op.responses("default").content.get("application/json").schema == ref("#/components/schemas/Error"))
+            assert(spec.components.get.schemas.get == Map(
+                "Pet" -> HttpOpenApi.SchemaObject.obj.copy(
+                    properties = Some(Map(
+                        "id"   -> HttpOpenApi.SchemaObject.long,
+                        "name" -> HttpOpenApi.SchemaObject.string,
+                        "tag"  -> HttpOpenApi.SchemaObject.string
+                    )),
+                    required = Some(List("id", "name"))
+                ),
+                "Error" -> HttpOpenApi.SchemaObject.obj.copy(
+                    properties = Some(Map(
+                        "code"    -> HttpOpenApi.SchemaObject.integer,
+                        "message" -> HttpOpenApi.SchemaObject.string
+                    )),
+                    required = Some(List("code", "message"))
+                )
+            ))
+        }
+
         "decode with invalid JSON fails" in {
             val parsed = Json.decode[HttpOpenApi]("not json")
             assert(!parsed.isSuccess)
@@ -276,6 +357,40 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
     }
 
     "HttpOpenApi.fromJson" - {
+
+        "reads the parameter and response schemas of an OpenAPI 3 document" in {
+            val api = HttpOpenApi.fromJson("""{
+                "openapi": "3.1.0",
+                "info": {"title": "Petstore", "version": "1.0.0"},
+                "servers": [{"url": "https://petstore.example.com/v1"}],
+                "paths": {
+                    "/pets/{petId}/name": {
+                        "get": {
+                            "operationId": "petName",
+                            "parameters": [
+                                {"name": "petId", "in": "path", "required": true, "schema": {"type": "integer", "format": "int64"}},
+                                {"name": "verbose", "in": "query", "required": true, "schema": {"type": "boolean"}},
+                                {"name": "X-Request-Id", "in": "header", "schema": {"type": "string", "format": "uuid"}}
+                            ],
+                            "responses": {
+                                "200": {
+                                    "description": "The pet's name",
+                                    "content": {"application/json": {"schema": {"type": "string"}}}
+                                }
+                            }
+                        }
+                    }
+                }
+            }""")
+            val route: HttpRoute[
+                "petId" ~ Long & "verbose" ~ Boolean & "X-Request-Id" ~ Maybe[java.util.UUID],
+                "body" ~ String,
+                Nothing
+            ] = api.petName
+            assert(route.method == HttpMethod.GET)
+            assert(route.request.fields.size == 2)
+            assert(route.response.fields.size == 1)
+        }
 
         "single GET route" in {
             val api = HttpOpenApi.fromJson("""{
@@ -329,7 +444,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "petId",
                                 "in": "path",
                                 "required": true,
-                                "json": {"type": "integer", "format": "int32"}
+                                "schema":{"type": "integer", "format": "int32"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -352,7 +467,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "limit",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "integer", "format": "int32"}
+                                "schema":{"type": "integer", "format": "int32"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -375,7 +490,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             "parameters": [{
                                 "name": "limit",
                                 "in": "query",
-                                "json": {"type": "integer", "format": "int32"}
+                                "schema":{"type": "integer", "format": "int32"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -398,7 +513,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "X-Request-Id",
                                 "in": "header",
                                 "required": true,
-                                "json": {"type": "string"}
+                                "schema":{"type": "string"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -422,7 +537,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/json": {
-                                            "json": {"type": "string"}
+                                            "schema":{"type": "string"}
                                         }
                                     }
                                 }
@@ -444,14 +559,14 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                         "get": {
                             "operationId": "getPet",
                             "parameters": [
-                                {"name": "petId", "in": "path", "required": true, "json": {"type": "integer"}},
-                                {"name": "verbose", "in": "query", "required": true, "json": {"type": "boolean"}}
+                                {"name": "petId", "in": "path", "required": true, "schema":{"type": "integer"}},
+                                {"name": "verbose", "in": "query", "required": true, "schema":{"type": "boolean"}}
                             ],
                             "responses": {
                                 "200": {
                                     "description": "ok",
                                     "content": {
-                                        "application/json": {"json": {"type": "string"}}
+                                        "application/json": {"schema":{"type": "string"}}
                                     }
                                 }
                             }
@@ -473,7 +588,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                     "/pets/{id}": {
                         "put": {
                             "operationId": "updatePet",
-                            "parameters": [{"name": "id", "in": "path", "required": true, "json": {"type": "string"}}],
+                            "parameters": [{"name": "id", "in": "path", "required": true, "schema":{"type": "string"}}],
                             "responses": {"200": {"description": "ok"}}
                         }
                     }
@@ -491,7 +606,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                     "/pets/{id}": {
                         "delete": {
                             "operationId": "deletePet",
-                            "parameters": [{"name": "id", "in": "path", "required": true, "json": {"type": "string"}}],
+                            "parameters": [{"name": "id", "in": "path", "required": true, "schema":{"type": "string"}}],
                             "responses": {"200": {"description": "ok"}}
                         }
                     }
@@ -509,7 +624,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                     "/pets/{id}": {
                         "patch": {
                             "operationId": "patchPet",
-                            "parameters": [{"name": "id", "in": "path", "required": true, "json": {"type": "string"}}],
+                            "parameters": [{"name": "id", "in": "path", "required": true, "schema":{"type": "string"}}],
                             "responses": {"200": {"description": "ok"}}
                         }
                     }
@@ -561,7 +676,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                     "/items/{id}": {
                         "get": {
                             "operationId": "getItem",
-                            "parameters": [{"name": "id", "in": "path", "required": true, "json": {"type": "integer", "format": "int64"}}],
+                            "parameters": [{"name": "id", "in": "path", "required": true, "schema":{"type": "integer", "format": "int64"}}],
                             "responses": {"200": {"description": "ok"}}
                         }
                     }
@@ -579,7 +694,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                     "/items": {
                         "get": {
                             "operationId": "listItems",
-                            "parameters": [{"name": "price", "in": "query", "required": true, "json": {"type": "number"}}],
+                            "parameters": [{"name": "price", "in": "query", "required": true, "schema":{"type": "number"}}],
                             "responses": {"200": {"description": "ok"}}
                         }
                     }
@@ -597,7 +712,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                     "/items": {
                         "get": {
                             "operationId": "listItems",
-                            "parameters": [{"name": "price", "in": "query", "required": true, "json": {"type": "number", "format": "double"}}],
+                            "parameters": [{"name": "price", "in": "query", "required": true, "schema":{"type": "number", "format": "double"}}],
                             "responses": {"200": {"description": "ok"}}
                         }
                     }
@@ -615,7 +730,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                     "/items/{id}": {
                         "get": {
                             "operationId": "getItem",
-                            "parameters": [{"name": "id", "in": "path", "required": true, "json": {"type": "string", "format": "uuid"}}],
+                            "parameters": [{"name": "id", "in": "path", "required": true, "schema":{"type": "string", "format": "uuid"}}],
                             "responses": {"200": {"description": "ok"}}
                         }
                     }
@@ -633,7 +748,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                     "/items/{active}": {
                         "get": {
                             "operationId": "getActive",
-                            "parameters": [{"name": "active", "in": "path", "required": true, "json": {"type": "boolean"}}],
+                            "parameters": [{"name": "active", "in": "path", "required": true, "schema":{"type": "boolean"}}],
                             "responses": {"200": {"description": "ok"}}
                         }
                     }
@@ -652,8 +767,8 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                         "get": {
                             "operationId": "getRepo",
                             "parameters": [
-                                {"name": "orgId", "in": "path", "required": true, "json": {"type": "string"}},
-                                {"name": "repoId", "in": "path", "required": true, "json": {"type": "integer"}}
+                                {"name": "orgId", "in": "path", "required": true, "schema":{"type": "string"}},
+                                {"name": "repoId", "in": "path", "required": true, "schema":{"type": "integer"}}
                             ],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -673,14 +788,14 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                         "get": {
                             "operationId": "getItem",
                             "parameters": [
-                                {"name": "id", "in": "path", "required": true, "json": {"type": "integer"}},
-                                {"name": "format", "in": "query", "required": true, "json": {"type": "string"}},
-                                {"name": "X-Token", "in": "header", "required": true, "json": {"type": "string"}}
+                                {"name": "id", "in": "path", "required": true, "schema":{"type": "integer"}},
+                                {"name": "format", "in": "query", "required": true, "schema":{"type": "string"}},
+                                {"name": "X-Token", "in": "header", "required": true, "schema":{"type": "string"}}
                             ],
                             "responses": {
                                 "200": {
                                     "description": "ok",
-                                    "content": {"application/json": {"json": {"type": "string"}}}
+                                    "content": {"application/json": {"schema":{"type": "string"}}}
                                 }
                             }
                         }
@@ -701,7 +816,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                     "/items": {
                         "get": {
                             "operationId": "listItems",
-                            "parameters": [{"name": "X-Trace-Id", "in": "header", "json": {"type": "string"}}],
+                            "parameters": [{"name": "X-Trace-Id", "in": "header", "schema":{"type": "string"}}],
                             "responses": {"200": {"description": "ok"}}
                         }
                     }
@@ -722,7 +837,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             "responses": {
                                 "default": {
                                     "description": "default response",
-                                    "content": {"application/json": {"json": {"type": "string"}}}
+                                    "content": {"application/json": {"schema":{"type": "string"}}}
                                 }
                             }
                         }
@@ -744,11 +859,11 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             "responses": {
                                 "201": {
                                     "description": "created",
-                                    "content": {"application/json": {"json": {"type": "integer"}}}
+                                    "content": {"application/json": {"schema":{"type": "integer"}}}
                                 },
                                 "200": {
                                     "description": "ok",
-                                    "content": {"application/json": {"json": {"type": "string"}}}
+                                    "content": {"application/json": {"schema":{"type": "string"}}}
                                 }
                             }
                         }
@@ -808,7 +923,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             "operationId": "createItem",
                             "requestBody": {
                                 "required": true,
-                                "content": {"application/json": {"json": {"type": "string"}}}
+                                "content": {"application/json": {"schema":{"type": "string"}}}
                             },
                             "responses": {"201": {"description": "created"}}
                         }
@@ -818,10 +933,10 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
             assert(api.createItem.request.fields.nonEmpty)
         }
 
-        // BUG: $ref jsons are not resolved — falls through to String.
+        // BUG: $ref schemas are not resolved, so they fall through to String.
         // A $ref response should not produce a "body" ~ String field.
-        "$ref json should be resolved".pendingUntilFixed(
-            "$ref jsons are not resolved , falls through to String. A $ref response should not produce a \"body\" ~ String field."
+        "$ref schema should be resolved".pendingUntilFixed(
+            "$ref schemas are not resolved , falls through to String. A $ref response should not produce a \"body\" ~ String field."
         ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
@@ -835,7 +950,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/json": {
-                                            "json": {"$ref": "#/components/jsons/Item"}
+                                            "schema":{"$ref": "#/components/schemas/Item"}
                                         }
                                     }
                                 }
@@ -845,17 +960,19 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                 }
             }""")
             // BUG: $ref is unresolved, silently falls to String. Should fail to compile
-            // when the referenced json cannot be resolved.
+            // when the referenced schema cannot be resolved.
             typeCheckFailure("""
                 HttpOpenApi.fromJson(
-                    "{\"openapi\":\"3.0.0\",\"info\":{\"title\":\"T\",\"version\":\"1\"},\"paths\":{\"/items\":{\"get\":{\"operationId\":\"listItems\",\"responses\":{\"200\":{\"description\":\"ok\",\"content\":{\"application/json\":{\"json\":{\"$$ref\":\"#/components/jsons/Item\"}}}}}}}}}"
+                    "{\"openapi\":\"3.0.0\",\"info\":{\"title\":\"T\",\"version\":\"1\"},\"paths\":{\"/items\":{\"get\":{\"operationId\":\"listItems\",\"responses\":{\"200\":{\"description\":\"ok\",\"content\":{\"application/json\":{\"schema\":{\"$$ref\":\"#/components/schemas/Item\"}}}}}}}}}"
                 )
             """)("ref")
             ()
         }
 
-        // BUG: array json type is not handled — falls through to String.
-        "array json should not fall through to String".pendingUntilFixed("array json type is not handled , falls through to String.") in {
+        // BUG: array schema type is not handled, so it falls through to String.
+        "array schema should not fall through to String".pendingUntilFixed(
+            "array schema type is not handled , falls through to String."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -868,7 +985,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/json": {
-                                            "json": {"type": "array", "items": {"type": "string"}}
+                                            "schema":{"type": "array", "items": {"type": "string"}}
                                         }
                                     }
                                 }
@@ -882,8 +999,10 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
             ()
         }
 
-        // BUG: object json type is not handled — falls through to String.
-        "object json should not fall through to String".pendingUntilFixed("object json type is not handled , falls through to String.") in {
+        // BUG: object schema type is not handled, so it falls through to String.
+        "object schema should not fall through to String".pendingUntilFixed(
+            "object schema type is not handled , falls through to String."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -896,7 +1015,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/json": {
-                                            "json": {"type": "object"}
+                                            "schema":{"type": "object"}
                                         }
                                     }
                                 }
@@ -905,13 +1024,13 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                     }
                 }
             }""")
-            // BUG: object falls to String. A bare object json should not produce "body" ~ String.
+            // BUG: object falls to String. A bare object schema should not produce "body" ~ String.
             typeCheck("""val r: HttpRoute[Any, Any, Nothing] = api.listItems""")
             ()
         }
 
         // Enum values are not used for type safety — parameter is just String.
-        "enum json maps to String" in {
+        "enum schema maps to String" in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -923,7 +1042,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "sort",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "string", "enum": ["asc", "desc"]}
+                                "schema":{"type": "string", "enum": ["asc", "desc"]}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -961,7 +1080,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "session",
                                 "in": "cookie",
                                 "required": true,
-                                "json": {"type": "string"}
+                                "schema":{"type": "string"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -984,7 +1103,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "since",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "string", "format": "date-time"}
+                                "schema":{"type": "string", "format": "date-time"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1009,7 +1128,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "since",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "string", "format": "date"}
+                                "schema":{"type": "string", "format": "date"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1035,7 +1154,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "text/plain": {
-                                            "json": {"type": "string"}
+                                            "schema":{"type": "string"}
                                         }
                                     }
                                 }
@@ -1047,8 +1166,8 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
             assert(api.greet.response.fields.nonEmpty)
         }
 
-        // BUG: oneOf json is not handled — falls through to String.
-        "oneOf json should not fall through to String".pendingUntilFixed("oneOf json is not handled , falls through to String.") in {
+        // BUG: oneOf schema is not handled, so it falls through to String.
+        "oneOf schema should not fall through to String".pendingUntilFixed("oneOf schema is not handled , falls through to String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1061,7 +1180,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/json": {
-                                            "json": {
+                                            "schema":{
                                                 "oneOf": [
                                                     {"type": "string"},
                                                     {"type": "integer"}
@@ -1093,7 +1212,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "data",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "string", "format": "byte"}
+                                "schema":{"type": "string", "format": "byte"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1118,7 +1237,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "data",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "string", "format": "binary"}
+                                "schema":{"type": "string", "format": "binary"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1130,8 +1249,8 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
             ()
         }
 
-        // BUG: anyOf json is not handled — falls through to String.
-        "anyOf json should not fall through to String".pendingUntilFixed("anyOf json is not handled , falls through to String.") in {
+        // BUG: anyOf schema is not handled, so it falls through to String.
+        "anyOf schema should not fall through to String".pendingUntilFixed("anyOf schema is not handled , falls through to String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1144,7 +1263,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/json": {
-                                            "json": {
+                                            "schema":{
                                                 "anyOf": [
                                                     {"type": "string"},
                                                     {"type": "integer"}
@@ -1162,8 +1281,8 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
             ()
         }
 
-        // BUG: allOf json is not handled — falls through to String.
-        "allOf json should not fall through to String".pendingUntilFixed("allOf json is not handled , falls through to String.") in {
+        // BUG: allOf schema is not handled, so it falls through to String.
+        "allOf schema should not fall through to String".pendingUntilFixed("allOf schema is not handled , falls through to String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1176,7 +1295,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/json": {
-                                            "json": {
+                                            "schema":{
                                                 "allOf": [
                                                     {"type": "object"},
                                                     {"type": "object"}
@@ -1211,7 +1330,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/xml": {
-                                            "json": {"type": "string"}
+                                            "schema":{"type": "string"}
                                         }
                                     }
                                 }
@@ -1223,8 +1342,8 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
             assert(api.listItems.response.fields.nonEmpty)
         }
 
-        // BUG: $ref in parameter json falls through to String.
-        "$ref in parameter json should be resolved".pendingUntilFixed("$ref in parameter json falls through to String.") in {
+        // BUG: $ref in parameter schema falls through to String.
+        "$ref in parameter schema should be resolved".pendingUntilFixed("$ref in parameter schema falls through to String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1236,7 +1355,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "id",
                                 "in": "path",
                                 "required": true,
-                                "json": {"$ref": "#/components/jsons/ItemId"}
+                                "schema":{"$ref": "#/components/schemas/ItemId"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1244,10 +1363,10 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                 }
             }""")
             // $ref should be resolved or produce a compile error — not silently default to String.
-            // This spec should fail to compile because ItemId json is not provided.
+            // This spec should fail to compile because ItemId schema is not provided.
             typeCheckFailure("""
                 HttpOpenApi.fromJson(
-                    "{\"openapi\":\"3.0.0\",\"info\":{\"title\":\"T\",\"version\":\"1\"},\"paths\":{\"/items/{id}\":{\"get\":{\"operationId\":\"getItem\",\"parameters\":[{\"name\":\"id\",\"in\":\"path\",\"required\":true,\"json\":{\"$$ref\":\"#/components/jsons/ItemId\"}}],\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"
+                    "{\"openapi\":\"3.0.0\",\"info\":{\"title\":\"T\",\"version\":\"1\"},\"paths\":{\"/items/{id}\":{\"get\":{\"operationId\":\"getItem\",\"parameters\":[{\"name\":\"id\",\"in\":\"path\",\"required\":true,\"schema\":{\"$$ref\":\"#/components/schemas/ItemId\"}}],\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"
                 )
             """)("ref")
             ()
@@ -1293,7 +1412,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/json": {
-                                            "json": {
+                                            "schema":{
                                                 "type": "array",
                                                 "items": {"type": "object"}
                                             }
@@ -1380,7 +1499,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             "name": "X-Tenant",
                             "in": "header",
                             "required": true,
-                            "json": {"type": "string"}
+                            "schema":{"type": "string"}
                         }],
                         "get": {
                             "operationId": "listItems",
@@ -1388,7 +1507,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "limit",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "integer"}
+                                "schema":{"type": "integer"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1412,7 +1531,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "filter",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "string", "nullable": true}
+                                "schema":{"type": "string", "nullable": true}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1436,7 +1555,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             "parameters": [{
                                 "name": "limit",
                                 "in": "query",
-                                "json": {"type": "integer", "default": 10}
+                                "schema":{"type": "integer", "default": 10}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1460,7 +1579,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             "operationId": "upload",
                             "requestBody": {
                                 "required": true,
-                                "content": {"multipart/form-data": {"json": {"type": "object"}}}
+                                "content": {"multipart/form-data": {"schema":{"type": "object"}}}
                             },
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1483,7 +1602,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                             "operationId": "login",
                             "requestBody": {
                                 "required": true,
-                                "content": {"application/x-www-form-urlencoded": {"json": {"type": "object"}}}
+                                "content": {"application/x-www-form-urlencoded": {"schema":{"type": "object"}}}
                             },
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1509,7 +1628,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/octet-stream": {
-                                            "json": {"type": "string", "format": "binary"}
+                                            "schema":{"type": "string", "format": "binary"}
                                         }
                                     }
                                 }
@@ -1538,10 +1657,10 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                     "description": "ok",
                                     "content": {
                                         "application/json": {
-                                            "json": {"type": "string"}
+                                            "schema":{"type": "string"}
                                         },
                                         "text/plain": {
-                                            "json": {"type": "string"}
+                                            "schema":{"type": "string"}
                                         }
                                     }
                                 }
@@ -1567,7 +1686,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "q",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "string", "minLength": 1}
+                                "schema":{"type": "string", "minLength": 1}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1594,7 +1713,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "page",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "integer", "minimum": 1, "maximum": 100}
+                                "schema":{"type": "integer", "minimum": 1, "maximum": 100}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
@@ -1618,7 +1737,7 @@ class HttpOpenApiTest extends kyo.BaseHttpTest:
                                 "name": "code",
                                 "in": "query",
                                 "required": true,
-                                "json": {"type": "string", "pattern": "^[A-Z]{3}$"}
+                                "schema":{"type": "string", "pattern": "^[A-Z]{3}$"}
                             }],
                             "responses": {"200": {"description": "ok"}}
                         }
