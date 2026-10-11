@@ -73,11 +73,10 @@ object ZIOs:
                         }
                     // Honor ZIO's interrupt-and-await contract: interrupt the kyo fiber and suspend until it
                     // has actually completed, so the ZIO fiber is not reported interrupted before the bridged
-                    // kyo computation (and its finalizers) have stopped. This runs as an onInterrupt finalizer
-                    // attached outside `restore`, so it fires on any interrupt of the ZIO fiber. The previous
-                    // asyncInterrupt canceler existed only after the async node executed, so an interrupt
-                    // landing between the fork and that node dropped the node, skipped canceler registration,
-                    // and orphaned the kyo fiber as a busy worker.
+                    // kyo computation (and its finalizers) have stopped. An onInterrupt finalizer attached
+                    // outside `restore`, not an asyncInterrupt canceler: a canceler exists only once the async
+                    // node runs, so an interrupt landing between the fork and that node would orphan the kyo
+                    // fiber as a busy worker.
                     val interruptAndAwait: ZIO[Any, Nothing, Unit] =
                         ZIO.async[Any, Nothing, Unit] { k =>
                             fiber.unsafe.onComplete(_ => k(ZIO.unit))

@@ -1,10 +1,7 @@
 package kyo
 
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import kyo.*
 import kyo.ZIOs.*
-import kyo.internal.Platform
 import zio.Cause
 import zio.Exit
 import zio.Task
@@ -129,194 +126,183 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
 
     "interrupts" - {
 
-        def kyoLoop(started: CountDownLatch, done: CountDownLatch): Unit < Sync =
-            def loop(i: Int): Unit < Sync =
-                Sync.defer {
-                    if i == 0 then
-                        Sync.defer(started.countDown()).andThen(loop(i + 1))
-                    else
-                        loop(i + 1)
-                }
-            Sync.ensure(Sync.defer(done.countDown()))(loop(0))
-        end kyoLoop
+        def kyoLoop(started: Latch, done: Latch): Unit < Sync =
+            def spin: Unit < Sync = Sync.defer(spin)
+            Sync.ensure(done.release)(started.release.andThen(spin))
 
-        def zioLoop(started: CountDownLatch, done: CountDownLatch): Task[Unit] =
-            def loop(i: Int): Task[Unit] =
-                ZIO.suspend {
-                    if i == 0 then
-                        ZIO.attempt(started.countDown())
-                            .flatMap(_ => loop(i + 1))
-                    else
-                        loop(i + 1)
-                }
-            loop(0).ensuring(ZIO.succeed(done.countDown()))
-        end zioLoop
+        def zioLoop(started: zio.Promise[Nothing, Unit], done: zio.Promise[Nothing, Unit]): Task[Unit] =
+            def spin: Task[Unit] = ZIO.suspendSucceed(spin)
+            started.succeed(()).zipRight(spin).ensuring(done.succeed(()))
 
-        if Platform.isJVM then
+        def zioSignal: zio.UIO[zio.Promise[Nothing, Unit]] = zio.Promise.make[Nothing, Unit]
 
-            "runZIO" - {
-                "zio to kyo" in runZIO {
-                    val started = new CountDownLatch(1)
-                    val done    = new CountDownLatch(1)
-                    for
-                        f <- ZIOs.run(kyoLoop(started, done)).fork
-                        _ <- ZIO.attempt(started.await(100, TimeUnit.MILLISECONDS))
-                        _ <- f.interrupt
-                        r <- f.await
-                        _ <- ZIO.attempt(done.await(100, TimeUnit.MILLISECONDS))
-                    yield assert(r.isInterrupted)
-                    end for
-                }
-
-                "both" in runZIO {
-                    val started = new CountDownLatch(2)
-                    val done    = new CountDownLatch(2)
-                    val v       =
-                        for
-                            _ <- ZIOs.get(zioLoop(started, done))
-                            _ <- Fiber.initUnscoped(kyoLoop(started, done))
-                        yield ()
-                    for
-                        f <- ZIOs.run(v).fork
-                        _ <- ZIO.attempt(started.await(100, TimeUnit.MILLISECONDS))
-                        _ <- f.interrupt
-                        r <- f.await
-                        _ <- ZIO.attempt(done.await(100, TimeUnit.MILLISECONDS))
-                    yield assert(r.isInterrupted)
-                    end for
-                }
-
-                "parallel loops" in runZIO {
-                    val started        = new CountDownLatch(2)
-                    val done           = new CountDownLatch(2)
-                    def parallelEffect =
-                        ZIOs.run {
-                            val loop1 = ZIOs.get(zioLoop(started, done))
-                            val loop2 = kyoLoop(started, done)
-                            Async.zip[Throwable, Unit, Unit, Any](loop1, loop2)
-                        }
-                    for
-                        f <- parallelEffect.fork
-                        _ <- ZIO.attempt(started.await(100, TimeUnit.MILLISECONDS))
-                        _ <- f.interrupt
-                        r <- f.await
-                        _ <- ZIO.attempt(done.await(100, TimeUnit.MILLISECONDS))
-                    yield assert(r.isInterrupted)
-                    end for
-                }
-
-                "race loops" in runZIO {
-                    val started    = new CountDownLatch(2)
-                    val done       = new CountDownLatch(2)
-                    def raceEffect =
-                        ZIOs.run {
-                            val loop1 = ZIOs.get(zioLoop(started, done))
-                            val loop2 = kyoLoop(started, done)
-                            Async.race[Throwable, Unit, Any](loop1, loop2)
-                        }
-                    for
-                        f <- raceEffect.fork
-                        _ <- ZIO.attempt(started.await(100, TimeUnit.MILLISECONDS))
-                        _ <- f.interrupt
-                        r <- f.await
-                        _ <- ZIO.attempt(done.await(100, TimeUnit.MILLISECONDS))
-                    yield assert(r.isInterrupted)
-                    end for
-                }
-
-                "interrupt racing acquisition never orphans the bridged kyo fiber" in runZIO {
-                    // A ZIO interrupt that lands between ZIOs.run's fork and the wiring of its interruption
-                    // path must still stop the bridged kyo fiber. Each iteration forks a busy spin loop and
-                    // interrupts it immediately, maximizing that window; a dropped interrupt leaves a worker
-                    // spinning, so progress keeps advancing after every fiber has been awaited.
-                    val progress          = new java.util.concurrent.atomic.AtomicLong(0)
-                    def spin: Unit < Sync =
-                        Sync.defer {
-                            discard(progress.incrementAndGet())
-                            spin
-                        }
-                    val iteration: Task[Unit] =
-                        ZIOs.run(spin).fork.flatMap(f => (f.interrupt *> f.await).unit)
-                    for
-                        _  <- ZIO.foreachDiscard(1 to 400)(_ => iteration)
-                        p1 <- ZIO.succeed(progress.get())
-                        _  <- ZIO.sleep(zio.Duration.fromMillis(200))
-                        p2 <- ZIO.succeed(progress.get())
-                    yield assert(p1 == p2)
-                    end for
-                }
+        "runZIO" - {
+            "zio to kyo" in runZIO {
+                for
+                    started <- ZIOs.run(Latch.init(1))
+                    done    <- ZIOs.run(Latch.init(1))
+                    f       <- ZIOs.run(kyoLoop(started, done)).fork
+                    _       <- ZIOs.run(started.await)
+                    _       <- f.interrupt
+                    r       <- f.await
+                    pending <- ZIOs.run(done.pending)
+                yield assert(r.isInterrupted && pending == 0)
+                end for
             }
 
-            "runKyo" - {
-                "kyo to zio" in runKyo {
-                    val started = new CountDownLatch(1)
-                    val done    = new CountDownLatch(1)
-                    val panic   = Result.Panic(new Exception)
-                    for
-                        f <- Fiber.initUnscoped(ZIOs.get(zioLoop(started, done)))
-                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
-                        _ <- f.interrupt(panic)
-                        r <- f.getResult
-                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
-                    yield assert(r == panic)
-                    end for
-                }
-
-                "both" in runKyo {
-                    val started = new CountDownLatch(2)
-                    val done    = new CountDownLatch(2)
-                    val v       =
-                        for
-                            _ <- ZIOs.get(zioLoop(started, done))
-                            _ <- kyoLoop(started, done)
-                        yield ()
-                    for
-                        f <- Fiber.initUnscoped(v)
-                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
-                        _ <- f.interrupt
-                        r <- f.getResult
-                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
-                    yield assert(r.isPanic)
-                    end for
-                }
-
-                "parallel loops" in runKyo {
-                    val started        = new CountDownLatch(2)
-                    val done           = new CountDownLatch(2)
-                    def parallelEffect =
-                        val loop1 = ZIOs.get(zioLoop(started, done))
-                        val loop2 = kyoLoop(started, done)
-                        Async.zip[Throwable, Unit, Unit, Any](loop1, loop2)
-                    end parallelEffect
-                    for
-                        f <- Fiber.initUnscoped(parallelEffect)
-                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
-                        _ <- f.interrupt
-                        r <- f.getResult
-                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
-                    yield assert(r.isPanic)
-                    end for
-                }
-
-                "race loops" in runKyo {
-                    val started    = new CountDownLatch(2)
-                    val done       = new CountDownLatch(2)
-                    def raceEffect =
-                        val loop1 = ZIOs.get(zioLoop(started, done))
-                        val loop2 = kyoLoop(started, done)
-                        Async.race(loop1, loop2)
-                    end raceEffect
-                    for
-                        f <- Fiber.initUnscoped(raceEffect)
-                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
-                        _ <- f.interrupt
-                        r <- f.getResult
-                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
-                    yield assert(r.isPanic)
-                    end for
-                }
+            "both" in runZIO {
+                for
+                    zioStarted <- zioSignal
+                    zioDone    <- zioSignal
+                    kyoStarted <- ZIOs.run(Latch.init(1))
+                    kyoDone    <- ZIOs.run(Latch.init(1))
+                    f          <- ZIOs.run(ZIOs.get(zioLoop(zioStarted, zioDone)).andThen(kyoLoop(kyoStarted, kyoDone))).fork
+                    _          <- zioStarted.await
+                    _          <- f.interrupt
+                    r          <- f.await
+                    _          <- zioDone.await
+                    pending    <- ZIOs.run(kyoStarted.pending)
+                yield assert(r.isInterrupted && pending == 1)
+                end for
             }
-        end if
+
+            "parallel loops" in runZIO {
+                for
+                    zioStarted <- zioSignal
+                    zioDone    <- zioSignal
+                    kyoStarted <- ZIOs.run(Latch.init(1))
+                    kyoDone    <- ZIOs.run(Latch.init(1))
+                    f          <- ZIOs.run(Async.zip[Throwable, Unit, Unit, Any](
+                        ZIOs.get(zioLoop(zioStarted, zioDone)),
+                        kyoLoop(kyoStarted, kyoDone)
+                    )).fork
+                    _ <- zioStarted.await
+                    _ <- ZIOs.run(kyoStarted.await)
+                    _ <- f.interrupt
+                    r <- f.await
+                    _ <- zioDone.await
+                    _ <- ZIOs.run(kyoDone.await)
+                yield assert(r.isInterrupted)
+                end for
+            }
+
+            "race loops" in runZIO {
+                for
+                    zioStarted <- zioSignal
+                    zioDone    <- zioSignal
+                    kyoStarted <- ZIOs.run(Latch.init(1))
+                    kyoDone    <- ZIOs.run(Latch.init(1))
+                    f          <- ZIOs.run(Async.race[Throwable, Unit, Any](
+                        ZIOs.get(zioLoop(zioStarted, zioDone)),
+                        kyoLoop(kyoStarted, kyoDone)
+                    )).fork
+                    _ <- zioStarted.await
+                    _ <- ZIOs.run(kyoStarted.await)
+                    _ <- f.interrupt
+                    r <- f.await
+                    _ <- zioDone.await
+                    _ <- ZIOs.run(kyoDone.await)
+                yield assert(r.isInterrupted)
+                end for
+            }
+
+            "interrupt racing acquisition never orphans the bridged kyo fiber" in runZIO {
+                // Each iteration interrupts the bridge right after forking it, so the interrupt can land before
+                // ZIOs.run wires its interruption path. A bridged kyo fiber completes only after its finalizers,
+                // so once the ZIO fiber is awaited a spin that was entered must also have stopped. The interrupt
+                // may stop the body before it enters, so only `entered` without `stopped` is an orphan; the
+                // recheck once every iteration has run catches an orphan that only started after its own check.
+                def spin: Unit < Sync = Sync.defer(spin)
+
+                def orphaned(entered: AtomicBoolean, stopped: AtomicBoolean): zio.UIO[Boolean] =
+                    ZIOs.run(stopped.get.map(s => entered.get.map(e => e && !s)))
+                val iteration: Task[(Boolean, AtomicBoolean, AtomicBoolean)] =
+                    for
+                        entered <- ZIOs.run(AtomicBoolean.init)
+                        stopped <- ZIOs.run(AtomicBoolean.init)
+                        f       <- ZIOs.run(Sync.ensure(stopped.set(true))(entered.set(true).andThen(spin))).fork
+                        _       <- f.interrupt
+                        orphan  <- orphaned(entered, stopped)
+                    yield (orphan, entered, stopped)
+                for
+                    runs <- ZIO.foreach(Chunk.from(1 to 400))(_ => iteration)
+                    late <- ZIO.foreach(runs)((_, entered, stopped) => orphaned(entered, stopped))
+                yield assert(runs.count(_._1) == 0 && late.count(identity) == 0)
+                end for
+            }
+        }
+
+        "runKyo" - {
+            "kyo to zio" in runKyo {
+                val panic = Result.Panic(new Exception)
+                for
+                    started <- ZIOs.get(zioSignal)
+                    done    <- ZIOs.get(zioSignal)
+                    f       <- Fiber.initUnscoped(ZIOs.get(zioLoop(started, done)))
+                    _       <- ZIOs.get(started.await)
+                    _       <- f.interrupt(panic)
+                    r       <- f.getResult
+                    _       <- ZIOs.get(done.await)
+                yield assert(r == panic)
+                end for
+            }
+
+            "both" in runKyo {
+                for
+                    zioStarted <- ZIOs.get(zioSignal)
+                    zioDone    <- ZIOs.get(zioSignal)
+                    kyoStarted <- Latch.init(1)
+                    kyoDone    <- Latch.init(1)
+                    f          <- Fiber.initUnscoped(ZIOs.get(zioLoop(zioStarted, zioDone)).andThen(kyoLoop(kyoStarted, kyoDone)))
+                    _          <- ZIOs.get(zioStarted.await)
+                    _          <- f.interrupt
+                    r          <- f.getResult
+                    _          <- ZIOs.get(zioDone.await)
+                    pending    <- kyoStarted.pending
+                yield assert(r.isPanic && pending == 1)
+                end for
+            }
+
+            "parallel loops" in runKyo {
+                for
+                    zioStarted <- ZIOs.get(zioSignal)
+                    zioDone    <- ZIOs.get(zioSignal)
+                    kyoStarted <- Latch.init(1)
+                    kyoDone    <- Latch.init(1)
+                    f          <- Fiber.initUnscoped(Async.zip[Throwable, Unit, Unit, Any](
+                        ZIOs.get(zioLoop(zioStarted, zioDone)),
+                        kyoLoop(kyoStarted, kyoDone)
+                    ))
+                    _ <- ZIOs.get(zioStarted.await)
+                    _ <- kyoStarted.await
+                    _ <- f.interrupt
+                    r <- f.getResult
+                    _ <- ZIOs.get(zioDone.await)
+                    _ <- kyoDone.await
+                yield assert(r.isPanic)
+                end for
+            }
+
+            "race loops" in runKyo {
+                for
+                    zioStarted <- ZIOs.get(zioSignal)
+                    zioDone    <- ZIOs.get(zioSignal)
+                    kyoStarted <- Latch.init(1)
+                    kyoDone    <- Latch.init(1)
+                    f          <- Fiber.initUnscoped(Async.race[Throwable, Unit, Any](
+                        ZIOs.get(zioLoop(zioStarted, zioDone)),
+                        kyoLoop(kyoStarted, kyoDone)
+                    ))
+                    _ <- ZIOs.get(zioStarted.await)
+                    _ <- kyoStarted.await
+                    _ <- f.interrupt
+                    r <- f.getResult
+                    _ <- ZIOs.get(zioDone.await)
+                    _ <- kyoDone.await
+                yield assert(r.isPanic)
+                end for
+            }
+        }
 
         "synthetic" in runKyo {
             val interrupted = ZIOs.get(ZIO.never.fork.flatMap(_.interrupt).flatten)
