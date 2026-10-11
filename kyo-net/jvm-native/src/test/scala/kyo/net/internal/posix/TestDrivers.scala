@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.internal.transport.IoDriver
 
 /** Test-tree construction helpers for the posix drivers. They wrap the drivers' package-private dependency constructors so a test can build a
   * driver over a chosen backend or bindings (a recording decorator over a real component, or the real bindings) without any production test
@@ -30,5 +31,9 @@ object TestDrivers:
       */
     def forBindings(uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)(using AllowUnsafe): IoUringDriver =
         IoUringDriver.init(uring, ring, sockets)
+
+    /** Build a [[BlockingReaderDriver]] over `real`, reading through caller-supplied socket bindings (a recording decorator or the real ones). */
+    def blockingReader(real: IoDriver[PosixHandle], sockets: SocketBindings): BlockingReaderDriver =
+        new BlockingReaderDriver(real, sockets)
 
 end TestDrivers
