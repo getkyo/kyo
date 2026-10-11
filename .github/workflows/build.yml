@@ -9,11 +9,15 @@ name: build
 #
 # Parallel across os poles: the calling workflow (ci.yml, or ci-dispatch.yml) calls this once per pole.
 # Those calls have no `needs:` between them so the poles run as independent CI jobs.
+#
+# The macos-arm64 pole (macos-14: 3 vCPU, 7 GB) is the exception to the 16GB sizing below. Its link
+# knobs are derived from `inputs.os` next to the others, and its driver heaps come from
+# scripts/sbt-heap-lib.sh like every other pole's.
 on:
   workflow_call:
     inputs:
       os:
-        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64, windows-x64).'
+        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64, windows-x64, macos-arm64).'
         type: string
         required: true
       runner-image:
@@ -32,6 +36,16 @@ on:
         default: full
       ref:
         description: 'Git ref (branch or sha) to check out. Empty string checks out the dispatch ref.'
+        type: string
+        required: false
+        default: ''
+      modules:
+        description: 'Comma-separated module base names the run is narrowed to (ci-test.sh ONLY_MODULES). Empty runs the whole selection.'
+        type: string
+        required: false
+        default: ''
+      net-backend:
+        description: 'kyo-net backend every kyo-net test is forced onto (KYO_NET_ONLY: io_uring, epoll, kqueue, nio, node). Empty keeps each platform default.'
         type: string
         required: false
         default: ''
@@ -86,14 +100,16 @@ jobs:
       # modules of accumulated heap, which frees headroom for one more optimizer thread: the old 2-CPU
       # cap was sized for a driver already carrying the whole set and left the box half idle (load 1.5
       # to 2 on 4 vCPUs) across a three hour link phase. ci-test.sh applies this to every nativeLink
-      # invocation; the plan process, the test batches, and the cross pass keep all 4 CPUs.
-      NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && '3' || '' }}"
+      # invocation; the plan process, the test batches, and the cross pass keep all 4 CPUs. The arm64
+      # macOS runner has 3 vCPUs: 2 leaves one to the driver.
+      NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && (inputs.os == 'macos-arm64' && '2' || '3') || '' }}"
       # Modules per sbt process in the Native link and test pools. Each batch is a fresh driver, so none
       # carries more than 8 modules of accumulated heap and metaspace into a link or a test fork; the
       # measured accumulation delta (+2.2G RSS) builds up around the tenth module of a shared driver. A
       # full run pays ~4 extra sbt startups (~1 min each) per pool and, in exchange, a crash re-runs one
-      # batch instead of the whole phase. Native target only.
-      NATIVE_LINK_BATCH: "${{ matrix.target == 'Native' && '8' || '' }}"
+      # batch instead of the whole phase. Native target only. The 7 GB arm64 macOS runner takes 4: its link
+      # driver has less than half the heap the 8-module figure was measured against.
+      NATIVE_LINK_BATCH: "${{ matrix.target == 'Native' && (inputs.os == 'macos-arm64' && '4' || '8') || '' }}"
       NATIVE_TEST_BATCH: "${{ matrix.target == 'Native' && '8' || '' }}"
       # Modules per sbt process in the JS and Wasm run phases. sbt-scalajs keeps every module's linker
       # state in the driver for the session, so one 6G driver linking every Wasm test bundle reached
@@ -105,6 +121,9 @@ jobs:
       # on Native rows). ci-monitor.sh then prints the disk attribution and TERM-kills the build,
       # converting an unattributable runner loss into a normal red job with the evidence in the log.
       CI_MON_DISK_ABORT_MB: "512"
+      # A leg narrowed to the modules whose backends it exists for (the macOS pole for kqueue, the
+      # forced-backend legs); ci-test.sh applies it as `--only` to every selecting invocation.
+      ONLY_MODULES: ${{ inputs.modules }}
 
     steps:
       - uses: actions/checkout@v7.0.1
@@ -138,16 +157,24 @@ jobs:
       - name: ${{ inputs.mode }} ${{ matrix.target }} (${{ inputs.os }})
         id: test
         shell: bash
+        env:
+          NET_BACKEND: ${{ inputs.net-backend }}
         run: |
           action="${{ inputs.mode == 'diff' && 'testDiff' || 'test' }}"
+          # kyo-net's Test bridges KYO_NET_ONLY to -Dkyo.net.backend, so the backend-parameterized suites and
+          # NetPlatform.transport both select the forced backend. Exported only when set: a reader that
+          # takes an empty KYO_NET_ONLY as a backend name selects no backend at all.
+          if [ -n "$NET_BACKEND" ]; then export KYO_NET_ONLY="$NET_BACKEND"; fi
           ./scripts/ci-test.sh "${{ matrix.target }}" "$action"
 
       # Saves only on a push to main (the action's own guard). Gated on the test step having run to a
       # conclusion: a failed test leaves dependencies worth keeping, while a failed setup or relink guard
       # leaves a partial tree, and a key is immutable once written, so that tree would own the whole
-      # generation. continue-on-error because a cache problem must never turn a main leg red.
+      # generation. continue-on-error because a cache problem must never turn a main leg red. A
+      # forced-backend leg never saves: it shares its pole's key with the full legs and resolves only
+      # kyo-net's dependencies, so a thinner tree written first would own that key.
       - name: save caches (${{ inputs.os }})
-        if: ${{ !cancelled() && (steps.test.outcome == 'success' || steps.test.outcome == 'failure') }}
+        if: ${{ !cancelled() && inputs.net-backend == '' && (steps.test.outcome == 'success' || steps.test.outcome == 'failure') }}
         continue-on-error: true
         uses: ./.github/actions/caches
         with:

@@ -63,7 +63,7 @@ object TestBackends:
         import AllowUnsafe.embrace.danger
         // KYO_NET_ONLY=<backend> restricts the matrix to one backend, so a single backend's behavior can be validated in isolation
         // without another backend's still-open strand aborting the chain first. Inert by default (unset = all backends).
-        val only = sys.env.get("KYO_NET_ONLY")
+        val only = Test.isolationEnv("KYO_NET_ONLY")
         IoBackendPlatform.registered.filter(entry => only.forall(_ == entry.name)).map { entry =>
             Entry(
                 name = entry.name,

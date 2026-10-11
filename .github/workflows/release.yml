@@ -39,8 +39,9 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # No ci leg runs on macOS, so this producer is the only writer of its pole; it saves after the
-      # compile below.
+      # The ci macos-arm64 pole also writes this pole, from a kyo-net test run; whichever tree is
+      # written first for a build hash owns that key, and both start from it. This producer saves
+      # after the compile below.
       - uses: ./.github/actions/caches
         with:
           os: macos-arm64

@@ -70,10 +70,10 @@ class JvmPosixBackendSelectionTest extends Test:
         // run (KYO_NET_ONLY=<backend>, bridged to -Dkyo.net.backend by kyo.net.Test) forces that backend instead of the natural priority
         // gradient; without accounting for it here, a KYO_NET_ONLY=epoll run on a host with io_uring available would wrongly expect
         // "io_uring", since natural selection never consults the isolation env var.
-        sys.env.get("KYO_NET_ONLY") match
-            case Some(only) =>
+        Test.isolationEnv("KYO_NET_ONLY") match
+            case Present(only) =>
                 assert(IoBackendPlatform.selected.name == only, s"selected=${IoBackendPlatform.selected.name}, expected=$only")
-            case None =>
+            case Absent =>
                 if PosixConstants.isMacOrBsd then
                     assert(
                         KqueueBackend.probe.isAvailable,

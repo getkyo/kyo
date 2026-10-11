@@ -8,6 +8,12 @@ name: ci
 # instantiate on Windows: every module, with or without native code, dies at startup on an
 # emitted import whose module name is empty).
 #
+# Three poles are narrowed to kyo-net, because they exist for backends no other leg reaches. The
+# macos-arm64 pole runs kyo-net on JVM, Native and JS: kqueue is kyo-net's macOS backend and runs on
+# no other runner, so without it a kqueue-only hang is invisible to a green main. The two linux-x64
+# JVM legs force kyo-net onto the NIO floor and onto epoll, which NetPlatform.transport never selects
+# on Linux (io_uring comes first), so the shared transport suites otherwise never run on either.
+#
 # Dispatching a custom run lives in ci-dispatch.yml. Keeping it out of this file is what stops a
 # pull request from reporting a set of skipped jobs it can never run: a job whose condition is
 # false still appears as a Skipped check, so the only way to not report one is to not define it
@@ -28,7 +34,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # A constant matrix, so nothing gates it and all ten build jobs enter their queues at once.
+  # A constant matrix, so nothing gates it and every build job enters its queue at once.
   # Deriving it in a prep job would cost a full runner slot to compute a constant, and the
   # `needs:` on it would hold every real build behind that acquisition; on a saturated queue that
   # is tens of minutes before the first compile starts.
@@ -36,8 +42,9 @@ jobs:
     # Named explicitly, because the default name is derived from the matrix values and would
     # embed the serialized targets array. Branch protection matches required checks by exact
     # context string, so a name carrying a serialization detail breaks the next time that
-    # serialization changes.
-    name: build (${{ matrix.pole.os }})
+    # serialization changes. A forced-backend leg appends its backend, so the existing poles keep
+    # their names.
+    name: build (${{ matrix.pole.os }}${{ matrix.pole.backend && format(' {0}', matrix.pole.backend) || '' }})
     strategy:
       fail-fast: false
       matrix:
@@ -51,10 +58,19 @@ jobs:
           # is the RC6 shape. Building cleanly proves little on Windows in particular, where the shim
           # once linked into a DLL with an empty export table and every lookup failed at runtime.
           - { os: windows-arm64, image: windows-11-arm, targets: '["JVM","JS"]' }
+          # macos-14 is the arm64 tier that is free for public repos (3 vCPU, 7 GB) and the image the
+          # release's natives-darwin producer runs on, so its Homebrew, clang, cmake and Go are the
+          # toolchain that stages the darwin natives on every release. build.yml sizes the Native links
+          # for it.
+          - { os: macos-arm64,   image: macos-14,         targets: '["JVM","JS","Native"]', modules: kyo-net }
+          - { os: linux-x64,     image: ubuntu-latest,    targets: '["JVM"]', modules: kyo-net, backend: nio }
+          - { os: linux-x64,     image: ubuntu-latest,    targets: '["JVM"]', modules: kyo-net, backend: epoll }
     uses: ./.github/workflows/build.yml
     with:
       os: ${{ matrix.pole.os }}
       runner-image: ${{ matrix.pole.image }}
       targets: ${{ matrix.pole.targets }}
+      modules: ${{ matrix.pole.modules || '' }}
+      net-backend: ${{ matrix.pole.backend || '' }}
       # pull_request runs testDiff, push to main runs the full test.
       mode: ${{ github.event_name == 'pull_request' && 'diff' || 'full' }}

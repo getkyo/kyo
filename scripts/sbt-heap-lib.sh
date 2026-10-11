@@ -12,9 +12,13 @@
 # after the -J flags, so sourcing this file clears SBT_OPTS: an inherited SBT_OPTS heap (a developer's
 # "-Xms32G -Xmx32G") would otherwise override the role's in every driver.
 #
-# Each role's value is what that driver needs on a 16GB runner. A smaller runner clamps it to its
-# memory minus SBT_HEAP_RESERVE_MB, the room a capped driver's off-heap (metaspace, code cache, thread
-# stacks: 1.0 to 1.6GB measured) and the OS and runner agent need beside it.
+# Each role has two values: the heap that driver needs on a 16GB runner, and the reserve a smaller runner
+# keeps beside it, to which the heap is clamped (memory minus reserve). The reserve is the room the
+# driver's off-heap (metaspace, code cache, thread stacks: 1.0 to 1.6GB measured) and the OS and runner
+# agent need, 4096MB by default. link reserves 2048MB: on macos-14 (7168MB, 3 vCPU) a 5120MB link driver
+# with 2 clang jobs peaked at 3993MB RSS with 1354MB still available (ci-dispatch run 36578469675), and
+# its kyo-net live heap reaches 3.3GB, above the 3072MB the default reserve leaves there. No reserve
+# lowers a 16GB runner's heap.
 #
 # Roles:
 #   compile     compile-main and compile-test drivers, the doc site build
@@ -45,6 +49,13 @@ sbt_heap_role_mb() {
         publish)    echo 6144 ;;
         tool)       echo 3072 ;;
         *)          return 1 ;;
+    esac
+}
+
+sbt_heap_role_reserve_mb() {
+    case "$1" in
+        link) echo 2048 ;;
+        *)    echo "$SBT_HEAP_RESERVE_MB" ;;
     esac
 }
 
@@ -79,7 +90,7 @@ sbt_heap_mb() {
     want=$(sbt_heap_role_mb "$1") || { echo "sbt-heap: unknown role '$1'" >&2; return 2; }
     mem=$(sbt_heap_memory_mb)
     if [ -n "$mem" ]; then
-        cap=$((mem - SBT_HEAP_RESERVE_MB))
+        cap=$((mem - $(sbt_heap_role_reserve_mb "$1")))
         [ "$cap" -lt 1024 ] && cap=1024
         [ "$want" -gt "$cap" ] && want="$cap"
     fi

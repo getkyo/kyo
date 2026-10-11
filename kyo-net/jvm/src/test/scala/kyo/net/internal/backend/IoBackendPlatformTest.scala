@@ -37,7 +37,7 @@ class IoBackendPlatformTest extends Test:
         // natural priority gradient; without accounting for it here, a KYO_NET_ONLY=epoll run on a host with io_uring available would
         // wrongly expect "io_uring", since natural selection never consults the isolation env var.
         val expected =
-            sys.env.get("KYO_NET_ONLY").getOrElse {
+            Test.isolationEnv("KYO_NET_ONLY").getOrElse {
                 if PosixConstants.isMacOrBsd && KqueueBackend.probe.isAvailable then "kqueue"
                 else if PosixConstants.isLinux && IoUringBackend.probe.isAvailable then "io_uring"
                 else if PosixConstants.isLinux && EpollBackend.probe.isAvailable then "epoll"
