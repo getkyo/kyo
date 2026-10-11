@@ -22,6 +22,9 @@ set -uo pipefail
 #      containerd.io, and an apt resolution that removes docker-ce has taken the daemon out
 #      from under CI before; the kyo-pod suites run half of their container cases against it.
 #
+# The podman probes' image is pulled once before either probe, with retries. A pull that still
+# fails is reported as a registry failure and neither podman probe runs.
+#
 # It also pre-pulls the database images the kyo-pod and kyo-sql fixtures use, into whichever
 # runtimes answered, so first-use pull latency and registry flake stay out of the test timing
 # budget. Those pulls are best-effort: a failed pre-pull warns and leaves first-use pulling to
@@ -50,13 +53,32 @@ failed=""
 # whichever test happened to ask for the image first.
 FIXTURE_IMAGES="docker.io/library/postgres:16-alpine docker.io/library/mysql:8.0"
 
+PROBE_IMAGE="docker.io/library/alpine:3"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RETRY_DELAY="${RETRY_DELAY:-10}"
+
+# The probes judge the runtime, so the image they start has to be present before either runs:
+# a registry refusal (Docker Hub's per-IP limit answers `toomanyrequests`) would otherwise read
+# as a runtime that cannot start or stop a container, and the teardown gate would switch the OCI
+# runtime over it.
+pull_probe_image() {
+    local attempt
+    for attempt in 1 2 3; do
+        podman pull -q "$PROBE_IMAGE" >/dev/null && return 0
+        [ "$attempt" -lt 3 ] && sleep "$RETRY_DELAY"
+    done
+    echo "podman could not pull the probe image $PROBE_IMAGE in 3 attempts. This is a registry" >&2
+    echo "failure, not a runtime one: neither podman probe ran, and the OCI runtime is unchanged." >&2
+    failed=1
+    return 1
+}
+
 check_podman() {
     podman version
     # Which OCI runtime and conmon podman resolved. Printed rather than asserted on: the probe
     # below is the real gate; these lines attribute a probe failure to the component.
     podman info | grep -iE 'ociRuntime|runc|crun|conmon|rootless|cgroup|path:' || true
-    if podman pull -q docker.io/library/alpine:3 \
-        && podman create --name setup-probe docker.io/library/alpine:3 sleep 60 >/dev/null \
+    if podman create --pull=never --name setup-probe "$PROBE_IMAGE" sleep 60 >/dev/null \
         && podman start setup-probe >/dev/null \
         && [ "$(podman inspect --format '{{.State.Status}}' setup-probe)" = "running" ] \
         && [ "$(podman exec setup-probe echo probe-exec-ok)" = "probe-exec-ok" ]; then
@@ -85,7 +107,7 @@ check_podman() {
 teardown_probe() {
     local name="teardown-probe" pid status rc=0
     podman rm -f "$name" >/dev/null 2>&1 || true
-    if ! podman run -d --name "$name" docker.io/library/alpine:3 \
+    if ! podman run -d --pull=never --name "$name" "$PROBE_IMAGE" \
         sh -c 'trap "" TERM; sleep 300' >/dev/null 2>&1; then
         echo "teardown probe could not start its container" >&2
         return 1
@@ -200,7 +222,7 @@ prepull_fixture_images() {
     local runtime image
     for runtime in "$@"; do
         for image in $FIXTURE_IMAGES; do
-            if "$runtime" pull -q "$image" >/dev/null 2>&1; then
+            if bash "$SCRIPT_DIR/registry-mirror.sh" pull "$runtime" "$image" >/dev/null 2>&1; then
                 echo "$runtime pre-pulled $image"
             else
                 echo "::warning title=fixture image pre-pull failed::$runtime could not pull $image; the first suite that needs it will pull it instead."
@@ -209,9 +231,12 @@ prepull_fixture_images() {
     done
 }
 
-check_podman
-podman_ok=$([ -z "$failed" ] && echo 1 || echo "")
-check_podman_teardown
+podman_ok=""
+if pull_probe_image; then
+    check_podman
+    podman_ok=$([ -z "$failed" ] && echo 1 || echo "")
+    check_podman_teardown
+fi
 check_docker
 
 runtimes=""

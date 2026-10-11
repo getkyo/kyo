@@ -1,14 +1,23 @@
 name: release-setup
 description: >-
-  Provision a job that builds kyo's publishable artifacts: the coursier cache, the Linux
+  Provision a job that builds kyo's publishable artifacts: the Docker Hub pull mirror, the coursier cache, the Linux
   native build dependencies, the staged BoringSSL and libaeron trees, and the JDK plus sbt.
   Shared by the release workflow and the release probe, so the probe builds in exactly the
   environment it vouches for; a native dependency added for publishing reaches both at once.
   Linux only; the staged natives follow the runner's own architecture. Checkout is the
   caller's responsibility.
+inputs:
+  docker-images:
+    description: 'Space-separated images a later step starts with `docker run`; see the registry-mirror action.'
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
+    - uses: ./.github/actions/registry-mirror
+      with:
+        images: ${{ inputs.docker-images }}
+
     # The deps-<pole>- namespace .github/actions/setup uses, not coursier/cache-action's own. That action
     # keys on the job name, so release and the probe each mint their own entry of roughly 1.6 GB holding
     # the same coursier tree the ci poles already cache. Against GitHub's 10 GB per-repo budget that is
