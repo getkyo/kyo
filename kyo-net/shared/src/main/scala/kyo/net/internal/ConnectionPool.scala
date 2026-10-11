@@ -21,6 +21,9 @@ import scala.util.control.NonFatal
   * An idle timeout of zero keeps nothing idle: a released connection is discarded at once, so none is reused. `Duration.Infinity` never
   * discards one for idleness.
   *
+  * A host pool holding no idle connection and no reservation is evicted, by the reaper after each sweep and by an amortized scan when the
+  * map grows, so a client that reaches many hosts retains at most about twice the pools of the hosts it still holds connections to.
+  *
   * All public methods are direct (no Kyo `< S` wrappers) and require AllowUnsafe. Health checks (isAlive) and eviction (discardConn) are
   * supplied as constructor parameters so the pool remains generic over connection type C.
   */
@@ -60,28 +63,39 @@ final private[kyo] class ConnectionPool[K, C](
         if closed || idleConnectionTimeoutNanos == 0L then discardConn(conn)
         else
             raceProbe()
-            val hostPool = getPool(key)
-            hostPool.release(clock.unsafe.nowMonotonic().toNanos, conn, discardConn)
-            // close() can race this release: it sets `closed`, drains every host pool, and clears the map, any of which may
-            // fall between the `closed` read above and the publish just done. A connection published into a ring close()
-            // already drained (or a fresh pool getPool re-created after pools.clear()) would otherwise never be drained again
-            // and its socket never closed. Re-read `closed`. If it is now set, drain and discard this host pool ourselves. The
-            // ring's head CAS makes disposal exactly-once against close()'s own drain.
-            if closed then
-                hostPool.drainDiscard(discardConn)
-                // Drop the entry we may have re-created after close()'s pools.clear() so it does not linger. The two-arg remove
-                // unmaps only this exact instance, so a fresh pool another releaser inserted for the same key is left alone.
-                kyo.discard(pools.remove(key, hostPool))
-            end if
+            publish(key, conn, clock.unsafe.nowMonotonic().toNanos)
+
+    @tailrec private def publish(key: K, conn: C, now: Long)(using AllowUnsafe): Unit =
+        val hostPool = getPool(key)
+        // A pool retired by eviction refuses the publish; its key maps to a fresh pool once the evictor has unmapped it.
+        if !hostPool.release(now, conn, discardConn) then publish(key, conn, now)
+        // close() can race this release: it sets `closed`, drains every host pool, and clears the map, any of which may
+        // fall between the `closed` read in release and the publish just done. A connection published into a ring close()
+        // already drained (or a fresh pool getPool re-created after pools.clear()) would otherwise never be drained again
+        // and its socket never closed. Re-read `closed`. If it is now set, drain and discard this host pool ourselves. The
+        // ring's head CAS makes disposal exactly-once against close()'s own drain.
+        else if closed then
+            hostPool.drainDiscard(discardConn)
+            // Drop the entry we may have re-created after close()'s pools.clear() so it does not linger. The two-arg remove
+            // unmaps only this exact instance, so a fresh pool another releaser inserted for the same key is left alone.
+            kyo.discard(pools.remove(key, hostPool))
+        end if
+    end publish
 
     /** Discard a connection without returning it to the pool. */
     def discard(conn: C)(using AllowUnsafe): Unit =
         discardConn(conn)
 
     /** Try to reserve an in-flight slot. Returns true if under the per-host limit. */
-    def tryReserve(key: K)(using AllowUnsafe): Boolean =
+    @tailrec def tryReserve(key: K)(using AllowUnsafe): Boolean =
         if closed then false
-        else getPool(key).tryReserve()
+        else
+            getPool(key).tryReserve() match
+                case HostPool.Reserved => true
+                case HostPool.Full     => false
+                case _                 => tryReserve(key) // retired by eviction: the key maps to a fresh pool once it is unmapped
+        end if
+    end tryReserve
 
     /** Release an in-flight slot. Always call this after tryReserve, on both success and failure paths. */
     def unreserve(key: K)(using AllowUnsafe): Unit =
@@ -111,8 +125,29 @@ final private[kyo] class ConnectionPool[K, C](
     private val newHostPool: java.util.function.Function[K, HostPool] =
         _ => new HostPool(maxConnectionsPerHost)
 
+    // The map size at which creating a host pool next scans for vacant ones to evict. Doubling it from the size each scan leaves keeps the
+    // scans amortized O(1) per created pool however many hosts are live. A lost update between racing creators only moves a scan.
+    @volatile private var evictAtSize = EvictScanMinSize
+
     private def getPool(key: K): HostPool =
-        pools.computeIfAbsent(key, newHostPool)
+        val existing = pools.get(key)
+        if existing ne null then existing
+        else
+            // Creating pools is the only way the map grows, so scanning here bounds it for every idle timeout, including the infinite one
+            // that runs no reaper. The scan runs before the creation so it cannot retire the pool this call is about to hand out.
+            if pools.size() >= evictAtSize then
+                evictVacant()
+                evictAtSize = math.max(EvictScanMinSize, pools.size() * 2)
+            pools.computeIfAbsent(key, newHostPool)
+        end if
+    end getPool
+
+    // Unmap every host pool holding no idle connection and no reservation. A pool is retired before it is unmapped, so a holder of the old
+    // reference can neither publish into it nor reserve on it (see HostPool.tryRetire).
+    private def evictVacant(): Unit =
+        pools.forEach { (key, hostPool) =>
+            if hostPool.tryRetire() then kyo.discard(pools.remove(key, hostPool))
+        }
 
     // Launch the idle-expiry reaper (init calls this only for a finite timeout). One scheduler fiber that parks on
     // Clock.sleep between passes: no thread blocking, no per-request cost. close() interrupts it.
@@ -128,11 +163,12 @@ final private[kyo] class ConnectionPool[K, C](
             )
     end startReaper
 
-    // One reaper pass: close every connection idle past the timeout, across all host pools.
+    // One reaper pass: close every connection idle past the timeout, across all host pools, then drop the pools that left vacant.
     private def sweepExpiredHosts()(using AllowUnsafe): Unit =
         given Frame = frame
         val now     = clock.unsafe.nowMonotonic().toNanos
         pools.forEach((_, hostPool) => hostPool.sweepExpired(now, idleConnectionTimeoutNanos, discardConn))
+        evictVacant()
     end sweepExpiredHosts
 
 end ConnectionPool
@@ -142,11 +178,23 @@ private[kyo] object ConnectionPool:
     // The shared default for `raceProbe`: a single no-op instance so a production pool allocates no per-instance lambda.
     private[internal] val noRaceProbe: () => Unit = () => ()
 
+    // The smallest map size at which creating a host pool scans for vacant pools, so a client with a handful of hosts never scans.
+    private val EvictScanMinSize = 16
+
     def init[K, C](
         maxConnectionsPerHost: Int,
         idleConnectionTimeout: Duration,
         isAlive: C => Boolean,
         discard: C => Unit
+    )(using Frame): ConnectionPool[K, C] < Sync =
+        init(maxConnectionsPerHost, idleConnectionTimeout, isAlive, discard, new ConcurrentHashMap[K, HostPool]())
+
+    private[internal] def init[K, C](
+        maxConnectionsPerHost: Int,
+        idleConnectionTimeout: Duration,
+        isAlive: C => Boolean,
+        discard: C => Unit,
+        pools: ConcurrentHashMap[K, HostPool]
     )(using frame: Frame): ConnectionPool[K, C] < Sync =
         // Capture the ambient clock (Clock.live, or a test's clock under Clock.withTimeControl). The pool stamps
         // idle-start instants and runs its reaper against it, so eviction is exercisable under virtual time.
@@ -155,7 +203,7 @@ private[kyo] object ConnectionPool:
                 val pool: ConnectionPool[K, C] = new ConnectionPool(
                     maxConnectionsPerHost,
                     idleConnectionTimeout.toNanos,
-                    new ConcurrentHashMap(),
+                    pools,
                     isAlive,
                     discard,
                     clock,
@@ -185,6 +233,8 @@ private[kyo] object ConnectionPool:
       */
     final private[internal] class HostPool(limit: Int):
         private val capacity = math.max(limit, 2)
+
+        import HostPool.*
 
         private val connections = Array.fill[Maybe[AnyRef]](capacity)(Absent)
         private val timestamps  = new Array[Long](capacity)
@@ -264,40 +314,74 @@ private[kyo] object ConnectionPool:
         end sweepExpired
 
         /** Return a connection to the ring, or discard it if full. `now` is the idle-start instant stamped on the
-          * connection, read once from the pool's clock.
+          * connection, read once from the pool's clock. False, with the connection untouched, when the pool is retired.
           */
-        final def release[C](now: Long, conn: C, discardConn: C => Unit): Unit =
-            if limit < capacity && tail.get() - head.get() >= limit then discardConn(conn)
-            else releaseToRing(now, conn, discardConn)
-
-        @tailrec private def releaseToRing[C](now: Long, conn: C, discardConn: C => Unit): Unit =
+        final def release[C](now: Long, conn: C, discardConn: C => Unit): Boolean =
             val currentTail = tail.get()
-            val idx         = (currentTail % capacity).toInt
-            val seq         = sequences.get(idx)
-            if seq < currentTail then
+            if currentTail == RetiredTail then false
+            else if limit < capacity && currentTail - head.get() >= limit then
                 discardConn(conn)
-            else if !tail.compareAndSet(currentTail, currentTail + 1) then
-                releaseToRing(now, conn, discardConn)
+                true
+            else releaseToRing(now, conn, discardConn)
+            end if
+        end release
+
+        @tailrec private def releaseToRing[C](now: Long, conn: C, discardConn: C => Unit): Boolean =
+            val currentTail = tail.get()
+            if currentTail == RetiredTail then false
             else
-                connections(idx) = Present(conn.asInstanceOf[AnyRef])
-                timestamps(idx) = now
-                sequences.lazySet(idx, currentTail + 1)
+                val idx = (currentTail % capacity).toInt
+                val seq = sequences.get(idx)
+                if seq < currentTail then
+                    discardConn(conn)
+                    true
+                else if !tail.compareAndSet(currentTail, currentTail + 1) then
+                    releaseToRing(now, conn, discardConn)
+                else
+                    connections(idx) = Present(conn.asInstanceOf[AnyRef])
+                    timestamps(idx) = now
+                    sequences.lazySet(idx, currentTail + 1)
+                    true
+                end if
             end if
         end releaseToRing
 
-        /** Reserve an in-flight slot to prevent connection storms. */
-        def tryReserve(): Boolean =
-            @tailrec def loop(): Boolean =
-                val current  = inFlight.get()
-                val idleSize = (tail.get() - head.get()).toInt.max(0)
-                if current + idleSize >= limit then false
-                else if inFlight.compareAndSet(current, current + 1) then true
-                else loop()
+        /** Reserve an in-flight slot to prevent connection storms: [[Reserved]], [[Full]], or [[Retired]] when eviction retired this pool. */
+        def tryReserve(): Int =
+            @tailrec def loop(): Int =
+                val current     = inFlight.get()
+                val currentTail = tail.get()
+                if currentTail == RetiredTail then Retired
+                else if current + (currentTail - head.get()).toInt.max(0) >= limit then Full
+                else if !inFlight.compareAndSet(current, current + 1) then loop()
+                // The reservation is published before this read, and tryRetire publishes its retirement before reading inFlight, so at
+                // least one of the two sees the other: the retirement is undone, or this reservation is given back here.
+                else if tail.get() == RetiredTail then
+                    kyo.discard(inFlight.decrementAndGet())
+                    Retired
+                else Reserved
+                end if
             end loop
             loop()
         end tryReserve
 
-        /** Release an in-flight slot. */
+        /** Retire the pool when it holds no idle connection and no reservation, after which `release` and `tryReserve` refuse it, so the
+          * caller can unmap it without stranding a connection or a reservation. Retiring swaps `tail` for a sentinel, so it excludes a
+          * concurrent `release` through that same CAS; a reservation that slipped in is seen through `inFlight` and the retirement undone.
+          * `poll`, `sweepExpired` and the drains treat the sentinel as an empty ring.
+          */
+        def tryRetire(): Boolean =
+            val currentTail = tail.get()
+            if currentTail == RetiredTail || head.get() != currentTail || inFlight.get() != 0 then false
+            else if !tail.compareAndSet(currentTail, RetiredTail) then false
+            else if inFlight.get() != 0 then
+                tail.set(currentTail)
+                false
+            else true
+            end if
+        end tryRetire
+
+        /** Release an in-flight slot. Never reaches a retired pool: a pool with a reservation outstanding is not retired. */
         def unreserve(): Unit =
             kyo.discard(inFlight.decrementAndGet())
 
@@ -347,6 +431,15 @@ private[kyo] object ConnectionPool:
         def drainDiscard[C](discardConn: C => Unit): Unit =
             drainClaimed(discardConn)
 
+    end HostPool
+
+    private[internal] object HostPool:
+        val Reserved = 1
+        val Full     = 0
+        val Retired  = -1
+
+        // Below every real tail (which starts at 0 and only grows), so the `head >= tail` empty checks treat a retired ring as empty.
+        private[internal] val RetiredTail = -1L
     end HostPool
 
 end ConnectionPool

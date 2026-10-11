@@ -19,9 +19,10 @@ import kyo.net.Test
   * contention on the ring's CAS loops). On JS fibers are cooperative on one thread, so a single pool op is never preempted mid-operation; the
   * same invariants still hold (trivially there), confirming the pool links and behaves on JS too.
   *
-  * Four leaves:
+  * Five leaves:
   *   - "connection conservation": every released connection (unique id) ends up polled-out exactly once, discarded by a full-ring release, or
   *     still in the pool at the end. None lost, none duplicated. Disjoint-union equality + no-duplicate-poll catch both loss and double-claim.
+  *   - "eviction racing": the same conservation, plus no stranded reservation, while host pools are retired and unmapped under the hot path.
   *   - "bounded in-flight": with the ring kept empty, the number of simultaneously-held reservations never exceeds capacity (the bound
   *     `tryReserve` enforces), asserted via a live max tracker around the reserve/unreserve wrap.
   *   - "no permit leak": after a storm of reserve+unreserve pairs, the in-flight count is back to 0, proven behaviorally by reserving exactly
@@ -124,6 +125,74 @@ class ConnectionPoolConcurrencyTest extends Test:
                         accounted == allReleased,
                         s"conservation violated: ${allReleased.diff(accounted).size} lost, ${accounted.diff(allReleased).size} fabricated"
                     )
+                }
+            }
+        }
+
+        /** Eviction racing the hot path: a host pool retired and unmapped while other fibers release into it, poll it and reserve on it.
+          *
+          * Workers cycle over a few hot hosts, reserving, releasing a unique id and polling, so each hot ring is often momentarily empty with no
+          * reservation, which is when eviction may take it. Churn fibers reach a stream of new hosts, and each creation past the scan threshold
+          * runs an eviction scan over every host, hot ones included. Afterwards every released id must be polled, discarded or still pooled
+          * exactly once, and each hot host must take exactly `capacity` fresh reservations, so no reservation was stranded in an unmapped pool.
+          */
+        "eviction racing release, poll and reserve loses, duplicates and strands nothing" in {
+            val capacity  = 4
+            val discarded = new ConcurrentLinkedQueue[Int]()
+            val pool      = mkPool(capacity, discarded)
+            val hot       = Chunk.from((0 until 4).map(i => NetAddress.Tcp("hot", i)))
+            val churners  = 4
+            val workers   = fibers - churners
+            val work      = Async.fillIndexed(workers, workers) { worker =>
+                Sync.defer {
+                    val polled = scala.collection.mutable.ListBuffer.empty[Int]
+                    var i      = 0
+                    while i < iterations do
+                        val host = hot(i % hot.size)
+                        if pool.tryReserve(host) then pool.unreserve(host)
+                        pool.release(host, worker * iterations + i)
+                        pool.poll(host).foreach(c => polled += c)
+                        i += 1
+                    end while
+                    polled.toList
+                }
+            }
+            val churn = Async.fillIndexed(churners, churners) { churner =>
+                Sync.defer {
+                    var i = 0
+                    while i < iterations * 10 do
+                        val transient = NetAddress.Tcp(s"transient-$churner", i)
+                        if pool.tryReserve(transient) then pool.unreserve(transient)
+                        i += 1
+                    end while
+                }
+            }
+            Async.zip(work, churn).map { (perWorkerPolled, _) =>
+                Sync.defer {
+                    val remaining = scala.collection.mutable.ListBuffer.empty[Int]
+                    hot.foreach { host =>
+                        var draining = true
+                        while draining do
+                            pool.poll(host) match
+                                case Present(c) => remaining += c
+                                case Absent     => draining = false
+                        end while
+                    }
+                    val discardList = scala.collection.mutable.ListBuffer.empty[Int]
+                    val it          = discarded.iterator()
+                    while it.hasNext do discardList += it.next()
+                    val polledAll  = perWorkerPolled.flatten ++ remaining.toList
+                    val polledSet  = polledAll.toSet
+                    val discardSet = discardList.toSet
+                    val released   = (0 until workers * iterations).toSet
+                    val reservable = hot.map(host => (0 to capacity).count(_ => pool.tryReserve(host)))
+                    assert(polledAll.size == polledSet.size, s"${polledAll.size - polledSet.size} connection(s) polled twice")
+                    assert(polledSet.intersect(discardSet).isEmpty, s"polled and discarded: ${polledSet.intersect(discardSet)}")
+                    assert(
+                        polledSet ++ discardSet == released,
+                        s"${released.diff(polledSet ++ discardSet).size} connection(s) lost, e.g. into an unmapped pool"
+                    )
+                    assert(reservable == hot.map(_ => capacity), s"fresh reservations per hot host after the race: $reservable")
                 }
             }
         }

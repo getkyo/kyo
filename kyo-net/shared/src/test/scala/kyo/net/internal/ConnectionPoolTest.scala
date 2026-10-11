@@ -248,6 +248,94 @@ class ConnectionPoolTest extends Test:
         }
     }
 
+    "host pool eviction" - {
+        // Each key's ring is three arrays sized to maxConnectionsPerHost, so a long-lived client that reaches many distinct hosts must not
+        // keep one per host forever. The map is handed in through the init production uses, so its size is the retained-memory measure.
+        "the reaper drops the host pools that hold no connection and no reservation" in {
+            Clock.withTimeControl { tc =>
+                val hosts  = 50
+                val pools  = new java.util.concurrent.ConcurrentHashMap[NetAddress, ConnectionPool.HostPool]()
+                val closed = AtomicInt.Unsafe.init(0)
+                for
+                    pool <- ConnectionPool.init[NetAddress, String](4, 100.millis, _ => true, _ => discard(closed.incrementAndGet()), pools)
+                    _ = (0 until hosts).foreach { i =>
+                        val key = NetAddress.Tcp("host", 1000 + i)
+                        assert(pool.tryReserve(key))
+                        pool.unreserve(key)
+                        pool.release(key, s"c$i") // idle-start stamped at virtual time 0
+                    }
+                    _ <- tc.awaitPendingSleepers(1)
+                    _ <- tc.advance(50.millis) // sweep at 50ms: every connection is still fresh
+                    _ <- tc.awaitPendingSleepers(1)
+                    kept = pools.size()
+                    _ <- tc.advance(50.millis)
+                    _ <- tc.awaitPendingSleepers(1)
+                    _ <- tc.advance(50.millis) // sweep at 150ms: every connection is past the 100ms timeout
+                    _ <- tc.awaitPendingSleepers(1)
+                    left = pools.size()
+                    _ <- Sync.defer(discard(pool.close()))
+                yield
+                    assert(kept == hosts, s"a host pool holding an idle connection must stay: $kept of $hosts kept")
+                    assert(closed.get() == hosts, s"every idle connection must be closed exactly once: ${closed.get()} of $hosts")
+                    assert(left == 0, s"$left of $hosts emptied host pools are still retained")
+                end for
+            }
+        }
+
+        "without a reaper, reaching new hosts keeps the retained pools within twice the live ones" in {
+            // An infinite idle timeout runs no reaper, so only creating a host pool can evict. Live hosts hold an idle connection each; the
+            // transient ones are reserved and released with nothing pooled, as a connect that failed leaves them.
+            val pools = new java.util.concurrent.ConcurrentHashMap[NetAddress, ConnectionPool.HostPool]()
+            val pool = Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](2, kyo.Duration.Infinity, _ => true, _ => (), pools))
+            val live = 40
+            val liveKeys = (0 until live).map(i => NetAddress.Tcp("live", i))
+            liveKeys.foreach(key => pool.release(key, key.toString))
+            var peak = 0
+            (0 until 1000).foreach { i =>
+                val key = NetAddress.Tcp("transient", i)
+                assert(pool.tryReserve(key))
+                pool.unreserve(key)
+                peak = math.max(peak, pools.size())
+            }
+            val liveKept = liveKeys.count(pools.containsKey)
+            val idle     = liveKeys.map(key => pool.poll(key))
+            discard(pool.close())
+            assert(peak <= 2 * live + 1, s"retained host pools peaked at $peak with $live live hosts")
+            assert(liveKept == live, s"only $liveKept of $live live host pools were kept")
+            assert(idle == liveKeys.map(key => Present(key.toString)), "a live host lost its idle connection to eviction")
+        }
+
+        "a host pool with an idle connection or an outstanding reservation is kept, and an evicted host is usable again" in {
+            Clock.withTimeControl { tc =>
+                val pools  = new java.util.concurrent.ConcurrentHashMap[NetAddress, ConnectionPool.HostPool]()
+                val idle   = NetAddress.Tcp("idle", 80)
+                val busy   = NetAddress.Tcp("busy", 80)
+                val vacant = NetAddress.Tcp("vacant", 80)
+                for
+                    pool <- ConnectionPool.init[NetAddress, String](2, 1.second, _ => true, _ => (), pools)
+                    _ = pool.release(idle, "i")
+                    _ = assert(pool.tryReserve(busy))
+                    _ = assert(pool.tryReserve(vacant))
+                    _ = pool.unreserve(vacant)
+                    _ <- tc.awaitPendingSleepers(1)
+                    _ <- tc.advance(500.millis) // one sweep, with the idle connection 500ms into its 1s timeout
+                    _ <- tc.awaitPendingSleepers(1)
+                    retained = (pools.containsKey(idle), pools.containsKey(busy), pools.containsKey(vacant))
+                    polled   = pool.poll(idle)
+                    // The busy host keeps its reservation: one more fits its capacity of 2, a third does not.
+                    busyNext    = (pool.tryReserve(busy), pool.tryReserve(busy))
+                    vacantAgain = (pool.tryReserve(vacant), pool.tryReserve(vacant), pool.tryReserve(vacant))
+                    _ <- Sync.defer(discard(pool.close()))
+                yield
+                    assert(retained == (true, true, false), s"(idle, busy, vacant) retained: $retained")
+                    assert(polled == Present("i"))
+                    assert(busyNext == (true, false), s"the outstanding reservation on the busy host was lost: $busyNext")
+                    assert(vacantAgain == (true, true, false), s"an evicted host must come back with its full capacity: $vacantAgain")
+                end for
+            }
+        }
+    }
+
     "release that observes close mid-publish disposes the connection, never orphans it (fd-leak race regression, CI #1837)" in {
         // The shared-transport fd leak: release(key, conn) passes its `closed` check, then close() runs (drains every host
         // pool, sets closed, clears the map). Release then re-creates a host pool via computeIfAbsent and publishes into a
