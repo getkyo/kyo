@@ -1311,18 +1311,21 @@ final private[kyo] class HttpClientBackend private (
     )(using Frame): A < (Async & Abort[HttpException]) =
         config.retrySchedule match
             case Present(schedule) =>
-                def loop(remaining: Schedule): A < (Async & Abort[HttpException]) =
+                def loop(remaining: Schedule, seeded: Boolean): A < (Async & Abort[HttpException]) =
                     timeoutWith(route, request, config) { res =>
                         if !config.retryOn(res.status) then f(res)
                         else
-                            Clock.nowWith { now =>
-                                remaining.next(now) match
-                                    case Present((delay, nextSchedule)) =>
-                                        Async.delay(delay)(loop(nextSchedule))
-                                    case Absent => f(res)
-                            }
+                            def retry(remaining: Schedule): A < (Async & Abort[HttpException]) =
+                                Clock.nowWith { now =>
+                                    remaining.next(now) match
+                                        case Present((delay, nextSchedule)) =>
+                                            Async.delay(delay)(loop(nextSchedule, seeded = true))
+                                        case Absent => f(res)
+                                }
+                            // Seeded on the first retry, so a request answered at once draws nothing from Random.
+                            if seeded then retry(remaining) else Random.nextLong.map(seed => retry(remaining.withSeed(seed)))
                     }
-                loop(schedule)
+                loop(schedule, seeded = !schedule.hasJitter)
             case Absent =>
                 timeoutWith(route, request, config)(f)
     end retryWith

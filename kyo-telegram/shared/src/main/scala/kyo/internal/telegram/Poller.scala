@@ -19,19 +19,23 @@ private[kyo] object Poller:
     def receive[E, S](telegram: Telegram, poll: HttpClient)(
         handler: Telegram.Update => Unit < (Async & Abort[E] & Env[Telegram] & S)
     )(using Frame): Unit < (Async & Abort[TelegramReceiveFailure | E] & Env[Telegram] & S) =
-        val config = telegram.config
-        Loop[Maybe[Long], Schedule, Unit, Async & Abort[TelegramReceiveFailure | E] & Env[Telegram] & S](
-            Absent,
-            config.retrySchedule
-        ) { (offset, schedule) =>
-            Abort.runWith[TelegramReceiveFailure](this.poll(config, poll, offset)) {
-                case Result.Success(updates) =>
-                    Kyo.foldLeft(updates)(offset) { (_, update) =>
-                        handler(update).andThen(Present(update.id.value + 1))
-                    }.map(next => Loop.continue(next, config.retrySchedule))
-                case Result.Failure(failure) =>
-                    retry(failure, schedule).map(next => Loop.continue(offset, next))
-                case Result.Panic(ex) => Abort.panic(ex)
+        val config                  = telegram.config
+        val seeded: Schedule < Sync =
+            if config.retrySchedule.hasJitter then Random.nextLong.map(config.retrySchedule.withSeed) else config.retrySchedule
+        seeded.map { retrySchedule =>
+            Loop[Maybe[Long], Schedule, Unit, Async & Abort[TelegramReceiveFailure | E] & Env[Telegram] & S](
+                Absent,
+                retrySchedule
+            ) { (offset, schedule) =>
+                Abort.runWith[TelegramReceiveFailure](this.poll(config, poll, offset)) {
+                    case Result.Success(updates) =>
+                        Kyo.foldLeft(updates)(offset) { (_, update) =>
+                            handler(update).andThen(Present(update.id.value + 1))
+                        }.map(next => Loop.continue(next, retrySchedule))
+                    case Result.Failure(failure) =>
+                        retry(failure, schedule).map(next => Loop.continue(offset, next))
+                    case Result.Panic(ex) => Abort.panic(ex)
+                }
             }
         }
     end receive

@@ -137,8 +137,10 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
     /** Adds variation to the delays in a schedule.
       *
       * Returns a new schedule that adds jitter to the delays of the original schedule. The actual delay will be the original delay
-      * multiplied by (1 + r * factor), where r is a value between -1 and 1. Note: The current implementation derives r using XOR shift
-      * operations on a hash of the current Instant and duration. This makes the jitter deterministic rather than truly random.
+      * multiplied by (1 + r * factor), where r is a value between -1 and 1. r is a pure function of a seed, the Instant the schedule is
+      * evaluated at, and the delay, and the seed advances with every delay. A schedule starts with seed 0, so two evaluations at the same
+      * Instant give the same delay. Callers that run the same schedule concurrently give each run its own seed with [[withSeed]], or their
+      * retries stay in step whenever they evaluate it at the same Instant, which a millisecond clock makes common.
       *
       * Example: With factor 0.5, delays may be adjusted by up to ±50%
       *
@@ -152,7 +154,65 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
         else
             this match
                 case Never | Done => this
-                case _            => Jitter(this, factor)
+                case _            => Jitter(this, factor, 0L)
+
+    /** Returns this schedule with every [[jitter]] in it drawn from `seed`.
+      *
+      * Jitter is deterministic for a given seed, so one schedule value shared by concurrent runs gives them all the same delays when they
+      * are evaluated at the same Instant. A run that seeds its schedule from a random source, such as `Random.nextLong` in kyo-core, gets
+      * delays independent of every other run's. A schedule without jitter is returned unchanged.
+      *
+      * A `forever` or `repeat` cycle restarts its inner schedule as it was seeded, so every cycle replays the same seed sequence. The
+      * delays still differ from cycle to cycle because the Instant each one is evaluated at moves on.
+      *
+      * @param seed
+      *   the seed the jitter draws from
+      * @return
+      *   this schedule with its jitter seeded
+      */
+    final def withSeed(seed: Long): Schedule =
+        this match
+            case Jitter(schedule, factor, _)  => Jitter(schedule.withSeed(mixSeed(seed)), factor, seed)
+            case Max(a, b)                    => reseedPair(a, b, seed)(Max(_, _))
+            case Min(a, b)                    => reseedPair(a, b, seed)(Min(_, _))
+            case AndThen(a, b)                => reseedPair(a, b, seed)(AndThen(_, _))
+            case Repeat(original, current, n) => reseedPair(original, current, seed)(Repeat(_, _, n))
+            case Take(s, n)                   => reseedOne(s, seed)(Take(_, n))
+            case MaxDuration(s, d)            => reseedOne(s, seed)(MaxDuration(_, d))
+            case Forever(s)                   => reseedOne(s, seed)(Forever(_))
+            case Delay(s, d)                  => reseedOne(s, seed)(Delay(_, d))
+            case _                            => this
+
+    /** Whether any [[jitter]] is in this schedule, so whether [[withSeed]] would change it.
+      *
+      * A loop that seeds its schedule from a random source checks this first, so a schedule without jitter draws nothing from that
+      * source and leaves its sequence where the caller expects it.
+      *
+      * @return
+      *   true when this schedule or any schedule inside it is jittered
+      */
+    final def hasJitter: Boolean =
+        this match
+            case _: Jitter                    => true
+            case Max(a, b)                    => a.hasJitter || b.hasJitter
+            case Min(a, b)                    => a.hasJitter || b.hasJitter
+            case AndThen(a, b)                => a.hasJitter || b.hasJitter
+            case Repeat(original, current, _) => original.hasJitter || current.hasJitter
+            case Take(s, _)                   => s.hasJitter
+            case MaxDuration(s, _)            => s.hasJitter
+            case Forever(s)                   => s.hasJitter
+            case Delay(s, _)                  => s.hasJitter
+            case _                            => false
+
+    private def reseedOne(s: Schedule, seed: Long)(rebuild: Schedule => Schedule): Schedule =
+        val r = s.withSeed(seed)
+        if r eq s then this else rebuild(r)
+
+    private def reseedPair(a: Schedule, b: Schedule, seed: Long)(rebuild: (Schedule, Schedule) => Schedule): Schedule =
+        val ra = a.withSeed(mixSeed(seed))
+        val rb = b.withSeed(mixSeed(~seed))
+        if (ra eq a) && (rb eq b) then this else rebuild(ra, rb)
+    end reseedPair
 
     /** Returns a string representation of the schedule as it would appear in source code.
       *
@@ -442,22 +502,31 @@ object Schedule:
             def show = s"(${schedule.show}).delay(${duration.show})"
         end Delay
 
-        final case class Jitter(schedule: Schedule, factor: Double) extends Schedule:
+        final case class Jitter(schedule: Schedule, factor: Double, seed: Long) extends Schedule:
             def next(now: Instant): Maybe[(Duration, Schedule)] =
                 schedule.next(now).map { (duration, nextSchedule) =>
-                    val x    = now.hashCode() + (31 * duration.hashCode())
-                    val y    = x ^ (x << 13)
-                    val z    = y ^ (y >> 7)
-                    val hash = z ^ (z << 17)
-
-                    val rawJitter    = (hash.toDouble / Int.MaxValue) * factor
-                    val jitterFactor = Math.max(-1.0, Math.min(1.0, rawJitter))
+                    val instant = now.toJava
+                    val time    = instant.getEpochSecond * 1000000000L + instant.getNano
+                    val hash    = mixSeed(seed ^ mixSeed(time ^ mixSeed(duration.toNanos)))
+                    // The top 53 bits as a uniform double in [0, 1), mapped to [-1, 1).
+                    val unit         = (hash >>> 11).toDouble / (1L << 53).toDouble * 2.0 - 1.0
+                    val jitterFactor = Math.max(-1.0, Math.min(1.0, unit * factor))
                     val jittered     = duration * (1.0 + jitterFactor)
-                    (jittered, Jitter(nextSchedule, factor))
+                    (jittered, Jitter(nextSchedule, factor, mixSeed(seed)))
                 }
 
-            def show: String = s"(${schedule.show}).jitter(${formatDouble(factor)})"
+            def show: String =
+                val jittered = s"(${schedule.show}).jitter(${formatDouble(factor)})"
+                if seed == 0L then jittered else s"$jittered.withSeed(${seed}L)"
         end Jitter
+
+        /** SplitMix64's output mix of `seed` stepped by the golden gamma; `Jitter` feeds the result back as its next seed. */
+        def mixSeed(seed: Long): Long =
+            var z = seed + 0x9e3779b97f4a7c15L
+            z = (z ^ (z >>> 30)) * 0xbf58476d1ce4e5b9L
+            z = (z ^ (z >>> 27)) * 0x94d049bb133111ebL
+            z ^ (z >>> 31)
+        end mixSeed
 
         private def formatDouble(d: Double): String =
             if d == d.toLong then f"$d%.1f" else d.toString

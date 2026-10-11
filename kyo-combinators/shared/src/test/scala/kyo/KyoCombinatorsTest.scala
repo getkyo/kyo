@@ -214,6 +214,50 @@ class KyoCombinatorsTest extends kyo.test.Test[Any]:
                         }
                     }
                 }
+
+                "under a seeded Random sleeps the delay a jittered schedule gives with the first draw as seed" in {
+                    // Each repetition counts itself before arming the next sleeper, so the fence after an advance pins the count.
+                    val schedule = Schedule.fixed(1.milli).jitter(0.5).take(1000)
+                    Random.withSeed(7)(Random.nextLong).map { seed =>
+                        val expected = schedule.withSeed(seed).next(Instant.Epoch).map(_._1).getOrElse(Duration.Zero)
+                        Clock.withTimeControl { control =>
+                            for
+                                runs      <- AtomicInt.init(0)
+                                fiber     <- Fiber.initUnscoped(Random.withSeed(7)(runs.incrementAndGet.repeat(schedule)))
+                                _         <- control.awaitPendingSleepers(1)
+                                _         <- control.advance(expected.minusOrZero(1.nanos), Duration.Zero)
+                                _         <- control.awaitPendingSleepers(1)
+                                justShort <- runs.get
+                                _         <- control.advance(1.nanos, Duration.Zero)
+                                _         <- control.awaitPendingSleepers(1)
+                                atDelay   <- runs.get
+                                _         <- fiber.interrupt
+                            yield
+                                assert(expected > Duration.Zero && expected != 1.milli)
+                                assert(justShort == 0, s"the repetition ran before the ${expected.show} the seeded schedule gives")
+                                assert(atDelay == 1, s"the repetition did not run at the ${expected.show} the seeded schedule gives")
+                            end for
+                        }
+                    }
+                }
+
+                "with a schedule without jitter leaves a seeded Random stream untouched" in {
+                    Clock.withTimeControl { control =>
+                        for
+                            expected       <- Random.withSeed(5)(Random.nextLong)
+                            (last, actual) <- Random.withSeed(5) {
+                                for
+                                    runs   <- AtomicInt.init(0)
+                                    fiber  <- Fiber.initUnscoped(runs.incrementAndGet.repeat(Schedule.fixed(1.milli).take(1)))
+                                    _      <- control.awaitPendingSleepers(1)
+                                    _      <- control.advance(1.milli, Duration.Zero)
+                                    last   <- fiber.get
+                                    actual <- Random.nextLong
+                                yield (last, actual)
+                            }
+                        yield assert(last == 2 && actual == expected, s"first draw after the repetition=$actual expected=$expected")
+                    }
+                }
             }
 
             "repeat with backoff and limit" - {

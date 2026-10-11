@@ -612,20 +612,24 @@ final private[kyo] class ShellBackend(
     private def retryOnTransientUnavailable[A](v: => A < (Async & Abort[ContainerException]))(
         using Frame
     ): A < (Async & Abort[ContainerException]) =
-        val schedule = Schedule.exponentialBackoff(initial = 50.millis, factor = 2, maxBackoff = 500.millis).take(3)
-        def attempt(remaining: Schedule): A < (Async & Abort[ContainerException]) =
+        // Jittered because the invocations rejected together would otherwise retry together and meet the same limit again.
+        val schedule = Schedule.exponentialBackoff(initial = 50.millis, factor = 2, maxBackoff = 500.millis).jitter(0.5).take(3)
+        def attempt(remaining: Schedule, seeded: Boolean): A < (Async & Abort[ContainerException]) =
             Abort.runWith[ContainerException](v) {
                 case Result.Success(value)                                   => value
                 case Result.Failure(e: ContainerBackendUnavailableException) =>
-                    Clock.now.map { now =>
-                        remaining.next(now) match
-                            case Present((delay, next)) => Async.sleep(delay).andThen(attempt(next))
-                            case Absent                 => Abort.fail[ContainerException](e)
-                    }
+                    def retry(remaining: Schedule): A < (Async & Abort[ContainerException]) =
+                        Clock.now.map { now =>
+                            remaining.next(now) match
+                                case Present((delay, next)) => Async.sleep(delay).andThen(attempt(next, seeded = true))
+                                case Absent                 => Abort.fail[ContainerException](e)
+                        }
+                    // Seeded on the first rejection, so a call that succeeds at once draws nothing from Random.
+                    if seeded then retry(remaining) else Random.nextLong.map(seed => retry(remaining.withSeed(seed)))
                 case Result.Failure(other) => Abort.fail[ContainerException](other)
                 case Result.Panic(t)       => Abort.panic[ContainerException](t)
             }
-        attempt(schedule)
+        attempt(schedule, seeded = false)
     end retryOnTransientUnavailable
 
     /** Execute a command inside the container, mapping exit codes to typed errors.

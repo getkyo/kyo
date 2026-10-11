@@ -119,9 +119,14 @@ private[kyo] object Session:
         private val config = discord.config
 
         def run(using Frame): Unit < (Async & Abort[Gateway.Failure] & Env[Discord]) =
-            val start = config.reconnect match
-                case DiscordConfig.Reconnect.Resume(backoff) => Backoff.start(backoff)
-                case DiscordConfig.Reconnect.Off             => Backoff.start(Schedule.done)
+            val policy = config.reconnect match
+                case DiscordConfig.Reconnect.Resume(backoff) => backoff
+                case DiscordConfig.Reconnect.Off             => Schedule.done
+            if policy.hasJitter then Random.nextLong.map(seed => runFrom(Backoff.start(policy.withSeed(seed))))
+            else runFrom(Backoff.start(policy))
+        end run
+
+        private def runFrom(start: Backoff)(using Frame): Unit < (Async & Abort[Gateway.Failure] & Env[Discord]) =
             Loop(Mode.Identify: Mode, start, false) { (mode, backoff, everReady) =>
                 AtomicBoolean.init(false).map { healthy =>
                     val connected = (mode match
@@ -151,7 +156,7 @@ private[kyo] object Session:
                     }
                 }
             }
-        end run
+        end runFrom
 
         /** `GET /gateway/bot` for the URL and the budget: a spent budget fails without connecting. */
         private def identify(using Frame): (HttpUrl, Gateway.Start) < (Async & Abort[Gateway.Failure] & Env[Discord]) =

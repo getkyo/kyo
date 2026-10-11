@@ -285,20 +285,23 @@ private[kyo] object SmtpSession:
         config.retry match
             case Absent            => attempt
             case Present(schedule) =>
-                Loop(schedule) { remaining =>
-                    Abort.run[EmailSendFailure](attempt).map {
-                        case Result.Success(value)                         => Loop.done(value)
-                        case Result.Failure(failure) if transient(failure) =>
-                            Clock.now.map { now =>
-                                remaining.next(now) match
-                                    case Present((delay, rest)) if delay <= config.retryMaxDelay =>
-                                        Async.sleep(delay).andThen(Loop.continue(rest))
-                                    case _ => Abort.fail(failure)
-                            }
-                        case Result.Failure(failure) => Abort.fail(failure)
-                        case Result.Panic(ex)        => Abort.panic(ex)
+                val seeded: Schedule < Sync = if schedule.hasJitter then Random.nextLong.map(schedule.withSeed) else schedule
+                seeded.map(schedule =>
+                    Loop(schedule) { remaining =>
+                        Abort.run[EmailSendFailure](attempt).map {
+                            case Result.Success(value)                         => Loop.done(value)
+                            case Result.Failure(failure) if transient(failure) =>
+                                Clock.now.map { now =>
+                                    remaining.next(now) match
+                                        case Present((delay, rest)) if delay <= config.retryMaxDelay =>
+                                            Async.sleep(delay).andThen(Loop.continue(rest))
+                                        case _ => Abort.fail(failure)
+                                }
+                            case Result.Failure(failure) => Abort.fail(failure)
+                            case Result.Panic(ex)        => Abort.panic(ex)
+                        }
                     }
-                }
+                )
 
     // RFC 5321 section 4.2.1: a 4yz reply means "the error condition is temporary, and the action may be requested again", and the
     // requested action did not occur, so a retry cannot deliver twice. A 421 closing the channel is the ConnectionClosed that carries

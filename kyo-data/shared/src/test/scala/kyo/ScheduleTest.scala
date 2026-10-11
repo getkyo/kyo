@@ -1614,6 +1614,76 @@ class ScheduleTest extends kyo.test.Test[Any]:
             val s = Schedule.fixed(1.second).jitter(0.5)
             assert(s.show == "(Schedule.fixed(1.seconds)).jitter(0.5)")
         }
+
+        "withSeed" - {
+            def delays(s: Schedule, n: Int): Chunk[Duration] =
+                Chunk.from(Iterator.unfold(Maybe(s)) {
+                    case Present(current) => current.next(Instant.Epoch).toOption.map((d, next) => (d, Maybe(next)))
+                    case Absent           => None
+                }.take(n).toSeq)
+
+            "different seeds give different delays at the same instant" in {
+                val s     = Schedule.fixed(1.second).jitter(0.5)
+                val seeds = (1L to 20L).map(seed => s.withSeed(seed).next(Instant.Epoch).get._1)
+                assert(seeds.distinct.size == seeds.size, s"delays=$seeds")
+                assert(seeds.forall(d => d >= 500.millis && d <= 1500.millis), s"delays=$seeds")
+            }
+
+            "the same seed gives the same delays" in {
+                val s = Schedule.fixed(1.second).jitter(0.5).take(10)
+                assert(delays(s.withSeed(42), 10) == delays(s.withSeed(42), 10))
+            }
+
+            "successive delays at the same instant differ" in {
+                val d = delays(Schedule.fixed(1.second).jitter(0.5).take(10).withSeed(42), 10)
+                assert(d.size == 10 && d.distinct.size == 10, s"delays=$d")
+            }
+
+            "reaches jitter nested in combinators" in {
+                val s = Schedule.fixed(1.second).jitter(0.5).take(3).forever.delay(1.millis)
+                assert(delays(s.withSeed(1), 5) != delays(s.withSeed(2), 5))
+            }
+
+            "both sides of max get the seed and draw distinct sequences" in {
+                val a     = Schedule.fixed(1.second).jitter(0.5)
+                val left  = delays(a.withSeed(Schedule.internal.mixSeed(3)), 1).head
+                val right = delays(a.withSeed(Schedule.internal.mixSeed(~3L)), 1).head
+                val max   = delays(a.max(a).withSeed(3), 1).head
+                val min   = delays(a.min(a).withSeed(3), 1).head
+                assert(left != right, s"left=$left right=$right")
+                assert(max == left.max(right), s"max=$max left=$left right=$right")
+                assert(min == left.min(right), s"min=$min left=$left right=$right")
+                assert(max != min)
+                assert(delays(a.max(a).withSeed(3), 3) != delays(a.max(a).withSeed(4), 3))
+            }
+
+            "returns a schedule without jitter unchanged" in {
+                val s = Schedule.exponentialBackoff(1.second, 2, 10.seconds).take(5).forever
+                assert(s.withSeed(9) eq s)
+            }
+
+            "hasJitter finds jitter at any depth and only there" in {
+                val plain = Schedule.exponentialBackoff(1.second, 2, 10.seconds).take(5)
+                assert(!plain.hasJitter)
+                assert(!plain.forever.delay(1.millis).max(Schedule.fixed(1.second)).hasJitter)
+                assert(Schedule.fixed(1.second).jitter(0.5).hasJitter)
+                assert(plain.andThen(Schedule.fixed(1.second).jitter(0.5).repeat(2)).forever.hasJitter)
+                assert(plain.min(Schedule.fixed(1.second).jitter(0.5)).maxDuration(1.minute).hasJitter)
+            }
+
+            "show names a seed other than 0" in {
+                val s = Schedule.fixed(1.second).jitter(0.5)
+                assert(s.show == "(Schedule.fixed(1.seconds)).jitter(0.5)")
+                assert(s.withSeed(42).show == "(Schedule.fixed(1.seconds)).jitter(0.5).withSeed(42L)")
+            }
+
+            "keeps the jitter bounds" in {
+                val s       = Schedule.fixed(1.second).jitter(0.5)
+                val samples = (1L to 1000L).map(seed => s.withSeed(seed).next(Instant.Epoch).get._1.toMillis)
+                assert(samples.min >= 500 && samples.max <= 1500)
+                assert(math.abs(samples.sum.toDouble / samples.size - 1000.0) < 50.0)
+            }
+        }
     }
 
 end ScheduleTest

@@ -2485,7 +2485,8 @@ object Container:
                                     case Result.Panic(ex)  => Abort.panic(ex)
                                 }
                         }
-                    loop(hc.schedule, 0, Seq.empty)
+                    if hc.schedule.hasJitter then Random.nextLong.map(seed => loop(hc.schedule.withSeed(seed), 0, Seq.empty))
+                    else loop(hc.schedule, 0, Seq.empty)
                 }
         }
 

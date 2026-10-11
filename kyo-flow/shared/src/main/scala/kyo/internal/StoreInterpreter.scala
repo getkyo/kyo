@@ -258,8 +258,9 @@ private[kyo] class StoreInterpreter(
                                 }
                             end if
                     }
-                val spent = retried.getOrElse(name, 0)
-                resume(schedule, spent).map(attempt(_, spent + 1))
+                val spent                = retried.getOrElse(name, 0)
+                val seeded: Schedule < S = if schedule.hasJitter then Random.nextLong.map(schedule.withSeed) else schedule
+                seeded.map(resume(_, spent)).map(attempt(_, spent + 1))
         end match
     end withTimeoutAndRetry
 

@@ -1,7 +1,5 @@
 package kyo
 
-import scala.util.*
-
 /** A utility for retrying operations with configurable backoff strategies and failure handling.
   *
   * Retry provides a structured approach to executing operations that may temporarily fail, allowing them to be automatically retried based
@@ -42,6 +40,9 @@ object Retry:
 
     /** Retries an operation using a custom policy builder.
       *
+      * A jittered schedule draws one seed from the ambient [[Random]] on the first failure, so concurrent runs retry independently and
+      * `Random.withSeed` makes a run reproducible. A schedule without jitter draws nothing from it.
+      *
       * @param builder
       *   A function that modifies the default policy.
       * @param v
@@ -50,17 +51,23 @@ object Retry:
       *   The result of the operation, or an abort if all retries fail.
       */
     def apply[E: ConcreteTag](using Frame)[A, S](schedule: Schedule)(v: => A < (Abort[E] & S)): A < (Async & Abort[E] & S) =
-        Abort.run[E](v).map {
-            case Result.Success(value)                => value
-            case result: Result.Failure[E] @unchecked =>
-                Clock.now.map { now =>
-                    schedule.next(now).map { (delay, nextSchedule) =>
-                        Async.delay(delay)(Retry[E](nextSchedule)(v))
-                    }.getOrElse {
-                        Abort.error(result)
-                    }
-                }
-            case panic: Result.Panic => Abort.error(panic)
-        }
+        def loop(schedule: Schedule, seeded: Boolean): A < (Async & Abort[E] & S) =
+            Abort.run[E](v).map {
+                case Result.Success(value)                => value
+                case result: Result.Failure[E] @unchecked =>
+                    def retry(schedule: Schedule): A < (Async & Abort[E] & S) =
+                        Clock.now.map { now =>
+                            schedule.next(now).map { (delay, nextSchedule) =>
+                                Async.delay(delay)(loop(nextSchedule, seeded = true))
+                            }.getOrElse {
+                                Abort.error(result)
+                            }
+                        }
+                    // Seeded on the first failure, so a run that succeeds at once draws nothing from Random.
+                    if seeded then retry(schedule) else Random.nextLong.map(seed => retry(schedule.withSeed(seed)))
+                case panic: Result.Panic => Abort.error(panic)
+            }
+        loop(schedule, seeded = !schedule.hasJitter)
+    end apply
 
 end Retry

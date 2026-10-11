@@ -508,7 +508,7 @@ val firstTen: Schedule = backoff.maxDuration(10.seconds)
 val jittery: Schedule  = backoff.jitter(0.5)
 ```
 
-> **Note:** `Schedule.jitter`'s randomness is deterministic, derived from an XOR shift on a hash of the current `Instant` and duration, not a PRNG. Repeat runs with the same starting `Instant` produce identical schedules.
+> **Note:** `Schedule.jitter`'s randomness is deterministic: each delay is a function of a seed, the `Instant` the schedule is evaluated at, and the delay. A schedule starts with seed 0, so runs that evaluate one schedule value at the same `Instant` get the same delays. `withSeed(seed)` gives a run its own sequence; kyo-core's `Retry`, `Clock` repetition and kyo-stm's `STM.run` seed each run from `Random`, so concurrent runs do not retry in step and `Random.withSeed` makes a run reproducible.
 
 Other factories include `Schedule.linear(base)`, `Schedule.fibonacci(a, b)`, `Schedule.exponential(initial, factor)`, and `Schedule.anchored(period, offset)` (executes at fixed time points aligned to a period, catching up on missed periods).
 

@@ -33,8 +33,8 @@ private[kyo] object Connector:
         val config = teams.config
         if !ServiceUrls.allowed(config.serviceHosts, serviceUrl.url) then Abort.fail(TeamsRefusedUrlException(route))
         else
-            val url                                                             = ServiceUrls.join(serviceUrl.url, segments)
-            def attempt(schedule: Maybe[Schedule]): String < (Async & Abort[F]) =
+            val url = ServiceUrls.join(serviceUrl.url, segments)
+            def attempt(schedule: Maybe[Schedule], seeded: Boolean): String < (Async & Abort[F]) =
                 teams.tokens.get.map { token =>
                     val headers = HttpHeaders.empty.add("Authorization", s"Bearer ${token.value}").add("Content-Type", "application/json")
                     transport(config, teams.http, route, url, config.requestTimeout)(send(method, url, headers, query, body)).map {
@@ -43,8 +43,11 @@ private[kyo] object Connector:
                             val retryAfter = response.headers.get("Retry-After").flatMap(parseRetryAfter)
                             if status.isSuccess then response.fields.body
                             else
-                                retry(schedule, config.retryMaxDelay, status, retryAfter).map {
-                                    case Present(next) => attempt(Present(next))
+                                // Seeded on the first failure, so a call that succeeds at once draws nothing from Random.
+                                val current: Maybe[Schedule] < Sync =
+                                    if seeded then schedule else Random.nextLong.map(seed => schedule.map(_.withSeed(seed)))
+                                current.map(retry(_, config.retryMaxDelay, status, retryAfter)).map {
+                                    case Present(next) => attempt(Present(next), seeded = true)
                                     case Absent        =>
                                         val operationId =
                                             response.headers.get("X-Correlating-OperationId").map(TeamsException.bounded(_, 128))
@@ -53,7 +56,7 @@ private[kyo] object Connector:
                             end if
                     }
                 }
-            attempt(config.retry)
+            attempt(config.retry, seeded = !config.retry.exists(_.hasJitter))
         end if
     end call
 

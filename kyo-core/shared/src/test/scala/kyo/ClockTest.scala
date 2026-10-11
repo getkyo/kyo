@@ -903,6 +903,58 @@ class ClockTest extends kyo.test.Test[Any]:
                 numbers   <- channel.drain
             yield assert(lastState == 10 && numbers.toSeq == (0 until 10))
         }
+
+        "under a seeded Random sleeps the delays a jittered schedule gives with the first draw as seed" in {
+            // Each run counts itself before arming the next sleeper, so the fence after an advance pins the run count.
+            val schedule = Schedule.fixed(1.milli).jitter(0.5).take(1000)
+            Random.withSeed(7)(Random.nextLong).map { seed =>
+                val (first, rest) = schedule.withSeed(seed).next(Instant.Epoch).get
+                val second        = rest.next(Instant.Epoch + first).map(_._1).getOrElse(Duration.Zero)
+                Clock.withTimeControl { control =>
+                    Random.withSeed(7) {
+                        for
+                            runs      <- AtomicInt.init(0)
+                            task      <- Clock.repeatWithDelay(schedule, 0)(st => runs.incrementAndGet.andThen(st + 1))
+                            _         <- control.awaitPendingSleepers(1)
+                            _         <- control.advance(first.minusOrZero(1.nanos), Duration.Zero)
+                            _         <- control.awaitPendingSleepers(1)
+                            beforeOne <- runs.get
+                            _         <- control.advance(1.nanos, Duration.Zero)
+                            _         <- control.awaitPendingSleepers(1)
+                            atOne     <- runs.get
+                            _         <- control.advance(second.minusOrZero(1.nanos), Duration.Zero)
+                            _         <- control.awaitPendingSleepers(1)
+                            beforeTwo <- runs.get
+                            _         <- control.advance(1.nanos, Duration.Zero)
+                            _         <- control.awaitPendingSleepers(1)
+                            atTwo     <- runs.get
+                            _         <- task.interrupt
+                        yield
+                            assert(first != second && first != 1.milli && second != 1.milli)
+                            assert(beforeOne == 0 && atOne == 1, s"the first run did not fire at ${first.show}")
+                            assert(beforeTwo == 1 && atTwo == 2, s"the second run did not fire ${second.show} after the first")
+                        end for
+                    }
+                }
+            }
+        }
+
+        "with a schedule without jitter leaves a seeded Random stream untouched" in {
+            Clock.withTimeControl { control =>
+                for
+                    expected            <- Random.withSeed(5)(Random.nextLong)
+                    (lastState, actual) <- Random.withSeed(5) {
+                        for
+                            task      <- Clock.repeatWithDelay(Schedule.fixed(1.milli).take(1), 0)(st => st + 1)
+                            _         <- control.awaitPendingSleepers(1)
+                            _         <- control.advance(1.milli, Duration.Zero)
+                            lastState <- task.get
+                            actual    <- Random.nextLong
+                        yield (lastState, actual)
+                    }
+                yield assert(lastState == 1 && actual == expected, s"first draw after the loop=$actual expected=$expected")
+            }
+        }
     }
 
     "Monotonic Time" - {

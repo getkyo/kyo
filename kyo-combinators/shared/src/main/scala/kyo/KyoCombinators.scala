@@ -57,6 +57,9 @@ extension [A, S](effect: A < S)
 
     /** Performs this computation repeatedly with a backoff policy.
       *
+      * A jittered schedule draws one seed from the ambient [[Random]] when the repetition starts, so concurrent repetitions spread their
+      * delays and `Random.withSeed` makes one reproducible. A schedule without jitter draws nothing from it.
+      *
       * @param policy
       *   The backoff policy to use
       * @return
@@ -64,12 +67,15 @@ extension [A, S](effect: A < S)
       */
     def repeat(schedule: Schedule)(using Frame): A < (S & Async) =
         Clock.use { clock =>
-            Loop(schedule) { current =>
-                clock.now.map { now =>
-                    current.next(now).map { (delay, next) =>
-                        effect.delay(delay).andThen(Loop.continue(next))
-                    }.getOrElse {
-                        effect.map(Loop.done)
+            val seeded: Schedule < Sync = if schedule.hasJitter then Random.nextLong.map(schedule.withSeed) else schedule
+            seeded.map { schedule =>
+                Loop(schedule) { current =>
+                    clock.now.map { now =>
+                        current.next(now).map { (delay, next) =>
+                            effect.delay(delay).andThen(Loop.continue(next))
+                        }.getOrElse {
+                            effect.map(Loop.done)
+                        }
                     }
                 }
             }

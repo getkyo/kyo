@@ -27,8 +27,12 @@ private[kyo] object ImapReceiver:
             case Start.New(name)  => name
             case Start.All(name)  => name
             case Start.After(uid) => uid.mailbox
-        AtomicRef.init(Resume(Absent, Absent, 0)).map { resume =>
-            Loop(config.reconnect, 0L) { (schedule, rounds) =>
+        val seeded: Schedule < Sync =
+            if config.reconnect.hasJitter then Random.nextLong.map(config.reconnect.withSeed) else config.reconnect
+        for
+            resume    <- AtomicRef.init(Resume(Absent, Absent, 0))
+            reconnect <- seeded
+            _         <- Loop(reconnect, 0L) { (schedule, rounds) =>
                 session(config, mailbox, start, resume)(handler).map { failure =>
                     resume.get.map { state =>
                         // Until the first session's SELECT is checked nothing was received, so its failures are the caller's.
@@ -36,7 +40,7 @@ private[kyo] object ImapReceiver:
                         else
                             // A whole round is what restarts the schedule: a server that accepts every reconnect and fails every FETCH
                             // would otherwise be retried forever.
-                            val remaining = if state.rounds != rounds then config.reconnect else schedule
+                            val remaining = if state.rounds != rounds then reconnect else schedule
                             Clock.now.map { now =>
                                 remaining.next(now) match
                                     case Absent                 => Abort.fail(failure)
@@ -45,7 +49,8 @@ private[kyo] object ImapReceiver:
                     }
                 }
             }
-        }
+        yield ()
+        end for
     end run
 
     // One connection, from opening it to the failure that ends it, answered as a value. The session is registered for release as it is

@@ -1622,7 +1622,8 @@ object Flow:
                                 }
                             end afterIteration
 
-                            resume(r.initialState, 0, schedule)
+                            if schedule.hasJitter then Random.nextLong.map(seed => resume(r.initialState, 0, schedule.withSeed(seed)))
+                            else resume(r.initialState, 0, schedule)
                         end scheduled
 
                         if fieldCompleted(ctx, nameStr) then compensated(ctx)

@@ -42,8 +42,8 @@ private[kyo] object Graph:
     def call[F >: Common](client: WhatsApp, method: String, target: HttpUrl)(
         request: HttpClient => HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException])
     )(using Frame, TypeTest[WhatsAppException, F]): Span[Byte] < (Async & Abort[F]) =
-        val config                                                              = client.config
-        def attempt(schedule: Maybe[Schedule]): Span[Byte] < (Async & Abort[F]) =
+        val config                                                                               = client.config
+        def attempt(schedule: Maybe[Schedule], seeded: Boolean): Span[Byte] < (Async & Abort[F]) =
             transport(client, method, target)(request).map { response =>
                 if response.status.isSuccess then response.fields.body
                 else
@@ -53,17 +53,22 @@ private[kyo] object Graph:
                             Abort.fail(failureOf[F](config.token, method, response.status, error, retryAfter))
                         if !error.exists(e => RetryableCodes.contains(e.code)) then fail
                         else
-                            Clock.now.map { now =>
-                                schedule.flatMap(_.next(now)).fold(fail) { (delay, rest) =>
-                                    val wait = retryAfter.fold(delay)(after => if after > delay then after else delay)
-                                    if wait > config.retryMaxDelay then fail
-                                    else Async.sleep(wait).andThen(attempt(Present(rest)))
+                            // Seeded on the first retry, so a call that succeeds at once draws nothing from Random.
+                            val current: Maybe[Schedule] < Sync =
+                                if seeded then schedule else Random.nextLong.map(seed => schedule.map(_.withSeed(seed)))
+                            current.map { schedule =>
+                                Clock.now.map { now =>
+                                    schedule.flatMap(_.next(now)).fold(fail) { (delay, rest) =>
+                                        val wait = retryAfter.fold(delay)(after => if after > delay then after else delay)
+                                        if wait > config.retryMaxDelay then fail
+                                        else Async.sleep(wait).andThen(attempt(Present(rest), seeded = true))
+                                    }
                                 }
                             }
                         end if
                     }
             }
-        attempt(config.retry)
+        attempt(config.retry, seeded = !config.retry.exists(_.hasJitter))
     end call
 
     /** The answer's `Retry-After` as delta-seconds, the form a rate-limited Graph answer would use. */

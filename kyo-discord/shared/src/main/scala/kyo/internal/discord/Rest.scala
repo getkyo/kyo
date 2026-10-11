@@ -169,7 +169,7 @@ private[kyo] object Rest:
             .add("Authorization", s"Bot ${config.token.value}")
             .add("User-Agent", UserAgent)
         val key = RateLimits.Key(call.method.name, call.route, RateLimits.resourceOf(call.path))
-        def attempt(schedule: Maybe[Schedule]): A < (Async & Abort[F]) =
+        def attempt(schedule: Maybe[Schedule], seeded: Boolean): A < (Async & Abort[F]) =
             discord.limits.acquire(key, global = call.interaction.isEmpty, timeout, call.name).andThen {
                 transport(config, discord.http, call.name, timeout)(send(call.method, url, headers, content))
             }.map { response =>
@@ -183,15 +183,19 @@ private[kyo] object Rest:
                             case Result.Panic(ex) => Abort.panic(ex)
                     else
                         failureOf[F](call, secrets, response.status, response.headers, text).map { (failure, retryAfter) =>
-                            retryWait(schedule, config.retryMaxDelay, response.status, retryAfter).map {
-                                case Present(next) => attempt(Present(next))
+                            // Seeded on the first failure, so a call that succeeds at once draws nothing from Random.
+                            val current: Maybe[Schedule] < Sync =
+                                if seeded then schedule else Random.nextLong.map(seed => schedule.map(_.withSeed(seed)))
+                            current.map(retryWait(_, config.retryMaxDelay, response.status, retryAfter)).map {
+                                case Present(next) => attempt(Present(next), seeded = true)
                                 case Absent        => Abort.fail(failure)
                             }
                         }
                     end if
                 }
             }
-        attempt(if call.retried then config.retry else Absent)
+        val retry = if call.retried then config.retry else Absent
+        attempt(retry, seeded = !retry.exists(_.hasJitter))
     end run
 
     /** Discord requires `DiscordBot ($url, $versionNumber)` on every request (`reference.mdx`, "User Agent"). */

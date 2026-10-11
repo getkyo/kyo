@@ -676,6 +676,9 @@ object Clock:
 
     /** Repeatedly executes a task with delays determined by a custom schedule, maintaining state between executions.
       *
+      * A jittered schedule draws one seed from the ambient [[Random]] when the repetition starts, so concurrent repetitions spread their
+      * delays and `Random.withSeed` makes one reproducible. A schedule without jitter draws nothing from it.
+      *
       * @param delaySchedule
       *   A schedule that determines the timing between executions
       * @param state
@@ -701,12 +704,16 @@ object Clock:
     ): Fiber[A, reduce.SReduced] < (Sync & S) =
         Fiber.initUnscoped {
             Clock.use { clock =>
-                Loop(state, delaySchedule) { (state, schedule) =>
-                    clock.now.map { now =>
-                        schedule.next(now) match
-                            case Absent                            => Loop.done(state)
-                            case Present((duration, nextSchedule)) =>
-                                clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(_, nextSchedule))))
+                val seeded: Schedule < Sync =
+                    if delaySchedule.hasJitter then Random.nextLong.map(delaySchedule.withSeed) else delaySchedule
+                seeded.map { delaySchedule =>
+                    Loop(state, delaySchedule) { (state, schedule) =>
+                        clock.now.map { now =>
+                            schedule.next(now) match
+                                case Absent                            => Loop.done(state)
+                                case Present((duration, nextSchedule)) =>
+                                    clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(_, nextSchedule))))
+                        }
                     }
                 }
             }

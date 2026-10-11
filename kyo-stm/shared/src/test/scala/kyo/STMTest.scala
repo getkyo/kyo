@@ -1939,29 +1939,74 @@ class STMTest extends kyo.test.Test[Any]:
         }
 
         "STM.run evaluates its retry schedule at the ambient Clock's time" in {
-            // The default schedule's jitter derives each delay from the instant it is evaluated at, so under a controlled clock frozen at
-            // the epoch the first retry must sleep exactly the delay the schedule gives at the epoch. A fired sleeper is done at once, and
-            // the next attempt counts itself before arming its own sleeper, so after each advance the pending-sleeper fence pins the
-            // attempt count without racing the retrying fiber.
-            val expected = STM.defaultRetrySchedule.next(Instant.Epoch).map(_._1).getOrElse(Duration.Zero)
+            // The default schedule's jitter derives each delay from the instant it is evaluated at and the seed STM.run draws from
+            // Random, so under a controlled clock frozen at the epoch and a seeded Random the first retry must sleep exactly the delay the
+            // schedule gives at the epoch with that seed. A fired sleeper is done at once, and the next attempt counts itself before
+            // arming its own sleeper, so after each advance the pending-sleeper fence pins the attempt count without racing the retrying
+            // fiber.
+            Random.withSeed(7)(Random.nextLong).map { seed =>
+                val expected = STM.defaultRetrySchedule.withSeed(seed).next(Instant.Epoch).map(_._1).getOrElse(Duration.Zero)
+                Clock.withTimeControl { control =>
+                    for
+                        attempts <- AtomicInt.init(0)
+                        fiber    <- Fiber.initUnscoped(Abort.run[FailedTransaction] {
+                            Random.withSeed(7)(STM.run(attempts.incrementAndGet.andThen(STM.retry)))
+                        })
+                        _         <- control.awaitPendingSleepers(1)
+                        _         <- control.advance(expected.minusOrZero(1.nanos), Duration.Zero)
+                        _         <- control.awaitPendingSleepers(1)
+                        justShort <- attempts.get
+                        _         <- control.advance(1.nanos, Duration.Zero)
+                        _         <- control.awaitPendingSleepers(1)
+                        atDelay   <- attempts.get
+                        _         <- fiber.interrupt
+                    yield
+                        assert(expected > Duration.Zero)
+                        assert(
+                            justShort == 1,
+                            s"the first retry fired before the ${expected.show} the schedule gives at the controlled time"
+                        )
+                        assert(
+                            atDelay == 2,
+                            s"the first retry did not fire at the ${expected.show} the schedule gives at the controlled time"
+                        )
+                    end for
+                }
+            }
+        }
+
+        "transactions that first retry at the same instant do not all retry in step" in {
+            // Under a clock frozen at the epoch every transaction evaluates its retry schedule at the same instant. Each advance of one
+            // microsecond fires the sleepers due by then; the fence after it pins each fiber's attempt count. With one shared jitter
+            // sequence all of them fire in the same step.
+            val fibers = 4
             Clock.withTimeControl { control =>
                 for
-                    attempts <- AtomicInt.init(0)
-                    fiber    <- Fiber.initUnscoped(Abort.run[FailedTransaction] {
-                        STM.run(attempts.incrementAndGet.andThen(STM.retry))
-                    })
-                    _         <- control.awaitPendingSleepers(1)
-                    _         <- control.advance(expected.minusOrZero(1.nanos), Duration.Zero)
-                    _         <- control.awaitPendingSleepers(1)
-                    justShort <- attempts.get
-                    _         <- control.advance(1.nanos, Duration.Zero)
-                    _         <- control.awaitPendingSleepers(1)
-                    atDelay   <- attempts.get
-                    _         <- fiber.interrupt
+                    attempts <- Kyo.fill(fibers)(AtomicInt.init(0))
+                    running  <- Kyo.foreach(attempts.zipWithIndex) { (counter, idx) =>
+                        Fiber.initUnscoped(Abort.run[FailedTransaction] {
+                            Random.withSeed(11 + idx)(STM.run(counter.incrementAndGet.andThen(STM.retry)))
+                        })
+                    }
+                    _       <- control.awaitPendingSleepers(fibers)
+                    firedAt <- Loop(0, Map.empty[Int, Int]) { (step, fired) =>
+                        if fired.size == fibers || step > 2000 then Loop.done(fired)
+                        else
+                            for
+                                _      <- control.advance(1.micros, Duration.Zero)
+                                _      <- control.awaitPendingSleepers(fibers)
+                                counts <- Kyo.foreach(attempts)(_.get)
+                            yield Loop.continue(
+                                step + 1,
+                                counts.zipWithIndex.foldLeft(fired) { case (acc, (count, idx)) =>
+                                    if count >= 2 && !acc.contains(idx) then acc.updated(idx, step) else acc
+                                }
+                            )
+                    }
+                    _ <- Kyo.foreachDiscard(running)(_.interrupt)
                 yield
-                    assert(expected > Duration.Zero)
-                    assert(justShort == 1, s"the first retry fired before the ${expected.show} the schedule gives at the controlled time")
-                    assert(atDelay == 2, s"the first retry did not fire at the ${expected.show} the schedule gives at the controlled time")
+                    assert(firedAt.size == fibers, s"every transaction must retry within 2ms: firedAt=$firedAt")
+                    assert(firedAt.values.toSet.size > 1, s"every transaction retried in the same microsecond: firedAt=$firedAt")
                 end for
             }
         }
