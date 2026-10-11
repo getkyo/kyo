@@ -7,10 +7,9 @@ import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** A closing connection completes its teardown. close() drives the Connection.Teardown machine to Released, which closes the handle
-  * exactly once and fires the owning transport's onClose callback so the connection is dropped from the open-connection registry (a connection
-  * whose teardown never completed would linger registered and leak its fd past the pool teardown).
+  * exactly once.
   *
-  * The SpyDriver counts closeHandle; onClose sets a flag.
+  * The SpyDriver counts closeHandle.
   */
 class ConnectionTeardownCompletesTest extends Test:
 
@@ -39,14 +38,12 @@ class ConnectionTeardownCompletesTest extends Test:
     end SpyDriver
 
     "closing-connection-completes-teardown" in {
-        val spy           = new SpyDriver
-        val onCloseCalled = AtomicBoolean.Unsafe.init(false)
-        val conn          = Connection.init[Unit]((), spy, 1, onClose = () => onCloseCalled.set(true))
+        val spy  = new SpyDriver
+        val conn = Connection.init[Unit]((), spy, 1)
         conn.start()
         Sync.defer {
             conn.close()
             assert(spy.closeHandleCount.get() == 1, s"teardown must close the handle exactly once, got ${spy.closeHandleCount.get()}")
-            assert(onCloseCalled.get(), "teardown must fire onClose so the connection is dropped from the open-connection registry")
             assert(!conn.isOpen, "the connection must not be open once its teardown has completed")
         }
     }

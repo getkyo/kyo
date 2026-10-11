@@ -147,7 +147,7 @@ class PosixTestSocketsTest extends Test:
                         case ReadOutcome.Bytes(got) if got.isEmpty =>
                             driver.closeHandle(acceptedH)
                             succeed
-                        case ReadOutcome.PeerFin | ReadOutcome.CleanClose | ReadOutcome.LocalShutdown =>
+                        case ReadOutcome.PeerFin | ReadOutcome.CleanClose =>
                             driver.closeHandle(acceptedH)
                             succeed
                         case other =>
@@ -174,7 +174,7 @@ class PosixTestSocketsTest extends Test:
                             driver.closeHandle(acceptedH)
                             discard(sock.close(client))
                             succeed
-                        case ReadOutcome.PeerFin | ReadOutcome.CleanClose | ReadOutcome.LocalShutdown =>
+                        case ReadOutcome.PeerFin | ReadOutcome.CleanClose =>
                             driver.closeHandle(acceptedH)
                             discard(sock.close(client))
                             succeed

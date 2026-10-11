@@ -76,7 +76,7 @@ class PollerIoDriverHalfCloseTest extends Test:
                     acc.write(bytes.toArrayUnsafe)
                     if becomeAvailable() then driver.awaitRead(handle, self)
                     else done.completeDiscard(Result.succeed(HalfCloseReader.BecomeAvailableFailed))
-                case Present(Result.Success(ReadOutcome.PeerFin | ReadOutcome.LocalShutdown | ReadOutcome.CleanClose)) =>
+                case Present(Result.Success(ReadOutcome.PeerFin | ReadOutcome.CleanClose)) =>
                     done.completeDiscard(Result.succeed(HalfCloseReader.EofSeen))
                 case Present(Result.Success(_)) =>
                     done.completeDiscard(Result.succeed(HalfCloseReader.EofSeen))

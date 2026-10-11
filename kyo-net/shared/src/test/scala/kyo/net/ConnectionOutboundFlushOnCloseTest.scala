@@ -6,9 +6,9 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** The write-side half of the flush-before-close contract: the queued outbound is flushed to the driver BEFORE the fd is closed. The teardown's
-  * ReleaseRequested -> AwaitingInFlight gate waits on the WRITE-side drain (the WritePump takes the closing outbound channel to empty and writes
-  * each span, then re-enters closeFn), so every queued span is written before closeHandle runs.
+/** The write-side half of the flush-before-close contract: the queued outbound is flushed to the driver BEFORE the fd is closed. The
+  * release waits on the WRITE-side drain (the WritePump takes the closing outbound channel to empty and writes each span, then re-enters
+  * closeFn), so every queued span is written before closeHandle runs.
   *
   * The SpyDriver records whether any `write` lands AFTER `closeHandle` (an ordering violation) and counts the writes; the closeHandle promise is
   * the deterministic settle point (no sleep).

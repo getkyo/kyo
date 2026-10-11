@@ -15,7 +15,7 @@ import kyo.*
   *   - [[WriteState.Flushing]]: a span is being written; `pending`/`offset` is the outstanding tail.
   *   - [[WriteState.AwaitingWritable]]: a partial write parked on socket writability.
   *   - [[WriteState.Backpressured]]: parked on the TLS pending-cipher / raw tail high-water bound.
-  *   - [[WriteState.TornDown]]: terminal; teardown has failed any parked waiter.
+  *   - [[WriteState.TornDown]]: terminal; no write starts after it, which is what lets the connection release its handle.
   */
 private[kyo] enum WriteState derives CanEqual:
     case Idle
@@ -23,8 +23,4 @@ private[kyo] enum WriteState derives CanEqual:
     case AwaitingWritable(pending: Span[Byte], offset: Int)
     case Backpressured(pending: Span[Byte], offset: Int)
     case TornDown
-
-    def holdsSpan: Boolean = this match
-        case Flushing(_, _) | AwaitingWritable(_, _) | Backpressured(_, _) => true
-        case Idle | TornDown                                               => false
 end WriteState

@@ -62,7 +62,6 @@ final private[kyo] class ReadPump[Handle](
                     case ReadOutcome.Bytes(span)   => offerToChannel(span)
                     case ReadOutcome.WouldBlock    => requestNextRead() // EAGAIN: re-arm, NOT EOF
                     case ReadOutcome.PeerFin       => teardown()
-                    case ReadOutcome.LocalShutdown => teardown()
                     case ReadOutcome.CleanClose    => teardown()
                     case ReadOutcome.Failed(cause) =>
                         Log.live.unsafe.debug(s"ReadPump read failed on ${driver.handleLabel(handle)}: $cause")

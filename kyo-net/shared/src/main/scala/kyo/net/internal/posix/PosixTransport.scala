@@ -76,7 +76,9 @@ final private[net] class PosixTransport private[posix] (
     // caller that closed the listeners can observe via [[activeAcceptLoops]] when every blocking `accept` has actually returned and its loop has
     // wound down. That matters for orderly shutdown: a blocking `accept` cannot be cancelled, so after closing a listen fd the only way to know
     // its parked `accept` has woken (and the fd is safe to recycle without a stale loop stealing a connection) is to watch this drop to 0.
-    acceptLoopsActive: AtomicLong.Unsafe
+    acceptLoopsActive: AtomicLong.Unsafe,
+    // The time source of every connection's close-flush and peer-close graces.
+    clock: Clock
 ) extends TransportImpl[PosixHandle]:
     // `representative` is one pool driver used ONLY for the transport-level, NON-per-handle paths that have no bound handle:
     //   - stdio (a single per-process handle; selectDriver bypasses the pool, so stdio rides the representative),
@@ -243,7 +245,7 @@ final private[net] class PosixTransport private[posix] (
         Frame
     ): InternalConnection[PosixHandle] =
         handle.driver = driver
-        InternalConnection.init(handle, driver, channelCapacity, handle.peerCloseGrace, handle.closeFlushGrace)
+        InternalConnection.init(handle, driver, channelCapacity, handle.peerCloseGrace, handle.closeFlushGrace, clock = clock)
     end openWith
 
     // ---------------------------------------------------------------------------------------------------------------------------------------
@@ -1875,7 +1877,8 @@ final private[net] class PosixTransport private[posix] (
                                                 handle.driver,
                                                 channelCapacity,
                                                 handle.peerCloseGrace,
-                                                handle.closeFlushGrace
+                                                handle.closeFlushGrace,
+                                                clock = clock
                                             )
                                         // Wire the cert-hash and re-upgrade functions on the upgraded connection, exactly as completeConnect /
                                         // spawnHandler do for a directly-connected or accepted connection. Without this the TLS connection
@@ -2513,7 +2516,7 @@ final private[net] class PosixTransport private[posix] (
                                 end try
                         }
                     case _ =>
-                        // PeerFin, CleanClose, LocalShutdown, WouldBlock, Failed: the peer closed or the read could not deliver ciphertext.
+                        // PeerFin, CleanClose, WouldBlock, Failed: the peer closed or the read could not deliver ciphertext.
                         // The typed leaf distinguishes a bare close from a received fatal alert (which fails the handshake with its
                         // own engine-level cause, never this leaf): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
                         onFailed(NetConnectionClosedException(Operation.Read))
@@ -2585,8 +2588,12 @@ private[net] object PosixTransport:
       * is epoll (the regular-file fallback's gate; true only on Linux when epoll, not io_uring, is selected).
       */
     def init(pool: IoDriverPool[PosixHandle])(using AllowUnsafe): PosixTransport =
+        init(pool, Clock.live)
+
+    /** Build the production transport over `pool`, timing every connection's close-flush and peer-close graces on `clock`. */
+    def init(pool: IoDriverPool[PosixHandle], clock: Clock)(using AllowUnsafe): PosixTransport =
         val representative = pool.next()
-        init(pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative))
+        init(pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative), clock = clock)
 
     /** Build a transport over a caller-supplied pool, representative driver, socket bindings, and epoll flag, allocating the transport's unsafe
       * fields under the caller's `AllowUnsafe`: the construction site propagates the capability rather than each field bridging it. Shared by
@@ -2598,7 +2605,8 @@ private[net] object PosixTransport:
         sockets: SocketBindings,
         backendIsEpoll: Boolean,
         engineFactory: TlsEngineFactory = realEngineFactory,
-        onAcceptResourceBackoff: () => Unit = () => ()
+        onAcceptResourceBackoff: () => Unit = () => (),
+        clock: Clock = Clock.live
     )(using AllowUnsafe): PosixTransport =
         new PosixTransport(
             pool = pool,
@@ -2608,7 +2616,8 @@ private[net] object PosixTransport:
             engineFactory = engineFactory,
             stdioClaimed = AtomicBoolean.Unsafe.init(false),
             onAcceptResourceBackoff = onAcceptResourceBackoff,
-            acceptLoopsActive = AtomicLong.Unsafe.init(0)
+            acceptLoopsActive = AtomicLong.Unsafe.init(0),
+            clock = clock
         )
 
     /** True when `ioDriver` is the readiness poller AND that poller is epoll (the only backend the regular-file fallback applies to). io_uring's driver has

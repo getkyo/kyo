@@ -4,12 +4,10 @@ import kyo.*
 import kyo.net.NetException
 import kyo.net.Test
 
-/** Tests for the Connection.Teardown machine fold: the connection teardown handoff is one named cell (Live -> ReleaseRequested -> AwaitingInFlight ->
-  * Released), the exactly-once release is the single CAS into Released gated by the per-backend `canRelease` predicate, and the gate waits on the
-  * WRITE-side drain only, never the inbound read-side drain.
+/** Tests for the Connection.Teardown machine: the connection teardown handoff is one named cell (Live -> ReleaseRequested -> Released), the
+  * exactly-once release is the single CAS into Released, and the release waits on the WRITE-side drain only, never the inbound read-side drain.
   *
-  * Each leaf builds a Connection[Unit] over a SpyDriver that counts closeHandle calls. The predicate is injected per connection, so a latch-gated
-  * predicate drives the in-flight-deferred release deterministically.
+  * Each leaf builds a Connection[Unit] over a SpyDriver that counts closeHandle calls.
   */
 class TeardownTest extends Test:
 
@@ -37,34 +35,16 @@ class TeardownTest extends Test:
         def handleLabel(handle: Unit): String       = "spy"
     end SpyDriver
 
-    "released-fires-exactly-once-with-in-flight-op" in {
-        // The per-backend canRelease predicate gates AwaitingInFlight -> Released. A false predicate models an outstanding in-flight op: the
-        // teardown reaches AwaitingInFlight but holds the release. When the predicate clears (the in-flight op completes) and the carriers retry,
-        // exactly one CAS into Released wins, so closeHandle runs exactly once. No sleep; latches drive it.
-        val spy        = new SpyDriver
-        val canRelease = AtomicBoolean.Unsafe.init(false)
-        val conn       = Connection.init[Unit]((), spy, 1, canRelease = () => canRelease.get())
+    "released-fires-exactly-once-under-concurrent-closes" in {
+        // Several carriers close at once, each reaching the release: exactly one CAS into Released wins, so closeHandle runs exactly once.
+        val spy  = new SpyDriver
+        val conn = Connection.init[Unit]((), spy, 1)
         conn.start()
         for
-            // Phase 1: multiple carriers reach teardown while the predicate is false (an in-flight op is outstanding): no release fires.
-            latch1 <- Latch.init(1)
-            f1     <- Fiber.init(latch1.await.map(_ => Sync.defer(conn.close())))
-            f2     <- Fiber.init(latch1.await.map(_ => Sync.defer(conn.close())))
-            _      <- latch1.release
-            _      <- f1.get
-            _      <- f2.get
-            _ = assert(
-                spy.closeHandleCount.get() == 0,
-                s"no release while the in-flight predicate is false, got ${spy.closeHandleCount.get()}"
-            )
-            // Phase 2: the in-flight op completes (predicate clears); the carriers retry teardown and exactly one reaches Released.
-            _ = canRelease.set(true)
-            latch2 <- Latch.init(1)
-            f3     <- Fiber.init(latch2.await.map(_ => Sync.defer(conn.close())))
-            f4     <- Fiber.init(latch2.await.map(_ => Sync.defer(conn.close())))
-            _      <- latch2.release
-            _      <- f3.get
-            _      <- f4.get
+            latch   <- Latch.init(1)
+            closers <- Kyo.foreach(Chunk.from(0 until 4))(_ => Fiber.init(latch.await.map(_ => Sync.defer(conn.close()))))
+            _       <- latch.release
+            _       <- Kyo.foreach(closers)(_.get)
         yield assert(spy.closeHandleCount.get() == 1, s"exactly one Released transition, got ${spy.closeHandleCount.get()}")
         end for
     }

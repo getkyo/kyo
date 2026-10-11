@@ -4,57 +4,59 @@ import kyo.*
 import kyo.net.*
 import kyo.scheduler.IOPromise
 
-/** End-to-end regression guard for the peer-close grace reclaim on the real posix transport (epoll / kqueue / io_uring). A never-draining server
-  * handler and a cap-1 inbound channel park the accepted-side ReadPump with no armed read (the first chunk fills the channel, the second overflows);
-  * the client then closes, and each backend's `isPeerClosed` observes the FIN so the grace timer reclaims the accepted connection. The in-leaf oracle
-  * is the captured accepted connection's `isOpen` (portable); on Linux the fork's `/proc/self/fd` leak check is a second oracle for the reclaimed fd.
+/** End-to-end regression guard for the peer-close grace reclaim on every JVM and Native transport. A never-draining server handler and a cap-1
+  * inbound channel park the accepted-side ReadPump with no armed read (the first chunk fills the channel, the second overflows); the client then
+  * closes, and each backend's `isPeerClosed` observes the FIN so a grace expiry reclaims the accepted connection. The grace runs on the
+  * transport's virtual clock, so each expiry happens exactly when the leaf advances it.
   */
 class TransportBackpressureReclaimTest extends kyo.net.Test:
 
     import AllowUnsafe.embrace.danger
 
-    // Poll a condition that settles on the transport's own carriers (the pump parking on the full channel, the grace reclaim closing the
-    // connection), out of the test's reach, so there is no latch to await. The bound is a ceiling; every caller asserts on the settled state.
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
+    /** Polls a condition that settles on the transport's own carriers; the leaf timeout turns one that never holds into a failure. */
+    private def awaitState(cond: => Boolean)(using Frame): Unit < Async =
         Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(5.millis).andThen(Loop.continue(()))
+            if cond then Loop.done(())
+            else Async.sleep(1.millis).andThen(Loop.continue(()))
         }
-    end awaitCondition
 
-    "an abandoned backpressured connection is reclaimed after the peer FIN within the grace window" in {
-        val transport = NetPlatform.transport
-        // Cap-1 channel + 64-byte read chunk so 128 bytes become two reads, the second overflowing the channel and parking the accepted-side
-        // ReadPump. Short grace so the reclaim lands well within the fork's leak-check drain budget.
-        val config =
-            NetConfig(channelCapacity = 1, readChunkSize = 64.bytes, peerCloseGrace = 200.millis.grace)
-        val acceptedP = new IOPromise[Closed, Connection]
-        for
-            // Capture the accepted (server) connection; the handler abandons it (never drains inbound, never closes), so its ReadPump fills the cap-1
-            // channel and parks on the put. The captured connection's isOpen is the portable reclaim oracle (the fork's fd-leak check is Linux-only).
-            listener <- transport.listen("127.0.0.1", 0, 128, config) { conn =>
-                acceptedP.completeDiscard(Result.succeed(conn))
-            }.safe.get
-            _        <- Scope.ensure(Sync.defer(listener.close()))
-            client   <- transport.connect("127.0.0.1", listener.port, config = config).safe.get
-            accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[Connection, Abort[Closed]]].safe.get
-            _        <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](128)(1))))
-            // An overflowing pump parks by registering a put, so a pending put IS the parked state. Awaiting it guarantees the FIN below lands on a
-            // parked pump: a FIN arriving earlier would be observed by an armed read and reclaimed via the EOF path, leaving the grace reclaim untested.
-            parked <- awaitCondition(5.seconds)(accepted.inbound.pendingPuts().getOrElse(0) > 0)
-            _ = assert(
-                parked,
-                "the accepted-side ReadPump never parked on the full inbound channel, so the FIN below would not exercise the grace reclaim"
-            )
-            _         <- Sync.defer(client.close()) // FIN with the accepted-side pump parked
-            reclaimed <- awaitCondition(5.seconds)(!accepted.isOpen)
-        yield assert(
-            reclaimed,
-            "the abandoned backpressured accepted connection must be reclaimed (closed) after the client FIN via the peer-close grace"
-        )
-        end for
+    "an abandoned backpressured connection is reclaimed after the peer FIN once a grace window passes" - eachBackendOnVirtualClock {
+        (transport, control) =>
+            val grace             = 3.seconds
+            val nonTerminationCap = (timeout.toMillis / 100 / 2).toInt
+            // Cap-1 channel + 64-byte read chunk so 128 bytes become two reads, the second overflowing the channel and parking the accepted-side
+            // ReadPump.
+            val config    = NetConfig(channelCapacity = 1, readChunkSize = 64.bytes, peerCloseGrace = grace.grace)
+            val acceptedP = new IOPromise[Closed, Connection]
+            for
+                // The handler abandons the accepted connection (never drains inbound, never closes), so its ReadPump fills the cap-1 channel and
+                // parks on the put.
+                listener <- transport.listen("127.0.0.1", 0, 128, config) { conn =>
+                    acceptedP.completeDiscard(Result.succeed(conn))
+                }.safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
+                client   <- transport.connect("127.0.0.1", listener.port, config = config).safe.get
+                accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[Connection, Abort[Closed]]].safe.get
+                _        <- Scope.ensure(Sync.defer(accepted.close()))
+                _        <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](128)(1))))
+                // The pump arms its grace on the transport's clock exactly when it parks, so the pending sleeper IS the parked state. A FIN
+                // arriving while a read is still armed takes the ordinary EOF path, leaving the grace reclaim untested.
+                _ <- control.awaitPendingSleeper(grace)
+                _ <- awaitState(accepted.inbound.pendingPuts().getOrElse(0) > 0)
+                openBeforeExpiry = accepted.isOpen
+                _ <- Sync.defer(client.close())
+                // An expiry that runs before the FIN reaches the accepted socket finds the peer live and re-arms, so the clock is advanced one
+                // window at a time until an expiry observes the FIN. How many windows that takes is kernel timing, so the cap only detects
+                // a reclaim that never comes, and is half the leaf budget at the about 100 ms of real time each advance yields, so the
+                // failure carries the count.
+                windows <- Loop(0) { windows =>
+                    if !accepted.isOpen || windows >= nonTerminationCap then Loop.done(windows)
+                    else control.awaitPendingSleeper(grace).andThen(control.advance(grace)).andThen(Loop.continue(windows + 1))
+                }
+            yield
+                assert(openBeforeExpiry, "the parked connection must stay open until a grace window passes")
+                assert(!accepted.isOpen, s"the connection must be reclaimed after the FIN; still open after $windows windows")
+            end for
     }
 
 end TransportBackpressureReclaimTest
