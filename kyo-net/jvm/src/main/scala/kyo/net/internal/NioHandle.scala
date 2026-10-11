@@ -168,7 +168,9 @@ private[kyo] object NioHandle:
             // any in-progress engine op (dispatchReadTls or writeTls) that may be running concurrently.
             // Released in finally so a throw in closeOutbound or wrap does not leak the gate permanently.
             @tailrec def spinAcquire(): Unit =
-                if !handle.engineGate.compareAndSet(false, true) then spinAcquire()
+                if !handle.engineGate.compareAndSet(false, true) then
+                    Thread.onSpinWait()
+                    spinAcquire()
             spinAcquire()
             try
                 tls.engine.closeOutbound()
@@ -177,11 +179,19 @@ private[kyo] object NioHandle:
                 // tls.netOutBuf. The send is best-effort and non-blocking: if the kernel send buffer is full
                 // the alert is dropped and the peer observes a bare FIN (truncation-observable), but that is
                 // the same outcome as not sending it at all, and the close still completes immediately.
-                val empty  = ByteBuffer.allocate(0)
-                val notify = ByteBuffer.allocate(tls.engine.getSession.getPacketBufferSize)
-                tls.engine.wrap(empty, notify)
-                notify.flip()
-                if notify.hasRemaining then discard(handle.channel.write(notify))
+                // A record partly on the wire (pendingCiphertext) gets one non-blocking try at its tail. If the
+                // tail does not fit, no alert is sent: written after the record's head it would land inside the
+                // record, which the peer rejects as a bad record rather than reading a truncation.
+                if tls.pendingCiphertext then
+                    discard(handle.channel.write(tls.netOutBuf))
+                    tls.pendingCiphertext = tls.netOutBuf.hasRemaining
+                if !tls.pendingCiphertext then
+                    val empty  = ByteBuffer.allocate(0)
+                    val notify = ByteBuffer.allocate(tls.engine.getSession.getPacketBufferSize)
+                    tls.engine.wrap(empty, notify)
+                    notify.flip()
+                    if notify.hasRemaining then discard(handle.channel.write(notify))
+                end if
             catch case _: Exception => ()
             finally handle.engineGate.set(false)
             end try

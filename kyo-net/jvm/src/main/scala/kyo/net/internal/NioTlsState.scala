@@ -2,6 +2,8 @@ package kyo.net.internal
 
 import java.nio.ByteBuffer
 import javax.net.ssl.SSLEngine
+import kyo.Absent
+import kyo.Maybe
 import kyo.net.internal.util.GrowableByteBuffer
 
 /** Mutable TLS session state for a JVM NIO connection.
@@ -19,9 +21,11 @@ import kyo.net.internal.util.GrowableByteBuffer
   * Note: `pendingCiphertext` tracks whether `netOutBuf` still holds bytes that could not be flushed on a previous write attempt. The next
   * call to `writeTls` must flush that buffer before encrypting new plaintext.
   */
-// Single owner: every NioTlsState field, including the mutable `netInBuf` (reassigned when the ciphertext accumulator must grow) and the
-// `pendingCiphertext` flag, is read and written ONLY on the NIO Selector carrier that owns this handle. No other carrier touches a handle's
-// NioTlsState, so the bare `var`s carry no cross-carrier hazard and need no fence.
+// Ownership: until the handshake completes, the handshake carrier is the only one touching this state. After it, the engine, the four
+// buffers (`netInBuf`, `netOutBuf`, `appInBuf`, `decryptAcc`) and `pendingCiphertext` are touched from several carriers: the selector
+// carrier decrypts, the writer's carrier encrypts and flushes, the reader's carrier runs the awaitRead pre-check, and the closer's carrier
+// sends close_notify. Every one of those accesses holds the handle's `engineGate`, whose CAS acquire and volatile release order the bare
+// `var`s and buffer contents between carriers. The `@volatile` flags below are read without the gate by the status accessor.
 final private[kyo] class NioTlsState(
     val engine: SSLEngine,
     var netInBuf: ByteBuffer,
@@ -29,8 +33,8 @@ final private[kyo] class NioTlsState(
     val appInBuf: ByteBuffer,
     var pendingCiphertext: Boolean = false
 ):
-    /** Per-handle reused accumulator for decrypted plaintext. NioTlsState is single-owner (one Selector carrier per handle),
-      * so no concurrency concern. Reset before each unwrap pass; never reallocated after the first warm-up.
+    /** Per-handle reused accumulator for decrypted plaintext, used under the engine gate. Reset before each unwrap pass; never reallocated
+      * after the first warm-up.
       */
     val decryptAcc: GrowableByteBuffer = new GrowableByteBuffer
 
@@ -50,4 +54,12 @@ final private[kyo] class NioTlsState(
       * `@volatile` carries the Selector carrier's write to the reader. Mirrors [[kyo.net.internal.posix.PosixHandle.peerEof]] on the engine path.
       */
     @volatile var peerEof: Boolean = false
+
+    /** The engine failure that ended this connection's inbound stream: a record that failed authentication, a fatal alert, or a handshake
+      * the peer started after the first one. It is sticky because the plaintext decrypted ahead of the failing record is delivered first,
+      * and the read after that must still end with the failure: the engine cannot be asked again, since a failed `SSLEngine` throws
+      * differently or not at all on the next call. `@volatile` because the caller-carrier read pre-check reads what the selector carrier
+      * set.
+      */
+    @volatile var readFailure: Maybe[Throwable] = Absent
 end NioTlsState
