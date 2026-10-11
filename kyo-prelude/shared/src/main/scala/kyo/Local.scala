@@ -61,6 +61,10 @@ abstract class Local[A] extends Serializable:
     def use[B, S](f: A => B < S)(using Frame): B < S =
         ContextEffect.suspendWith(Tag[State], Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[A]))
 
+    /** This local's value in a snapshot taken by [[Local.snapshotWith]], or its default when the snapshot does not bind it. */
+    private[kyo] def getIn(snapshot: Map[Local[?], AnyRef]): A =
+        snapshot.getOrElse(this, default).asInstanceOf[A]
+
     /** Runs an effect with a temporarily modified local value.
       *
       * @param value
@@ -162,6 +166,12 @@ object Local:
       */
     inline def initNoninheritable[A](inline defaultValue: A): Local[A] =
         init(defaultValue)(_ => Maybe.Absent)
+
+    /** Applies `f` to the values of every local bound where it runs, as [[Local#use]] does for one, so they can be read later where no
+      * effect can be evaluated (see [[Local#getIn]]).
+      */
+    private[kyo] def snapshotWith[B, S](f: Map[Local[?], AnyRef] => B < S)(using Frame): B < S =
+        ContextEffect.suspendWith(Tag[State], Map.empty[Local[?], AnyRef])(f)
 
     object internal:
 

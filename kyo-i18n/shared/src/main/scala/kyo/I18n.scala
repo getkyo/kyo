@@ -85,10 +85,7 @@ object I18n:
       * reactive to that argument too. A missing or empty key renders as `‹key›`.
       */
     def t(key: String, args: Args = Dict.empty)(using Frame): Signal[String] =
-        Signal.initRaw[String](
-            currentWith = [B, S] => (f: String => B < S) => i18nLocal.use(_.leaf(key, args).currentWith(f)),
-            nextWith = [B, S] => (f: String => B < S) => i18nLocal.use(_.leaf(key, args).nextWith(f))
-        )
+        Signal.withLocal(i18nLocal)(_.leaf(key, args))
 
     /** Point-in-time lookup against the active locale, for values that must not re-translate after the fact
       * (toast messages, exception messages, log lines).
@@ -171,10 +168,7 @@ object I18n:
             sb.toString
         end render
         if sigs.isEmpty then
-            Signal.initRaw[String](
-                currentWith = [B, S] => (f: String => B < S) => i18nLocal.use(_.locale.currentWith(_ => f(render(Iterator.empty)))),
-                nextWith = [B, S] => (f: String => B < S) => i18nLocal.use(_.locale.nextWith(_ => f(render(Iterator.empty))))
-            )
+            Signal.withLocal(i18nLocal)(_.locale.map(_ => render(Iterator.empty)))
         else Signal.combineLatestAll(sigs).map(chunk => render(chunk.iterator))
         end if
     end interpolate

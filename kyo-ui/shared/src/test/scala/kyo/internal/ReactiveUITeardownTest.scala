@@ -88,6 +88,50 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "a write while the region renders reaches the exchange without the repair timer" in {
+        for
+            ref      <- Signal.initRef("a")
+            rendered <- AtomicRef.init(Chunk.empty[String])
+            entered  <- Promise.init[Unit, Any]
+            release  <- Promise.init[Unit, Any]
+            exchange = new UIExchange:
+                def onChange(
+                    region: ReactiveRegion,
+                    path: Seq[String],
+                    context: ReactiveRegion.RegionIdentity,
+                    parentContext: ReactiveRegion.ParentContext,
+                    previous: Maybe[UI],
+                    ui: UI
+                )(using Frame): Unit < Async =
+                    HtmlRenderer.render(ui, path).map { html =>
+                        rendered.updateAndGet(_.append(html)).andThen {
+                            if html.contains(">b<") then entered.completeUnitDiscard.andThen(release.get)
+                            else ()
+                        }
+                    }
+            // Freeze the repair timer: only the write itself can bring the region to "c".
+            fiber <- Clock.withTimeControl { _ =>
+                Fiber.init(Scope.run {
+                    for
+                        root <- ReactiveUI.normalize(ref.map(UI.span(_)), Seq.empty)
+                        _    <- ReactiveUI.subscribe(root, exchange)
+                        _    <- Async.never
+                    yield ()
+                })
+            }
+            _    <- assertEventually(rendered.get.map(_.exists(_.contains(">a<"))))
+            _    <- ref.set("b")
+            _    <- entered.get
+            _    <- ref.set("c")
+            _    <- release.completeUnitDiscard
+            _    <- assertEventually(rendered.get.map(_.lastOption.exists(_.contains(">c<"))))
+            last <- rendered.get.map(_.last)
+            _    <- fiber.interrupt
+            _    <- fiber.getResult
+        yield assert(last.contains(">c<"))
+        end for
+    }
+
     "nested independently bound element keeps exactly one leaf waiter" in {
         for
             outer <- Signal.initRef(true)
