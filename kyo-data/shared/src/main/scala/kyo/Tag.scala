@@ -240,7 +240,15 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                         case NothingEntry                 => "scala.Nothing"
                         case NullEntry                    => "scala.Null"
                         case LiteralEntry(widened, value) => value
-                        case IntersectionEntry(set)       =>
+                        case BoundsEntry(lower, upper)    =>
+                            val low  = owner.staticDB.get(lower).exists(_ eq NothingEntry)
+                            val high = owner.staticDB.get(upper).exists(_ eq AnyEntry)
+                            if low && high then "?"
+                            else if low then s"? <: ${render(owner, upper)}"
+                            else if high then s"? >: ${render(owner, lower)}"
+                            else s"? >: ${render(owner, lower)} <: ${render(owner, upper)}"
+                            end if
+                        case IntersectionEntry(set) =>
                             val b = new ChunkBuilder[String]
                             set.foreach(id => b.addOne(render(owner, id)))
                             "(" + b.result().sorted.mkString(" & ") + ")"
@@ -285,6 +293,11 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                 case object AnyEntry     extends Entry
                 case object NothingEntry extends Entry
                 case object NullEntry    extends Entry
+
+                /** A wildcard type argument, `? >: lower <: upper`: it stands for every type within its bounds, so a type conforms to
+                  * it when it is within them, as the variance of the parameter it fills reads them.
+                  */
+                final case class BoundsEntry(lower: Id, upper: Id) extends Entry
 
                 final case class IntersectionEntry(set: Span[Id]) extends Entry
 
@@ -438,8 +451,15 @@ object Tag extends kyo.internal.TagPlatformSpecific:
 
                 aEntry match
                     case NothingEntry => true
-                    case AnyEntry     => bEntry eq AnyEntry
-                    case NullEntry    => !bEntry.isInstanceOf[LiteralEntry]
+                    case AnyEntry     =>
+                        bEntry match
+                            case AnyEntry              => true
+                            case BoundsEntry(_, upper) => isSubType(aOwner, bOwner, aId, upper)
+                            case _                     => false
+                    case NullEntry => !bEntry.isInstanceOf[LiteralEntry]
+
+                    // Outside an argument position a wildcard is read as its upper bound.
+                    case BoundsEntry(_, aUpper) => isSubType(aOwner, bOwner, aUpper, bId)
 
                     case IntersectionEntry(aSet) =>
                         bEntry match
@@ -483,14 +503,7 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                             case OpaqueEntry(bName, bLower, _, bVariances, bParams) if aName == bName =>
                                 aParams.size == bParams.size &&
                                 Span.forallZip(aVariances, aParams, bParams) { (variance, aParamId, bParamId) =>
-                                    variance match
-                                        case Variance.Invariant =>
-                                            isSubType(aOwner, bOwner, aParamId, bParamId) &&
-                                            isSubType(bOwner, aOwner, bParamId, aParamId)
-                                        case Variance.Covariant =>
-                                            isSubType(aOwner, bOwner, aParamId, bParamId)
-                                        case Variance.Contravariant =>
-                                            isSubType(bOwner, aOwner, bParamId, aParamId)
+                                    conforms(variance, aOwner, bOwner, aParamId, bParamId)
                                 }
                             case _ =>
                                 isSubType(aOwner, bOwner, aUpper, bId)
@@ -515,6 +528,9 @@ object Tag extends kyo.internal.TagPlatformSpecific:
 
                             case _: LambdaEntry => false
 
+                            case BoundsEntry(lower, upper) =>
+                                isSubType(bOwner, aOwner, lower, aId) && isSubType(aOwner, bOwner, aId, upper)
+
                             case OpaqueEntry(_, lower, upper, variances, params) =>
                                 isSubType(aOwner, bOwner, aId, lower) && {
                                     Span.forallZip(variances, params) { (variance, paramId) =>
@@ -526,14 +542,7 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                                 if isSameString(aClass.className, bClass.className) then
                                     aClass.params.size == bClass.params.size &&
                                     Span.forallZip(aClass.variances, aClass.params, bClass.params) { (variance, aParam, bParam) =>
-                                        variance match
-                                            case Variance.Invariant =>
-                                                isSubType(aOwner, bOwner, aParam, bParam) &&
-                                                isSubType(bOwner, aOwner, bParam, aParam)
-                                            case Variance.Covariant =>
-                                                isSubType(aOwner, bOwner, aParam, bParam)
-                                            case Variance.Contravariant =>
-                                                isSubType(bOwner, aOwner, bParam, aParam)
+                                        conforms(variance, aOwner, bOwner, aParam, bParam)
                                     }
                                 else
                                     aClass.parents.exists { parentId =>
@@ -541,6 +550,45 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                                     }
                 end match
         end isSubType
+
+        /** Whether the argument `aId` fills a parameter of `variance` as `bId` does, with a wildcard on either side read as the set of
+          * types within its bounds: there is a type within `b`'s bounds that `a`'s argument conforms to under the variance, for every
+          * type within `a`'s bounds. The lower bound matters only where the parameter is invariant or contravariant, the upper only
+          * where it is invariant or covariant.
+          */
+        private def conforms(variance: Variance, aOwner: Type[?], bOwner: Type[?], aId: Entry.Id, bId: Entry.Id): Boolean =
+            if !aOwner.staticDB.contains(aId) then
+                val aType = aOwner.dynamicDB(aId).tpe
+                conforms(variance, aType, bOwner, aType.entryId, bId)
+            else if !bOwner.staticDB.contains(bId) then
+                val bType = bOwner.dynamicDB(bId).tpe
+                conforms(variance, aOwner, bType, aId, bType.entryId)
+            else
+                (aOwner.staticDB(aId), bOwner.staticDB(bId)) match
+                    case (BoundsEntry(aLower, aUpper), BoundsEntry(bLower, bUpper)) =>
+                        variance match
+                            case Variance.Invariant =>
+                                isSubType(bOwner, aOwner, bLower, aLower) && isSubType(aOwner, bOwner, aUpper, bUpper)
+                            case Variance.Covariant     => isSubType(aOwner, bOwner, aUpper, bUpper)
+                            case Variance.Contravariant => isSubType(bOwner, aOwner, bLower, aLower)
+                    case (BoundsEntry(aLower, aUpper), _) =>
+                        variance match
+                            case Variance.Invariant     => false
+                            case Variance.Covariant     => isSubType(aOwner, bOwner, aUpper, bId)
+                            case Variance.Contravariant => isSubType(bOwner, aOwner, bId, aLower)
+                    case (_, BoundsEntry(bLower, bUpper)) =>
+                        variance match
+                            case Variance.Invariant =>
+                                isSubType(bOwner, aOwner, bLower, aId) && isSubType(aOwner, bOwner, aId, bUpper)
+                            case Variance.Covariant     => isSubType(aOwner, bOwner, aId, bUpper)
+                            case Variance.Contravariant => isSubType(bOwner, aOwner, bLower, aId)
+                    case _ =>
+                        variance match
+                            case Variance.Invariant =>
+                                isSubType(aOwner, bOwner, aId, bId) && isSubType(bOwner, aOwner, bId, aId)
+                            case Variance.Covariant     => isSubType(aOwner, bOwner, aId, bId)
+                            case Variance.Contravariant => isSubType(bOwner, aOwner, bId, aId)
+        end conforms
 
         private def isSameString(a: String, b: String): Boolean = (a eq b) || (a.hashCode() == b.hashCode() && a.equals(b))
 
@@ -559,6 +607,12 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                     case NothingEntry => bEntry eq NothingEntry
                     case AnyEntry     => bEntry eq AnyEntry
                     case NullEntry    => bEntry eq NullEntry
+
+                    case BoundsEntry(aLower, aUpper) =>
+                        bEntry match
+                            case BoundsEntry(bLower, bUpper) =>
+                                isSameType(aOwner, bOwner, aLower, bLower) && isSameType(aOwner, bOwner, aUpper, bUpper)
+                            case _ => false
 
                     case IntersectionEntry(aSet) =>
                         bEntry match
@@ -610,6 +664,7 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                     case NullEntry    => "U"
 
                     case LiteralEntry(widened, value) => s"L:$widened:$value"
+                    case BoundsEntry(lower, upper)    => s"B:$lower:$upper"
                     case IntersectionEntry(set)       => s"I:${set.mkString(":")}"
                     case UnionEntry(set)              => s"U:${set.mkString(":")}"
 
@@ -667,6 +722,7 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                 case "N" :: Nil                     => NothingEntry
                 case "U" :: Nil                     => NullEntry
                 case "L" :: widened :: value :: Nil => LiteralEntry(widened, value)
+                case "B" :: lower :: upper :: Nil   => BoundsEntry(lower, upper)
                 case "I" :: set                     => IntersectionEntry(Span.from(set))
                 case "U" :: set                     => UnionEntry(Span.from(set))
 

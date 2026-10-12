@@ -427,6 +427,15 @@ private[kyo] object TagMacro:
                                 visit(body)
                             )
 
+                        // A wildcard type argument, Scala's `? >: L <: U` or Java's `<? extends T>`, surfaces
+                        // through `typeArgs` as a bare `TypeBounds`. It is not a proper type, so it must not
+                        // reach `asType`/`summon`/`<:<` (those crash the compiler), and its symbol is its
+                        // bound's, so it is matched before the class and opaque cases. The entry keeps both
+                        // bounds, so that an invariant parameter filled by a wildcard admits every argument
+                        // within them.
+                        case TypeBounds(low, high) =>
+                            BoundsEntry(visit(low), visit(high))
+
                         case tpe if tpe.typeSymbol.isClassDef =>
                             val symbol    = tpe.typeSymbol
                             val name      = symbol.fullName
@@ -494,15 +503,6 @@ private[kyo] object TagMacro:
                                         Span.from(args.map(visit))
                                     )
                             end match
-
-                        // A Java wildcard type argument (e.g. `Comparable<? extends T>`) surfaces
-                        // through `typeArgs` as a bare `TypeBounds`. It is not a proper type, so
-                        // it must not reach `asType`/`summon`/`<:<` (those crash the compiler).
-                        // Encode it as its upper bound: a deterministic, sound representative for
-                        // subtyping purposes, consistent with how the macro already collapses
-                        // type-lambda bounds (see the `TypeLambda` case above).
-                        case TypeBounds(_, high) =>
-                            loop(high.dealiasKeepOpaques.simplified.dealiasKeepOpaques)
 
                         case tpe =>
                             tpe.asType match

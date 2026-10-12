@@ -1724,6 +1724,85 @@ class TagTest extends kyo.test.Test[Any]:
         }
     }
 
+    "wildcard arguments" - {
+        class Box[A]
+        class Out[+A]
+        class In[-A]
+
+        "an invariant parameter admits every argument within the wildcard's bounds" in {
+            assert(Tag[Box[String]] <:< Tag[Box[?]])
+            assert(Tag[Box[Int]] <:< Tag[Box[?]])
+            assert(Tag[Box[String]] <:< Tag[Box[? <: AnyRef]])
+            assert(!(Tag[Box[Int]] <:< Tag[Box[? <: AnyRef]]))
+            assert(Tag[Box[Any]] <:< Tag[Box[? >: String]])
+            assert(Tag[Box[String]] <:< Tag[Box[? >: String]])
+            assert(!(Tag[Box[Int]] <:< Tag[Box[? >: String]]))
+            assert(Tag[Box[CharSequence]] <:< Tag[Box[? >: String <: AnyRef]])
+            assert(!(Tag[Box[Any]] <:< Tag[Box[? >: String <: AnyRef]]))
+        }
+        "a wildcard argument is not a specific one" in {
+            assert(!(Tag[Box[?]] <:< Tag[Box[String]]))
+            assert(!(Tag[Box[? <: AnyRef]] <:< Tag[Box[AnyRef]]))
+            assert(!(Tag[Box[?]] <:< Tag[Box[Any]]))
+            assert(!(Tag[Box[Any]] <:< Tag[Box[? <: AnyRef]]))
+        }
+        "a wildcard within another's bounds conforms to it" in {
+            assert(Tag[Box[? <: String]] <:< Tag[Box[? <: AnyRef]])
+            assert(!(Tag[Box[? <: AnyRef]] <:< Tag[Box[? <: String]]))
+            assert(Tag[Box[? >: AnyRef]] <:< Tag[Box[? >: String]])
+            assert(!(Tag[Box[? >: String]] <:< Tag[Box[? >: AnyRef]]))
+            assert(Tag[Box[?]] <:< Tag[Box[?]])
+        }
+        "a covariant parameter reads the upper bound" in {
+            assert(Tag[Out[String]] <:< Tag[Out[? <: AnyRef]])
+            assert(!(Tag[Out[Int]] <:< Tag[Out[? <: AnyRef]]))
+            assert(Tag[Out[String]] <:< Tag[Out[? >: Int]])
+            assert(Tag[Out[? <: String]] <:< Tag[Out[AnyRef]])
+            assert(!(Tag[Out[? <: AnyRef]] <:< Tag[Out[String]]))
+            assert(Tag[Out[? <: String]] <:< Tag[Out[? <: AnyRef]])
+        }
+        "a contravariant parameter reads the lower bound" in {
+            assert(Tag[In[Any]] <:< Tag[In[? >: String]])
+            assert(Tag[In[AnyRef]] <:< Tag[In[? >: String]])
+            assert(!(Tag[In[Int]] <:< Tag[In[? >: String]]))
+            assert(Tag[In[AnyRef]] <:< Tag[In[? <: String]])
+            assert(Tag[In[? >: AnyRef]] <:< Tag[In[String]])
+            assert(!(Tag[In[? >: String]] <:< Tag[In[AnyRef]]))
+            assert(Tag[In[? >: AnyRef]] <:< Tag[In[? >: String]])
+        }
+        "nested" in {
+            assert(Tag[List[Box[String]]] <:< Tag[List[Box[?]]])
+            assert(!(Tag[List[Box[?]]] <:< Tag[List[Box[String]]]))
+            assert(Tag[Box[Box[String]]] <:< Tag[Box[? <: Box[?]]])
+        }
+        "equality is by bounds" in {
+            assert(Tag[Box[?]] =:= Tag[Box[?]])
+            assert(Tag[Box[? <: AnyRef]] =:= Tag[Box[? <: AnyRef]])
+            assert(Tag[Box[?]] =!= Tag[Box[Any]])
+            assert(Tag[Box[?]] =!= Tag[Box[? <: AnyRef]])
+            assert(Tag[Box[? <: AnyRef]] =!= Tag[Box[AnyRef]])
+        }
+        "show" in {
+            val anyRef = Tag[AnyRef].show
+            val string = Tag[String].show
+            assert(Tag[Box[?]].show.endsWith("Box[?]"))
+            assert(Tag[Box[? <: AnyRef]].show.endsWith(s"Box[? <: $anyRef]"))
+            assert(Tag[Box[? >: String]].show.endsWith(s"Box[? >: $string]"))
+            assert(Tag[Box[? >: String <: AnyRef]].show.endsWith(s"Box[? >: $string <: $anyRef]"))
+        }
+        "an invariant argument holding a wildcard is not the same as one holding a type, as in Scala" in {
+            assert(!(Tag[Box[Box[String]]] <:< Tag[Box[Box[?]]]))
+            assert(Tag[Box[Box[String]]] <:< Tag[Box[? <: Box[?]]])
+        }
+        "a dynamic argument beside a wildcard" in {
+            def boxed[A: Tag]: Tag[Box[Box[A]]] = Tag[Box[Box[A]]]
+            assert(boxed[String] <:< Tag[Box[? <: Box[?]]])
+            assert(boxed[String] <:< Tag[Box[? <: Box[? <: AnyRef]]])
+            assert(!(boxed[Int] <:< Tag[Box[? <: Box[? <: AnyRef]]]))
+            assert(!(boxed[String] <:< Tag[Box[Box[?]]]))
+        }
+    }
+
     "show determinism" - {
 
         "intersection order is canonical" - {
