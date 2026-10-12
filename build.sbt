@@ -2428,7 +2428,7 @@ lazy val `kyo-whatsapp` =
         .crossType(CrossType.Full)
         .in(file("kyo-whatsapp"))
         .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-crypto`, `kyo-charset`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -3882,7 +3882,7 @@ lazy val `kyo-slack` =
         .crossType(CrossType.Full)
         .in(file("kyo-slack"))
         .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-charset`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -3906,7 +3906,7 @@ lazy val `kyo-email` =
         .in(file("kyo-email"))
         .dependsOn(`kyo-net` % "compile->compile;test->test", `kyo-schema`, `kyo-charset`, `kyo-mime`)
         .dependsOn(`kyo-schema-json` % "test->compile")
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -3955,7 +3955,7 @@ lazy val `kyo-telegram` =
         .crossType(CrossType.Full)
         .in(file("kyo-telegram"))
         .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-charset`, `kyo-crypto`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -3978,7 +3978,7 @@ lazy val `kyo-discord` =
         .crossType(CrossType.Full)
         .in(file("kyo-discord"))
         .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-crypto`, `kyo-mime`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -4014,7 +4014,7 @@ lazy val `kyo-teams` =
         .crossType(CrossType.Full)
         .in(file("kyo-teams"))
         .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-crypto`, `kyo-charset`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,

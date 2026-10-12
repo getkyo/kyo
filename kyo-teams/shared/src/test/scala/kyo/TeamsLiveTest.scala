@@ -7,8 +7,8 @@ import kyo.internal.charset.Utf8
   *   - Teams, when `TEAMS_APP_ID` is set, with `TEAMS_CLIENT_SECRET` and `TEAMS_REFERENCE` (a stored `Teams.ConversationReference` as
   *     its JSON, from a conversation the bot is installed in), and `TEAMS_TENANT_ID` for a single-tenant registration; a leaf is
   *     cancelled naming the first of the others that is missing. The leaves post to that conversation and delete what they posted.
-  *   - Otherwise, as in CI, the Agents Playground, Microsoft's local Bot Connector emulation ([[TeamsPlayground]]), in a container of the
-  *     leaf's own, with the token [[TeamsLocal]] issues. It runs wherever a container runtime does, and is cancelled on Windows.
+  *   - Otherwise, as in CI, the Agents Playground, Microsoft's local Bot Connector emulation ([[TeamsPlayground]]), one container the
+  *     leaves share, with the token [[TeamsLocal]] issues. It runs wherever a container runtime does, and is cancelled on Windows.
   *
   * A leaf whose behaviour the Playground does not reproduce asserts Teams', and is cancelled on the Playground naming the gap. The
   * inbound verification against the Bot Framework's real OpenID metadata and key set needs no credential but reaches the internet, so
@@ -65,8 +65,8 @@ class TeamsLiveTest extends kyo.test.Test[Any]:
             case Result.Panic(ex)                    => Abort.panic(ex)
         }
 
-    /** Runs `test` on a Playground of its own, with a config that logs in at [[TeamsLocal]] and may send its token to the Playground. A
-      * leaf that fails, is interrupted or times out prints the tail of the Playground's log before the container is removed.
+    /** Runs `test` on the shared Playground, with a config that logs in at [[TeamsLocal]] and may send its token to the Playground. A
+      * leaf that fails, is interrupted or times out prints the tail of the Playground's log.
       */
     private def withPlayground(test: (TeamsConfig, Teams.ConversationReference) => Unit < (Async & Abort[Any] & Scope))(using
         Frame
@@ -94,13 +94,13 @@ class TeamsLiveTest extends kyo.test.Test[Any]:
                 }
             }
 
-    /** Where an outbound leaf runs. A Teams conversation keeps what a leaf posts, so a Teams leaf deletes it; the Playground's is the
-      * leaf's own and goes with its container.
+    /** Where an outbound leaf runs. A Teams conversation keeps what a leaf posts, so a Teams leaf deletes it; the Playground answers
+      * every DELETE with 501, so what a leaf posts there stays, and the leaves only read back what they posted themselves.
       */
     private enum Target derives CanEqual:
         case OnTeams, OnPlayground
 
-    /** Runs `test` on Teams when `TEAMS_APP_ID` is set, and on a Playground of its own otherwise. `realOnly` is why the Playground
+    /** Runs `test` on Teams when `TEAMS_APP_ID` is set, and on the shared Playground otherwise. `realOnly` is why the Playground
       * cannot stand in for this leaf, which is then cancelled before a container starts.
       */
     private def withTarget(realOnly: Maybe[String] = Absent)(

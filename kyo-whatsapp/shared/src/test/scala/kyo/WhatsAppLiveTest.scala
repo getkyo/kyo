@@ -2,6 +2,7 @@ package kyo
 
 import kyo.crypto.Sha256
 import kyo.internal.Platform
+import kyo.internal.TestContainers
 
 /** The module against the Cloud API: Meta's when `KYO_WHATSAPP_TOKEN` is set, a [[WhatsAppLiveServer]] (whaloc, an emulator of Graph
   * v25.0, MIT-licensed and run, never distributed) otherwise.
@@ -9,8 +10,8 @@ import kyo.internal.Platform
   * On Meta every leaf needs `KYO_WHATSAPP_TOKEN`, the app's access token, `KYO_WHATSAPP_PHONE_NUMBER_ID`, the test number's Phone Number
   * ID, and `KYO_WHATSAPP_RECIPIENT`, the wa_id (E.164 digits, no `+`) of a number added as a recipient on the app's API Setup page. They
   * are read through `kyo.System.env`, the names `demo.WhatsAppDemo` reads, and a leaf is cancelled with a message naming the first one
-  * missing. On the container, every leaf starts a server of its own, which approves the `hello_world` template every Meta test number
-  * has, and talks to one person, [[WhatsAppLiveTest.Person]].
+  * missing. On the container, the leaves share a server, one for the leaves that receive webhooks and one for the rest, which approves
+  * the `hello_world` template every Meta test number has, and talks to one person, [[WhatsAppLiveTest.Person]].
   *
   * Only a template reaches a person outside the 24-hour window that their own message to the test number opens. Meta accepts every other
   * send outside it and reports the message failed later, so the send leaves pass either way; the person sees them only inside the window.
@@ -89,8 +90,8 @@ class WhatsAppLiveTest extends BaseWhatsAppTest:
                     case Absent          => emulator(Absent).map(Target.Emulator(_))
         }
 
-    /** A container posting webhooks to the host's `webhook` port and path when given. A leaf that ends in error prints the container's
-      * log before it is removed.
+    /** The container posting webhooks to the host's `webhook` port and path when given. A leaf that ends in error prints the container's
+      * log.
       */
     private def emulator(webhook: Maybe[(Int, String)])(using Frame): WhatsAppLiveServer < (Async & Scope & Abort[Setup]) =
         if Platform.isWindows then cancel("whaloc does not run on Windows: its container daemon cannot serve the Linux image")
@@ -100,7 +101,7 @@ class WhatsAppLiveTest extends BaseWhatsAppTest:
                     case Present(error) =>
                         server.postMortem.map(log => Console.printLineErr(s"the leaf ended with $error; whaloc log:\n$log"))
                     case Absent => Kyo.unit
-                }.andThen(server.approvedTemplate("hello_world", "en_US", "Hello World")).andThen(server)
+                }.andThen(server)
             }
 
     /** Runs `v` with a client on the target. */
@@ -255,9 +256,10 @@ class WhatsAppLiveTest extends BaseWhatsAppTest:
     private case class Live(target: Target, notifications: Channel[WhatsAppNotification])
 
     /** Runs `v` with the webhook served and every notification handed to `Live.notifications`. On Meta the webhook is served on
-      * `KYO_WHATSAPP_WEBHOOK_PORT` behind the person's tunnel. On the container it binds first, since whaloc reads its webhook URL once
-      * at boot, and on every interface: under rootless podman `host.containers.internal` is the host's own address, which a loopback-only
-      * server does not answer.
+      * `KYO_WHATSAPP_WEBHOOK_PORT` behind the person's tunnel. On the container it is served on [[webhookPort]], and on every interface:
+      * under rootless podman `host.containers.internal` is the host's own address, which a loopback-only server does not answer. A status
+      * an earlier leaf's message produced late reaches the leaf that holds the port then, which skips it, since every leaf picks what it
+      * waits for by message id.
       */
     private def interactive[R](v: Live => R < (Async & Abort[WhatsAppException | Closed | Setup] & Env[WhatsApp] & Scope))(using
         Frame
@@ -285,8 +287,12 @@ class WhatsAppLiveTest extends BaseWhatsAppTest:
             case Absent =>
                 // The handler only records what arrives, so the client it hands the callback calls nothing.
                 val placeholder = configOf("unused", WhatsAppId.PhoneNumberId("0"), url("http://127.0.0.1"))
-                served(placeholder, webhookConfigOf(WhatsAppLiveServer.AppSecret, WhatsAppLiveServer.VerifyToken, Path), Wildcard) {
-                    server =>
+                webhookPort.map { port =>
+                    served(
+                        placeholder,
+                        webhookConfigOf(WhatsAppLiveServer.AppSecret, WhatsAppLiveServer.VerifyToken, Path),
+                        Wildcard.port(port)
+                    ) { server =>
                         // A container whose host alias resolves can still fail to connect to it, as under a daemon that itself runs in a
                         // container; the handshake proves the callback path before a leaf waits on a webhook that cannot arrive.
                         emulator(Present((server.port, Path))).map { emulator =>
@@ -298,8 +304,27 @@ class WhatsAppLiveTest extends BaseWhatsAppTest:
                                 else Target.Emulator(emulator)
                             }
                         }
-                }(v)
+                    }(v)
+                }
         }
+
+    /** The host port the container target's webhook is served on, chosen once per process. whaloc reads its webhook URL once at boot,
+      * so the leaves sharing a container serve it on the same port, each binding it for its own extent: a server outliving the leaves
+      * would be a socket open at the end of the run. Chosen below every platform's ephemeral range (Linux's starts at 32768), so an
+      * outbound connection's local port cannot take it between two leaves.
+      */
+    private def webhookPort(using Frame): Int < (Async & Abort[HttpBindException | HttpRouteException]) =
+        def attempt(remaining: Int): Int < (Async & Abort[HttpBindException | HttpRouteException]) =
+            Random.nextInt(12000).map { offset =>
+                Abort.run[HttpBindException](Scope.run(HttpServer.init(20000 + offset, "0.0.0.0")().map(_.port))).map {
+                    case Result.Success(port)               => port
+                    case Result.Failure(_) if remaining > 1 => attempt(remaining - 1)
+                    case Result.Failure(taken)              => Abort.fail(taken)
+                    case Result.Panic(e)                    => Abort.panic(e)
+                }
+            }
+        TestContainers.getOrInit(webhookPorts, "webhook")(attempt(10))
+    end webhookPort
 
     /** Serves the webhook on `server` with a handler on `handlerClient`, then starts the leaf's target with `start` and runs `v` on a
       * client of that target.
@@ -474,6 +499,8 @@ object WhatsAppLiveTest:
     private val Path = "webhook"
 
     private val Wildcard = HttpServerConfig.default.port(0).host("0.0.0.0")
+
+    private val webhookPorts = TestContainers.memo[Int, HttpBindException | HttpRouteException]
 
     final case class PhoneNumber(id: String) derives CanEqual, Schema
 

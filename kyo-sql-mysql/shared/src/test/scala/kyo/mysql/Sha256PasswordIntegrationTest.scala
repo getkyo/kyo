@@ -31,7 +31,7 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
 
     // ─── Container + user-switch helper ─────────────────────────────────────
 
-    /** Starts a fresh MySQL container, switches the "test" user to sha256_password via root, and runs `f` with connection details.
+    /** Runs `f` with connection details for a MySQL server whose "test" user root has switched to sha256_password.
       *
       * `serverArgs` reaches `mysqld`'s command line, which is the only way to move the server's default authentication plugin: the plugin named
       * in `HandshakeV10` is the server's default, not the account's, so an `ALTER USER` alone never changes which branch the client's initial
@@ -43,11 +43,13 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
     )(
         f: (String, Int, String, String, String) => A < (S & Async & Abort[SqlException] & Scope)
     )(using Frame): A < (S & Async & Abort[Throwable] & Scope) =
-        // Through `TestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
-        // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-        // process leaves something the reaper can find.
+        // Leaves on the default server args share a server of their own: each switches `test` to sha256_password, which is
+        // idempotent here and would break every caching_sha2 leaf on the module's default server. Other args need their own.
         val predef = ContainerPredef.MySQL.Config.default.serverArgs(serverArgs)
-        TestContainers.initScopedMysql(predef, "mysql-sha256-password").map { mysql =>
+        val server =
+            if serverArgs.isEmpty then TestContainers.initSharedMysql(predef, "mysql-sha256-password")
+            else TestContainers.initScopedMysql(predef, "mysql-sha256-password")
+        server.map { mysql =>
             mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                 val host = mysql.container.host
                 val user = mysql.username
@@ -82,7 +84,7 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
 
     // ─── Leaf 1: non-TLS → RSA-OAEP path ────────────────────────────────────
 
-    "MySQL user configured with sha256_password authenticates via RSA-OAEP (non-TLS)".tagged(OwnContainer.name) in {
+    "MySQL user configured with sha256_password authenticates via RSA-OAEP (non-TLS)" in {
         Scope.run {
             withSha256User(Maybe.Absent) { (host, port, user, pass, db) =>
                 // Connect without TLS: HandshakeExchange sends empty auth → receives PEM key → XOR+RSA-OAEP encrypts → server decrypts.
@@ -101,7 +103,7 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
 
     // ─── Leaf 2: TLS path skips RSA encryption ───────────────────────────────
 
-    "TLS path skips RSA encryption for sha256_password (cleartext NUL-terminated)".tagged(OwnContainer.name) in {
+    "TLS path skips RSA encryption for sha256_password (cleartext NUL-terminated)" in {
         Scope.run {
             withSha256User(Maybe.Present(NetTlsConfig(trustAll = true))) { (host, port, user, pass, db) =>
                 // Connect with TLS (trustAll): sends cleartext NUL-terminated password in HandshakeResponse41, no RSA involved.

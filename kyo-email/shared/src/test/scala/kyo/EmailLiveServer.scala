@@ -1,10 +1,11 @@
 package kyo
 
+import kyo.internal.TestContainers
 import kyo.net.TlsTestCertShared
 
-/** A docker-mailserver container for one leaf: Postfix for submission and delivery, Dovecot for IMAP, so a message submitted over SMTP is
-  * delivered by real server software and read back over IMAP. It is removed when the leaf's `Scope` closes, with the directory its
-  * configuration was staged in.
+/** A docker-mailserver container: Postfix for submission and delivery, Dovecot for IMAP, so a message submitted over SMTP is delivered by
+  * real server software and read back over IMAP. One per [[EmailLiveServer.Kind]] per test process, shared by the leaves, each of which
+  * gets accounts of its own (a [[tenant]]).
   *
   * The image writes into its configuration directory while it starts, so the staged files are bound read-only at `/kyo-email` and copied
   * into place before supervisord starts. Every server refuses an unknown recipient at `RCPT` (the image's submission services accept it
@@ -27,9 +28,21 @@ import kyo.net.TlsTestCertShared
   * (`scripts/fixture-images.sh`), [[EmailLiveServer.init]] fails with the command that pulls it rather than pulling where it is missing, and every service of the image
   * that would call out is off.
   */
-final case class EmailLiveServer(container: Container, ports: EmailLiveServer.Ports, certificate: Path, key: Path, password: String):
+final case class EmailLiveServer(
+    container: Container,
+    ports: EmailLiveServer.Ports,
+    certificate: Path,
+    key: Path,
+    password: String,
+    tenant: Int
+):
 
     import EmailLiveServer.*
+
+    /** The login of `user` among the accounts of this leaf's [[tenant]]. */
+    def login(user: User): String = s"${user.name}-$tenant@example.com"
+
+    def address(user: User)(using Frame): Email.Address = Email.Address(login(user))
 
     def clientCertificate: Email.Tls.ClientCertificate = Email.Tls.ClientCertificate(certificate, key)
 
@@ -51,7 +64,7 @@ final case class EmailLiveServer(container: Container, ports: EmailLiveServer.Po
             case _: Email.Tls.StartTls => ports.imap
         EmailLiterals.valid(EmailImapConfig.init(
             Host,
-            EmailLiterals.passwordAccountOf(user.login, EmailLiterals.passwordOf(password)),
+            EmailLiterals.passwordAccountOf(login(user), EmailLiterals.passwordOf(password)),
             tls,
             Present(port)
         ))
@@ -63,17 +76,17 @@ final case class EmailLiveServer(container: Container, ports: EmailLiveServer.Po
             case _: Email.Tls.StartTls => ports.submission
         EmailLiterals.valid(EmailSmtpConfig.init(
             Host,
-            EmailLiterals.passwordAccountOf(user.login, EmailLiterals.passwordOf(password)),
+            EmailLiterals.passwordAccountOf(login(user), EmailLiterals.passwordOf(password)),
             tls,
             Present(port)
         ))
     end smtp
 
-    def account(user: User)(using Frame): EmailLiveAccount = EmailLiveAccount(user.address, imap(user), smtp(user))
+    def account(user: User)(using Frame): EmailLiveAccount = EmailLiveAccount(address(user), imap(user), smtp(user))
 
     /** A JWT for `user` of the given kind, minted in the container. */
     def token(user: User, kind: Token)(using Frame): Email.OAuthToken < (Async & Abort[ContainerException]) =
-        run("sh", Staged + "/" + MintToken, user.login, kind.toString).map(minted => EmailLiterals.tokenOf(minted.trim))
+        run("sh", Staged + "/" + MintToken, login(user), kind.toString).map(minted => EmailLiterals.tokenOf(minted.trim))
 
     /** Runs Dovecot's admin tool in the container and answers its output. */
     def doveadm(args: String*)(using Frame): String < (Async & Abort[ContainerException]) = run(("doveadm" +: args)*)
@@ -112,43 +125,66 @@ object EmailLiveServer:
     enum Token derives CanEqual:
         case Valid, Foreign, Expired
 
-    /** The accounts every server holds, each with the userdb fields that shape its IMAP capabilities. */
+    /** The accounts every tenant holds, each with the userdb fields that shape its IMAP capabilities. */
     enum User(val name: String, val userdb: String) derives CanEqual:
         case Test   extends User("test", "")
         case Other  extends User("other", "")
         case NoMove extends User("nomove", "userdb_imap_capability/MOVE=no")
         case Bare   extends User("bare", "userdb_imap_capability/MOVE=no userdb_imap_capability/UIDPLUS=no")
-
-        def login: String = s"$name@example.com"
-
-        def address(using Frame): Email.Address = Email.Address(login)
     end User
 
     /** The host ports the container's IMAP (143, 993) and submission (587, 465) ports are published on. */
     final case class Ports(imap: Int, imaps: Int, submission: Int, submissions: Int)
 
-    def init(kind: Kind = Kind.Standard)(using
-        Frame
-    ): EmailLiveServer < (Async & Scope & Abort[ContainerException | FileSystemException]) =
-        pulled.andThen(Random.nextStringAlphanumeric(24)).map { password =>
-            Path.run {
-                Path.tempDir("kyo-email-server").map { directory =>
-                    Kyo.foreachDiscard(files(kind, password))((name, content) => (directory / name).write(content)).andThen(directory)
-                }
-            }.map { directory =>
-                Container.init(containerConfig(directory)).map { container =>
-                    for
-                        imap        <- container.mappedPort(143)
-                        imaps       <- container.mappedPort(993)
-                        submission  <- container.mappedPort(587)
-                        submissions <- container.mappedPort(465)
-                    yield EmailLiveServer(
-                        container,
-                        Ports(imap, imaps, submission, submissions),
-                        directory / "cert.pem",
-                        directory / "key.pem",
-                        password
+    /** How many leaves one server can serve. The accounts are written before the server starts, which reads them once, so each server
+      * holds a set of [[User]] accounts per tenant and hands each leaf the next unused set: a leaf's mailboxes are empty when it starts,
+      * whatever earlier leaves did with theirs.
+      */
+    val Tenants: Int = 64
+
+    type Failure = ContainerException | FileSystemException
+
+    final private case class Shared(server: EmailLiveServer, tenants: AtomicInt)
+
+    private val servers = TestContainers.memo[Shared, Failure]
+
+    /** The process's server of `kind`, started on first use, with the accounts of a tenant no other leaf has had. */
+    def init(kind: Kind = Kind.Standard)(using Frame): EmailLiveServer < (Async & Abort[Failure]) =
+        TestContainers.getOrInit(servers, kind.toString)(start(kind)).map { shared =>
+            shared.tenants.incrementAndGet.map { tenant =>
+                if tenant > Tenants then
+                    Abort.panic(
+                        new IllegalStateException(s"the $kind server's $Tenants tenants are all taken; raise EmailLiveServer.Tenants")
                     )
+                else shared.server.copy(tenant = tenant)
+            }
+        }
+
+    private def start(kind: Kind)(using Frame): Shared < (Async & Abort[Failure]) =
+        pulled.andThen(Random.nextStringAlphanumeric(24)).map { password =>
+            // Unscoped: the directory is bind-mounted into a server that outlives the leaf that started it, and the clients read the
+            // certificate in it at every connect.
+            Path.tempDirUnscoped(prefix = "kyo-email-server").map { directory =>
+                Path.run(Kyo.foreachDiscard(files(kind, password))((name, content) => (directory / name).write(content))).andThen {
+                    TestContainers.initShared(containerConfig(directory), s"mail-$kind").map { container =>
+                        for
+                            imap        <- container.mappedPort(143)
+                            imaps       <- container.mappedPort(993)
+                            submission  <- container.mappedPort(587)
+                            submissions <- container.mappedPort(465)
+                            tenants     <- AtomicInt.init(0)
+                        yield Shared(
+                            EmailLiveServer(
+                                container,
+                                Ports(imap, imaps, submission, submissions),
+                                directory / "cert.pem",
+                                directory / "key.pem",
+                                password,
+                                tenant = 0
+                            ),
+                            tenants
+                        )
+                    }
                 }
             }
         }
@@ -166,7 +202,10 @@ object EmailLiveServer:
     private def files(kind: Kind, password: String): Chunk[(String, String)] =
         val strict   = kind == Kind.Strict
         val accounts =
-            User.values.map(user => s"${user.login}|{PLAIN}$password" + (if user.userdb.isEmpty then "" else s"|${user.userdb}"))
+            for
+                tenant <- 1 to Tenants
+                user   <- User.values
+            yield s"${user.name}-$tenant@example.com|{PLAIN}$password" + (if user.userdb.isEmpty then "" else s"|${user.userdb}")
         val postfixMain =
             // The reverse lookup of each client would send a DNS query out of the container.
             Chunk("smtputf8_enable = yes", s"message_size_limit = ${SizeLimit.toBytes}", "smtpd_peername_lookup = no") ++
@@ -185,6 +224,10 @@ object EmailLiveServer:
             }
         // Without it Dovecot's LMTP does not offer SMTPUTF8, and Postfix bounces every message submitted with it.
         val dovecot = Chunk("protocol lmtp {", "  mail_utf8_extensions = yes", "}") ++
+            // Off: Dovecot delays each failed login from an address longer than the last, and past four Postfix gives up on the delay
+            // with a 454. Every leaf reaches the shared server from one address, so the refusals of earlier leaves would delay or
+            // replace the refusal a later leaf asserts. Each failure keeps the fixed auth_failure_delay.
+            Chunk("service anvil {", "  unix_listener anvil-auth-penalty {", "    mode = 0", "  }", "}") ++
             Chunk(
                 "auth_mechanisms = plain login xoauth2",
                 "passdb oauth2 {",

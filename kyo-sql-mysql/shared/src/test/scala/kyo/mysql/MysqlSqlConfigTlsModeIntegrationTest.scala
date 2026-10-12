@@ -53,23 +53,24 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
 
     import MysqlSqlConfigTlsModeIntegrationTest.*
 
-    // ── Leaf 1: sslmode=allow connects plaintext when server permits plaintext ─
-    // Uses a per-leaf MySQL container started with --skip-ssl --default-authentication-plugin=mysql_native_password
-    // (no CLIENT_SSL capability). allow mode: try plaintext first → server accepts → stay plaintext. No reconnect.
+    // --skip-ssl disables server-side TLS so the server does not advertise CLIENT_SSL.
+    // --default-authentication-plugin=mysql_native_password is required alongside --skip-ssl so
+    // that the 'test' user can authenticate over plaintext; caching_sha2_password (8.0 default)
+    // does not complete its fast-auth path without TLS or RSA key exchange.
+    private def skipSslServer(using Frame): ContainerPredef.MySQL < (Async & Abort[ContainerException]) =
+        TestContainers.initSharedMysql(
+            ContainerPredef.MySQL.Config.default.appendServerArgs("--skip-ssl", "--default-authentication-plugin=mysql_native_password"),
+            "mysql-skip-ssl"
+        )
 
-    "sslmode=allow connects plaintext when server permits plaintext".tagged(OwnContainer.name) in {
+    // ── Leaf 1: sslmode=allow connects plaintext when server permits plaintext ─
+    // Uses the process's MySQL server started with --skip-ssl --default-authentication-plugin=mysql_native_password
+    // (no CLIENT_SSL capability), shared with leaf 4: both only connect and read their own session.
+    // allow mode: try plaintext first → server accepts → stay plaintext. No reconnect.
+
+    "sslmode=allow connects plaintext when server permits plaintext" in {
         Scope.run {
-            // --skip-ssl disables server-side TLS so the server does not advertise CLIENT_SSL.
-            // --default-authentication-plugin=mysql_native_password is required alongside --skip-ssl so
-            // that the 'test' user can authenticate over plaintext; caching_sha2_password (8.0 default)
-            // does not complete its fast-auth path without TLS or RSA key exchange.
-            val skipSslPredef = ContainerPredef.MySQL.Config.default
-                .appendServerArgs("--skip-ssl", "--default-authentication-plugin=mysql_native_password")
-            val skipSslConfig = ContainerPredef.MySQL.buildContainerConfig(skipSslPredef)
-            // Through `TestContainers` rather than `Container.init` directly, so the container carries the
-            // `kyo-test-container` and `kyo-test-owner-pid` labels and a force-killed run's leftover is still reapable.
-            TestContainers.initScoped(skipSslConfig, "mysql-skip-ssl").flatMap { skipSslContainer =>
-                val mysql = new ContainerPredef.MySQL(skipSslContainer, skipSslPredef)
+            skipSslServer.flatMap { mysql =>
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=allow"
                     MysqlClient.init(url).flatMap { client =>
@@ -185,21 +186,12 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     }
 
     // ── Leaf 4: sslmode=prefer falls back to plaintext when server refuses TLS ─
-    // Uses a per-leaf MySQL container started with --skip-ssl --default-authentication-plugin=mysql_native_password
-    // (no CLIENT_SSL capability). prefer mode: HandshakeExchange sees no CLIENT_SSL → preferFallback=true → plaintext fallback.
+    // Uses the skip-ssl server leaf 1 shares (no CLIENT_SSL capability).
+    // prefer mode: HandshakeExchange sees no CLIENT_SSL → preferFallback=true → plaintext fallback.
 
-    "sslmode=prefer falls back to plaintext when server refuses TLS".tagged(OwnContainer.name) in {
+    "sslmode=prefer falls back to plaintext when server refuses TLS" in {
         Scope.run {
-            // --skip-ssl disables server-side TLS so the server does not advertise CLIENT_SSL.
-            // --default-authentication-plugin=mysql_native_password is required alongside --skip-ssl so
-            // that the 'test' user can authenticate over plaintext; caching_sha2_password (8.0 default)
-            // does not complete its fast-auth path without TLS or RSA key exchange.
-            val skipSslPredef2 = ContainerPredef.MySQL.Config.default
-                .appendServerArgs("--skip-ssl", "--default-authentication-plugin=mysql_native_password")
-            val skipSslConfig2 = ContainerPredef.MySQL.buildContainerConfig(skipSslPredef2)
-            // Labelled for the same reason as leaf 1: an unlabelled container is unreapable after a force-kill.
-            TestContainers.initScoped(skipSslConfig2, "mysql-skip-ssl").flatMap { skipSslContainer2 =>
-                val mysql = new ContainerPredef.MySQL(skipSslContainer2, skipSslPredef2)
+            skipSslServer.flatMap { mysql =>
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=prefer"
                     MysqlClient.init(url).flatMap { client =>

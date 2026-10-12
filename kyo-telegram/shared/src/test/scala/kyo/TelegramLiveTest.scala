@@ -11,7 +11,7 @@ import scala.reflect.TypeTest
   * Start in it. `TELEGRAM_CHAT_ID` names it. Without it, and with `TELEGRAM_INTERACTIVE` set, the suite finds the chat through
   * `Telegram.receive`: the first such leaf waits for a message a person sends the bot, and every later leaf uses that message's chat.
   * Without either variable, those leaves are cancelled with a message naming what is missing; the leaves that need no chat still run.
-  * On the container, every leaf starts a server of its own, with the chat of its one person.
+  * On the container, the leaves share one server, with the chat of its one person.
   *
   * The suite deletes every message it sends, and the person's messages it asked for. The leaves after the `Interactive` separator each
   * send the person an instruction and wait through `Telegram.receive` for the update it produces: on the real Bot API a person acts,
@@ -51,7 +51,7 @@ class TelegramLiveTest extends kyo.test.Test[Any]:
         if digits.nonEmpty && digits.length <= 18 && digits.forall(c => c >= '0' && c <= '9') then Present(text.toLong) else Absent
 
     /** The Bot API a leaf runs against. `realOnly` is why the emulator cannot stand in for this leaf, which is then cancelled before a
-      * container starts. A leaf that ends in error prints the container's log before it is removed.
+      * container starts. A leaf that ends in error prints the container's log.
       */
     private def target(realOnly: Maybe[String])(using
         Frame
@@ -115,11 +115,13 @@ class TelegramLiveTest extends kyo.test.Test[Any]:
                 }
         }
 
-    /** On the real Bot API, an interactive leaf waits for a person, so it runs only when one is there. */
-    private def interactive(l: Live)(using Frame): Unit < Sync =
+    /** On the real Bot API, an interactive leaf waits for a person, so it runs only when one is there. On the shared emulator it starts
+      * from an empty queue.
+      */
+    private def interactive(l: Live)(using Frame): Unit < (Async & Abort[HttpException | DecodeException]) =
         l.target match
-            case Target.Emulator(_) => ()
-            case Target.Real(_)     =>
+            case Target.Emulator(server) => server.drain
+            case Target.Real(_)          =>
                 System.env[String]("TELEGRAM_INTERACTIVE").map {
                     case Present(_) => ()
                     case Absent     => cancel("TELEGRAM_INTERACTIVE not set: this leaf waits for a person to write to the bot")

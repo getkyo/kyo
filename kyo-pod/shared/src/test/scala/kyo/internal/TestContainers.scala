@@ -327,6 +327,33 @@ private[kyo] object TestContainers:
     ): ContainerPredef.Postgres < (Async & Abort[ContainerException] & Scope) =
         initScoped(ContainerPredef.Postgres.buildContainerConfig(cfg), tag).map(c => new ContainerPredef.Postgres(c, cfg))
 
+    /** One container per `tag` and config per process, shared by every leaf that asks for it, for fixtures whose leaves isolate
+      * themselves inside the server (a database, a role or a table of their own) rather than by owning it.
+      *
+      * Unlike [[initSingleton]] it never adopts a container from another process and is never adopted by one: its leaves create
+      * server-wide objects (roles, accounts) that two processes running the same suite against one server would collide on. It is
+      * created unscoped and labelled like a singleton, so it outlives the leaf that first asked for it and is reaped once this process
+      * is gone.
+      */
+    def initShared(cfg: Container.Config, tag: String)(using Frame): Container < (Async & Abort[ContainerException]) =
+        getOrInit(containers, s"shared:$tag:${fixtureFingerprint(cfg)}") {
+            // Adoption matches the tag label exactly, so a prefix no singleton tag carries keeps another process's
+            // `initSingleton` from attaching to this container; the reaper sweeps by label key and still finds it.
+            reapOrphans.andThen(Container.initUnscoped(labelled(cfg, s"shared-$tag")))
+        }
+
+    /** [[initShared]] for a [[ContainerPredef.Postgres]] fixture. */
+    def initSharedPostgres(cfg: ContainerPredef.Postgres.Config, tag: String)(using
+        Frame
+    ): ContainerPredef.Postgres < (Async & Abort[ContainerException]) =
+        initShared(ContainerPredef.Postgres.buildContainerConfig(cfg), tag).map(c => new ContainerPredef.Postgres(c, cfg))
+
+    /** [[initShared]] for a [[ContainerPredef.MySQL]] fixture. */
+    def initSharedMysql(cfg: ContainerPredef.MySQL.Config, tag: String)(using
+        Frame
+    ): ContainerPredef.MySQL < (Async & Abort[ContainerException]) =
+        initShared(ContainerPredef.MySQL.buildContainerConfig(cfg), tag).map(c => new ContainerPredef.MySQL(c, cfg))
+
     private[kyo] def labelled(cfg: Container.Config, tag: String): Container.Config =
         cfg.label(tagLabelKey, tag)
             .label(ownerLabelKey, TestProcessId.pid.toString)
@@ -379,9 +406,16 @@ private[kyo] object TestContainers:
       */
     // Unsafe: module-load AtomicRef init (no live Frame yet). Uses Unsafe.init().safe to construct the wrapper
     // without a Frame implicit; subsequent accesses use the safe AtomicRef API so the Promises inside are filled safely.
-    private[kyo] val containers: AtomicRef[Map[String, Promise[Container, Abort[ContainerException]]]] =
+    private[kyo] val containers: AtomicRef[Map[String, Promise[Container, Abort[ContainerException]]]] = memo
+
+    /** A fresh per-process table for [[getOrInit]], for a fixture whose value is more than a container (a server plus the certificate or
+      * accounts it was set up with) or whose setup fails in more ways than a container start.
+      */
+    // Unsafe: held in an object's field, initialised at class load where no Frame is live; every access after that goes through the
+    // safe AtomicRef API.
+    private[kyo] def memo[A, E]: AtomicRef[Map[String, Promise[A, Abort[E]]]] =
         import AllowUnsafe.embrace.danger
-        AtomicRef.Unsafe.init[Map[String, Promise[Container, Abort[ContainerException]]]](Map.empty).safe
+        AtomicRef.Unsafe.init[Map[String, Promise[A, Abort[E]]]](Map.empty).safe
 
     /** Returns the singleton resource for `id`, creating it once via `create` and sharing it across every later caller for that id.
       *
@@ -390,15 +424,15 @@ private[kyo] object TestContainers:
       * over the resource so a container fixture passes [[initSingleton]] as `create` with [[containers]] as `ref`, while a mechanism test can
       * pass an observable stub, both exercising this same CAS/promise machinery.
       */
-    private[kyo] def getOrInit[A](
-        ref: AtomicRef[Map[String, Promise[A, Abort[ContainerException]]]],
+    private[kyo] def getOrInit[A, E](
+        ref: AtomicRef[Map[String, Promise[A, Abort[E]]]],
         id: String
-    )(create: => A < (Async & Abort[ContainerException]))(using Frame): A < (Async & Abort[ContainerException]) =
+    )(create: => A < (Async & Abort[E]))(using Frame, ConcreteTag[E]): A < (Async & Abort[E]) =
         ref.use { current =>
             Maybe.fromOption(current.get(id)) match
                 case Present(p) => p.get
                 case Absent     =>
-                    Promise.init[A, Abort[ContainerException]].flatMap { p =>
+                    Promise.init[A, Abort[E]].flatMap { p =>
                         ref.compareAndSet(current, current.updated(id, p)).flatMap {
                             case false =>
                                 // Lost the race; await whoever won, or retry if the winner already reset its slot on failure.
@@ -412,7 +446,7 @@ private[kyo] object TestContainers:
                                     fiber.getResult.flatMap {
                                         case Result.Success(resource) =>
                                             p.completeDiscard(Result.succeed(resource)).andThen(resource)
-                                        case Result.Failure(e: ContainerException) =>
+                                        case Result.Failure(e) =>
                                             // Remove this id's slot first so the next caller retries instead of seeing a poisoned Promise.
                                             ref.updateAndGet(_ - id).andThen(p.completeDiscard(Result.fail(e))).andThen(p.get)
                                         case Result.Panic(t) =>

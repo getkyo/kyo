@@ -2,8 +2,8 @@ package kyo
 
 import kyo.internal.Platform
 
-/** The live suites: leaves against real mail servers, on the real clock. Each leaf starts an [[EmailLiveServer]] of its own, so a leaf that
-  * disconnects sessions or recreates mailboxes cannot disturb another.
+/** The live suites: leaves against real mail servers, on the real clock. The leaves share an [[EmailLiveServer]] per kind, each on accounts
+  * of its own, so a leaf that disconnects sessions or recreates mailboxes cannot disturb another.
   */
 abstract class EmailLiveSuite extends kyo.test.Test[Any]:
 
@@ -18,8 +18,8 @@ abstract class EmailLiveSuite extends kyo.test.Test[Any]:
             Sync.defer(cancel("the live suites do not run on Windows: its container daemon cannot serve the Linux mail server image"))
         else HttpClient.init().flatMap(client => HttpClient.let(client)(body))
 
-    /** Runs `leaf` on a server of its own. A leaf that fails, is interrupted or times out prints the tail of the server's log before the
-      * container is removed: a message the server bounced or refused shows in the leaf only as a wait that never ends.
+    /** Runs `leaf` on the shared server of `kind`, with accounts of its own. A leaf that fails, is interrupted or times out prints the
+      * tail of the server's log: a message the server bounced or refused shows in the leaf only as a wait that never ends.
       */
     protected def server[A](kind: EmailLiveServer.Kind = EmailLiveServer.Kind.Standard)(
         leaf: EmailLiveServer => A < (Async & Abort[Throwable] & Scope)
