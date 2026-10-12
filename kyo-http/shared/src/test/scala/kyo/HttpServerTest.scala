@@ -1096,6 +1096,35 @@ class HttpServerTest extends BaseHttpTest:
                 }.andThen(assert(called))
             }
         }
+
+        "a chunked request body with malformed framing fails the handler's stream with HttpMalformedBodyException" in {
+            val bytes =
+                "POST /upload HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\nzz\r\nworld\r\n0\r\n\r\n"
+            Promise.init[(String, Result[HttpException, Unit]), Any].map { outcome =>
+                val ep = HttpRoute.postRaw("upload").request(_.bodyStream).response(_.bodyText).handler { req =>
+                    AtomicRef.init("").map { seen =>
+                        Abort.run[HttpException](req.fields.body.foreach(span =>
+                            seen.updateAndGet(_ + new String(span.toArrayUnsafe, "UTF-8"))
+                        ))
+                            .map(result => seen.get.map(text => outcome.completeDiscard(Result.succeed((text, result)))))
+                            .andThen(HttpResponse.ok("done"))
+                    }
+                }
+                withServer(ep) { url =>
+                    Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(url.host, url.port).safe.get).map { conn =>
+                        Scope.ensure(
+                            Sync.Unsafe.defer(conn.close())
+                        ).andThen(conn.outbound.safe.put(Span.fromUnsafe(bytes.getBytes("UTF-8"))))
+                            .andThen(outcome.get).map { (text, result) =>
+                                assert(text == "hello")
+                                result match
+                                    case Result.Failure(_: HttpMalformedBodyException) => ()
+                                    case other => fail(s"Expected HttpMalformedBodyException, got $other")
+                            }
+                    }
+                }
+            }
+        }
     }
 
     "handler errors" - {

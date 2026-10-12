@@ -606,6 +606,37 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
+        // The bare channels arm no close watcher, so the handler is not interrupted by the close and observes how its stream ends.
+        "inbound channel closed mid-way through a streamed chunked body fails the handler's stream with HttpConnectionClosedException" in {
+            Promise.init[(String, Result[HttpException, Unit]), Any].map { outcome =>
+                Latch.init(1).map { firstChunk =>
+                    val route   = HttpRoute.postRaw("upload").request(_.bodyStream).response(_.bodyText)
+                    val handler = route.handler { req =>
+                        AtomicRef.init("").map { seen =>
+                            Abort.run[HttpException](req.fields.body.foreach { span =>
+                                seen.updateAndGet(_ + new String(span.toArray, StandardCharsets.US_ASCII)).andThen(firstChunk.release)
+                            }).map(result => seen.get.map(text => outcome.completeDiscard(Result.succeed((text, result)))))
+                                .andThen(HttpResponse.ok("done"))
+                        }
+                    }
+                    val router   = routerOf(Seq(handler), Absent)
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                    val request  = "POST /upload HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n"
+                    discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
+
+                    UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+
+                    firstChunk.await.andThen(Sync.Unsafe.defer(discard(inbound.close()))).andThen(outcome.get).map { (text, result) =>
+                        assert(text == "hello")
+                        result match
+                            case Result.Failure(_: HttpConnectionClosedException) => ()
+                            case other => fail(s"Expected HttpConnectionClosedException, got $other")
+                    }
+                }
+            }
+        }
+
         "Date header present on 200 response" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
             val router  = routerOf(Seq(handler), Absent)

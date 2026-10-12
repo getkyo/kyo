@@ -2501,31 +2501,57 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "streaming response: a server-side stream error fails the client's body stream as a cut body" - {
+        "streaming response: a server stream that fails mid-way fails the client's stream as a cut body, after the bytes before it" - {
             val route = HttpRoute.getRaw("fail-stream").response(_.bodyStream)
-            val ep    = route.handler { _ =>
-                val failingStream = Stream[Span[Byte], Async] {
-                    kyo.Emit.valueWith(Chunk(Span.fromUnsafe("ok\n".getBytes("UTF-8")))) {
-                        throw new RuntimeException("stream error")
-                    }
-                }
-                HttpResponse.ok.addField("body", failingStream)
-            }
-            runServer(ep) { url =>
+
+            def drainFailing(url: HttpUrl)(using Frame, kyo.test.AssertScope): Unit < (Async & Abort[HttpException]) =
                 client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/fail-stream"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
-                                Abort.run[HttpException](resp.fields.body.run).map {
-                                    case Result.Failure(e: HttpConnectionClosedException) =>
-                                        assert(e.phase == HttpConnectionClosedException.Phase.BodyTruncated)
-                                    case other => fail(s"a failed response stream must reach the client as a cut body, got: $other")
+                                AtomicRef.init("").map { seen =>
+                                    Abort.run[HttpException](
+                                        resp.fields.body.foreach(span =>
+                                            seen.updateAndGet(_ + new String(span.toArrayUnsafe, "UTF-8")).unit
+                                        )
+                                    ).map { result =>
+                                        seen.get.map { text =>
+                                            assert(text == "ok\n")
+                                            result match
+                                                case Result.Failure(e: HttpConnectionClosedException) =>
+                                                    assert(e.phase == HttpConnectionClosedException.Phase.BodyTruncated)
+                                                case other => fail(s"a failed response stream must reach the client as a cut body, got: $other")
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
+
+            "when it panics" - {
+                val ep = route.handler { _ =>
+                    val failingStream = Stream[Span[Byte], Async & Abort[HttpException]] {
+                        kyo.Emit.valueWith(Chunk(Span.fromUnsafe("ok\n".getBytes("UTF-8")))) {
+                            throw new RuntimeException("stream error")
+                        }
+                    }
+                    HttpResponse.ok.addField("body", failingStream)
+                }
+                runServer(ep)(drainFailing)
+            }
+
+            "when it fails with an HttpException, as a forwarded client stream does" - {
+                val ep = route.handler { _ =>
+                    val failingStream = Stream[Span[Byte], Async & Abort[HttpException]] {
+                        kyo.Emit.valueWith(Chunk(Span.fromUnsafe("ok\n".getBytes("UTF-8")))) {
+                            Abort.fail(HttpConnectionClosedException(HttpConnectionClosedException.Phase.BodyTruncated))
+                        }
+                    }
+                    HttpResponse.ok.addField("body", failingStream)
+                }
+                runServer(ep)(drainFailing)
             }
         }
 
