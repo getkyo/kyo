@@ -602,6 +602,10 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
                 LiveCoverageFixtures.retryRepeatCounter.get() == 4,
                 s"expected retryRepeatCounter == 4 (2 outer * 2 per retry) but got ${LiveCoverageFixtures.retryRepeatCounter.get()}"
             )
+            // A repeated leaf reports the attempts of the repetition that produced its result, the last one here.
+            report.suiteReports.head.leafResults.head._2 match
+                case passed: TestResult.Passed => assert(passed.attempts == 2, s"the result reports $passed")
+                case other                     => fail(s"expected Passed but got $other")
         }
     }
 

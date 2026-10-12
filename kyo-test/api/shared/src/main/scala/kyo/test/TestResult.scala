@@ -24,7 +24,8 @@ enum TestResult derives CanEqual:
       *   wall-clock time for the successful run
       * @param attempts
       *   how many attempts it took to pass; 1 means it passed on the first try. Values > 1 indicate a flaky leaf that the `.flaky` /
-      *   `.retry(schedule)` decorator rescued. Always 1 when no retry decorator is in scope.
+      *   `.retry(schedule)` decorator rescued. Always 1 when no retry decorator is in scope. For a `.times(n)` leaf, the attempts of the
+      *   repetition that produced the result.
       */
     case Passed(duration: Duration, attempts: Int = 1)
 
@@ -38,7 +39,8 @@ enum TestResult derives CanEqual:
       *   elapsed time before the failure
       * @param attempts
       *   how many attempts were made before giving up; 1 means it failed on the first try. Values > 1 indicate exhaustion of a retry
-      *   schedule. Always 1 when no retry decorator is in scope.
+      *   schedule. Always 1 when no retry decorator is in scope. For a `.times(n)` leaf, the attempts of the repetition that produced
+      *   the result.
       */
     case Failed(diagram: String, cause: Maybe[Throwable], duration: Duration, attempts: Int = 1)
 

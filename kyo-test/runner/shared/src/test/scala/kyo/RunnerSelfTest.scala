@@ -247,6 +247,9 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
                 RunnerSelfFixtures.retryCounter.get() == 3,
                 s"expected 3 attempts (throw, throw, pass) but counter was ${RunnerSelfFixtures.retryCounter.get()}"
             )
+            report.suiteReports.head.leafResults.head._2 match
+                case passed: TestResult.Passed => assert(passed.attempts == 3, s"the result reports $passed")
+                case other                     => fail(s"expected Passed but got $other")
         }
     }
 
@@ -260,6 +263,9 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
                 RunnerSelfFixtures.retryFailCounter.get() == 3,
                 s"expected 3 attempts before failing but counter was ${RunnerSelfFixtures.retryFailCounter.get()}"
             )
+            report.suiteReports.head.leafResults.head._2 match
+                case failed: TestResult.Failed => assert(failed.attempts == 3, s"the result reports $failed")
+                case other                     => fail(s"expected Failed but got $other")
         }
     }
 

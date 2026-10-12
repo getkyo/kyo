@@ -269,7 +269,7 @@ class ResilienceTest extends Test[Any]:
 end ResilienceTest
 ```
 
-When a `Passed` or `Failed` result reports `attempts > 1`, a retry decorator rescued (or exhausted on) that leaf; `attempts == 1` means it settled on the first try.
+When a `Passed` or `Failed` result reports `attempts > 1`, a retry decorator rescued (or exhausted on) that leaf; `attempts == 1` means it settled on the first try. A `.times(n)` leaf reports the attempts of the repetition that produced its result.
 
 ### Platform: `jvm`/`js`/`native`/`wasm`, `notX`, `onlyX`
 
@@ -347,7 +347,7 @@ end ConnectedSuite
 
 Other per-suite hooks you can override: `name` (the suite display name), `timeout` (the default per-leaf bound), `randomize` / `randomSeed` (shuffle leaf order), and `config` (the suite's own `RunConfig`, e.g. `override def config = super.config.sequential`).
 
-> **Note:** the default per-leaf `timeout` is 60 seconds, but `Duration.Infinity` (no timeout) when a debugger is attached, so a breakpoint does not trip the bound. The effective limit therefore differs between a debug run and a normal run.
+> **Note:** the default per-leaf `timeout` is 120 seconds, but `Duration.Infinity` (no timeout) when a debugger is attached, so a breakpoint does not trip the bound. The effective limit therefore differs between a debug run and a normal run.
 
 ## Property-based testing
 

@@ -492,6 +492,10 @@ object TestRunner:
         // pendingUntilFixed bodies are EXPECTED to fail and run exactly once; retry/repeat do not apply.
         val isXfail = builder.pendingUntilFixed.isDefined
 
+        // Attempts started by the latest run of the retry loop. Atomic: attempts run on the leaf's body fiber and the count
+        // is read where the leaf is scored, on another.
+        val attemptCount = new java.util.concurrent.atomic.AtomicInteger(0)
+
         // One attempt: the body in a scope of its own, so what a failed attempt acquired is released before the retry starts,
         // under what is left of the leaf's deadline. The scope sits in the leaf fiber, OUTSIDE the fiber the timeout forks: a
         // scope opened inside that fork is a root the leaf does not own, and on expiry its finalizers drain detached, after
@@ -501,15 +505,17 @@ object TestRunner:
         // failure. The body was normalized by `toThrowable` before the fork, so a thrown assertion is still a retryable
         // Failure.
         def attempt(deadline: Maybe[(Duration, Clock.Deadline)]): Unit < (Async & Abort[Throwable]) =
+            val counted = Sync.defer(discard(attemptCount.incrementAndGet())).andThen(body)
             Scope.run {
                 deadline match
                     case Maybe.Present((limit, end)) =>
                         end.timeLeft.map { left =>
                             if left <= Duration.Zero then Abort.panic(LeafTimedOut(limit))
-                            else Async.timeoutWithError(left, Result.Panic(LeafTimedOut(limit)))(body)
+                            else Async.timeoutWithError(left, Result.Panic(LeafTimedOut(limit)))(counted)
                         }
-                    case Maybe.Absent => body
+                    case Maybe.Absent => counted
             }
+        end attempt
 
         // The retry loop mirrors `Retry.apply` (a Failure is retried per the schedule, a Panic is re-raised, and a jittered
         // schedule is seeded from `Random` on the first failure, so concurrent leaves do not retry in step), plus the deadline
@@ -541,11 +547,15 @@ object TestRunner:
 
         // One deadline per run of the retry loop, so the leaf's limit bounds its retries together, not each attempt.
         // pendingUntilFixed bodies run exactly once (no retry).
+        // The count restarts with each run of the loop, so a repeated leaf reports the attempts of the repetition that produced its
+        // result.
         val timed: Unit < (Async & Abort[Throwable]) =
             val schedule = if isXfail then Maybe.empty else builder.retrySchedule
-            builder.timeout match
-                case Maybe.Present(d) => Clock.deadline(d).map(end => attempts(schedule, Maybe((d, end))))
-                case Maybe.Absent     => attempts(schedule, Maybe.empty)
+            Sync.defer(attemptCount.set(0)).andThen {
+                builder.timeout match
+                    case Maybe.Present(d) => Clock.deadline(d).map(end => attempts(schedule, Maybe((d, end))))
+                    case Maybe.Absent     => attempts(schedule, Maybe.empty)
+            }
         end timed
 
         // Apply the suite's `aroundLeaf` hook from OUTSIDE the timeout, so any setup it performs (a resource
@@ -612,7 +622,13 @@ object TestRunner:
                                 TestResult.Pending(reason)
                             case other => other
                     case Maybe.Absent => trNoAssert
-                Chunk((path, finalTr))
+                // At least 1: a hook that fails or cancels before running the body still made the leaf's one try.
+                val attempts = math.max(1, attemptCount.get())
+                val counted  = finalTr match
+                    case passed: TestResult.Passed => passed.copy(attempts = attempts)
+                    case failed: TestResult.Failed => failed.copy(attempts = attempts)
+                    case other                     => other
+                Chunk((path, counted))
             }
         }
     end runRegisteredBody
