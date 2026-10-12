@@ -32,6 +32,7 @@ import kyo.test.TestResult
 import kyo.test.internal.TestBase
 import kyo.test.internal.TestContext
 import kyo.test.runner.ConsoleReporter
+import kyo.test.runner.internal.EventLoopWatchdog
 import kyo.test.runner.internal.Glob
 import kyo.test.runner.internal.Instantiate
 import kyo.test.runner.internal.LeafPool
@@ -204,13 +205,20 @@ object TestRunner:
                         val cursor   = cursorMap.getOrElse(path, Chunk.empty)
                         Sync.defer {
                             reporter.onLeafStart(leafInfo)
+                            val watched = EventLoopWatchdog.leafStarted(
+                                (suiteInfo.name +: path).mkString(" › "),
+                                builder.timeout,
+                                effectiveConfig.heartbeatInterval
+                            )
                             // Leak-debug attribution: snapshot the open descriptors before the leaf body and get the after-leaf finalizer. A
                             // no-op (single shared closure) unless leak-debug mode installed a probe, so the normal path is untouched.
-                            LeakDebug.beginLeaf(path)
-                        }.map { probeFinish =>
-                            withHeartbeat(leafInfo, effectiveConfig.heartbeatInterval, builder.timeout, reporter)(
-                                runLeaf(suite, cursor, path, builder, hasFocus, effectiveConfig.failOnNoAssertion)
-                            ).map { entries =>
+                            (watched, LeakDebug.beginLeaf(path))
+                        }.map { (watched, probeFinish) =>
+                            Sync.ensure(EventLoopWatchdog.leafFinished(watched)) {
+                                withHeartbeat(leafInfo, effectiveConfig.heartbeatInterval, builder.timeout, reporter)(
+                                    runLeaf(suite, cursor, path, builder, hasFocus, effectiveConfig.failOnNoAssertion)
+                                )
+                            }.map { entries =>
                                 // Run after the leaf body (which includes the leaf's Scope.run, so the leaf's own finalizers have already run):
                                 // any descriptor still open here that the leaf opened is the leaf's leak, recorded against this leaf path.
                                 probeFinish()
