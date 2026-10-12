@@ -38,10 +38,10 @@ package kyo {
                 assert(id.bytes.is(bytes(0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff)))
             }
 
-            "remains opaque to code outside its defining package" in {
+            "remains opaque to code outside its defining package, which builds one from its halves through fromLongs" in {
                 assert(!uuidclient.UUIDOpacityEvidence.tupleAssignmentCompiles)
                 assert(!uuidclient.UUIDOpacityEvidence.tupleMemberAccessCompiles)
-                assert(!uuidclient.UUIDOpacityEvidence.trustedConstructorCompiles)
+                assert(uuidclient.UUIDOpacityEvidence.trustedConstructorCompiles)
             }
 
             "constructs exact network order from trusted raw halves" in {

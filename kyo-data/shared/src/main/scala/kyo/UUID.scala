@@ -28,7 +28,8 @@ object UUID:
     /** The max UUID, `ffffffff-ffff-ffff-ffff-ffffffffffff`, with all 128 bits set to one. */
     val max: UUID = Repr(-1L, -1L)
 
-    private[kyo] def fromLongs(mostSignificantBits: Long, leastSignificantBits: Long): UUID =
+    /** The UUID with these 128 bits, for a fixed well-known value; a fresh or derived UUID comes from `v5`, `v7` or `parse`. */
+    def fromLongs(mostSignificantBits: Long, leastSignificantBits: Long): UUID =
         Repr(mostSignificantBits, leastSignificantBits)
 
     /** The RFC 9562 variant encoded in a UUID's variant bits.
