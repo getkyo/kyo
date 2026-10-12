@@ -858,6 +858,132 @@ class HttpClientTest extends BaseHttpTest:
         }
     }
 
+    "a streamed element that does not decode" - {
+
+        // One write, so both elements arrive in one read: the element before the bad one must still be delivered.
+        val sseBody    = "data: {\"id\":1,\"name\":\"alice\"}\n\ndata: [DONE]\n\n"
+        val ndjsonBody = "{\"id\":1,\"name\":\"alice\"}\n{\"id\":\"one\",\"name\":\"bob\"}\n"
+
+        def raw(text: String): Stream[Span[Byte], Async] = Stream.init(Seq(Span.fromUnsafe(text.getBytes("UTF-8"))))
+
+        def rawHandlers(path: String, text: String): Seq[HttpHandler[?, ?, ?]] =
+            Seq(
+                HttpRoute.getRaw(path).response(_.bodyStream).handler(_ => HttpResponse.ok.addField("body", raw(text))),
+                HttpRoute.postRaw(path).request(_.bodyJson[User]).response(_.bodyStream)
+                    .handler(_ => HttpResponse.ok.addField("body", raw(text)))
+            )
+
+        def drain[V](stream: Stream[V, Async & Abort[HttpException]])(using
+            Tag[Emit[Chunk[V]]],
+            Frame
+        ): (Chunk[V], Result[HttpException, Unit]) < Async =
+            AtomicRef.init(Chunk.empty[V]).map { seen =>
+                Abort.run[HttpException](stream.foreach(v => seen.updateAndGet(_.append(v)).unit))
+                    .map(result => seen.get.map(values => (values, result)))
+            }
+
+        def assertDecodeFailure(
+            drained: (Chunk[User], Result[HttpException, Unit]),
+            delivered: Chunk[User],
+            method: String,
+            url: String
+        )(using Frame, kyo.test.AssertScope): Unit =
+            val (values, result) = drained
+            result match
+                case Result.Failure(e: HttpJsonDecodeException) =>
+                    assert(e.method == method, s"method ${e.method}")
+                    assert(e.url == url, s"url ${e.url}")
+                case other => fail(s"Expected Result.Failure(HttpJsonDecodeException), got $other")
+            end match
+            assert(values == delivered, s"delivered $values")
+        end assertDecodeFailure
+
+        def base(url: HttpUrl): String = s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}"
+
+        "getSseJson fails typed on a [DONE] event" - {
+            runServer(rawHandlers("events", sseBody)*) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    drain(HttpClient.getSseJson[User](s"${base(url)}/events")).map { drained =>
+                        assertDecodeFailure(
+                            drained.copy(_1 = drained._1.map(_.data)),
+                            Chunk(User(1, "alice")),
+                            "GET",
+                            s"${base(url)}/events"
+                        )
+                    }
+                }
+            }
+        }
+
+        "postSseJson fails typed on a [DONE] event" - {
+            runServer(rawHandlers("events", sseBody)*) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    drain(HttpClient.postSseJson[User](s"${base(url)}/events", User(1, "alice"))).map { drained =>
+                        assertDecodeFailure(
+                            drained.copy(_1 = drained._1.map(_.data)),
+                            Chunk(User(1, "alice")),
+                            "POST",
+                            s"${base(url)}/events"
+                        )
+                    }
+                }
+            }
+        }
+
+        "sendWith with a bodySseJson route fails typed on a [DONE] event" - {
+            val route = HttpRoute.getRaw("events").response(_.bodySseJson[User])
+            runServer(rawHandlers("events", sseBody)*) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { client =>
+                        val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/events", Absent))
+                        client.sendWith(route, request)(resp => drain(resp.fields.body))
+                    }.map { drained =>
+                        assertDecodeFailure(
+                            drained.copy(_1 = drained._1.map(_.data)),
+                            Chunk(User(1, "alice")),
+                            "GET",
+                            s"${base(url)}/events"
+                        )
+                    }
+                }
+            }
+        }
+
+        "getNdJson fails typed on a line that is not the schema" - {
+            runServer(rawHandlers("data", ndjsonBody)*) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    drain(HttpClient.getNdJson[User](s"${base(url)}/data")).map { drained =>
+                        assertDecodeFailure(drained, Chunk(User(1, "alice")), "GET", s"${base(url)}/data")
+                    }
+                }
+            }
+        }
+
+        "postNdJson fails typed on a line that is not the schema" - {
+            runServer(rawHandlers("data", ndjsonBody)*) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    drain(HttpClient.postNdJson[User](s"${base(url)}/data", User(1, "alice"))).map { drained =>
+                        assertDecodeFailure(drained, Chunk(User(1, "alice")), "POST", s"${base(url)}/data")
+                    }
+                }
+            }
+        }
+
+        "sendWith with a bodyNdjson route fails typed on a line that is not the schema" - {
+            val route = HttpRoute.getRaw("data").response(_.bodyNdjson[User])
+            runServer(rawHandlers("data", ndjsonBody)*) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { client =>
+                        val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/data", Absent))
+                        client.sendWith(route, request)(resp => drain(resp.fields.body))
+                    }.map { drained =>
+                        assertDecodeFailure(drained, Chunk(User(1, "alice")), "GET", s"${base(url)}/data")
+                    }
+                }
+            }
+        }
+    }
+
     "combined route features" - {
 
         "path capture + query + header + body" - {
