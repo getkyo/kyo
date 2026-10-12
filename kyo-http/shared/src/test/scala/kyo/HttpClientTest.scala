@@ -3326,6 +3326,75 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
+        "postSseJson sends the body as JSON and streams the events" - {
+            val route = HttpRoute.postRaw("events").request(_.bodyJson[User]).response(_.bodySseJson[User])
+            val ep = route.handler { req =>
+                HttpResponse.ok.addField(
+                    "body",
+                    Stream.init(Seq(HttpSseEvent(data = req.fields.body), HttpSseEvent(data = User(2, "bob"))))
+                )
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.postSseJson[User](s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/events", User(1, "alice"))
+                        .run.map(events => assert(events.map(_.data) == Chunk(User(1, "alice"), User(2, "bob"))))
+                }
+            }
+        }
+
+        "postSseText sends the body as JSON and streams the events as text" - {
+            val route = HttpRoute.postRaw("events").request(_.bodyJson[User]).response(_.bodySseText)
+            val ep = route.handler { req =>
+                HttpResponse.ok.addField(
+                    "body",
+                    Stream.init(Seq(HttpSseEvent(req.fields.body.name, Absent, Absent, Absent), HttpSseEvent("[DONE]", Absent, Absent, Absent)))
+                )
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.postSseText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/events", User(1, "alice"))
+                        .run.map(events => assert(events.map(_.data) == Chunk("alice", "[DONE]")))
+                }
+            }
+        }
+
+        "postNdJson sends the body as JSON and streams the lines" - {
+            val route = HttpRoute.postRaw("data").request(_.bodyJson[User]).response(_.bodyNdjson[User])
+            val ep    = route.handler(req => HttpResponse.ok.addField("body", Stream.init(Seq(req.fields.body, User(2, "bob")))))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.postNdJson[User](s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/data", User(1, "alice"))
+                        .run.map(items => assert(items == Chunk(User(1, "alice"), User(2, "bob"))))
+                }
+            }
+        }
+
+        "a POST stream refused with a 429 fails with the status, the body and the headers" - {
+            val route = HttpRoute.postRaw("refused").request(_.bodyJson[User]).response(_.bodyText)
+            val ep = route.handler(_ =>
+                HttpResponse(HttpStatus.TooManyRequests).addHeader("retry-after", "7").addField("body", "slow down")
+            )
+            runServer(ep) { url =>
+                val target = s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/refused"
+                HttpClient.withConfig(noTimeout) {
+                    Kyo.foreach(Chunk(
+                        HttpClient.postSseJson[User](target, User(1, "alice")).run.unit,
+                        HttpClient.postSseText(target, User(1, "alice")).run.unit,
+                        HttpClient.postNdJson[User](target, User(1, "alice")).run.unit
+                    ))(call => Abort.run[HttpException](call))
+                }.map { results =>
+                    results.foreach {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.TooManyRequests)
+                            assert(e.body == Present("slow down"))
+                            assert(e.headers.get("retry-after") == Present("7"))
+                        case other => fail(s"Expected HttpStatusException(429), got $other")
+                    }
+                    assert(results.size == 3)
+                }
+            }
+        }
+
         "invalid URL returns ParseError" in {
             HttpClient.withConfig(noTimeout) {
                 Abort.run(HttpClient.getText("not a valid url")).map { result =>
@@ -3886,6 +3955,30 @@ class HttpClientTest extends BaseHttpTest:
                         case other =>
                             fail(s"Expected HttpStatusException(409), got $other")
                     }
+                }
+            }
+        }
+
+        "a refusal keeps its headers, whether its body decodes or not" - {
+            val text = HttpRoute.postText("refused-text")
+            val json = HttpRoute.postRaw("refused-json").request(_.bodyJson[User]).response(_.bodyText)
+            def refuse(request: Any) =
+                HttpResponse(HttpStatus.TooManyRequests).addHeader("retry-after", "7").addField("body", "slow down")
+            runServer(text.handler(refuse), json.handler(refuse)) { url =>
+                val base = s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}"
+                HttpClient.withConfig(noTimeout) {
+                    Kyo.foreach(Chunk(
+                        HttpClient.postText(s"$base/refused-text", "data").unit,
+                        HttpClient.postJson[User](s"$base/refused-json", User(1, "alice")).unit
+                    ))(call => Abort.run[HttpException](call))
+                }.map { results =>
+                    results.foreach {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.TooManyRequests)
+                            assert(e.headers.get("retry-after") == Present("7"))
+                        case other => fail(s"Expected HttpStatusException(429), got $other")
+                    }
+                    assert(results.size == 2)
                 }
             }
         }

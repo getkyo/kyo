@@ -248,17 +248,25 @@ case class HttpCookieException private[kyo] (part: String)(using Frame)
            |  and no ';'. Encode arbitrary content, base64 being the usual choice.""".stripMargin
     )
 
-/** Non-success status code when the response body can't be decoded. */
-case class HttpStatusException private (status: HttpStatus, method: String, url: String, body: Maybe[String])(using Frame)
-    extends HttpRequestException(
+/** A non-2xx response a call treats as a failure: its status, the request it answered, the body when one arrived, and the response's
+  * headers, which say what a refusal asks of the caller, such as a 429's `Retry-After`. The headers are data for the caller; the message
+  * does not render them.
+  */
+case class HttpStatusException private (status: HttpStatus, method: String, url: String, body: Maybe[String], headers: HttpHeaders)(using
+    Frame
+) extends HttpRequestException(
         s"${HttpException.showRequest(method, url)} returned ${status.code} (${status.name})." +
             body.map(b => s" Body: ${if b.length > 500 then b.take(500) + "..." else b}").getOrElse("")
     )
 object HttpStatusException:
     def apply(status: HttpStatus, method: String, url: String)(using Frame): HttpStatusException =
-        new HttpStatusException(status, method, HttpException.stripQuery(url), Absent)
+        apply(status, method, url, HttpHeaders.empty)
     def apply(status: HttpStatus, method: String, url: String, body: String)(using Frame): HttpStatusException =
-        new HttpStatusException(status, method, HttpException.stripQuery(url), Present(body))
+        apply(status, method, url, body, HttpHeaders.empty)
+    def apply(status: HttpStatus, method: String, url: String, headers: HttpHeaders)(using Frame): HttpStatusException =
+        new HttpStatusException(status, method, HttpException.stripQuery(url), Absent, headers)
+    def apply(status: HttpStatus, method: String, url: String, body: String, headers: HttpHeaders)(using Frame): HttpStatusException =
+        new HttpStatusException(status, method, HttpException.stripQuery(url), Present(body), headers)
 end HttpStatusException
 
 // --- Server (server-side operational failures) ---

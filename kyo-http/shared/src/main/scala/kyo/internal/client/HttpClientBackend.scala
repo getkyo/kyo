@@ -979,7 +979,9 @@ final private[kyo] class HttpClientBackend private (
                         else
                             val bytes = lastBody.take(4096).toArray
                             new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
-                    Abort.get(HttpStatus.init(status)).map(s => Abort.fail(HttpStatusException(s, method.name, url.baseUrl, bodyText)))
+                    Abort.get(HttpStatus.init(status)).map(s =>
+                        Abort.fail(HttpStatusException(s, method.name, url.baseUrl, bodyText, parsed.headers))
+                    )
                 }
             else
                 Sync.Unsafe.defer {
@@ -1046,7 +1048,13 @@ final private[kyo] class HttpClientBackend private (
         Abort.run[HttpResponse.Halt](v).map {
             case Result.Success(value) => value
             case Result.Failure(halt)  =>
-                Abort.fail(HttpStatusException(halt.response.status, HttpMethod.GET.name, url.baseUrl, halt.response.rawBody.getOrElse("")))
+                Abort.fail(HttpStatusException(
+                    halt.response.status,
+                    HttpMethod.GET.name,
+                    url.baseUrl,
+                    halt.response.rawBody.getOrElse(""),
+                    halt.response.headers
+                ))
             case Result.Panic(t) => Abort.panic(t)
         }
     end handleWebSocketFilterResult

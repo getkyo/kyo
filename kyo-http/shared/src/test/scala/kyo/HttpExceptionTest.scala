@@ -26,6 +26,22 @@ class HttpExceptionTest extends BaseHttpTest:
             val ex = HttpStatusException(HttpStatus.BadRequest, "GET", "http://x/y?token=abc", "err")
             assert(ex.url == "http://x/y")
         }
+        "carries the response's headers, with or without a body" in {
+            val headers  = HttpHeaders.init(Seq("retry-after" -> "7"))
+            val withBody = HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", "slow down", headers)
+            val bodiless = HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", headers)
+            assert(withBody.headers.get("retry-after") == Present("7"))
+            assert(withBody.body == Maybe("slow down"))
+            assert(bodiless.headers.get("retry-after") == Present("7"))
+            assert(bodiless.body == Maybe.empty)
+        }
+        "leaves the message to the status and the body, never the headers" in {
+            val headers = HttpHeaders.init(Seq("retry-after" -> "7"))
+            val headed = HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", "slow down", headers)
+            val plain  = HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", "slow down")
+            assert(headed.getMessage == plain.getMessage)
+            assert(plain.headers.get("retry-after") == Absent)
+        }
     }
 
     // Built here, away from the leaves: KyoException renders the source around its frame into getMessage, so a leaf that constructed the

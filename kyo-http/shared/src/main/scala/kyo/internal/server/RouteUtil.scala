@@ -215,8 +215,8 @@ private[kyo] object RouteUtil:
             case Result.Success(resp) if !status.isSuccess =>
                 Result.succeed(resp.copy(rawBody = if body.isEmpty then Absent else Present(spanToString(body))))
             case Result.Error(_: HttpDecodeException) if !status.isSuccess =>
-                if body.isEmpty then Result.fail(HttpStatusException(status, method, url.toString))
-                else Result.fail(HttpStatusException(status, method, url.toString, spanToString(body)))
+                if body.isEmpty then Result.fail(HttpStatusException(status, method, url.toString, headers))
+                else Result.fail(HttpStatusException(status, method, url.toString, spanToString(body), headers))
             case other => other
         end match
     end decodeBufferedResponse

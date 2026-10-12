@@ -691,6 +691,25 @@ object HttpClient:
             )(_.fields.body).map(_.emit)
         ))
 
+    /** Sends `body` as JSON and streams the response's events. Fails with `HttpStatusException` on non-2xx. */
+    def postSseJson[V: Schema: Tag](using
+        Frame
+    )[B: Schema](
+        url: String | HttpUrl,
+        body: B,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
+    )(using Tag[Emit[Chunk[HttpSseEvent[V]]]]): Stream[HttpSseEvent[V], Async & Abort[HttpException]] =
+        Stream(resolveUrl(url).map(u =>
+            sendUrlBody(
+                u,
+                HttpRoute.postRaw("").request(_.bodyJson[B]).response(_.bodySseJson[V]),
+                body,
+                headers,
+                query
+            )(_.fields.body).map(_.emit)
+        ))
+
     // --- SSE Text ---
 
     def getSseText(
@@ -707,6 +726,23 @@ object HttpClient:
             )(_.fields.body).map(_.emit)
         ))
 
+    /** Sends `body` as JSON and streams the response's events as text. Fails with `HttpStatusException` on non-2xx. */
+    def postSseText[B: Schema](
+        url: String | HttpUrl,
+        body: B,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
+    )(using Frame, Tag[Emit[Chunk[HttpSseEvent[String]]]]): Stream[HttpSseEvent[String], Async & Abort[HttpException]] =
+        Stream(resolveUrl(url).map(u =>
+            sendUrlBody(
+                u,
+                HttpRoute.postRaw("").request(_.bodyJson[B]).response(_.bodySseText),
+                body,
+                headers,
+                query
+            )(_.fields.body).map(_.emit)
+        ))
+
     // --- NDJSON ---
 
     def getNdJson[V: Schema: Tag](
@@ -718,6 +754,25 @@ object HttpClient:
             sendUrlBody(
                 u,
                 HttpRoute.getRaw("").response(_.bodyNdjson[V]),
+                headers,
+                query
+            )(_.fields.body).map(_.emit)
+        ))
+
+    /** Sends `body` as JSON and streams the response's lines, each as the value it holds. Fails with `HttpStatusException` on non-2xx. */
+    def postNdJson[V: Schema: Tag](using
+        Frame
+    )[B: Schema](
+        url: String | HttpUrl,
+        body: B,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
+    )(using Tag[Emit[Chunk[V]]]): Stream[V, Async & Abort[HttpException]] =
+        Stream(resolveUrl(url).map(u =>
+            sendUrlBody(
+                u,
+                HttpRoute.postRaw("").request(_.bodyJson[B]).response(_.bodyNdjson[V]),
+                body,
                 headers,
                 query
             )(_.fields.body).map(_.emit)
@@ -872,8 +927,8 @@ object HttpClient:
             client.sendWithConfig(route, req, config) { resp =>
                 if !resp.status.isSuccess then
                     resp.rawBody match
-                        case Present(b) => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl, b))
-                        case Absent     => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl))
+                        case Present(b) => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl, b, resp.headers))
+                        case Absent     => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl, resp.headers))
                 else extract(resp)
             }
         }
@@ -892,8 +947,8 @@ object HttpClient:
             client.sendWithConfig(route, req, config) { resp =>
                 if !resp.status.isSuccess then
                     resp.rawBody match
-                        case Present(b) => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl, b))
-                        case Absent     => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl))
+                        case Present(b) => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl, b, resp.headers))
+                        case Absent     => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl, resp.headers))
                 else extract(resp)
             }
         }
