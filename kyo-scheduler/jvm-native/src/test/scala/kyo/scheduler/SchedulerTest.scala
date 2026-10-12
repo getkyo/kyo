@@ -344,7 +344,7 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
                 val release    = new CountDownLatch(1)
                 val spinning   = TestTask(
                     // Only the scan run by this test's own schedule call fails: armed around that call, and on this thread. The
-                    // cycle's preemptions pass, and so do the ones `status()` makes, which reads availability too.
+                    // cycle's preemptions pass.
                     _preempt = () =>
                         if ((Thread.currentThread() eq testThread) && armed.get() && thrown.compareAndSet(false, true))
                             throw new StackOverflowError("injected"),

@@ -285,10 +285,14 @@ abstract private class Worker(
         available
     }
 
+    private def overSlice(task: Task, nowMs: Long): Boolean = {
+        val start = taskStartMs
+        (task ne null) && start > 0 && start < nowMs - timeSliceMs
+    }
+
     private def checkStalling(nowMs: Long): Boolean = {
         val task    = currentTask
-        val start   = taskStartMs
-        val stalled = (task ne null) && start > 0 && start < nowMs - timeSliceMs
+        val stalled = overSlice(task, nowMs)
         if (stalled) {
             // Preempt a long-running task even when this worker's own queue is empty. The task may be
             // pinned on work that cannot progress until a task stranded on another worker's queue runs:
@@ -471,7 +475,9 @@ abstract private class Worker(
             thread,
             frame,
             blocked,
-            checkStalling(clock.currentMillis()),
+            // Read-only: status is read from other threads for dumps, probes and reporting. Preempting is checkAvailability's job, which
+            // withholds it from a blocked task (pointless, and unsafe on Native) and runs on every worker each cycle anyway.
+            overSlice(currentTask, clock.currentMillis()),
             executions,
             preemptions,
             completions,
@@ -485,8 +491,9 @@ abstract private class Worker(
 
 private object Worker {
 
-    // Created without inheriting the creator's thread-locals (the final `false` is `inheritThreadLocals`): a worker spawned by a busy parent would
-    // otherwise share the parent's Scala Native `StackTrace` unwind-cursor `Context`, and two threads driving one cursor corrupt it into a native SIGSEGV.
+    // Created without inheriting the creator's thread-locals (the final `false` is `inheritThreadLocals`): a worker spawned by a busy
+    // parent would otherwise share the parent's Scala Native `StackTrace` unwind-cursor `Context`, and two threads driving one cursor
+    // corrupt it into a native SIGSEGV.
     final class WorkerThread(init: Runnable)
         extends Thread(null, init, "kyo-scheduler-worker", 0L, false) {
         var currentWorker: Worker = null

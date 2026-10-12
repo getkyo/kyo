@@ -769,6 +769,25 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             assert(worker.checkAvailability(0))
         }
 
+        "status reports a task over its slice as stalled without preempting it" in withWorker { worker =>
+            val release     = new CountDownLatch(1)
+            val preemptions = new AtomicInteger
+            val task        = TestTask(
+                _run = () => {
+                    while (release.getCount() > 0) {}
+                    Task.Done
+                },
+                _preempt = () => preemptions.incrementAndGet(): Unit
+            )
+            worker.enqueue(task)
+            try {
+                eventually(assert(worker.status().isStalled))
+                assert(worker.status().isStalled)
+                assert(preemptions.get() == 0, "reading status preempted the running task")
+            } finally release.countDown()
+            eventually(assert(task.executions == 1))
+        }
+
         "when worker is running and not stalled or blocked" in withWorker { worker =>
             val task = TestTask()
             worker.enqueue(task)
