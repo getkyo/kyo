@@ -7,6 +7,8 @@ import java.util.concurrent.FutureTask
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually
 import org.scalatest.freespec.AnyFreeSpec
@@ -66,6 +68,51 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
             )
             scheduler.schedule(task)
             cdl.await()
+        }
+
+        "from another scheduler's worker places the task on this scheduler" in withScheduler { origin =>
+            withScheduler { target =>
+                val done  = new CountDownLatch(1)
+                val outer = new AtomicReference[Worker]
+                val inner = new AtomicReference[Worker]
+                origin.schedule(TestTask(_run = () => {
+                    outer.set(Worker.current())
+                    target.schedule(TestTask(_run = () => {
+                        inner.set(Worker.current())
+                        done.countDown()
+                        Task.Done
+                    }))
+                    Task.Done
+                }))
+                assert(done.await(10, TimeUnit.SECONDS))
+                assert(outer.get() ne null)
+                assert(inner.get() ne null)
+                assert(inner.get() ne outer.get(), "the task ran on the submitting scheduler's worker")
+            }
+        }
+
+        "flush from another scheduler's worker drains it through its own scheduler, which counts the flush" in {
+            // Two workers, so the drained task has a worker other than the flushing one to go to.
+            val cfg = Scheduler.Config.default.copy(cores = 2, coreWorkers = 2, minWorkers = 2, maxWorkers = 2)
+            withScheduler(cfg) { origin =>
+                withScheduler { target =>
+                    val done   = new CountDownLatch(1)
+                    val queued = TestTask()
+                    val held   = new AtomicLong(-1L)
+                    origin.schedule(TestTask(_run = () => {
+                        origin.schedule(queued)
+                        target.flush()
+                        held.set(Worker.current().load().toLong)
+                        done.countDown()
+                        Task.Done
+                    }))
+                    assert(done.await(10, TimeUnit.SECONDS))
+                    assert(held.get() == 1L, "the flush must hand the calling worker's queue off, leaving only the running task")
+                    eventually(assert(queued.executions == 1))
+                    assert(origin.status().flushes == 1L, "the flush belongs to the scheduler that owns the drained worker")
+                    assert(target.status().flushes == 0L, "the scheduler the call went through drained none of its own workers")
+                }
+            }
         }
     }
 

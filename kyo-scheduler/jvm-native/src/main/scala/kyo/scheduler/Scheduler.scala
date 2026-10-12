@@ -113,7 +113,6 @@ final class Scheduler private[scheduler] (
     private val pool    = LoomSupport.tryVirtualize(virtualizeWorkers, workerExecutor)
     private val clock   = new InternalClock(clockExecutor, clockSource)
     private val workers = new Array[Worker](maxWorkers)
-    private val flushes = new LongAdder
     // Declared before cycleTask, which starts the loop that writes them: an initializer that ran after the loop started would
     // overwrite what it wrote. `cycleThread` lets tests aim at the cycle's own work, since other threads check worker
     // availability too.
@@ -311,7 +310,7 @@ final class Scheduler private[scheduler] (
     /** Schedules a task for execution, optionally specifying the submitting worker.
       *
       * Implements a work-stealing load balancing strategy:
-      *   - If submitted by a worker, tries to execute on that worker first
+      *   - If called from a thread mounted by one of this scheduler's workers, with no submitter to exclude, tries that worker first
       *   - Otherwise samples a subset of workers to find one with minimal load
       *   - Scans the remaining workers for any available one when the sample holds none
       *   - Falls back to random worker assignment only when no worker is available
@@ -341,8 +340,8 @@ final class Scheduler private[scheduler] (
         val nowMs          = clock.currentMillis()
         var worker: Worker = null
         if (submitter eq null) {
-            worker = Worker.current()
-            if ((worker ne null) && ((worker eq submitter) || !worker.checkAvailability(nowMs)))
+            worker = currentWorker()
+            if ((worker ne null) && !worker.checkAvailability(nowMs))
                 worker = null
         }
         if (worker eq null) {
@@ -418,15 +417,36 @@ final class Scheduler private[scheduler] (
 
     /** Forces completion of any pending tasks on the current worker thread.
       *
-      * When called from a worker thread, drains and re-submits all queued tasks before returning. Has no effect when called from non-worker
-      * threads.
+      * When called from a thread a worker has mounted, drains that worker's queue and re-submits each task before returning. The worker may
+      * belong to another scheduler instance: its drain re-submits through its own scheduler, which also counts the flush. Has no effect
+      * when called from a thread no worker has mounted.
       */
     def flush() = {
         val worker = Worker.current()
-        if (worker ne null) {
-            flushes.increment()
-            worker.drain()
+        if (worker ne null)
+            worker.flush()
+    }
+
+    private def flushes(): Long = {
+        val allocated = this.allocatedWorkers
+        var position  = 0
+        var sum       = 0L
+        while (position < allocated) {
+            val w = workers(position)
+            if (w ne null)
+                sum += w.flushes()
+            position += 1
         }
+        sum
+    }
+
+    /** The calling thread's worker when this scheduler owns it, else null. `Worker.current()` is per thread, not per scheduler, so a
+      * thread mounted by another scheduler instance would otherwise receive this one's placements.
+      */
+    private def currentWorker(): Worker = {
+        val worker = Worker.current()
+        if ((worker ne null) && worker.id < workers.length && (workers(worker.id) eq worker)) worker
+        else null
     }
 
     /** Calculates the current average load across all workers.
@@ -593,7 +613,7 @@ final class Scheduler private[scheduler] (
             statsScope.gauge("current_workers")(currentWorkers),
             statsScope.gauge("allocated_workers")(allocatedWorkers),
             statsScope.gauge("load_avg")(loadAvg()),
-            statsScope.gauge("flushes")(flushes.sum().toDouble),
+            statsScope.gauge("flushes")(flushes().toDouble),
             statsScope.gauge("loop_failures")((cycleFailures.sum() + blockingMonitor.failures.sum()).toDouble),
             statsScope.gauge("placement_fallbacks")(placementFallbacks.sum().toDouble)
         )
@@ -615,7 +635,7 @@ final class Scheduler private[scheduler] (
             currentWorkers,
             allocatedWorkers,
             loadAvg(),
-            flushes.sum(),
+            flushes(),
             activeThreads,
             totalThreads,
             (0 until allocatedWorkers).map(workerStatus),

@@ -83,7 +83,7 @@ import scala.util.control.NonFatal
   *   Scheduler for how workers are managed
   */
 abstract private class Worker(
-    id: Int,
+    val id: Int,
     exec: Executor,
     scheduleTask: (Task, Worker) => Unit,
     stealTask: Worker => Task,
@@ -155,6 +155,7 @@ abstract private class Worker(
     private var completions = 0L
     private var mounts      = 0L
     private var stolenTasks = 0L
+    private var flushCount  = 0L
 
     // Epoch and timestamp of this worker's last queue rebuild. Single-thread-owned by the
     // worker's own run loop (read and written only inside rebalance), so plain vars suffice.
@@ -176,7 +177,7 @@ abstract private class Worker(
 
     /** Transitions the worker from Idle to Dispatched and requests a thread from the executor. run() claims the
       * worker by taking the Dispatched -> Running edge, so a dispatch that never mounts leaves the worker
-      * Dispatched, which is what recoverStrand detects.
+      * Dispatched with its queue in place.
       */
     def wakeup() = {
         if ((state.get() eq State.Idle) && state.compareAndSet(State.Idle, State.Dispatched))
@@ -208,6 +209,16 @@ abstract private class Worker(
       */
     def drain(): Unit =
         queue.drain(schedule)
+
+    /** Drains this worker's queue on behalf of a `Scheduler.flush` made from its own thread. Counted on the worker rather than on the
+      * scheduler the call went through, since the drain always re-submits through this worker's own scheduler.
+      */
+    def flush(): Unit = {
+        flushCount += 1
+        drain()
+    }
+
+    def flushes(): Long = flushCount
 
     /** The drain of an unavailable worker found by `checkAvailability`. A no-op while one is already in progress on any thread: what
       * arrives meanwhile stays queued for the next check.
