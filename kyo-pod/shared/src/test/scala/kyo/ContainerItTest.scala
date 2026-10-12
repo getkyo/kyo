@@ -809,19 +809,6 @@ class ContainerItTest extends BasePodTest:
             }
         }
 
-        "a published port with nothing listening fails init" - runBackends {
-            // The container stays up and the runtime publishes the port, so nothing short of
-            // a host-side connection that is then dropped can tell that nobody serves it.
-            val config = alpine.port(8080, 0)
-                .requireService(true)
-                .portMappingTimeout(5.seconds)
-            Abort.run[ContainerException](Scope.run(Container.init(config))).map {
-                case Result.Failure(e: ContainerStartFailedException) =>
-                    assert(e.reason.contains("does not hold a connection"), s"expected a reachability reason, got ${e.reason}")
-                case other => fail(s"expected ContainerStartFailedException for an unserved port, got $other")
-            }
-        }
-
         "a published port with a live listener starts normally" - runBackends {
             // nginx, not a hand-rolled nc fixture. This case needs a listener that HOLDS an
             // accepted connection (the probe correctly rejects accept-then-drop) and serves
@@ -846,7 +833,9 @@ class ContainerItTest extends BasePodTest:
             }
         }
 
-        "a published port with nothing listening fails init on monotonic time while the wall clock stands still" - runBackends {
+        "a published port with nothing listening fails init, timed on monotonic time while the wall clock stands still" - runBackends {
+            // The container stays up and the runtime publishes the port, so nothing short of
+            // a host-side connection that is then dropped can tell that nobody serves it.
             val config = alpine.port(8080, 0)
                 .requireService(true)
                 .portMappingTimeout(5.seconds)

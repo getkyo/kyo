@@ -45,6 +45,35 @@ class HttpContainerBackendTest extends BasePodTest:
             )
         }
 
+        "a ping answered by podman names podman" in {
+            // The headers podman 4.9.3's compat `_ping` sends on the linux CI runners.
+            val podman = HttpHeaders.init(Seq(
+                "Api-Version"            -> "1.41",
+                "Docker-Experimental"    -> "true",
+                "Libpod-Api-Version"     -> "4.9.3",
+                "Libpod-Buildah-Version" -> "1.33.7",
+                "Ostype"                 -> "linux",
+                "Server"                 -> "Libpod/4.9.3 (linux)"
+            ))
+            assert(HttpContainerBackend.runtimeFromPing(podman) == "podman")
+            assert(HttpContainerBackend.runtimeFromPing(HttpHeaders.init(Seq("Server" -> "Libpod/5.0.3 (linux)"))) == "podman")
+            assert(HttpContainerBackend.runtimeFromPing(HttpHeaders.init(Seq("libpod-api-version" -> "5.0.3"))) == "podman")
+        }
+
+        "a ping answered by docker names docker" in {
+            // The headers Docker 28.0.4's `_ping` sends on the linux CI runners.
+            val docker = HttpHeaders.init(Seq(
+                "Api-Version"         -> "1.48",
+                "Builder-Version"     -> "2",
+                "Docker-Experimental" -> "false",
+                "Ostype"              -> "linux",
+                "Server"              -> "Docker/28.0.4 (linux)",
+                "Swarm"               -> "inactive"
+            ))
+            assert(HttpContainerBackend.runtimeFromPing(docker) == "docker")
+            assert(HttpContainerBackend.runtimeFromPing(HttpHeaders.empty) == "docker")
+        }
+
         "the description carries the runtime and the command that reaches the same daemon" in {
             val backend = new HttpContainerBackend("/var/run/docker.sock", "v1.43", Meter.Noop, Present("podman"))
             val text    = backend.describe
