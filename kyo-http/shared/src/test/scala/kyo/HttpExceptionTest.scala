@@ -36,11 +36,10 @@ class HttpExceptionTest extends BaseHttpTest:
             assert(bodiless.body == Maybe.empty)
         }
         "leaves the message to the status and the body, never the headers" in {
-            val headers = HttpHeaders.init(Seq("retry-after" -> "7"))
-            val headed = HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", "slow down", headers)
-            val plain  = HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", "slow down")
-            assert(headed.getMessage == plain.getMessage)
-            assert(plain.headers.get("retry-after") == Absent)
+            // One construction site, so the rendered frame is the same and only the headers differ.
+            def refusal(headers: HttpHeaders) = HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", "slow down", headers)
+            assert(refusal(HttpHeaders.init(Seq("retry-after" -> "7"))).getMessage == refusal(HttpHeaders.empty).getMessage)
+            assert(HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", "slow down").headers.get("retry-after") == Absent)
         }
     }
 

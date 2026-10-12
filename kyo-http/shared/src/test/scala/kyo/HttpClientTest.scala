@@ -3328,7 +3328,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "postSseJson sends the body as JSON and streams the events" - {
             val route = HttpRoute.postRaw("events").request(_.bodyJson[User]).response(_.bodySseJson[User])
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok.addField(
                     "body",
                     Stream.init(Seq(HttpSseEvent(data = req.fields.body), HttpSseEvent(data = User(2, "bob"))))
@@ -3344,10 +3344,13 @@ class HttpClientTest extends BaseHttpTest:
 
         "postSseText sends the body as JSON and streams the events as text" - {
             val route = HttpRoute.postRaw("events").request(_.bodyJson[User]).response(_.bodySseText)
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok.addField(
                     "body",
-                    Stream.init(Seq(HttpSseEvent(req.fields.body.name, Absent, Absent, Absent), HttpSseEvent("[DONE]", Absent, Absent, Absent)))
+                    Stream.init(Seq(
+                        HttpSseEvent(req.fields.body.name, Absent, Absent, Absent),
+                        HttpSseEvent("[DONE]", Absent, Absent, Absent)
+                    ))
                 )
             }
             runServer(ep) { url =>
@@ -3371,7 +3374,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "a POST stream refused with a 429 fails with the status, the body and the headers" - {
             val route = HttpRoute.postRaw("refused").request(_.bodyJson[User]).response(_.bodyText)
-            val ep = route.handler(_ =>
+            val ep    = route.handler(_ =>
                 HttpResponse(HttpStatus.TooManyRequests).addHeader("retry-after", "7").addField("body", "slow down")
             )
             runServer(ep) { url =>
@@ -3960,8 +3963,8 @@ class HttpClientTest extends BaseHttpTest:
         }
 
         "a refusal keeps its headers, whether its body decodes or not" - {
-            val text = HttpRoute.postText("refused-text")
-            val json = HttpRoute.postRaw("refused-json").request(_.bodyJson[User]).response(_.bodyText)
+            val text                 = HttpRoute.postText("refused-text")
+            val json                 = HttpRoute.postRaw("refused-json").request(_.bodyJson[User]).response(_.bodyText)
             def refuse(request: Any) =
                 HttpResponse(HttpStatus.TooManyRequests).addHeader("retry-after", "7").addField("body", "slow down")
             runServer(text.handler(refuse), json.handler(refuse)) { url =>
