@@ -469,6 +469,19 @@ final class Scheduler private[scheduler] (
         busy
     }
 
+    /** The tasks waiting in one allocated worker's queue, excluding the task it is executing, or 0 for an unallocated id.
+      *
+      * An executing task holds its carrier by its own doing, possibly parked inside a blocking call (an I/O driver's readiness wait), and
+      * needs nothing from the scheduler to continue. Only a queued task depends on the scheduler to be run, so this, not the worker's load,
+      * is the work a lost wakeup leaves behind.
+      */
+    private[scheduler] def queued(workerId: Int): Int =
+        if (workerId < 0 || workerId >= allocatedWorkers) 0
+        else {
+            val w = workers(workerId)
+            if (w eq null) 0 else w.queued()
+        }
+
     /** Shuts down the scheduler and releases resources.
       *
       * Stops all internal threads, cancels pending tasks, and cleans up monitoring systems. The scheduler cannot be restarted after

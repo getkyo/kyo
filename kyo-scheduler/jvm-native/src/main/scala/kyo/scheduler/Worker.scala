@@ -193,6 +193,9 @@ abstract private class Worker(
         load
     }
 
+    /** Returns the count of queued tasks waiting to run, excluding any actively executing task. */
+    def queued(): Int = queue.size()
+
     /** Attempts to steal tasks from this worker's queue into the thief's queue. Updates metrics to track task movement between workers.
       * Returns null if no tasks were stolen.
       */

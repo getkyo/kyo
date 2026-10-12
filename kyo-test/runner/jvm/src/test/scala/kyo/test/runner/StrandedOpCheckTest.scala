@@ -32,6 +32,25 @@ class StrandedOpCheckTest extends AnyFunSuite with NonImplicitAssertions:
         end try
     }
 
+    test("reports a frozen lane of a lanes registration by its lane name while a sibling lane advances") {
+        val name    = freshName("lanes")
+        val counter = new AtomicLong(0L)
+        val reg     = Diagnostics.registerLanes(name)(
+            () => "unused",
+            () =>
+                List(
+                    "stuck" -> Diagnostics.Probe(closed = false, cycles = 5L, pending = true),
+                    "live"  -> Diagnostics.Probe(closed = false, cycles = counter.incrementAndGet(), pending = true)
+                )
+        )
+        try
+            val report = StrandedOpCheck.detect(Chunk.empty, settleNanos = 5_000_000L)
+            assert(report.exists(_.contains(s"$name/stuck: pending op present")))
+            assert(!report.exists(_.contains(s"$name/live:")))
+        finally reg.close()
+        end try
+    }
+
     test("does not report a component whose cycle counter advances between samples") {
         val name    = freshName("advancing")
         val counter = new AtomicLong(0L)

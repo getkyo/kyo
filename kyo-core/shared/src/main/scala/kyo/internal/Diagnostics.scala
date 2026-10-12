@@ -46,7 +46,7 @@ private[kyo] object Diagnostics:
       */
     private val noProbe: () => Probe = () => Probe(closed = true, cycles = 0L, pending = false)
 
-    final private case class Entry(name: String, dump: () => String, probe: () => Probe)
+    final private case class Entry(name: String, dump: () => String, probes: () => List[(String, Probe)])
 
     private var entries: List[Entry] = Nil
 
@@ -54,10 +54,19 @@ private[kyo] object Diagnostics:
       * default) is reported via [[noProbe]] and never flagged. Returns a [[Registration]] whose `close()` removes both.
       */
     def register(name: String)(dump: () => String, probe: () => Probe = noProbe): Registration =
-        val entry = Entry(name, dump, probe)
+        add(Entry(name, dump, () => List(name -> probe())))
+
+    /** Register a named state dumper whose state is several independent loops, each reported as its own [[Probe]] lane named
+      * `<name>/<lane>`. The classifier compares a lane only with the same lane, so one loop's progress cannot hide another's frozen
+      * pending work, which a single summed probe would. A lane present in only one of two samples (a loop created or retired between
+      * them) is not compared.
+      */
+    def registerLanes(name: String)(dump: () => String, lanes: () => List[(String, Probe)]): Registration =
+        add(Entry(name, dump, () => lanes().map((lane, probe) => s"$name/$lane" -> probe)))
+
+    private def add(entry: Entry): Registration =
         synchronized { entries = entry :: entries }
         new Registration(entry)
-    end register
 
     private def remove(entry: AnyRef): Unit =
         synchronized { entries = entries.filterNot(_ eq entry) }
@@ -98,13 +107,14 @@ private[kyo] object Diagnostics:
         end if
     end dumpAll
 
-    /** Every registered component's current [[Probe]], alongside its name. A probe that throws is dropped, exactly as a throwing dump is
-      * caught inline in [[dumpAll]]: one broken component's probe must never blind the classifier to every other component.
+    /** Every registered component's current [[Probe]], alongside its name, with a lanes registration contributing one entry per lane. A
+      * probe that throws is dropped, exactly as a throwing dump is caught inline in [[dumpAll]]: one broken component's probe must never
+      * blind the classifier to every other component.
       */
     def probeAll(): List[(String, Probe)] =
         val snapshot = synchronized { entries }
         snapshot.reverse.flatMap { e =>
-            try List(e.name -> e.probe())
+            try e.probes()
             catch case _: Throwable => Nil
         }
     end probeAll

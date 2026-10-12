@@ -12,15 +12,16 @@ import kyo.internal.Diagnostics
   * that runs on EVERY suite. The governing principle: a loop whose cycle counter
   * advances is making continuous progress, however long it then takes, and is never a finding; a loop whose pending work survives
   * unchanged while its cycle counter stays frozen has parked with nothing left to wake it, which is a lost wakeup. [[detect]] takes two
-  * [[Diagnostics.probeAll]] samples a settle window apart and applies exactly that rule to each registered component.
+  * [[Diagnostics.probeAll]] samples a settle window apart and applies exactly that rule to each registered component, and to each lane
+  * of a component registered with `Diagnostics.registerLanes`.
   *
   * Unlike [[LeakCheck]] this check has no per-suite opt-out: a stranded op is never acceptable suite behavior, so every forked run is
   * checked. It reuses [[LeakCheck.defaultAllowlist]] and the fork's aggregated `leakCheckAllowlist` (the same plumbing LeakCheck itself
   * uses to excuse the process-lifetime transports) rather than a second allowlist: kyo-net's drivers tag a by-design, never-closed
-  * process-lifetime transport's own [[Diagnostics]] registration name (the shared singleton or the default HTTP client's transport) with the
-  * same `processSharedTransport` marker LeakCheck's default allowlist already matches, so a component that is SUPPOSED to sit parked with
-  * pending work forever (an idle kept-alive connection) is exempt by the same convention as every other process-lifetime resource, not a
-  * second one.
+  * process-lifetime transport's own [[Diagnostics]] registration name (the shared singleton or the default HTTP client's transport) with
+  * the same `processSharedTransport` marker LeakCheck's default allowlist already matches, so a component that is SUPPOSED to sit parked
+  * with pending work forever (an idle kept-alive connection) is exempt by the same convention as every other process-lifetime resource,
+  * not a second one.
   */
 private[runner] object StrandedOpCheck:
 

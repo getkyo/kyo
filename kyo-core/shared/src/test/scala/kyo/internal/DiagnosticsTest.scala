@@ -31,6 +31,35 @@ class DiagnosticsTest extends kyo.test.Test[Any]:
     }
 
     "probeAll" - {
+        "reports each lane of a lanes registration under <name>/<lane>, and the dump once under the name" in {
+            val name = freshName("lanes")
+            val a    = Diagnostics.Probe(closed = false, cycles = 1L, pending = true)
+            val b    = Diagnostics.Probe(closed = false, cycles = 2L, pending = false)
+            val reg  = Diagnostics.registerLanes(name)(() => "lanes body", () => List("a" -> a, "b" -> b))
+            try
+                val found = Diagnostics.probeAll().filter((n, _) => n.startsWith(name))
+                assert(found == List(s"$name/a" -> a, s"$name/b" -> b))
+                assert(Diagnostics.dumpAll().contains(s"=== $name ===\nlanes body"))
+            finally reg.close()
+            end try
+        }
+
+        "drops a lanes registration whose thunk throws, keeping the others" in {
+            val okName  = freshName("lanes-ok")
+            val badName = freshName("lanes-throws")
+            val ok      = Diagnostics.Probe(closed = false, cycles = 1L, pending = false)
+            val okReg   = Diagnostics.registerLanes(okName)(() => "body", () => List("a" -> ok))
+            val badReg  = Diagnostics.registerLanes(badName)(() => "body", () => throw new RuntimeException("boom"))
+            try
+                val all = Diagnostics.probeAll().toMap
+                assert(all.get(s"$okName/a") == Some(ok))
+                assert(!all.keys.exists(_.startsWith(badName)))
+            finally
+                okReg.close()
+                badReg.close()
+            end try
+        }
+
         "reports the registered probe's current snapshot under its name" in {
             val name = freshName("probe")
             val reg  = Diagnostics.register(name)(() => "body", () => Diagnostics.Probe(closed = false, cycles = 3L, pending = true))
