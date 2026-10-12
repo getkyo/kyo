@@ -4573,6 +4573,20 @@ lazy val `js-settings` = Seq(
         val c = scalaJSLinkerConfig.value
         if (insideCI.value) c.withBatchMode(true) else c
     }
+) ++ `scalajs-ci-ir-cache`
+
+// Batch mode drops the linker state, but each config's IR cache keeps its classpath's deserialized IR
+// referenced until sbt exits, which grew a CI test driver's live heap about 40 MB per module tested
+// (1.14 GB after the first module, 1.58 GB after eleven). Freeing the module's caches once its tests
+// pass leaves only what a later module's caches still reference; the next link refills a freed cache.
+lazy val `scalajs-ci-ir-cache` = Seq(
+    Test / test := {
+        val _ = (Test / test).value
+        if (insideCI.value) {
+            (Compile / scalaJSIRCacheBox).value.foreach(_.free())
+            (Test / scalaJSIRCacheBox).value.foreach(_.free())
+        }
+    }
 )
 
 // WASM rows are Scala.js compilations: same scala-java-time stand-in for the JDK time APIs,
@@ -4607,7 +4621,7 @@ lazy val `wasm-settings` = Seq(
         val c = scalaJSLinkerConfig.value
         if (insideCI.value) c.withBatchMode(true) else c
     }
-)
+) ++ `scalajs-ci-ir-cache`
 
 def scalacOptionToken(proposedScalacOption: ScalacOption) =
     scalacOptionTokens(Set(proposedScalacOption))
