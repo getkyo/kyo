@@ -10,8 +10,8 @@ import kyo.Frame
 import kyo.Kyo
 import kyo.Local
 import kyo.Maybe
+import kyo.Random
 import kyo.Result
-import kyo.Retry
 import kyo.Scope
 import kyo.Sync
 import kyo.discard
@@ -403,11 +403,10 @@ object TestRunner:
       *
       * Re-instantiates the suite at this leaf's execution cursor. When the re-instantiation produced a TERMINAL registration
       * (`peekRegisteredLeaf` is `Present`: a `.pending` / `.ignore` / `.only(false)` / platform-mismatch leaf that buffered no body), the
-      * terminal `TestResult` is returned directly. Otherwise the buffered baseline body is discharged via [[runRegisteredBody]]: `Retry`
-      * wraps the body (it already retries a thrown failure, which the Abort machinery lifts into a retryable `Result.Failure`), and
-      * `Async.timeout` wraps the whole retry loop so it bounds the leaf including retries. A thrown `AssertionFailed` / `TestCancelled` on
-      * the no-retry path surfaces as a `Result.Panic`, and the leaf's timeout expiry surfaces as a `Result.Failure(LeafTimedOut)`, both
-      * mapped to the matching `TestResult` at the `Abort.run[Throwable]` boundary.
+      * terminal `TestResult` is returned directly. Otherwise the buffered baseline body is discharged via [[runRegisteredBody]]: a retry
+      * loop runs each attempt in its own scope under what is left of one deadline, so the timeout bounds the leaf including its retries.
+      * A thrown `AssertionFailed` / `TestCancelled` on the no-retry path surfaces as a `Result.Panic`, and the leaf's timeout expiry as a
+      * `Result.Panic(LeafTimedOut)`, both mapped to the matching `TestResult` at the `Abort.run[Throwable]` boundary.
       */
     private def runLeaf(
         suite: Class[? <: TestBase[?]],
@@ -443,9 +442,9 @@ object TestRunner:
         end if
     end runLeaf
 
-    /** Discharge the buffered baseline-row body for a non-terminal leaf. Applies the retry/timeout/repeat decorators, runs the body under a
-      * per-leaf `Scope.run` + fiber, and maps the `Abort.run[Throwable]` boundary into a `TestResult` (including the `pendingUntilFixed`
-      * inversion).
+    /** Discharge the buffered baseline-row body for a non-terminal leaf. Applies the retry/timeout/repeat decorators, runs each retry
+      * attempt and each repetition under its own `Scope.run` and the whole leaf under a per-leaf `Scope.run` + fiber, and maps the
+      * `Abort.run[Throwable]` boundary into a `TestResult` (including the `pendingUntilFixed` inversion).
       */
     private def runRegisteredBody(
         instance: kyo.test.internal.TestBase[?],
@@ -493,24 +492,61 @@ object TestRunner:
         // pendingUntilFixed bodies are EXPECTED to fail and run exactly once; retry/repeat do not apply.
         val isXfail = builder.pendingUntilFixed.isDefined
 
-        // Retry wraps the body. Retry already retries a THROWN failure: a raw throw is lifted into an `Abort[Throwable]`
-        // `Result.Failure` by the Abort machinery (verified empirically), NOT a Panic, so Retry sees it as retryable with
-        // no `Abort.catching`. pendingUntilFixed bodies run exactly once (no retry).
-        val retried: Unit < (Async & Abort[Throwable] & Scope) =
-            builder.retrySchedule match
-                case Maybe.Present(s) if !isXfail => Retry[Throwable](s)(body)
-                case _                            => body
+        // One attempt: the body in a scope of its own, so what a failed attempt acquired is released before the retry starts,
+        // under what is left of the leaf's deadline. The scope sits in the leaf fiber, OUTSIDE the fiber the timeout forks: a
+        // scope opened inside that fork is a root the leaf does not own, and on expiry its finalizers drain detached, after
+        // the leaf is scored and while the next leaf runs. Outside it, the abort closes the scope and awaits the drain first.
+        // The expiry is a Panic carrying the configured limit, so the retry loop never retries it, the report states the
+        // limit rather than the elapsed time, and a `Timeout` the body raises from its own `Async.timeout` stays the body's
+        // failure. The body was normalized by `toThrowable` before the fork, so a thrown assertion is still a retryable
+        // Failure.
+        def attempt(deadline: Maybe[(Duration, Clock.Deadline)]): Unit < (Async & Abort[Throwable]) =
+            Scope.run {
+                deadline match
+                    case Maybe.Present((limit, end)) =>
+                        end.timeLeft.map { left =>
+                            if left <= Duration.Zero then Abort.panic(LeafTimedOut(limit))
+                            else Async.timeoutWithError(left, Result.Panic(LeafTimedOut(limit)))(body)
+                        }
+                    case Maybe.Absent => body
+            }
 
-        // Timeout wraps the WHOLE retry loop, so it bounds the leaf including its retries (not each attempt). Keeping the
-        // timeout OUTSIDE Retry is also what makes retry-on-throw work: a throw wrapped in `Async.timeout` surfaces as a
-        // `Result.Panic` (which Retry would not retry), whereas the un-wrapped body's throw stays a retryable
-        // `Result.Failure`. The expiry raises `Abort[LeafTimedOut]`, mapped to TimedOut at the boundary below.
-        // The expiry carries the configured limit on its own type, so the report states the limit rather than the elapsed
-        // time, and a `Timeout` the body raises from its own `Async.timeout` stays the body's failure.
-        val timed: Unit < (Async & Abort[Throwable] & Scope) =
+        // The retry loop mirrors `Retry.apply` (a Failure is retried per the schedule, a Panic is re-raised, and a jittered
+        // schedule is seeded from `Random` on the first failure, so concurrent leaves do not retry in step), plus the deadline
+        // cut: a wait the time left cannot cover times the leaf out at once rather than sleeping, since a timer can wake early.
+        def attempts(schedule: Maybe[kyo.Schedule], deadline: Maybe[(Duration, Clock.Deadline)]): Unit < (Async & Abort[Throwable]) =
+            def loop(schedule: kyo.Schedule, seeded: Boolean): Unit < (Async & Abort[Throwable]) =
+                Abort.run[Throwable](attempt(deadline)).map {
+                    case Result.Success(_)                             => ()
+                    case failure: Result.Failure[Throwable] @unchecked =>
+                        def retry(schedule: kyo.Schedule): Unit < (Async & Abort[Throwable]) =
+                            Clock.now.map { now =>
+                                schedule.next(now) match
+                                    case Maybe.Present((delay, next)) =>
+                                        val again = Async.sleep(delay).andThen(loop(next, seeded = true))
+                                        deadline match
+                                            case Maybe.Present((limit, end)) =>
+                                                end.timeLeft.map(left => if left <= delay then Abort.panic(LeafTimedOut(limit)) else again)
+                                            case Maybe.Absent => again
+                                        end match
+                                    case Maybe.Absent => Abort.error(failure)
+                            }
+                        if seeded then retry(schedule) else Random.nextLong.map(seed => retry(schedule.withSeed(seed)))
+                    case panic: Result.Panic => Abort.error(panic)
+                }
+            schedule match
+                case Maybe.Absent     => attempt(deadline)
+                case Maybe.Present(s) => loop(s, seeded = !s.hasJitter)
+        end attempts
+
+        // One deadline per run of the retry loop, so the leaf's limit bounds its retries together, not each attempt.
+        // pendingUntilFixed bodies run exactly once (no retry).
+        val timed: Unit < (Async & Abort[Throwable]) =
+            val schedule = if isXfail then Maybe.empty else builder.retrySchedule
             builder.timeout match
-                case Maybe.Present(d) => Async.timeoutWithError(d, Result.Failure(LeafTimedOut(d)))(retried)
-                case Maybe.Absent     => retried
+                case Maybe.Present(d) => Clock.deadline(d).map(end => attempts(schedule, Maybe((d, end))))
+                case Maybe.Absent     => attempts(schedule, Maybe.empty)
+        end timed
 
         // Apply the suite's `aroundLeaf` hook from OUTSIDE the timeout, so any setup it performs (a resource
         // acquisition, a browser warm-up) runs untimed and does not consume the leaf's timeout budget; only the wrapped
@@ -520,9 +556,12 @@ object TestRunner:
         val wrapped: Unit < (Async & Abort[Throwable] & Scope) =
             toThrowable(instance.aroundLeaf(timed))
 
+        // Each repetition, its `aroundLeaf` hook included, runs in a scope of its own, so what one repetition acquires is released
+        // before the next starts. A scope spanning every repetition holds all of them at once, which a `.times(500)` leaf that
+        // opens sockets or drivers cannot survive.
         val repeated: Unit < (Async & Abort[Throwable] & Scope) =
             if isXfail || builder.repeat <= 1 then wrapped
-            else Kyo.foreachDiscard(0 until builder.repeat)(_ => wrapped)
+            else Kyo.foreachDiscard(0 until builder.repeat)(_ => Scope.run(wrapped))
 
         // Discharge Scope per-leaf (Scope is fiber-shared; per-leaf Scope.run bounds resource release to leaf end), spawn the
         // body as its own fiber so the per-leaf Local context is inherited, then catch the Abort/Panic boundary.
@@ -580,13 +619,12 @@ object TestRunner:
 
     /** Convert an `Abort.run[Throwable]` `Result` into a `TestResult`. A thrown `AssertionFailed` / `TestCancelled` arrives as a
       * `Result.Panic` (raw `throw` in a Kyo computation surfaces as a panic, not a failure); the leaf's own timeout expiry arrives as a
-      * `Result.Failure(LeafTimedOut)` carrying the configured limit. Any other panic is logged and recorded as a failure (never
+      * `Result.Panic(LeafTimedOut)` carrying the configured limit. Any other panic is logged and recorded as a failure (never
       * swallowed).
       */
     private def resultToTestResult(result: Result[Throwable, Unit], elapsed: Duration): TestResult =
         result match
             case Result.Success(_)                   => TestResult.Passed(elapsed)
-            case Result.Failure(LeafTimedOut(limit)) => TestResult.TimedOut(limit)
             case Result.Failure(af: AssertionFailed) =>
                 TestResult.Failed(af.diagram, Maybe(af.getCause), elapsed)
             case Result.Failure(tc: TestCancelled) => TestResult.Cancelled(tc.reason, elapsed)

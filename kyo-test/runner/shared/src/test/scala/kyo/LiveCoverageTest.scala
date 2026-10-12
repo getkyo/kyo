@@ -194,6 +194,128 @@ private object LiveCoverageFixtures:
         }
     end RetryRepeatSuite
 
+    // ── 14. per-attempt scope ────────────────────────────────────────────────────────────────
+    // Each attempt acquires one resource whose finalizer releases it; `scopeOpen` counts the live ones and `scopePeak` the most ever live.
+
+    val scopeOpen: AtomicInteger = new AtomicInteger(0)
+    val scopePeak: AtomicInteger = new AtomicInteger(0)
+
+    private def acquire(using Frame): Int < (Sync & Scope) =
+        Sync.defer {
+            val n = scopeOpen.incrementAndGet()
+            discard(scopePeak.accumulateAndGet(n, math.max))
+            n
+        }.map(n => Scope.ensure(Sync.defer(discard(scopeOpen.decrementAndGet()))).andThen(n))
+
+    class RepeatScopeSuite extends TestBase[Any]:
+        "rs".times(3) in acquire.map(n => assert(n == 1, s"$n resources live: an earlier repetition's scope is still open"))
+    end RepeatScopeSuite
+
+    val retryScopeAttempts: AtomicInteger = new AtomicInteger(0)
+
+    class RetryScopeSuite extends TestBase[Any]:
+        "rts".retry(1) in acquire.map { n =>
+            if retryScopeAttempts.incrementAndGet() == 1 then assert(false, "the first attempt fails")
+            else assert(n == 1, s"$n resources live: the failed attempt's scope is still open")
+        }
+    end RetryScopeSuite
+
+    class RepeatHookScopeSuite extends TestBase[Any]:
+        override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+            acquire.andThen(body)
+        "rhs".times(3) in Sync.defer {
+            val n = scopeOpen.get()
+            assert(n == 1, s"$n resources live: an earlier repetition's aroundLeaf scope is still open")
+        }
+    end RepeatHookScopeSuite
+
+    // The first leaf times out holding a resource whose release takes a while; the second, run after it, sees it released.
+    class TimeoutScopeSuite extends TestBase[Any]:
+        override def config = super.config.sequential
+        "ts-timed-out".timeout(100.millis) in
+            Sync.defer(discard(scopeOpen.incrementAndGet()))
+                .andThen(Scope.ensure(Async.sleep(200.millis).andThen(Sync.defer(discard(scopeOpen.decrementAndGet())))))
+                .andThen(Async.sleep(1.hour))
+                .andThen(succeed)
+        "ts-next" in Sync.defer {
+            val n = scopeOpen.get()
+            assert(n == 0, s"$n resources live: the timed-out leaf was scored before its scope finished releasing")
+        }
+    end TimeoutScopeSuite
+
+    val timeoutRetryAttempts: AtomicInteger = new AtomicInteger(0)
+
+    // A timed-out attempt is not retried: the limit bounds the leaf's attempts together.
+    class TimeoutNotRetriedSuite extends TestBase[Any]:
+        "tnr".retry(5).timeout(100.millis) in
+            Sync.defer(discard(timeoutRetryAttempts.incrementAndGet())).andThen(Async.sleep(1.hour)).andThen(succeed)
+    end TimeoutNotRetriedSuite
+
+    // A wait before a retry that the time left cannot cover times the leaf out at once, without sleeping.
+    class TimeoutBoundsBackoffSuite extends TestBase[Any]:
+        "tbb".retry(Schedule.fixed(1.hour).take(1)).timeout(100.millis) in
+            Sync.defer(timeoutRetryAttempts.incrementAndGet()).map(n => assert(false, s"attempt $n fails"))
+    end TimeoutBoundsBackoffSuite
+
+    val seedDraws: java.util.concurrent.ConcurrentLinkedQueue[Long] = new java.util.concurrent.ConcurrentLinkedQueue[Long]()
+    val seedCounter: AtomicInteger                                  = new AtomicInteger(0)
+    val jitterAttempts: java.util.concurrent.ConcurrentHashMap[String, AtomicInteger] =
+        new java.util.concurrent.ConcurrentHashMap[String, AtomicInteger]()
+    val jittered: Schedule = Schedule.fixed(1.milli).jitter(0.5).take(1)
+
+    /** Runs each leaf at a fixed Instant (`Instant.Epoch`, under time control) with a Random that hands out one seed of the leaf's own,
+      * and moves time on only once the retry loop sleeps exactly the delay `sleepFor` gives for that seed. A leaf therefore passes only
+      * if its retry loop slept that delay; otherwise the wait for it gives up after 10 seconds of real time and the leaf fails.
+      */
+    abstract class SleepCheckSuite extends TestBase[Any]:
+        def sleepFor(seed: Long): Maybe[Duration]
+
+        override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+            val seed   = 1000L + seedCounter.incrementAndGet()
+            val random = Random(Random.Unsafe(new java.util.Random:
+                override def nextLong(): Long =
+                    discard(seedDraws.add(seed))
+                    seed))
+            Random.let(random) {
+                Clock.withTimeControl { control =>
+                    sleepFor(seed) match
+                        case Maybe.Absent         => body
+                        case Maybe.Present(delay) =>
+                            // deviation: the real-clock timeout only turns a sleep that never arms into a failure; it decides no pass.
+                            val armed =
+                                Abort.run[Timeout](Clock.let(Clock.live)(Async.timeout(10.seconds)(control.awaitPendingSleeper(delay))))
+                            val driver = armed.map { result =>
+                                (if result.isSuccess then control.advance(delay) else control.advance(1.hour)).andThen(result.isSuccess)
+                            }
+                            Fiber.initUnscoped(driver).map { fiber =>
+                                body.map(a => fiber.get.map(slept => if slept then a else Abort.fail(s"the retry loop never slept $delay")))
+                            }
+                }
+            }
+        end aroundLeaf
+
+        def failsFirst(name: String)(using Frame, kyo.test.AssertScope): Unit < Sync =
+            Sync.defer(jitterAttempts.computeIfAbsent(name, _ => new AtomicInteger(0)).incrementAndGet()).map(n =>
+                assert(n > 1, s"$name attempt $n fails")
+            )
+    end SleepCheckSuite
+
+    class JitterSeedSuite extends SleepCheckSuite:
+        def sleepFor(seed: Long) = jittered.withSeed(seed).next(Instant.Epoch).map(_._1)
+        "jittered-a".retry(jittered) in failsFirst("jittered-a")
+        "jittered-b".retry(jittered) in failsFirst("jittered-b")
+    end JitterSeedSuite
+
+    class JitterFirstTrySuite extends SleepCheckSuite:
+        def sleepFor(seed: Long) = Maybe.empty
+        "jittered-first-try".retry(jittered) in succeed
+    end JitterFirstTrySuite
+
+    class PlainScheduleSuite extends SleepCheckSuite:
+        def sleepFor(seed: Long) = Maybe(1.milli)
+        "plain".retry(Schedule.fixed(1.milli).take(1)) in failsFirst("plain")
+    end PlainScheduleSuite
+
 end LiveCoverageFixtures
 
 /** Live-path execution tests for kyo-test-runner behaviors.
@@ -479,6 +601,99 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
             assert(
                 LiveCoverageFixtures.retryRepeatCounter.get() == 4,
                 s"expected retryRepeatCounter == 4 (2 outer * 2 per retry) but got ${LiveCoverageFixtures.retryRepeatCounter.get()}"
+            )
+        }
+    }
+
+    // ── 14. per-attempt scope ────────────────────────────────────────────────────────────────
+
+    "repeat: each repetition's scope closes before the next repetition starts" in {
+        LiveCoverageFixtures.scopeOpen.set(0)
+        LiveCoverageFixtures.scopePeak.set(0)
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.RepeatScopeSuite])).map { report =>
+            assert(report.passed == 1, s"expected passed==1 but got $report")
+            assert(
+                (LiveCoverageFixtures.scopePeak.get(), LiveCoverageFixtures.scopeOpen.get()) == (1, 0),
+                "(peak, open) resources after the run"
+            )
+        }
+    }
+
+    "repeat: what aroundLeaf acquires for a repetition is released before the next repetition starts" in {
+        LiveCoverageFixtures.scopeOpen.set(0)
+        LiveCoverageFixtures.scopePeak.set(0)
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.RepeatHookScopeSuite])).map { report =>
+            assert(report.passed == 1, s"expected passed==1 but got $report")
+            assert(
+                (LiveCoverageFixtures.scopePeak.get(), LiveCoverageFixtures.scopeOpen.get()) == (1, 0),
+                "(peak, open) resources after the run"
+            )
+        }
+    }
+
+    "timeout: a timed-out leaf's resources are released before it is scored and the next leaf starts" in {
+        LiveCoverageFixtures.scopeOpen.set(0)
+        LiveCoverageFixtures.scopePeak.set(0)
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.TimeoutScopeSuite])).map { report =>
+            assert((report.timedOut, report.passed) == (1, 1), s"expected (timedOut, passed) == (1, 1) but got $report")
+            assert(LiveCoverageFixtures.scopeOpen.get() == 0, s"expected open == 0 but got ${LiveCoverageFixtures.scopeOpen.get()}")
+        }
+    }
+
+    "timeout: an attempt that times out is not retried" in {
+        LiveCoverageFixtures.timeoutRetryAttempts.set(0)
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.TimeoutNotRetriedSuite])).map { report =>
+            assert(report.timedOut == 1, s"expected timedOut==1 but got $report")
+            assert(LiveCoverageFixtures.timeoutRetryAttempts.get() == 1)
+        }
+    }
+
+    "retry: concurrent jittered retries each seed their schedule, so they do not retry in step" in {
+        // Each jittered leaf passes only if its retry loop slept the delay its own drawn seed gives, so the two leaves wait different
+        // times; a leaf that passes at once and a schedule without jitter draw no seed, and the plain one sleeps exactly its 1ms.
+        import LiveCoverageFixtures.*
+        seedDraws.clear()
+        seedCounter.set(0)
+        jitterAttempts.clear()
+        for
+            seeded <- discharge(TestRunner.runReport(classOf[JitterSeedSuite]))
+            jitterSeeds = seedDraws.toArray.toList.map(_.asInstanceOf[Long])
+            _           = seedDraws.clear()
+            firstTry <- discharge(TestRunner.runReport(classOf[JitterFirstTrySuite]))
+            plain    <- discharge(TestRunner.runReport(classOf[PlainScheduleSuite]))
+        yield
+            assert(seeded.passed == 2, s"expected passed==2 but got $seeded")
+            assert(jitterSeeds.size == 2 && jitterSeeds.distinct.size == 2, s"expected two distinct seed draws but got $jitterSeeds")
+            val delays = jitterSeeds.map(seed => jittered.withSeed(seed).next(Instant.Epoch).map(_._1))
+            assert(delays.distinct.size == 2, s"the two seeds gave the same delay: $delays")
+            assert(firstTry.passed == 1 && plain.passed == 1, s"expected both passed but got $firstTry and $plain")
+            assert(seedDraws.isEmpty, s"a leaf without a jittered retry drew a seed: $seedDraws")
+        end for
+    }
+
+    "timeout: a wait the time left cannot cover times the leaf out at once" in {
+        LiveCoverageFixtures.timeoutRetryAttempts.set(0)
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.TimeoutBoundsBackoffSuite])).map { report =>
+            assert(report.timedOut == 1, s"expected timedOut==1 but got $report")
+            assert(LiveCoverageFixtures.timeoutRetryAttempts.get() == 1)
+        }
+    }
+
+    "retry: a failed attempt's scope closes before the retry starts" in {
+        LiveCoverageFixtures.scopeOpen.set(0)
+        LiveCoverageFixtures.scopePeak.set(0)
+        LiveCoverageFixtures.retryScopeAttempts.set(0)
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.RetryScopeSuite])).map { report =>
+            assert(report.passed == 1, s"expected passed==1 but got $report")
+            assert(
+                (
+                    LiveCoverageFixtures.retryScopeAttempts.get(),
+                    LiveCoverageFixtures.scopePeak.get(),
+                    LiveCoverageFixtures.scopeOpen.get()
+                ) ==
+                    (2, 1, 0),
+                s"expected (attempts, peak, open) == (2, 1, 0) but got (${LiveCoverageFixtures.retryScopeAttempts.get()}, " +
+                    s"${LiveCoverageFixtures.scopePeak.get()}, ${LiveCoverageFixtures.scopeOpen.get()})"
             )
         }
     }

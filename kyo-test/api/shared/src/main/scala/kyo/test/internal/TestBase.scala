@@ -525,8 +525,8 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
       * `override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame) =
       *      HttpClient.withConfig(_.timeout(60.seconds))(body)`.
       * This is the kyo-test equivalent of overriding ScalaTest's `withFixture`: a single point that wraps every leaf,
-      * instead of repeating the wrapper at each `in { … }`. The runner applies it
-      * to the raw leaf body before the per-leaf retry/timeout/scope discharge.
+      * instead of repeating the wrapper at each `in { … }`. The runner applies it once per repetition of a `.times(n)` leaf,
+      * outside the leaf's timeout and retries, and what it acquires through `Scope` is released when that repetition ends.
       */
     def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) = body
 

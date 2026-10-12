@@ -332,7 +332,7 @@ kyo-`Random` is not a row effect: every operation suspends `Sync`, which the bas
 
 ### `aroundLeaf` and the suite hooks
 
-When every leaf in a suite needs the same wrapper (open a connection, set a config), override `aroundLeaf` instead of repeating `.handle` at each `in`. It is the kyo-test equivalent of ScalaTest's `withFixture`: a single point that wraps each raw leaf body before the runner applies retry, timeout, and scope discharge.
+When every leaf in a suite needs the same wrapper (open a connection, set a config), override `aroundLeaf` instead of repeating `.handle` at each `in`. It is the kyo-test equivalent of ScalaTest's `withFixture`: a single point that wraps each leaf body. It runs once per repetition of a `.times(n)` leaf, outside the leaf's timeout and retries, and what it acquires through `Scope` is released when that repetition ends.
 
 ```scala
 class ConnectedSuite extends Test[Any]:
