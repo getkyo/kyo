@@ -2517,11 +2517,15 @@ class HttpClientTest extends BaseHttpTest:
                                         )
                                     ).map { result =>
                                         seen.get.map { text =>
-                                            assert(text == "ok\n")
                                             result match
                                                 case Result.Failure(e: HttpConnectionClosedException) =>
                                                     assert(e.phase == HttpConnectionClosedException.Phase.BodyTruncated)
-                                                case other => fail(s"a failed response stream must reach the client as a cut body, got: $other")
+                                                case other =>
+                                                    fail(
+                                                        s"a failed response stream must reach the client as a cut body, got: $other after '$text'"
+                                                    )
+                                            end match
+                                            assert(text == "ok\n", s"received '$text'")
                                         }
                                     }
                                 }
