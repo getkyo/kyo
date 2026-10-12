@@ -2108,6 +2108,38 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 case other => fail(s"expected unquoted whitespace to fail with HttpMissingBoundaryException, got $other")
             end match
         }
+
+        /** Decodes `body` as a streamed multipart request with boundary `abc`, delivered in reads split at `splits`. */
+        def streamedParts(body: Array[Byte], splits: Int*)(using Frame): Chunk[HttpRequest.Part] < (Async & Abort[HttpException]) =
+            val route   = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val bounds  = (0 +: splits :+ body.length).sliding(2).toSeq
+            val stream  = Stream.init(bounds.map(b => Span.fromUnsafe(body.slice(b(0), b(1)))), chunkSize = 1)
+            val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=abc")
+            Abort.get(RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream, maxPartSize))
+                .map(_.fields.body.run)
+        end streamedParts
+
+        def ascii(s: String): Array[Byte] = s.getBytes("US-ASCII")
+
+        "a binary part arrives byte for byte, across reads" in {
+            val data = Array[Byte](0xff.toByte, 0, 0x80.toByte, 0xc3.toByte, '\n', ' ')
+            val body = ascii("--abc\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.bin\"\r\n\r\n") ++ data ++
+                ascii("\r\n--abc--\r\n")
+            streamedParts(body, body.length - 12, body.length - 9).map { parts =>
+                assert(parts.map(_.name) == Chunk("file"))
+                assert(parts.map(_.filename) == Chunk(Present("x.bin")))
+                assert(parts.head.data.toArray.toSeq == data.toSeq)
+            }
+        }
+
+        "a preamble before the first delimiter and an epilogue after the last are not parts" in {
+            val body = ascii("preamble\r\n--abc\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\none\r\n" +
+                "--abc\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\n two \r\n--abc--\r\nepilogue")
+            streamedParts(body, 3, 20).map { parts =>
+                assert(parts.map(_.name) == Chunk("a", "b"))
+                assert(parts.map(p => new String(p.data.toArray, "US-ASCII")) == Chunk("one", " two "))
+            }
+        }
     }
 
     // ==================== NDJSON line splitting ====================
