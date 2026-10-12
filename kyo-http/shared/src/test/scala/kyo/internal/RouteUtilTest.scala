@@ -1649,6 +1649,12 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             }
         }
 
+        "an empty event field leaves the default type" in {
+            decodeReads(sseText, utf8("event:\ndata: a\n\nevent: update\nevent:\ndata: b\n\n")).map { events =>
+                assert(events == Chunk(HttpSseEvent("a", Absent, Absent, Absent), HttpSseEvent("b", Absent, Absent, Absent)))
+            }
+        }
+
         "a multibyte character split across reads arrives whole" in {
             val bytes = utf8("data: café\n\n")
             val split = bytes.indexOf(0xa9.toByte)
@@ -2172,6 +2178,15 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             Abort.get(RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, reads, "GET", HttpUrl.fromUri("/events")))
                 .map(_.fields.body.run)
                 .map(users => assert(users == Chunk(User("José", 30))))
+        }
+
+        "a last line the stream ends without a newline is decoded" in {
+            val route = HttpRoute.getRaw("events").response(_.bodyNdjson[User])
+            val body  = "{\"name\":\"Alice\",\"age\":30}\r\n\n{\"name\":\"Bob\",\"age\":25}"
+            val reads = Stream.init(Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
+            Abort.get(RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, reads, "GET", HttpUrl.fromUri("/events")))
+                .map(_.fields.body.run)
+                .map(users => assert(users == Chunk(User("Alice", 30), User("Bob", 25))))
         }
     }
 

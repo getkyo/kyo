@@ -1164,7 +1164,8 @@ private[kyo] object RouteUtil:
 
     // SSE (the WHATWG event stream format): lines end with CR, LF or CRLF; a field is the text before the first colon, its value the text
     // after it minus one leading space; a line starting with a colon is a comment; an empty line dispatches the event, which needs at
-    // least one data line; the data lines join with LF; an event the stream ends inside is discarded.
+    // least one data line; the data lines join with LF; an empty event field leaves the default type; an event the stream ends inside is
+    // discarded.
 
     /** The bytes of the line in progress (as the pieces they arrived in, joined once the line ends), whether it ended on a CR whose LF
       * may still follow, whether it is the stream's first line (the one a byte order mark may precede), and the fields of the event in
@@ -1254,7 +1255,7 @@ private[kyo] object RouteUtil:
                 else line.substring(colon + 1)
             val next = field match
                 case "data"  => st.copy(data = Present(st.data.getOrElse(Chunk.empty).append(value)))
-                case "event" => st.copy(event = Present(value))
+                case "event" => st.copy(event = Maybe.when(value.nonEmpty)(value))
                 case "id"    => if value.indexOf('\u0000') < 0 then st.copy(id = Present(value)) else st
                 case "retry" =>
                     // digits only, and few enough to be a millisecond count a Long holds (the spec ignores any other value)
