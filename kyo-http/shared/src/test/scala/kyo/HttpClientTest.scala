@@ -2722,6 +2722,40 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
+        "streaming request body: a request stream that fails fails the request with its own failure" - {
+            val route = HttpRoute.postRaw("sink").request(_.bodyStream).response(_.bodyText)
+            val ep    = route.handler(req => Abort.run[HttpException](req.fields.body.run).map(_ => HttpResponse.ok("drained")))
+
+            def sendFailing(url: HttpUrl, failure: => Unit < Abort[HttpException])(using
+                Frame,
+                kyo.test.AssertScope
+            ): HttpResponse["body" ~ String] < (Async & Abort[HttpException] & Scope) =
+                val body = Stream[Span[Byte], Async & Abort[HttpException]] {
+                    kyo.Emit.valueWith(Chunk(Span.fromUnsafe("partial".getBytes("UTF-8"))))(failure)
+                }
+                val request = HttpRequest.postRaw(HttpUrl(url.scheme, url.host, url.port, "/sink", Absent)).addField("body", body)
+                withClient(_.sendWith(route, request)(identity))
+            end sendFailing
+
+            "when it fails with an HttpException" - {
+                runServer(ep) { url =>
+                    Abort.run[HttpException](sendFailing(url, Abort.fail(HttpJsonDecodeException("upstream", "GET", "/upstream")))).map {
+                        case Result.Failure(e: HttpJsonDecodeException) => assert(e.detail == "upstream")
+                        case other => fail(s"Expected the stream's HttpJsonDecodeException, got $other")
+                    }
+                }
+            }
+
+            "when it panics" - {
+                runServer(ep) { url =>
+                    Abort.run[HttpException](sendFailing(url, throw new RuntimeException("upstream broke"))).map {
+                        case Result.Panic(e) => assert(e.getMessage == "upstream broke")
+                        case other           => fail(s"Expected the stream's panic, got $other")
+                    }
+                }
+            }
+        }
+
         "client close while requests in-flight" in {
             val slowRoute = HttpRoute.getRaw("slow-close").response(_.bodyText)
             // Handler blocks forever — cancelled when client closes
