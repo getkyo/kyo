@@ -12,8 +12,7 @@ import kyo.*
   *
   * The deadline is the transport's own Clock-driven timer, NOT a caller-side `Async.timeout` (the distinct property [[TransportConnectDeadlineTest]]
   * asserts and leaves green). The finite `connectTimeout` is the deterministic latch (the black hole never answers, so the deadline always wins);
-  * a generous outer `Async.timeout` survival window turns a regression (no deadline armed, so the connect hangs) into a failure rather than a hang,
-  * never a sleep-as-synchronization.
+  * a regression (no deadline armed, so the connect hangs) fails by the leaf timeout, never a sleep-as-synchronization.
   *
   * Native is excluded (`.notNative`): a connect to the RFC 5737 TEST-NET-1 black hole can fail-fast with an unreachable error on a Native host
   * rather than parking in SYN_SENT, which would surface `NetConnectException` (the OS-close arm) instead of exercising the deadline. The posix
@@ -35,10 +34,10 @@ class TransportConnectTimeoutProducedTest extends Test:
         // deadline always wins; the produced leaf is the typed NetConnectTimeoutException, NOT the generic NetConnectException.
         val timeout   = 200.millis
         val transport = NetPlatform.transport
-        Abort.run[NetException | Closed | Timeout](
-            // A generous survival window: if the deadline were NOT armed (the regression) the connect would hang and this would time out, failing
-            // the assertion below rather than hanging the suite. With the deadline armed, the connect fails well within the window.
-            Async.timeout(5.seconds)(transport.connect(blackHoleHost, blackHolePort, timeout).safe.get)
+        // If the deadline were NOT armed (the regression) the connect would park, which the leaf timeout fails.
+        awaitOutcome(
+            transport.connect(blackHoleHost, blackHolePort, timeout),
+            "the connect never failed: no connect deadline was armed"
         ).map { outcome =>
             outcome match
                 case Result.Failure(e: NetConnectTimeoutException) =>
@@ -57,7 +56,7 @@ class TransportConnectTimeoutProducedTest extends Test:
                     assert(
                         false,
                         s"expected the internal connect-deadline to produce NetConnectTimeoutException($blackHoleHost, $blackHolePort, $timeout), " +
-                            s"got $other (a Timeout means no deadline was armed; a NetConnectException means an OS-close beat the deadline)"
+                            s"got $other (a NetConnectException means an OS-close beat the deadline)"
                     )
             end match
         }
@@ -71,8 +70,9 @@ class TransportConnectTimeoutProducedTest extends Test:
         val timeout   = 200.millis
         val transport = NetPlatform.transport
         val tls       = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
-        Abort.run[NetException | Closed | Timeout](
-            Async.timeout(5.seconds)(transport.connectTls(blackHoleHost, blackHolePort, tls, timeout).safe.get)
+        awaitOutcome(
+            transport.connectTls(blackHoleHost, blackHolePort, tls, timeout),
+            "the TLS connect never failed: the TLS connect path armed no deadline"
         ).map { outcome =>
             outcome match
                 case Result.Failure(e: NetConnectTimeoutException) =>
@@ -86,8 +86,7 @@ class TransportConnectTimeoutProducedTest extends Test:
                 case other =>
                     assert(
                         false,
-                        s"expected NetConnectTimeoutException($timeout) from the TLS connect deadline, got $other " +
-                            "(a Timeout means the TLS connect path armed no deadline)"
+                        s"expected NetConnectTimeoutException($timeout) from the TLS connect deadline, got $other"
                     )
             end match
         }

@@ -62,8 +62,10 @@ class TransportMutualTlsTrustAnchorTest extends Test:
                             client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
                         }
                     }
-                val outcome: Result[NetException | Closed | Timeout, (Connection, Array[Byte])] < (Async & Scope) =
-                    Abort.run[NetException | Closed | Timeout](Async.timeout(30.seconds)(connectAndEcho))
+                val outcome: Result[NetException | Closed, (Connection, Array[Byte])] < (Async & Scope) =
+                    Abort.run[NetException | Closed](
+                        logIfInterrupted("the trustStorePath-validated mutual-TLS round-trip never completed")(connectAndEcho)
+                    )
                 outcome.map { outcome =>
                     listener.close()
                     outcome match
@@ -136,8 +138,10 @@ class TransportMutualTlsTrustAnchorTest extends Test:
                                 client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
                             }
                         }
-                    val outcome: Result[NetException | Closed | Timeout, (Connection, Array[Byte])] < (Async & Scope) =
-                        Abort.run[NetException | Closed | Timeout](Async.timeout(30.seconds)(connectAndEcho))
+                    val outcome: Result[NetException | Closed, (Connection, Array[Byte])] < (Async & Scope) =
+                        Abort.run[NetException | Closed](
+                            logIfInterrupted("the precedence mutual-TLS round-trip never completed")(connectAndEcho)
+                        )
                     outcome.map { outcome =>
                         listener.close()
                         outcome match

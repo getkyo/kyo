@@ -105,25 +105,24 @@ class TransportStartTlsTest extends Test:
             val rounds = 20
             startTlsEchoServer(transport, serverTls).map { listener =>
                 Scope.ensure(Sync.defer(listener.close())).andThen {
-                    Abort.run[Timeout] {
-                        Loop.indexed { i =>
-                            if i >= rounds then Loop.done(())
-                            else
-                                val msg = s"handoff-$i".getBytes("UTF-8")
-                                // Each round's upgrade round-trip is bounded on its own, so amortized slowness across the 20 rounds cannot
-                                // accumulate into a false failure the way a single budget spanning all rounds would. 30s fires only on a genuine
-                                // strand (a dropped ClientHello leaving the handshake parked), never on a slow-but-progressing round.
-                                Async.timeout(30.seconds)(startTlsClient(transport, listener.port, cli, msg)).map { echoed =>
-                                    assert(
-                                        new String(echoed, "UTF-8") == s"handoff-$i",
-                                        s"round $i must round-trip after the STARTTLS upgrade"
-                                    )
-                                    Loop.continue
-                                }
-                        }
-                    }.map { outcome =>
+                    Loop.indexed { i =>
+                        if i >= rounds then Loop.done(())
+                        else
+                            val msg = s"handoff-$i".getBytes("UTF-8")
+                            // A round has no bound of its own: a strand (a dropped ClientHello leaving the handshake parked) is failed by the
+                            // leaf timeout, which logs the round it stalled in.
+                            logIfInterrupted(s"STARTTLS round $i never round-tripped (the handshake stranded)")(
+                                startTlsClient(transport, listener.port, cli, msg)
+                            ).map { echoed =>
+                                assert(
+                                    new String(echoed, "UTF-8") == s"handoff-$i",
+                                    s"round $i must round-trip after the STARTTLS upgrade"
+                                )
+                                Loop.continue
+                            }
+                    }.andThen {
                         listener.close()
-                        assert(outcome.isSuccess, s"all $rounds STARTTLS upgrades must round-trip without stranding; got $outcome")
+                        succeed
                     }
                 }
             }
@@ -229,15 +228,13 @@ class TransportStartTlsTest extends Test:
                     _ <- Scope.ensure(Sync.defer(conn.close()))
                     _ <- conn.outbound.safe.put(upgradeRequest)
                     _ <- conn.inbound.safe.take
-                    first = transport.upgradeToTls(conn, cli, 16).safe
-                    second <-
-                        Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(transport.upgradeToTls(
-                            conn,
-                            cli,
-                            16
-                        ).safe.get))
+                    first = transport.upgradeToTls(conn, cli, 16)
+                    second <- awaitOutcome(
+                        transport.upgradeToTls(conn, cli, 16),
+                        "a second upgradeToTls on an upgrading connection never settled"
+                    )
                     _ = conn.close()
-                    firstOutcome <- Abort.run[NetException | Closed | Timeout](Async.timeout(10.seconds)(first.get))
+                    firstOutcome <- awaitOutcome(first, "close() never settled the first, still-parked upgrade (it was stranded)")
                 yield
                     listener.close()
                     assert(
@@ -245,7 +242,7 @@ class TransportStartTlsTest extends Test:
                         s"a second upgradeToTls on an upgrading connection must fail NetAlreadyDetachedException, got $second"
                     )
                     // The second call must not have disarmed the first upgrade's close route: close() settles the still-parked first
-                    // upgrade with the typed close leaf and releases what it holds. A Timeout here means the first upgrade was stranded.
+                    // upgrade with the typed close leaf and releases what it holds.
                     assert(
                         firstOutcome.failure.exists(_.isInstanceOf[NetConnectionClosedException]),
                         s"close() must settle the first, still-parked upgrade with NetConnectionClosedException, got $firstOutcome"
@@ -374,9 +371,8 @@ class TransportStartTlsTest extends Test:
     // ServerHello leaves the handshake parked on a read forever, holding the detached fd and the TLS engine. The plaintext connection has
     // already been detached by then, so nothing else reclaims them, and on the process-shared transport no later close() sweeps them either.
     //
-    // The peer here accepts the plaintext connection and simply never upgrades, which is exactly a silent TLS peer from the upgrading side. The
-    // outer Async.timeout is the regression detector: with no deadline armed the upgrade parks and the window expires, failing the assertion
-    // below rather than hanging the suite.
+    // The peer here accepts the plaintext connection and simply never upgrades, which is exactly a silent TLS peer from the upgrading side. With
+    // no deadline armed the upgrade parks, which the leaf timeout fails.
     "a STARTTLS upgrade whose peer never speaks TLS is reaped on its own deadline" in {
         assumeTls()
         given Frame = Frame.internal
@@ -392,8 +388,9 @@ class TransportStartTlsTest extends Test:
                                     sniHostname = Present("localhost"),
                                     handshakeTimeout = 150.millis
                                 )
-                            Abort.run[NetException | Closed | Timeout](
-                                Async.timeout(5.seconds)(transport.upgradeToTls(conn, clientTls, 16).safe.get)
+                            awaitOutcome(
+                                transport.upgradeToTls(conn, clientTls, 16),
+                                "the upgrade never failed: no handshake deadline was armed, so the detached fd and engine leak"
                             ).map { outcome =>
                                 silentListener.close()
                                 outcome match
@@ -402,8 +399,7 @@ class TransportStartTlsTest extends Test:
                                     case other =>
                                         assert(
                                             false,
-                                            s"expected NetTlsHandshakeTimeoutException(150ms) from the upgrade handshake deadline, got $other " +
-                                                "(a Timeout means no deadline was armed, so the detached fd and engine leak)"
+                                            s"expected NetTlsHandshakeTimeoutException(150ms) from the upgrade handshake deadline, got $other"
                                         )
                                 end match
                             }

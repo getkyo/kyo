@@ -119,8 +119,9 @@ class TransportPerOperationConfigTest extends Test:
             // Guarantees the generous fiber is interrupted (releasing its half-open connect) even if an assertion below throws before the
             // explicit `generousFiber.interrupt` call is reached.
             Scope.ensure(generousFiber.interrupt.unit).andThen {
-                Abort.run[NetException | Closed | Timeout](
-                    Async.timeout(10.seconds)(transport.connect(blackHoleHost, blackHolePort, tight).safe.get)
+                awaitOutcome(
+                    transport.connect(blackHoleHost, blackHolePort, tight),
+                    s"the connect that asked for $tight never failed: its own deadline was not armed"
                 ).map { tightOutcome =>
                     // The generous connect must STILL BE PARKED at this moment. Without this check the leaf proves only that the tight connect
                     // timed out, which a single shared deadline would also produce: the assertions below would pass unchanged if both connects
@@ -180,7 +181,9 @@ class TransportPerOperationConfigTest extends Test:
                 heldClient        <- transport.connect("127.0.0.1", unboundedListener.port).safe.get
                 _                 <- Scope.ensure(Sync.defer(heldClient.close()))
                 // The reaped side closes the accepted fd, which this client observes as its inbound terminating.
-                reaped <- Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](reapedClient.inbound.safe.take)))
+                reaped <- logIfInterrupted("the 150ms listener never reaped its stalled handshake")(
+                    Abort.run[Closed](reapedClient.inbound.safe.take)
+                )
                 // The unbounded side must still be held open at that moment, proving the two listeners did not share a deadline.
                 held <- Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](heldClient.inbound.safe.take)))
             yield
@@ -188,7 +191,7 @@ class TransportPerOperationConfigTest extends Test:
                 heldClient.close()
                 reapingListener.close()
                 unboundedListener.close()
-                assert(reaped.isSuccess, s"the 150ms listener must reap its stalled handshake, got $reaped")
+                assert(reaped.isFailure, s"the 150ms listener must reap its stalled handshake, closing the client's inbound, got $reaped")
                 assert(held.isFailure, s"the Infinity listener must not reap its stalled handshake, got $held")
                 assert(NetPlatform.transport eq transport, "both listeners must have come from the one shared transport")
             end for

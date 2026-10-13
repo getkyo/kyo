@@ -15,15 +15,6 @@ class TransportCloseFlushTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(5.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     private def parkedOnWritable(conn: InternalConnection[?]): Boolean =
         conn.writeState match
             case WriteState.AwaitingWritable(_, _) | WriteState.Backpressured(_, _) => true
@@ -54,10 +45,10 @@ class TransportCloseFlushTest extends Test:
             server   <- accepted.safe.get.map(_.asInstanceOf[InternalConnection[?]])
             stalled  <- fillUntilStalled(server)
             _        <- Sync.defer(server.close())
-            released <- awaitCondition(10.seconds)(server.isReleased)
-        yield
-            assert(stalled, "the server's WritePump never parked on a full socket, so the close would not exercise the flush bound")
-            assert(released, "a close whose peer never reads must release the descriptor once a grace window passes with no write progress")
+            _        <- awaitCondition(
+                "a close whose peer never reads never released the descriptor once a grace window passed with no write progress"
+            )(server.isReleased)
+        yield assert(stalled, "the server's WritePump never parked on a full socket, so the close would not exercise the flush bound")
         end for
     }
 

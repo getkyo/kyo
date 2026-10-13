@@ -75,10 +75,6 @@ class TransportMutualTlsTest extends Test:
             val clientWithCert = clientTls.copy(certChainPath = serverTls.certChainPath, privateKeyPath = serverTls.privateKeyPath)
             echoListener(transport, serverMtls(serverTls)).map { listener =>
                 val message = "kyo-mutual-tls".getBytes("UTF-8")
-                // A mutual-TLS round-trip is CPU-heavy (both ends verify a certificate chain); under a cold JVM with every backend cell running
-                // concurrently on a constrained runner it can take several seconds, so this inner bound is generous. It is only a hang-guard: a
-                // true deadlock still fails well within the suite's 60s leaf budget. Mirrors kyo.net.Test's generous-ceiling rationale; 5s was too
-                // tight for the cold/loaded gate and produced spurious timeouts on every cell at once.
                 // Scope.ensure guarantees `client` is closed even if the put/collect below aborts before the tuple (and its trailing
                 // client.close() in the success match arm) is ever produced.
                 val connectAndEcho: (Connection, Array[Byte]) < (Async & Abort[NetException | Closed] & Scope) =
@@ -87,8 +83,8 @@ class TransportMutualTlsTest extends Test:
                             client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
                         }
                     }
-                val outcome: Result[NetException | Closed | Timeout, (Connection, Array[Byte])] < (Async & Scope) =
-                    Abort.run[NetException | Closed | Timeout](Async.timeout(30.seconds)(connectAndEcho))
+                val outcome: Result[NetException | Closed, (Connection, Array[Byte])] < (Async & Scope) =
+                    Abort.run[NetException | Closed](logIfInterrupted("the mutual-TLS round-trip never completed")(connectAndEcho))
                 outcome.map { outcome =>
                     listener.close()
                     outcome match

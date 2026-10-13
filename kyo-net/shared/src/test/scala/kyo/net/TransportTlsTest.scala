@@ -95,14 +95,13 @@ class TransportTlsTest extends Test:
     "a TLS connect whose peer drops after the TCP accept fails the handshake" - eachBackendTls { (transport, _, clientTls) =>
         transport.listen("127.0.0.1", 0, 16)(conn => conn.close()).safe.get.map { listener =>
             Scope.ensure(Sync.defer(listener.close())).andThen {
-                Abort.run[NetException | Closed | Timeout](
-                    Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
-                ).map { outcome =>
-                    outcome.foreach(conn => conn.close())
-                    outcome match
-                        case Result.Failure(e: NetTlsHandshakeException) => assert(e.port == listener.port)
-                        case other                                       => fail(s"expected NetTlsHandshakeException, got $other")
-                    end match
+                awaitOutcome(transport.connectTls("127.0.0.1", listener.port, clientTls), "the failing TLS connect never settled").map {
+                    outcome =>
+                        outcome.foreach(conn => conn.close())
+                        outcome match
+                            case Result.Failure(e: NetTlsHandshakeException) => assert(e.port == listener.port)
+                            case other                                       => fail(s"expected NetTlsHandshakeException, got $other")
+                        end match
                 }
             }
         }
@@ -114,8 +113,9 @@ class TransportTlsTest extends Test:
             listener.close()
             // NIO defers the descriptor's close to the selector's next pass, and until then the kernel still completes connects into the
             // backlog and resets them at the close. `released` is the signal that the port refuses.
-            listener.released.safe.get.andThen(Abort.run[NetException | Closed | Timeout](
-                Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", port, clientTls).safe.get)
+            listener.released.safe.get.andThen(awaitOutcome(
+                transport.connectTls("127.0.0.1", port, clientTls),
+                "the TLS connect to a refusing port never settled"
             )).map { outcome =>
                 outcome.foreach(conn => conn.close())
                 outcome match
