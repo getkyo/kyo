@@ -2517,7 +2517,7 @@ final private[net] class PosixTransport private[posix] (
                                 end try
                         }
                     case _ =>
-                        // PeerFin, CleanClose, LocalShutdown, WouldBlock, Failed: the peer closed or the read could not deliver ciphertext.
+                        // PeerFin, CleanClose, WouldBlock, Failed: the peer closed or the read could not deliver ciphertext.
                         // The typed leaf distinguishes a bare close from a received fatal alert (which fails the handshake with its
                         // own engine-level cause, never this leaf): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
                         onFailed(NetConnectionClosedException(Operation.Read))

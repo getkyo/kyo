@@ -9,11 +9,14 @@ import kyo.*
   * Obtain a connection via Transport.connect or from a Transport.listen handler. Read bytes from inbound, write bytes via outbound.put, close
   * via close().
   *
-  * Lifecycle: the connection is active until close() is called or the remote end closes it. After closing, the inbound channel completes.
+  * Lifecycle: the connection is active until close() is called or the remote end closes it. After closing, the inbound channel ends once
+  * the spans it already holds are taken.
   */
 abstract class Connection:
 
-    /** Inbound channel delivering byte spans as they arrive from the network. Completes when the connection is closed. */
+    /** Inbound channel delivering byte spans as they arrive from the network. Once the connection closes it accepts no more spans and ends after
+      * the ones it holds are taken.
+      */
     def inbound: Channel.Unsafe[Span[Byte]]
 
     /** Outbound channel for buffering bytes to be sent to the network. The write pump drains it to the socket. */
@@ -22,7 +25,14 @@ abstract class Connection:
     /** Returns whether the connection is still open. Non-blocking. */
     def isOpen(using AllowUnsafe): Boolean
 
-    /** Close the connection. Closes channels and the underlying socket. Synchronous, idempotent. */
+    /** Close the connection. Idempotent and non-blocking: it returns at once, and every later call, as well as a peer FIN or a read error
+      * arriving during the close, changes nothing.
+      *
+      * The outbound channel stops accepting writes, and the spans it already holds, together with the one being written, are sent to the
+      * peer in order before the socket is released. The release is therefore asynchronous unless nothing is left to write. A peer that stops
+      * reading holds it for at most [[NetConfig.closeFlushGrace]] without progress, after which the unsent tail is dropped. The inbound
+      * channel accepts no more spans and ends once the spans it holds are taken.
+      */
     def close()(using AllowUnsafe, Frame): Unit
 
     /** Fiber that completes when this connection begins closing: `close()` wins the close, or a peer FIN / read-error / write-error teardown

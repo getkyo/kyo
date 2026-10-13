@@ -127,10 +127,10 @@ class PollerIoDriverTest extends Test:
                         readVia(driver, acceptedH).map { outcome =>
                             driver.closeHandle(acceptedH)
                             outcome match
-                                case ReadOutcome.Bytes(s) if s.isEmpty => succeed // empty Bytes: EOF as a zero-length read
-                                case ReadOutcome.PeerFin | ReadOutcome.CleanClose | ReadOutcome.LocalShutdown => succeed
-                                case ReadOutcome.Bytes(s) => fail(s"expected EOF, got ${s.size} bytes")
-                                case other                => fail(s"expected EOF, got $other")
+                                case ReadOutcome.Bytes(s) if s.isEmpty            => succeed // empty Bytes: EOF as a zero-length read
+                                case ReadOutcome.PeerFin | ReadOutcome.CleanClose => succeed
+                                case ReadOutcome.Bytes(s)                         => fail(s"expected EOF, got ${s.size} bytes")
+                                case other                                        => fail(s"expected EOF, got $other")
                             end match
                         }
                     }

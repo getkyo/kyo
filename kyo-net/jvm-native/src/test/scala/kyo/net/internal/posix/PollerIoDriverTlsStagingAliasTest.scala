@@ -118,7 +118,7 @@ class PollerIoDriverTlsStagingAliasTest extends Test:
                     if acc.size() >= expected then done.completeDiscard(Result.succeed(()))
                     else if becomeAvailable() then driver.awaitRead(handle, self)
                     else done.completeDiscard(Result.fail(Closed("StandingReader", summon[Frame], "becomeAvailable failed")))
-                case Present(Result.Success(ReadOutcome.PeerFin | ReadOutcome.LocalShutdown | ReadOutcome.CleanClose)) =>
+                case Present(Result.Success(ReadOutcome.PeerFin | ReadOutcome.CleanClose)) =>
                     done.completeDiscard(Result.fail(Closed("StandingReader", summon[Frame], "EOF before expected bytes")))
                 case Present(Result.Success(_)) =>
                     done.completeDiscard(Result.fail(Closed("StandingReader", summon[Frame], "EOF before expected bytes")))
