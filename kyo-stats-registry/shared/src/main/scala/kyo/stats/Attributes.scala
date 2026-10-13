@@ -8,6 +8,12 @@ case class Attributes(get: List[Attributes.Attribute]) {
         Attributes(get ++ a.get)
     def add[A](name: String, value: A)(implicit a: AsAttribute[A]): Attributes =
         add(Attributes.add(name, value))
+
+    /** The same attributes in name order, so two sets that differ only in the order they were added are equal. A metric
+      * registry keys an instrument by its path and its attributes, and an attribute set is unordered.
+      */
+    def normalized: Attributes =
+        Attributes(get.sortBy(_.name))
 }
 
 object Attributes {
@@ -19,7 +25,9 @@ object Attributes {
     def all(l: List[Attributes]): Attributes =
         Attributes(l.flatMap(_.get))
 
-    sealed trait Attribute
+    sealed trait Attribute {
+        def name: String
+    }
     object Attribute {
         case class BooleanListAttribute(name: String, value: List[Boolean]) extends Attribute
         case class BooleanAttribute(name: String, value: Boolean)           extends Attribute

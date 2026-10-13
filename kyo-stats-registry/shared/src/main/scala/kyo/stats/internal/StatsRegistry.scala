@@ -2,6 +2,7 @@ package kyo.stats.internal
 
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
+import kyo.stats.Attributes
 import scala.annotation.tailrec
 
 object StatsRegistry {
@@ -19,20 +20,26 @@ object StatsRegistry {
 
         /** The description the instrument was first registered with. */
         def description: String
+
+        /** The unit the instrument was first registered with, as an OpenTelemetry unit string: `"1"` for a
+          * dimensionless count, `"ms"`, `"By"`, `"{request}"`.
+          */
+        def unit: String
     }
 
     object Instrument {
-        case class Counter(unsafe: UnsafeCounter, description: String)           extends Instrument
-        case class Histogram(unsafe: UnsafeHistogram, description: String)       extends Instrument
-        case class Gauge(unsafe: UnsafeGauge, description: String)               extends Instrument
-        case class CounterGauge(unsafe: UnsafeCounterGauge, description: String) extends Instrument
+        case class Counter(unsafe: UnsafeCounter, description: String, unit: String)           extends Instrument
+        case class Histogram(unsafe: UnsafeHistogram, description: String, unit: String)       extends Instrument
+        case class Gauge(unsafe: UnsafeGauge, description: String, unit: String)               extends Instrument
+        case class CounterGauge(unsafe: UnsafeCounterGauge, description: String, unit: String) extends Instrument
     }
 
     /** One registered metric: its full registry key and the instrument at it.
       *
       * `path` is the flattened key, the same `List[String]` a `Scope`'s own `path` plus the instrument name
       * produce, so a consumer that discovered a metric here can address it again through `scope(path.init:
-      * _*).find*(path.last)`.
+      * _*).find*(path.last)`. The instrument's series, one per attribute set observed, are the instrument's
+      * own: `series()` on the handle.
       */
     case class Registration(path: List[String], instrument: Instrument)
 
@@ -55,23 +62,23 @@ object StatsRegistry {
         val want    = prefix.toList
         val entries = List.newBuilder[Registration]
 
-        def collect[A <: AnyRef](store: internal.Store[A], wrap: (A, String) => Instrument): Unit = {
+        def collect[A <: AnyRef](store: internal.Store[A], wrap: (A, String, String) => Instrument): Unit = {
             val it = store.map.entrySet().iterator()
             while (it.hasNext) {
                 val entry = it.next()
                 val path  = entry.getKey
                 if (path.startsWith(want)) {
-                    val value = entry.getValue._1.get()
+                    val value = entry.getValue.reference.get()
                     if (value != null)
-                        entries += Registration(path, wrap(value, entry.getValue._2))
+                        entries += Registration(path, wrap(value, entry.getValue.description, entry.getValue.unit))
                 }
             }
         }
 
-        collect[UnsafeCounter](internal.counters, Instrument.Counter(_, _))
-        collect[UnsafeHistogram](internal.histograms, Instrument.Histogram(_, _))
-        collect[UnsafeGauge](internal.gauges, Instrument.Gauge(_, _))
-        collect[UnsafeCounterGauge](internal.counterGauges, Instrument.CounterGauge(_, _))
+        collect[UnsafeCounter](internal.counters, Instrument.Counter(_, _, _))
+        collect[UnsafeHistogram](internal.histograms, Instrument.Histogram(_, _, _))
+        collect[UnsafeGauge](internal.gauges, Instrument.Gauge(_, _, _))
+        collect[UnsafeCounterGauge](internal.counterGauges, Instrument.CounterGauge(_, _, _))
 
         entries.result().sortBy(_.path)
     }
@@ -88,31 +95,36 @@ object StatsRegistry {
         /** Registers a counter at `name`, or returns the one already registered there.
           *
           * Registration is first-writer-wins per key: a later call with the same path returns the instrument
-          * the first call created, which is what lets a producer and a consumer share one handle. Use
-          * `findCounter` to READ a counter someone else registered; this method mints one when the path is
-          * empty, which turns a misspelled path into a permanent, always-zero series.
+          * the first call created, with the first description and unit, which is what lets a producer and a
+          * consumer share one handle. Use `findCounter` to READ a counter someone else registered; this method
+          * mints one when the path is empty, which turns a misspelled path into a permanent, always-zero
+          * series. `unit` is the OpenTelemetry unit string an exporter sends with the metric. The counter's
+          * series, one per attribute set, are made as they are observed: `inc(attributes)`.
           */
-        def counter(name: String, description: String = "empty"): UnsafeCounter =
-            internal.counters.get(name :: reversePath, description, new UnsafeCounter())
+        def counter(name: String, description: String = "empty", unit: String = "1"): UnsafeCounter =
+            internal.counters.get(name :: reversePath, description, unit, new UnsafeCounter())
 
         /** Registers a histogram at `name`, or returns the one already registered there.
           *
           * First-writer-wins per key, as for `counter`: the first registration's `boundaries` are the ones
-          * that stand, and a later call with different boundaries silently gets the first histogram. Use
-          * `findHistogram` to read one back.
+          * that stand, for every series, and a later call with different boundaries silently gets the first
+          * histogram. Use `findHistogram` to read one back.
           */
         def histogram(
             name: String,
             description: String = "empty",
-            boundaries: Array[Double] = UnsafeHistogram.defaultBoundaries
+            boundaries: Array[Double] = UnsafeHistogram.defaultBoundaries,
+            unit: String = "1"
         ): UnsafeHistogram =
             internal.histograms.get(
                 name :: reversePath,
                 description,
+                unit,
                 new UnsafeHistogram(boundaries)
             )
 
-        /** Registers a gauge at `name`, or returns the one already registered there.
+        /** Registers a gauge at `name`, or returns the one already registered there; with `attributes`, registers
+          * `run` as that series of it, first-writer-wins per attribute set.
           *
           * A gauge's value IS its thunk, and registration is first-writer-wins, so the first caller to reach
           * a path decides what every later holder of that gauge reads. That makes this the one instrument a
@@ -120,14 +132,37 @@ object StatsRegistry {
           * registers wins the path, and the producer's later registration silently hands back the consumer's
           * placeholder for the process lifetime. Read a gauge with `findGauge`, which never registers.
           */
-        def gauge(name: String, description: String = "empty")(run: => Double): UnsafeGauge =
-            internal.gauges.get(name :: reversePath, description, new UnsafeGauge(() => run))
+        def gauge(
+            name: String,
+            description: String = "empty",
+            unit: String = "1",
+            attributes: Attributes = Attributes.empty
+        )(run: => Double): UnsafeGauge =
+            if (attributes.get.isEmpty)
+                internal.gauges.get(name :: reversePath, description, unit, new UnsafeGauge(() => run))
+            else {
+                val gauge = internal.gauges.get(name :: reversePath, description, unit, new UnsafeGauge(() => Double.NaN))
+                gauge.register(attributes, () => run)
+                gauge
+            }
 
-        /** Registers a counter gauge at `name`, or returns the one already registered there. First-writer-wins
-          * per key, with the same reader hazard as `gauge`: read one back with `findCounterGauge`.
+        /** Registers a counter gauge at `name`, or returns the one already registered there; with `attributes`,
+          * registers `run` as that series of it. First-writer-wins per key and per attribute set, with the same
+          * reader hazard as `gauge`: read one back with `findCounterGauge`.
           */
-        def counterGauge(name: String, description: String = "empty")(run: => Long): UnsafeCounterGauge =
-            internal.counterGauges.get(name :: reversePath, description, new UnsafeCounterGauge(() => run))
+        def counterGauge(
+            name: String,
+            description: String = "empty",
+            unit: String = "1",
+            attributes: Attributes = Attributes.empty
+        )(run: => Long): UnsafeCounterGauge =
+            if (attributes.get.isEmpty)
+                internal.counterGauges.get(name :: reversePath, description, unit, new UnsafeCounterGauge(() => run))
+            else {
+                val gauge = internal.counterGauges.get(name :: reversePath, description, unit, new UnsafeCounterGauge(() => 0L))
+                gauge.register(attributes, () => run)
+                gauge
+            }
 
         /** The counter registered at `name`, or `None` when nothing is registered there.
           *
@@ -161,22 +196,29 @@ object StatsRegistry {
         val gauges        = new Store[UnsafeGauge]
         val counterGauges = new Store[UnsafeCounterGauge]
 
-        class Store[A <: AnyRef] extends Serializable {
-            val map = new ConcurrentHashMap[List[String], (WeakReference[A], String)]
+        /** What the registry keeps for one path: the instrument, weakly, and what it was registered with. */
+        final case class Entry[A <: AnyRef](reference: WeakReference[A], description: String, unit: String)
 
-            @tailrec final def get(reversePath: List[String], description: String, init: => A): A = {
+        class Store[A <: AnyRef] extends Serializable {
+            val map = new ConcurrentHashMap[List[String], Entry[A]]
+
+            @tailrec final def get(reversePath: List[String], description: String, unit: String, init: => A): A = {
                 val path  = reversePath.reverse
-                val entry = map.computeIfAbsent(path, _ => (new WeakReference(init), description))
-                val value = entry._1.get()
+                val entry = map.computeIfAbsent(path, _ => Entry(new WeakReference(init), description, unit))
+                val value = entry.reference.get()
                 if (value == null) {
                     // Conditional on the exact entry that was observed cleared: an unconditional remove would
                     // drop a live registration another thread installed between the read and the removal.
                     map.remove(path, entry)
-                    get(reversePath, description, init)
+                    get(reversePath, description, unit, init)
                 } else {
                     value
                 }
             }
+
+            /** The instrument at `reversePath` with a dimensionless unit, or the one `init` makes. */
+            final def get(reversePath: List[String], description: String, init: => A): A =
+                get(reversePath, description, "1", init)
 
             /** The instrument at `reversePath`, or `None`. Never installs one, so a miss leaves the registry
               * exactly as it was.
@@ -186,13 +228,17 @@ object StatsRegistry {
                 val entry = map.get(path)
                 if (entry == null) None
                 else {
-                    val value = entry._1.get()
+                    val value = entry.reference.get()
                     if (value == null) {
                         map.remove(path, entry)
                         None
                     } else Some(value)
                 }
             }
+
+            /** Whether a path is registered, cleared or not: the map's own membership. */
+            final def contains(path: List[String]): Boolean =
+                map.containsKey(path)
         }
 
     }

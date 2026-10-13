@@ -1364,24 +1364,30 @@ object SqlClient:
 
         /** No-op counter: every method does nothing. Used when `metricsEnabled = false`. */
         private[Metrics] val noopCounter: Counter = new Counter:
-            val unsafe                                 = new kyo.stats.internal.UnsafeCounter
-            def get(using Frame): Long < Sync          = 0L
-            def inc(using Frame): Unit < Sync          = ()
-            def add(v: Long)(using Frame): Unit < Sync = ()
+            val unsafe                                                                   = new kyo.stats.internal.UnsafeCounter
+            def get(using Frame): Long < Sync                                            = 0L
+            def inc(using Frame): Unit < Sync                                            = ()
+            def add(v: Long)(using Frame): Unit < Sync                                   = ()
+            def add(v: Long, attributes: kyo.stats.Attributes)(using Frame): Unit < Sync = ()
+            def series(using Frame): Seq[kyo.stats.internal.UnsafeCounter.Series] < Sync = Sync.Unsafe.defer(unsafe.series())
 
         /** No-op histogram: observations are discarded, and `summary` reports the empty distribution. Used when `metricsEnabled = false`. */
         private[Metrics] val noopHistogram: Histogram = new Histogram:
             val unsafe                                       = new kyo.stats.internal.UnsafeHistogram(Array.empty[Double])
             def observe(v: Long)(using Frame): Unit < Sync   = ()
             def observe(v: Double)(using Frame): Unit < Sync = ()
+            def observe(v: Long, attributes: kyo.stats.Attributes)(using Frame): Unit < Sync   = ()
+            def observe(v: Double, attributes: kyo.stats.Attributes)(using Frame): Unit < Sync = ()
             // Reads the backing instrument rather than a hand-built zero: nothing ever observes into it, so it
             // answers count/min/max/sum of 0 with empty buckets, and that stays true if Summary gains a field.
-            def summary(using Frame): kyo.stats.internal.Summary < Sync = Sync.Unsafe.defer(unsafe.summary())
+            def summary(using Frame): kyo.stats.internal.Summary < Sync                    = Sync.Unsafe.defer(unsafe.summary())
+            def series(using Frame): Seq[kyo.stats.internal.UnsafeHistogram.Series] < Sync = Sync.Unsafe.defer(unsafe.series())
 
         /** No-op gauge: always reports zero. Used when `metricsEnabled = false`. */
         private[Metrics] val noopGauge: Gauge = new Gauge:
-            val unsafe                              = new kyo.stats.internal.UnsafeGauge(() => 0.0d)
-            def collect(using Frame): Double < Sync = 0.0d
+            val unsafe                                                                 = new kyo.stats.internal.UnsafeGauge(() => 0.0d)
+            def collect(using Frame): Double < Sync                                    = 0.0d
+            def series(using Frame): Seq[kyo.stats.internal.UnsafeGauge.Series] < Sync = Sync.Unsafe.defer(unsafe.series())
 
         /** Construct with explicit enable flag and optional scope override. */
         def apply(metricsEnabled: Boolean, metricsScope: Maybe[String]): Metrics =

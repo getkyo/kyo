@@ -180,6 +180,29 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
             }
         }
 
+        "the series of one name export as one metric with a data point per attribute set, carrying the unit".onlyJvm in {
+            withCollector { (config, metricCh) =>
+                val uniqueName = "test.export.attributed." + java.util.UUID.randomUUID().toString.take(8)
+                val scope      = Stat.initScope("test", "export")
+                val requests   = scope.initCounter(uniqueName, "requests per model", unit = "{request}")
+                for
+                    _     <- requests.add(1L, Attributes.add("model", "a"))
+                    _     <- requests.add(2L, Attributes.add("model", "b"))
+                    _     <- OTLPMetricsExporter.run(config)
+                    found <- awaitMetric(metricCh, s"test.export.$uniqueName", requests)
+                yield
+                    assert(found.unit == "{request}")
+                    assert(found.description == "requests per model")
+                    val points = found.sum.get.dataPoints
+                    assert(points.size == 2)
+                    val byModel = points.map(p =>
+                        p.attributes.collectFirst { case KeyValue("model", v) => v.stringValue.get }.get -> p.asInt.get
+                    ).toMap
+                    assert(byModel == Map("a" -> "1", "b" -> "2"))
+                end for
+            }
+        }
+
         // Histograms never drain: their buckets, count, min, max and sum are lifetime values, so they are
         // exported with CUMULATIVE temporality and a fixed series start. Counters DO drain on read
         // (UnsafeCounter.get is adder.sumThenReset), so they keep DELTA temporality and a per-export start.

@@ -114,6 +114,64 @@ class StatTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "a measurement's attributes name its series, and find reads the same instrument" in {
+        import kyo.stats.Attributes
+        import kyo.stats.given
+        val scope    = Stat.initScope("stattest-attributes")
+        val requests = scope.initCounter("requests", "requests")
+        val latency  = scope.initHistogram("latency", "latency")
+        for
+            _      <- requests.add(1L, Attributes.add("model", "a"))
+            _      <- requests.add(2L, Attributes.add("model", "b"))
+            _      <- requests.inc
+            _      <- latency.observe(3L, Attributes.add("model", "a"))
+            _      <- latency.observe(4.0, Attributes.add("model", "a"))
+            found  <- scope.findCounter("requests")
+            series <- found match
+                case Present(c) => c.series
+                case Absent     => Kyo.lift(Seq.empty)
+            dist <- latency.series
+        yield
+            assert(series.head.attributes == Attributes.empty)
+            assert(series.head.delta == 1L)
+            assert(series.tail.map(s => (s.attributes, s.delta)).toSet ==
+                Set((Attributes.add("model", "a"), 1L), (Attributes.add("model", "b"), 2L)))
+            assert(dist.map(s => (s.attributes, s.summary.count, s.summary.sum)).toSet ==
+                Set((Attributes.empty, 0L, 0.0), (Attributes.add("model", "a"), 2L, 7.0)))
+        end for
+    }
+
+    "a gauge registered with attributes reads its own series" in {
+        import kyo.stats.Attributes
+        val scope = Stat.initScope("stattest-gauge-series")
+        val base  = scope.initGauge("depth", "depth")(1.0)
+        val a     = scope.initGauge("depth", "depth", attributes = Attributes.add("queue", "a"))(2.0)
+        val count = scope.initCounterGauge("reads", "reads", attributes = Attributes.add("disk", "a"))(5L)
+        for
+            seenBase  <- base.collect
+            seenA     <- a.collect
+            seenCount <- count.collect
+        yield
+            assert(a.unsafe eq base.unsafe)
+            assert(seenBase == 1.0)
+            assert(seenA == 2.0)
+            assert(seenCount == 5L)
+        end for
+    }
+
+    "the unit is registered with the instrument and read back through the registry" in {
+        import AllowUnsafe.embrace.danger
+        import kyo.stats.internal.StatsRegistry
+        val histogram = Stat.initScope("stattest-unit").initHistogram("latency", "request latency", unit = "ms")
+        for
+            _ <- histogram.observe(1L)
+        yield
+            val found = StatsRegistry.snapshot("stattest-unit")
+            assert(found.size == 1)
+            assert(found.head.instrument.unit == "ms")
+        end for
+    }
+
     "scope".onlyJvm in {
         import AllowUnsafe.embrace.danger
         val stat         = Stat.initScope("test1")

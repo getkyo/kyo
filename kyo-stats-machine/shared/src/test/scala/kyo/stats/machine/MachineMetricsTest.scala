@@ -88,7 +88,7 @@ class MachineMetricsTest extends kyo.test.Test[Any]:
         val expected = (expectedFixed ++ expectedDisk ++ expectedPressure).toSet
         assert(registered.map(_.path).toSet == expected)
         val loadOne = registered.collectFirst {
-            case StatsRegistry.Registration(path, StatsRegistry.Instrument.Gauge(gauge, _))
+            case StatsRegistry.Registration(path, StatsRegistry.Instrument.Gauge(gauge, _, _))
                 if path == rerooted(root, MachineMetrics.loadOne.path) => gauge
         }
         assert(loadOne.map(_.collect()) == Some(2.0))

@@ -4,7 +4,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.*
 import kyo.stats.*
 import kyo.stats.Attributes
-import kyo.stats.Attributes.Attribute
 import kyo.stats.internal.TraceExporter
 import kyo.stats.internal.UnsafeTraceSpan
 
@@ -88,7 +87,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
             scope,
             name,
             startNanos,
-            toKeyValues(attributes)
+            KeyValue.of(attributes)
         )
     end startSpan
 
@@ -142,7 +141,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
             val _          = events.add(SpanEvent(
                 name = name,
                 timeUnixNano = eventNanos.toString,
-                attributes = toKeyValues(a)
+                attributes = KeyValue.of(a)
             ))
         end event
 
@@ -221,18 +220,6 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
         java.util.concurrent.ThreadLocalRandom.current().nextBytes(buf)
         buf.map(b => String.format("%02x", Byte.box(b))).mkString
     end randomHex
-
-    private def toKeyValues(a: Attributes): Seq[KeyValue] =
-        a.get.map {
-            case Attribute.BooleanAttribute(name, value)     => KeyValue(name, AnyValue.boolean(value))
-            case Attribute.DoubleAttribute(name, value)      => KeyValue(name, AnyValue.double(value))
-            case Attribute.LongAttribute(name, value)        => KeyValue(name, AnyValue.int(value))
-            case Attribute.StringAttribute(name, value)      => KeyValue(name, AnyValue.string(value))
-            case Attribute.BooleanListAttribute(name, value) => KeyValue(name, AnyValue.string(value.mkString(",")))
-            case Attribute.DoubleListAttribute(name, value)  => KeyValue(name, AnyValue.string(value.mkString(",")))
-            case Attribute.LongListAttribute(name, value)    => KeyValue(name, AnyValue.string(value.mkString(",")))
-            case Attribute.StringListAttribute(name, value)  => KeyValue(name, AnyValue.string(value.mkString(",")))
-        }
 end OTLPTraceExporter
 
 object OTLPTraceExporter:
