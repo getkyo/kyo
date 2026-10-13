@@ -27,8 +27,8 @@ class NioTransportTest extends Test:
     /** Create a transport and register its driver to close at leaf-scope exit. An owned transport (unlike the process-shared one) must be closed,
       * or its never-exiting selector poll loop keeps a scheduler worker busy and the suite fails the end-of-run leak check.
       */
-    def mkTransport()(using Frame): NioTransport < (Sync & Scope) =
-        Sync.defer(NioTransport.init()).map { t =>
+    def mkTransport(clock: Clock = Clock.live)(using Frame): NioTransport < (Sync & Scope) =
+        Sync.defer(NioTransport.init(clock)).map { t =>
             Scope.ensure(Sync.defer {
                 import AllowUnsafe.embrace.danger
                 t.pool.next().close()
@@ -177,39 +177,97 @@ class NioTransportTest extends Test:
         }
     }
 
-    /** Whether the OS socket table holds a TCP socket whose remote end is 192.0.2.77:80. On Linux a dual-stack NIO socket lists it in
-      * tcp6 as an IPv4-mapped address, which ends in the same hex; elsewhere `netstat -an` prints it as `192.0.2.77.80` (macOS) or
-      * `192.0.2.77:80` (Windows).
+    /** The rows of this process's own TCP sockets whose remote end is 192.0.2.77:80, or the table it read when there are none, so a miss can be
+      * diagnosed. Scoped to the process because other processes on the host (another worktree's suite, a previous test JVM still tearing
+      * down) may hold sockets to the same address for the life of their SYN. Linux matches the `/proc/net/tcp*` rows by the socket inodes
+      * `/proc/self/fd` links to (a dual-stack NIO socket lists the address IPv4-mapped in tcp6, ending in the same hex); Windows reads
+      * `netstat -ano`'s pid column, over both tables since a dual-stack socket may print as `[::ffff:192.0.2.77]:80`; elsewhere `lsof` is
+      * asked for this pid only. `Absent` when the host has no such tool.
       */
-    private def blackHoleSocketOpen(): Boolean =
-        val procTables = Seq("/proc/net/tcp", "/proc/net/tcp6").map(java.nio.file.Paths.get(_)).filter(java.nio.file.Files.exists(_))
-        if procTables.nonEmpty then procTables.exists(p => new String(java.nio.file.Files.readAllBytes(p)).contains("4D0200C0:0050"))
+    private def blackHoleSockets(): Maybe[(Boolean, String)] =
+        val pid                              = ProcessHandle.current().pid()
+        val procFd                           = java.nio.file.Paths.get("/proc/self/fd")
+        def run(cmd: String*): Maybe[String] =
+            try Present(new String(new ProcessBuilder(cmd*).redirectErrorStream(true).start().getInputStream.readAllBytes()))
+            catch case _: java.io.IOException => Absent
+        if java.nio.file.Files.isDirectory(procFd) then
+            val fds    = java.nio.file.Files.list(procFd)
+            val inodes =
+                try
+                    fds.toArray.toSeq.flatMap { p =>
+                        try
+                            val target = java.nio.file.Files.readSymbolicLink(p.asInstanceOf[java.nio.file.Path]).toString
+                            if target.startsWith("socket:[") then Seq(target.stripPrefix("socket:[").stripSuffix("]")) else Seq.empty
+                        catch case _: java.io.IOException => Seq.empty
+                    }.toSet
+                finally fds.close()
+            val rows = Seq("/proc/net/tcp", "/proc/net/tcp6").map(java.nio.file.Paths.get(_)).filter(java.nio.file.Files.exists(_))
+                .flatMap(p => new String(java.nio.file.Files.readAllBytes(p)).linesIterator.toSeq)
+            val mine = rows.filter { row =>
+                val cols = row.trim.split("\\s+")
+                cols.length > 9 && cols(2).endsWith("4D0200C0:0050") && inodes.contains(cols(9))
+            }
+            Present((mine.nonEmpty, if mine.nonEmpty then mine.mkString("\n") else s"socket inodes $inodes\n${rows.mkString("\n")}"))
+        else if java.lang.System.getProperty("os.name").startsWith("Windows") then
+            run("netstat", "-ano").map { table =>
+                val mine = table.linesIterator.filter { l =>
+                    (l.contains("192.0.2.77:80") || l.contains("192.0.2.77]:80")) && l.trim.split("\\s+").lastOption.contains(pid.toString)
+                }.toSeq
+                (mine.nonEmpty, if mine.nonEmpty then mine.mkString("\n") else table)
+            }
         else
-            val netstat = new String(new ProcessBuilder("netstat", "-an").redirectErrorStream(true).start().getInputStream.readAllBytes())
-            netstat.contains("192.0.2.77.80") || netstat.contains("192.0.2.77:80")
+            run("lsof", "-nP", "-a", "-p", pid.toString, "-iTCP@192.0.2.77:80").map(table => (table.contains("192.0.2.77:80"), table))
         end if
-    end blackHoleSocketOpen
+    end blackHoleSockets
 
-    // 192.0.2.77 is RFC 5737 TEST-NET-1, routable and unanswered, and no other test connects to it, so its socket-table row is this
-    // connect's. The connect parks in SYN_SENT, and before the kernel gives up on the SYN (about 2 minutes on Linux) only the deadline's
-    // failure can release the socket. The row is seen while the connect is pending, so its absence afterwards is the release.
+    // 192.0.2.77 is RFC 5737 TEST-NET-1, routable and unanswered, so the connect parks in SYN_SENT, and before the kernel gives up on the SYN
+    // (about 2 minutes on Linux) only the deadline's failure can release the socket. The deadline runs on the transport's controlled clock, so
+    // the socket is sampled while the connect is pending for as long as it takes to see it, and its absence after the deadline is the release.
+    // A host that answers or cannot route TEST-NET-1 completes the connect before the deadline, so the question cannot be asked there.
     "a connect failed by its deadline releases its socket at once, plaintext and TLS" in {
-        given Frame = Frame.internal
-        mkTransport().map { transport =>
-            val tls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
-            def released(connect: Fiber.Unsafe[kyo.net.Connection, Abort[NetException]]) =
-                for
-                    seen    <- awaitCondition(5.seconds)(blackHoleSocketOpen())
-                    outcome <- Abort.run[NetException](connect.safe.get)
-                    gone    <- awaitCondition(5.seconds)(!blackHoleSocketOpen())
-                yield (seen, outcome.failure.map(_.getClass.getSimpleName), gone)
-            for
-                plain  <- released(transport.connect("192.0.2.77", 80, 1.second))
-                secure <- released(transport.connectTls("192.0.2.77", 80, tls, 1.second))
-            yield
-                assert(plain == (true, Present("NetConnectTimeoutException"), true), s"plaintext: $plain")
-                assert(secure == (true, Present("NetConnectTimeoutException"), true), s"TLS: $secure")
-            end for
+        given Frame                      = Frame.internal
+        def sockets(): (Boolean, String) =
+            blackHoleSockets().getOrElse(cancel("neither /proc/self/fd, netstat nor lsof is available to list this process's sockets"))
+        Clock.withTimeControl { control =>
+            Clock.get.map { clock =>
+                Clock.let(Clock.live) {
+                    mkTransport(clock).map { transport =>
+                        val tls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
+                        def released(connect: => Fiber.Unsafe[kyo.net.Connection, Abort[NetException]], label: String, gatesHost: Boolean) =
+                            for
+                                fiber <- Sync.defer(connect)
+                                seen  <- Loop(()) { _ =>
+                                    Sync.defer {
+                                        val sample = sockets()
+                                        if sample._1 || fiber.done() then Loop.done(sample) else Loop.continue(())
+                                    }
+                                }
+                                _ <-
+                                    if fiber.done() then Kyo.unit
+                                    else armedThenAdvance(control, s"$label connect deadline", 1.second)
+                                outcome <- Abort.run[NetException](fiber.safe.get)
+                                _ = outcome match
+                                    case Result.Failure(_: kyo.net.NetConnectTimeoutException) => ()
+                                    case other if gatesHost                                    =>
+                                        cancel(s"$label: 192.0.2.77:80 did not hold the connect until its deadline on this host: $other")
+                                    case other =>
+                                        fail(s"$label: the connect must fail by its deadline as the plaintext one did; got $other")
+                                _ = assert(
+                                    seen._1,
+                                    s"$label: this process held no socket to 192.0.2.77:80 while the connect was pending:\n${seen._2}"
+                                )
+                                // deviation: the socket's release is a kernel event with nothing to latch on, so it is awaited on real time;
+                                // the bound only detects a socket that is never released, far above the one selector pass the release costs.
+                                gone <- awaitCondition(5.seconds)(!sockets()._1)
+                            yield assert(
+                                gone,
+                                s"$label: the socket was still open 5s after the deadline failed the connect:\n${sockets()._2}"
+                            )
+                        released(transport.connect("192.0.2.77", 80, 1.second), "plaintext", gatesHost = true)
+                            .andThen(released(transport.connectTls("192.0.2.77", 80, tls, 1.second), "TLS", gatesHost = false))
+                    }
+                }
+            }
         }
     }
 
@@ -826,37 +884,49 @@ class NioTransportTest extends Test:
     "threads peerCloseGrace end-to-end: an abandoned backpressured accepted connection is reclaimed after the client FIN" in {
         given Frame = Frame.internal
         // Cap-1 inbound + 64-byte read chunk so a 128-byte client write becomes two reads, the second overflowing the channel and parking the
-        // accepted-side ReadPump with no armed read. Short grace so the reclaim fires promptly. Without NioTransport threading config.peerCloseGrace
-        // into the handle and the Connection, the grace defaults to Infinity and the abandoned connection is never reclaimed (isOpen stays true).
-        val config =
-            NetConfig(channelCapacity = 1, readChunkSize = 64.bytes, peerCloseGrace = 200.millis.grace)
-        val acceptedP = new IOPromise[Closed, kyo.net.Connection]
-        mkTransport().map { transport =>
-            for
-                listener <- transport.listen("127.0.0.1", 0, 50, config) { conn =>
-                    acceptedP.completeDiscard(Result.succeed(conn))
-                }.safe.get
-                client   <- Sync.defer(new java.net.Socket("127.0.0.1", listener.port))
-                accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[kyo.net.Connection, Abort[Closed]]].safe.get
-                _        <- Sync.defer {
-                    client.getOutputStream.write(Array.fill[Byte](128)(1))
-                    client.getOutputStream.flush()
+        // accepted-side ReadPump with no armed read. Without NioTransport threading config.peerCloseGrace into the handle and the Connection, the
+        // grace defaults to Infinity and the abandoned connection is never reclaimed (isOpen stays true).
+        val grace             = 3.seconds
+        val nonTerminationCap = (timeout.toMillis / 100 / 2).toInt
+        val config            = NetConfig(channelCapacity = 1, readChunkSize = 64.bytes, peerCloseGrace = grace.grace)
+        val acceptedP         = new IOPromise[Closed, kyo.net.Connection]
+        Clock.withTimeControl { control =>
+            Clock.get.map { clock =>
+                Clock.let(Clock.live) {
+                    mkTransport(clock).map { transport =>
+                        for
+                            listener <- transport.listen("127.0.0.1", 0, 50, config) { conn =>
+                                acceptedP.completeDiscard(Result.succeed(conn))
+                            }.safe.get
+                            _        <- Scope.ensure(Sync.defer(listener.close()))
+                            client   <- Sync.defer(new java.net.Socket("127.0.0.1", listener.port))
+                            accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[kyo.net.Connection, Abort[Closed]]].safe.get
+                            _        <- Sync.defer {
+                                client.getOutputStream.write(Array.fill[Byte](128)(1))
+                                client.getOutputStream.flush()
+                            }
+                            // The pump arms its grace on the transport's clock exactly when it parks, so the pending sleeper IS the parked
+                            // state; a FIN before parking is reclaimed via the EOF path, leaving grace reclaim untested.
+                            _ <- awaitTimer(control, "peer-close grace", grace)
+                            openBeforeExpiry = accepted.isOpen
+                            _ <- Sync.defer(client.close()) // FIN with the pump parked
+                            // An expiry that runs before the FIN reaches the accepted socket finds the peer live and re-arms, so the clock is
+                            // advanced one window at a time until an expiry observes the FIN. How many windows that takes is kernel timing,
+                            // so the cap only detects a reclaim that never comes, and is half the leaf budget at the about 100 ms of real
+                            // time each advance yields, so the failure carries the count.
+                            windows <- Loop(0) { windows =>
+                                if !accepted.isOpen || windows >= nonTerminationCap then Loop.done(windows)
+                                else
+                                    armedThenAdvance(control, s"peer-close grace (window ${windows + 1})", grace)
+                                        .andThen(Loop.continue(windows + 1))
+                            }
+                        yield
+                            assert(openBeforeExpiry, "the parked connection must stay open until a grace window passes")
+                            assert(!accepted.isOpen, s"the connection must be reclaimed after the FIN; still open after $windows windows")
+                        end for
+                    }
                 }
-                // A pump that overflows the channel parks by registering a put, so awaiting a pending put guarantees the
-                // FIN lands on a parked pump; a FIN before parking is reclaimed via the EOF path, leaving grace reclaim untested.
-                parked <- awaitCondition(5.seconds)(accepted.inbound.pendingPuts().getOrElse(0) > 0)
-                _ = assert(
-                    parked,
-                    "the accepted-side pump never parked on the full inbound channel, so the FIN below would not exercise the grace reclaim"
-                )
-                _         <- Sync.defer(client.close()) // FIN with the pump parked
-                reclaimed <- awaitCondition(5.seconds)(!accepted.isOpen)
-                _         <- Sync.defer(listener.close())
-            yield assert(
-                reclaimed,
-                "NioTransport must thread peerCloseGrace so an abandoned backpressured accepted connection is reclaimed after the client FIN"
-            )
-            end for
+            }
         }
     }
 

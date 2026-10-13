@@ -2370,7 +2370,7 @@ final private[net] class IoUringDriver private[posix] (
                             // free the buffers.
                             reArmedTransientAccept = true
                             backoffReArmAccept = true
-                            Clock.live.unsafe.sleep(kyo.net.acceptResourceBackoff().millis).onComplete { _ =>
+                            h.clock.unsafe.sleep(kyo.net.acceptResourceBackoff().millis).onComplete { _ =>
                                 submitEngineOp { () =>
                                     submitAccept(promise, h, noAddr, noLen)
                                     decrementInFlight(h)

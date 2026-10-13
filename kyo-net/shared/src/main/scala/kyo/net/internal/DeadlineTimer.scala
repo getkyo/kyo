@@ -10,7 +10,7 @@ import kyo.*
   * completes inline re-arms inline there, which recurses.
   */
 private[net] object DeadlineTimer:
-    def arm(timeout: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+    def arm(clock: Clock, timeout: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
         if timeout == Duration.Zero then Fiber.Unsafe.fromResult(Result.succeed(()))
-        else Clock.live.unsafe.sleep(timeout)
+        else clock.unsafe.sleep(timeout)
 end DeadlineTimer

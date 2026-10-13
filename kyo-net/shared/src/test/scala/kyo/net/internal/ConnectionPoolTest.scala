@@ -207,7 +207,7 @@ class ConnectionPoolTest extends Test:
                         reaped.release()
                 )
                 _ = pool.release(key1, "c") // idle-start stamped at virtual time 0
-                _ <- tc.awaitPendingSleepers(1)        // the reaper has armed its first sleep
+                _ <- awaitTimer(tc, "reaper sweep", 50.millis)
                 _ <- tc.advance(150.millis)            // past the 100ms timeout: the reaper wakes and evicts
                 _ <- reaped.safe.await                 // fence on the discard
                 _ <- Sync.defer(discard(pool.close())) // interrupt the reaper so it does not outlive the test
@@ -236,9 +236,9 @@ class ConnectionPoolTest extends Test:
                 )
                 _ = pool.release(key1, "a") // idle-start stamped at virtual time 0
                 _ = pool.release(key2, "b")
-                _ <- tc.awaitPendingSleepers(1) // the reaper has armed its first sleep
-                _ <- tc.advance(150.millis)     // past the 100ms timeout: one sweep evicts both hosts
-                _ <- reaped.safe.await          // fence on both discards
+                _ <- awaitTimer(tc, "reaper sweep", 50.millis)
+                _ <- tc.advance(150.millis) // past the 100ms timeout: one sweep evicts both hosts
+                _ <- reaped.safe.await      // fence on both discards
                 _ <- Sync.defer(discard(pool.close()))
             yield assert(
                 discardCount.get() == 2,
@@ -264,14 +264,12 @@ class ConnectionPoolTest extends Test:
                         pool.unreserve(key)
                         pool.release(key, s"c$i") // idle-start stamped at virtual time 0
                     }
-                    _ <- tc.awaitPendingSleepers(1)
-                    _ <- tc.advance(50.millis) // sweep at 50ms: every connection is still fresh
-                    _ <- tc.awaitPendingSleepers(1)
+                    _ <- armedThenAdvance(tc, "reaper sweep", 50.millis) // sweep at 50ms: every connection is still fresh
+                    _ <- awaitTimer(tc, "reaper sweep", 50.millis)
                     kept = pools.size()
-                    _ <- tc.advance(50.millis)
-                    _ <- tc.awaitPendingSleepers(1)
-                    _ <- tc.advance(50.millis) // sweep at 150ms: every connection is past the 100ms timeout
-                    _ <- tc.awaitPendingSleepers(1)
+                    _ <- armedThenAdvance(tc, "reaper sweep", 50.millis)
+                    _ <- armedThenAdvance(tc, "reaper sweep", 50.millis) // sweep at 150ms: every connection is past the 100ms timeout
+                    _ <- awaitTimer(tc, "reaper sweep", 50.millis)
                     left = pools.size()
                     _ <- Sync.defer(discard(pool.close()))
                 yield
@@ -317,9 +315,8 @@ class ConnectionPoolTest extends Test:
                     _ = assert(pool.tryReserve(busy))
                     _ = assert(pool.tryReserve(vacant))
                     _ = pool.unreserve(vacant)
-                    _ <- tc.awaitPendingSleepers(1)
-                    _ <- tc.advance(500.millis) // one sweep, with the idle connection 500ms into its 1s timeout
-                    _ <- tc.awaitPendingSleepers(1)
+                    _ <- armedThenAdvance(tc, "reaper sweep", 500.millis) // one sweep, with the idle connection 500ms into its 1s timeout
+                    _ <- awaitTimer(tc, "reaper sweep", 500.millis)
                     retained = (pools.containsKey(idle), pools.containsKey(busy), pools.containsKey(vacant))
                     polled   = pool.poll(idle)
                     // The busy host keeps its reservation: one more fits its capacity of 2, a third does not.

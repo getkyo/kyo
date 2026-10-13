@@ -189,10 +189,10 @@ class JsIoDriverTest extends kyo.net.Test:
                 driver.closeHandle(handle)
                 def destroyed = socket.destroyed.asInstanceOf[Boolean]
                 val atClose   = destroyed
-                tc.advance((30.seconds.toMillis - 1).millis).map { _ =>
+                armedThenAdvance(tc, "close-flush grace", 30.seconds, by = (30.seconds.toMillis - 1).millis).map { _ =>
                     val oneTickBefore = destroyed
                     val flushed       = socket.writableFinished.asInstanceOf[Boolean]
-                    tc.advance(1.millis).map { _ =>
+                    armedThenAdvance(tc, "close-flush grace", 30.seconds, by = 1.millis).map { _ =>
                         val atGrace = destroyed
                         driver.close()
                         assert(!atClose, "the graceful close must not destroy a socket whose output is still flushing")
@@ -237,7 +237,7 @@ class JsIoDriverTest extends kyo.net.Test:
                     _ <- Sync.defer(discard(client.write(buffer(Array.fill[Byte](64)(2)))))
                     // The pump arms its grace on the controlled clock exactly when it parks, so the pending sleeper IS the parked state. A FIN
                     // arriving while a read is still armed takes the ordinary EOF path, leaving the grace reclaim untested.
-                    _ <- tc.awaitPendingSleepers(1)
+                    _ <- awaitTimer(tc, "peer-close grace", grace)
                     _ = assert(
                         accepted.inbound.pendingPuts().getOrElse(0) == 1,
                         "the accepted-side ReadPump must be parked on the full channel"
@@ -247,7 +247,7 @@ class JsIoDriverTest extends kyo.net.Test:
                     // The first expiry finds the paused socket not yet ended: the probe resumes it toward the FIN and the grace re-arms.
                     _ <- tc.advance(grace)
                     _ <- end.get
-                    _ <- tc.awaitPendingSleepers(1)
+                    _ <- awaitTimer(tc, "re-armed peer-close grace", grace)
                     openAfterFirstExpiry = accepted.isOpen
                     closing              = accepted.onClosing.safe
                     _ <- tc.advance(grace)

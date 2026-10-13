@@ -31,8 +31,8 @@ private[net] object NodeBackend extends Entry:
         JsIoDriver.init()
 
     /** JS is single-threaded (one Node event loop), so one `JsIoDriver` suffices; `JsTransport.init` builds the pool over `createDriver`. */
-    def build()(using AllowUnsafe, Frame): Transport =
-        JsTransport.init(poolSize = 1)
+    def build(clock: Clock = Clock.live)(using AllowUnsafe, Frame): Transport =
+        JsTransport.init(poolSize = 1, clock)
 end NodeBackend
 
 /** JS/Wasm `registered` list and selection entry point, mirroring the JVM/Native `IoBackendPlatform`: the koffi posix backends

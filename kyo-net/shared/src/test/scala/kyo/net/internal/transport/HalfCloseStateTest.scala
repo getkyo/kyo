@@ -18,9 +18,9 @@ import kyo.net.Transport
   *     must be [[Connection.Status.CleanClose]], never [[Connection.Status.Truncated]]. This tests that the single-field
   *     transition (Open -> PeerCleanClose, a single volatile write) cannot produce a torn intermediate state.
   *
-  * Truncated (bare TCP FIN without close_notify) is NOT testable through the public [[Connection]] API: both `conn.close()` and
-  * `Transport.close()` send a TLS close_notify first, so every close path through this API produces CleanClose. The Truncated case is
-  * covered at the driver level in NioTransportTlsCloseReasonTest (JVM NIO) and PollerIoDriverTlsHalfCloseEtTest (posix).
+  * Truncated (bare TCP FIN without close_notify) needs a peer that sends a FIN with no close_notify, which no kyo connection does: both
+  * `conn.close()` and `Transport.close()` send a TLS close_notify first. The end-of-stream contract suite drives that peer through a raw
+  * relay on every backend cell.
   */
 class HalfCloseStateTest extends Test:
 

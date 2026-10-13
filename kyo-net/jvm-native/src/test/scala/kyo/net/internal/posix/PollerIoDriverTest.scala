@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetErrno
 import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.TlsEngine
@@ -137,7 +138,7 @@ class PollerIoDriverTest extends Test:
             }.map(_ => succeed)
         }
 
-        "peer-reset surfaces Closed (or terminal EOF)" in {
+        "a peer reset surfaces as a receive failure carrying ECONNRESET" in {
             assumePoller()
             withDriver { driver =>
                 loopbackPair().map { case (client, accepted) =>
@@ -155,17 +156,19 @@ class PollerIoDriverTest extends Test:
                     sock.close(client).safe.get.map { _ =>
                         Abort.run[Closed](readVia(driver, acceptedH)).map { result =>
                             driver.closeHandle(acceptedH)
-                            // The reset surfaces as a driver close (Closed), a terminal EOF, or a typed receive failure when the recv itself
-                            // reaps the RST errno; some kernels deliver the RST only after an EOF read. All are non-data terminal outcomes,
-                            // never live bytes.
+                            // ECONNRESET is 54 on macOS/BSD (errno.h), 104 on Linux (asm-generic/errno.h).
+                            val econnreset = if PosixConstants.isMacOrBsd then 54 else 104
                             result match
-                                case Result.Failure(_: Closed) => succeed
-                                case Result.Success(ReadOutcome.PeerFin) | Result.Success(ReadOutcome.CleanClose) | Result.Success(
-                                        ReadOutcome.LocalShutdown
-                                    ) => succeed
-                                case Result.Success(ReadOutcome.Bytes(s)) if s.isEmpty => succeed // empty Bytes: EOF as a zero-length read
-                                case Result.Success(ReadOutcome.Failed(_)) => succeed // recv reaped the RST as a typed receive failure
-                                case other => fail(s"expected Closed, EOF, or a typed receive failure, got $other")
+                                case Result.Success(ReadOutcome.Failed(e)) =>
+                                    assert(
+                                        e.getCause match
+                                            case errno: NetErrno => errno.code == econnreset
+                                            case _               =>
+                                                false
+                                        ,
+                                        s"the reset must surface as a receive failure carrying ECONNRESET, got $e caused by ${e.getCause}"
+                                    )
+                                case other => fail(s"the reset must surface as a receive failure carrying ECONNRESET, got $other")
                             end match
                         }
                     }

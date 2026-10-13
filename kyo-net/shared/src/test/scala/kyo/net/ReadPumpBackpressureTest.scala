@@ -269,7 +269,7 @@ class ReadPumpBackpressureTest extends Test:
                     val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 100.millis, clock = clock)
                     conn.start()             // fills the channel, parks on the overflow put, arms the grace timer
                     driver.peerClosed = true // peer FIN: the grace expiry polls isPeerClosed and observes it
-                    tc.advance(100.millis).map { _ =>
+                    armedThenAdvance(tc, "peer-close grace", 100.millis).map { _ =>
                         assert(
                             driver.closeHandleCalls.get() == 1,
                             s"the grace must reclaim an abandoned backpressured connection; closeHandle=${driver.closeHandleCalls.get()}"
@@ -313,19 +313,24 @@ class ReadPumpBackpressureTest extends Test:
                 Clock.get.map { clock =>
                     val driver = new WatchDriver(1)
                     val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 100.millis, clock = clock)
-                    conn.start()                      // parks on the overflow put, arms the grace timer; peer still live (peerClosed=false)
-                    tc.advance(100.millis).map { _ => // first expiry: isPeerClosed false -> re-arm, no reclaim
-                        assert(
-                            driver.closeHandleCalls.get() == 0,
-                            s"a live peer must not reclaim on expiry; closeHandle=${driver.closeHandleCalls.get()}"
-                        )
-                        driver.peerClosed = true          // peer FIN now arrives
-                        tc.advance(100.millis).map { _ => // second expiry: isPeerClosed true -> reclaim
+                    conn.start() // parks on the overflow put, arms the grace timer; peer still live (peerClosed=false)
+                    armedThenAdvance(tc, "peer-close grace", 100.millis).map {
+                        _ => // first expiry: isPeerClosed false -> re-arm, no reclaim
                             assert(
-                                driver.closeHandleCalls.get() == 1,
-                                s"the re-armed timer must reclaim once the peer closes; closeHandle=${driver.closeHandleCalls.get()}"
+                                driver.closeHandleCalls.get() == 0,
+                                s"a live peer must not reclaim on expiry; closeHandle=${driver.closeHandleCalls.get()}"
                             )
-                        }
+                            driver.peerClosed = true // peer FIN now arrives
+                            armedThenAdvance(
+                                tc,
+                                "re-armed peer-close grace",
+                                100.millis
+                            ).map { _ => // second expiry: isPeerClosed true -> reclaim
+                                assert(
+                                    driver.closeHandleCalls.get() == 1,
+                                    s"the re-armed timer must reclaim once the peer closes; closeHandle=${driver.closeHandleCalls.get()}"
+                                )
+                            }
                     }
                 }
             }

@@ -23,8 +23,13 @@ object TestBackends:
     final case class Entry(
         name: String,
         isAvailable: Boolean,
-        private val make: Frame => Transport
+        private val make: (Frame, Clock) => Transport
     ):
+        /** A transport of its own on `clock`, never shared: a deadline leaf's controlled clock scopes that leaf alone. The caller closes its
+          * drivers when the leaf ends.
+          */
+        def transportOn(clock: Clock)(using frame: Frame): Transport = make(frame, clock)
+
         // One transport per backend, built on first use and never torn down, mirroring production: a transport is process-lifetime, so the
         // harness holds one per backend for the run rather than building and discarding one per leaf. Cells share it exactly as every client
         // and server in a process shares NetPlatform.transport; per-connection settings travel with each operation, so sharing costs a cell
@@ -36,7 +41,7 @@ object TestBackends:
                 built match
                     case Present(t) => t
                     case Absent     =>
-                        val t = make(frame)
+                        val t = make(frame, Clock.live)
                         built = Present(t)
                         t
                 end match
@@ -56,7 +61,7 @@ object TestBackends:
             Entry(
                 name = backend.name,
                 isAvailable = backend.probe.isAvailable,
-                make = frame => backend.build()(using summon[AllowUnsafe], frame)
+                make = (frame, clock) => backend.build(clock)(using summon[AllowUnsafe], frame)
             )
         }
     end all

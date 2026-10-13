@@ -40,16 +40,10 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
         private val nextSqeIsAccept         = new AtomicBoolean(false)
         private val acceptKey               = new AtomicLong(Long.MinValue)
 
-        // Reap-cycle instrumentation for the backoff assertion. waitCount (inherited) is the reap loop's wait counter, one increment per reap
-        // cycle. We record the cycle in which the injected EMFILE CQE was reaped and the cycle in which the driver next re-armed the accept (its
-        // next kyo_uring_prep_accept). An IMMEDIATE re-arm happens inside the SAME reap cycle as the EMFILE reap (equal counts). The resource
-        // backoff defers the re-arm to a LATER cycle (strictly greater), after the loop parks and the backoff wakes it. This is independent of
-        // the backoff duration, so there is no timing threshold. reArmSeen is completed once the re-arm prep is observed so a test awaits it
-        // instead of polling.
-        @volatile var emfileInjected        = false
-        @volatile var waitCountAtEmfileReap = -1
-        @volatile var waitCountAtReArm      = -1
-        val reArmSeen                       = Promise.Unsafe.init[Unit, Abort[Closed]]()
+        // The re-arm is the first accept prep after the injected EMFILE reap. Under a controlled clock the backoff can fire before the reap
+        // loop starts its next cycle, so the witness of deferral is that no re-arm precedes the backoff firing, not a reap-cycle count.
+        @volatile var emfileInjected = false
+        val reArmSeen                = Promise.Unsafe.init[Unit, Abort[Closed]]()
 
         /** Arm the one-shot: the next accept CQE reports `-errno` instead of its real fd. */
         def armAcceptErrno(errno: Int): Unit =
@@ -60,9 +54,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
             AllowUnsafe
         ): Unit =
             nextSqeIsAccept.set(true)
-            // The first accept prep AFTER the injected EMFILE reap is the driver's re-arm: record its reap cycle and release the await latch.
-            if emfileInjected && waitCountAtReArm < 0 then
-                waitCountAtReArm = waitCount.get()
+            if emfileInjected then
                 discard(reArmSeen.complete(Result.succeed(())))
             super.kyo_uring_prep_accept(sqe, fd, addr, addrlen, flags)
         end kyo_uring_prep_accept
@@ -77,7 +69,6 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
             if key == acceptKey.get() && injectPending.compareAndSet(true, false) then
                 // close the real accepted fd synchronously (sock.close returns an async fiber) so the injected errno leaks nothing
                 if realRes >= 0 then discard(Ffi.load[PosixShimBindings].kyo_posix_close(realRes))
-                waitCountAtEmfileReap = waitCount.get()
                 emfileInjected = true
                 -injectedErrno
             else realRes
@@ -144,31 +135,37 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                 val promise          = Promise.Unsafe.init[Int, Abort[Closed]]()
                 // Arm the one-shot transient errno for the first accept CQE, then arm the accept and drive a connection.
                 recording.armAcceptErrno(PosixConstants.EMFILE)
-                drv.awaitAccept(listenH, promise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
-                connectClient(port).map { client1 =>
-                    // The first accept CQE reports -EMFILE (injected). The driver re-arms on the transient errno; connect
-                    // a second client so the re-armed accept has a real connection to accept.
-                    connectClient(port).map { client2 =>
-                        Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
-                            drv.closeHandle(listenH)
-                            discard(sockets.close(client1))
-                            discard(sockets.close(client2))
-                            outcome match
-                                case Result.Success(fd) =>
-                                    assert(fd >= 0, s"the re-armed accept must deliver a valid fd; got $fd")
-                                    discard(sockets.close(fd)) // close the re-armed accept's connection so it does not outlive the test
-                                case Result.Failure(_: Timeout) =>
-                                    fail("accept hung: a transient errno was neither failed nor retried")
-                                case Result.Failure(c: Closed) =>
-                                    fail(
-                                        s"the accept promise was failed Closed (\"$c\") on a TRANSIENT accept errno; the io_uring accept " +
-                                            "path did not classify it as transient, so the transport accept loop would stop and wedge the listener"
-                                    )
-                                case other => fail(s"unexpected accept outcome: $other")
-                            end match
-                            serverFd
+                Clock.withTimeControl { tc =>
+                    Clock.get.map { clock =>
+                        // The re-arm after the errno waits out the resource backoff on the listen handle's clock.
+                        listenH.clock = clock
+                        drv.awaitAccept(listenH, promise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
+                        connectClient(port).map { client1 =>
+                            // The first accept CQE reports -EMFILE (injected). The driver re-arms after the backoff; connect a second client so
+                            // the re-armed accept has a real connection to accept. An accept neither failed nor retried hangs to the leaf cap.
+                            connectClient(port).map { client2 =>
+                                armedThenAdvance(tc, "accept resource backoff", kyo.net.acceptResourceBackoff().millis)
+                                    .andThen(Abort.run[Closed](promise.safe.get))
+                                    .map(outcome => (client1, client2, outcome))
+                            }
                         }
                     }
+                }.map { (client1, client2, outcome) =>
+                    drv.closeHandle(listenH)
+                    discard(sockets.close(client1))
+                    discard(sockets.close(client2))
+                    outcome match
+                        case Result.Success(fd) =>
+                            assert(fd >= 0, s"the re-armed accept must deliver a valid fd; got $fd")
+                            discard(sockets.close(fd)) // close the re-armed accept's connection so it does not outlive the test
+                        case Result.Failure(c: Closed) =>
+                            fail(
+                                s"the accept promise was failed Closed (\"$c\") on a TRANSIENT accept errno; the io_uring accept " +
+                                    "path did not classify it as transient, so the transport accept loop would stop and wedge the listener"
+                            )
+                        case other => fail(s"unexpected accept outcome: $other")
+                    end match
+                    serverFd
                 }
             }.map { case (serverFd, sockets) => assertClosedOnce(sockets, serverFd) }
         }
@@ -181,33 +178,31 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                 val promise          = Promise.Unsafe.init[Int, Abort[Closed]]()
                 // Arm the one-shot EMFILE for the first accept CQE, then drive one connection so that CQE is produced and injected.
                 recording.armAcceptErrno(PosixConstants.EMFILE)
-                drv.awaitAccept(listenH, promise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
-                connectClient(port).map { client1 =>
-                    // The first accept CQE reports -EMFILE (injected). Await the driver's re-arm (its next accept prep), then compare the reap
-                    // cycle of the EMFILE reap against the reap cycle of the re-arm. On EMFILE the kernel does NOT dequeue the pending
-                    // connection, so an IMMEDIATE re-arm reaps -EMFILE again in the same cycle and the shared reap carrier busy-spins (libuv
-                    // #690, asyncio Tulip #78). The poller defers re-arming these two errnos by a resource backoff, and this asserts io_uring
-                    // does the same by re-arming in a strictly later cycle. The 5s ceiling turns a never-re-armed regression (a wedged listener)
-                    // into a failed test rather than a hang.
-                    Abort.run[Timeout | Closed](Async.timeout(5.seconds)(recording.reArmSeen.safe.get)).map { seen =>
-                        drv.closeHandle(listenH)
-                        discard(sockets.close(client1))
-                        seen match
-                            case Result.Success(_) =>
-                                val reapCycle  = recording.waitCountAtEmfileReap
-                                val reArmCycle = recording.waitCountAtReArm
-                                assert(
-                                    reArmCycle > reapCycle,
-                                    s"an EMFILE accept re-arm must be deferred to a later reap cycle so the reap carrier does not busy-spin. " +
-                                        s"The EMFILE was reaped in cycle $reapCycle and the accept was re-armed in cycle $reArmCycle. " +
-                                        "A same-cycle re-arm is the immediate re-arm (the spin)."
-                                )
-                            case Result.Failure(_: Timeout) =>
-                                fail("the accept was never re-armed after the EMFILE errno; the listener would be wedged")
-                            case other => fail(s"unexpected accept re-arm outcome: $other")
-                        end match
-                        serverFd
+                Clock.withTimeControl { tc =>
+                    Clock.get.map { clock =>
+                        listenH.clock = clock
+                        drv.awaitAccept(listenH, promise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
+                        connectClient(port).map { client1 =>
+                            // The first accept CQE reports -EMFILE (injected). On EMFILE the kernel does NOT dequeue the pending connection,
+                            // so an IMMEDIATE re-arm reaps -EMFILE again and the shared reap carrier busy-spins (libuv #690, asyncio Tulip
+                            // #78). The poller defers re-arming these two errnos by a resource backoff, and this asserts io_uring does the
+                            // same: with the backoff armed on the listen handle's clock and not yet fired, no re-arm has happened; firing it
+                            // re-arms. A never-re-armed listener hangs to the leaf cap.
+                            val backoff = kyo.net.acceptResourceBackoff().millis
+                            awaitTimer(tc, "accept resource backoff", backoff)
+                                .andThen(Sync.defer(recording.reArmSeen.done()))
+                                .map(early => tc.advance(backoff).andThen(recording.reArmSeen.safe.get).andThen((client1, early)))
+                        }
                     }
+                }.map { (client1, reArmedEarly) =>
+                    drv.closeHandle(listenH)
+                    discard(sockets.close(client1))
+                    assert(
+                        !reArmedEarly,
+                        "an EMFILE accept re-arm must wait out the resource backoff so the reap carrier does not busy-spin; " +
+                            "the accept was re-armed while the backoff was still pending"
+                    )
+                    serverFd
                 }
             }.map { case (serverFd, sockets) => assertClosedOnce(sockets, serverFd) }
         }

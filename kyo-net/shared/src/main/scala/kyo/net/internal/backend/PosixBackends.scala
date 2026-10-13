@@ -29,7 +29,10 @@ import kyo.net.internal.transport.IoDriverPool
   * `PosixHandle`, Nio `NioHandle`, Node `JsHandle`), so `IoBackend.selectAndBuild` keeps `build` a parameter each registry's entries satisfy.
   */
 private[net] trait Entry extends IoBackend:
-    def build()(using AllowUnsafe, Frame): Transport
+    /** A transport over this backend whose deadlines, backoffs and close graces run on `clock`: `Clock.live` in production, a controlled clock
+      * under `Clock.withTimeControl` in a test.
+      */
+    def build(clock: Clock = Clock.live)(using AllowUnsafe, Frame): Transport
 end Entry
 
 /** The posix backends, shared verbatim by the JVM and Native `IoBackendPlatform` registries. Both platforms produce the same unified drivers
@@ -46,7 +49,7 @@ end Entry
 private[net] trait PosixIoBackend extends Entry:
     type Handle = PosixHandle
 
-    final def build()(using AllowUnsafe, Frame): Transport =
+    final def build(clock: Clock = Clock.live)(using AllowUnsafe, Frame): Transport =
         // Build ioPoolSize independent drivers, wrap them in the pool, and start them all-or-nothing. Each driver owns its own poller/io_uring fd
         // and carrier fiber; pool.next() distributes new connections round-robin across the drivers, and each connection is then bound to one
         // driver for its lifetime, so per-handle single-driver ownership holds downstream. Both JVM and Native run the scheduler over real OS
@@ -57,7 +60,7 @@ private[net] trait PosixIoBackend extends Entry:
         val drivers = Array.fill(n)(createDriver())
         val pool    = IoDriverPool.init(drivers)
         pool.start() // all-or-nothing: on any driver-start failure this closes the started subset and rethrows.
-        PosixTransport.init(pool)
+        PosixTransport.init(pool, clock)
     end build
 end PosixIoBackend
 

@@ -102,6 +102,11 @@ final private[net] class PosixHandle private (
     /** Close-flush grace window (see [[kyo.net.NetConfig.closeFlushGrace]]), on the handle for the same reason as [[peerCloseGrace]]. */
     @volatile var closeFlushGrace: Duration = Duration.Infinity
 
+    /** The transport's clock, for the waits a driver times on this handle's behalf (the io_uring accept backoff on a listen handle), so a test
+      * under `Clock.withTimeControl` drives them with virtual time. The driver is built before any transport, so it cannot hold the clock itself.
+      */
+    @volatile var clock: Clock = Clock.live
+
     /** STARTTLS-on-io_uring carry-over of the plaintext ReadPump's stale in-flight recv. io_uring cannot cancel an in-flight recv SQE, so after
       * `detachForUpgrade` that recv stays kernel-owned and consumes the peer's first post-signal handshake flight (the ClientHello) into the read
       * buffer; its CQE then lands on an already-settled (cancelled) promise and the bytes would be lost, hanging the handshake. While
@@ -756,10 +761,16 @@ private[net] object PosixHandle:
 
     /** stdio handle: split fds, read end 0 and write end 1 (the split-fd case). */
     def stdio(bufSize: Int, createdAt: Frame)(using AllowUnsafe): PosixHandle =
+        split(0, 1, bufSize, createdAt)
+
+    /** A split-fd handle: reads from `readFd`, writes to `writeFd`. When the two differ the drivers never close either descriptor; their
+      * owner does.
+      */
+    def split(readFd: Int, writeFd: Int, bufSize: Int, createdAt: Frame)(using AllowUnsafe): PosixHandle =
         new PosixHandle(
-            0,
-            1,
-            HandleId.next(0),
+            readFd,
+            writeFd,
+            HandleId.next(readFd),
             Buffer.alloc[Byte](bufSize),
             bufSize,
             Absent,

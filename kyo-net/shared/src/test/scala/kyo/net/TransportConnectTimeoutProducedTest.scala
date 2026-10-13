@@ -93,6 +93,26 @@ class TransportConnectTimeoutProducedTest extends Test:
         }
     }
 
+    "the connect deadline runs on the transport's clock and fires at its instant".notNative - eachBackendOnClock { (transport, tc) =>
+        val timeout = 30.seconds
+        for
+            connect <- Sync.defer(transport.connect(blackHoleHost, blackHolePort, timeout))
+            _       <- armedThenAdvance(tc, "connect deadline", timeout, by = timeout.minusOrZero(1.millis))
+            early   <- Sync.defer(connect.done())
+            _       <- armedThenAdvance(tc, "connect deadline", timeout, by = 1.millis)
+            outcome <- Abort.run[NetException](connect.safe.get)
+        yield
+            assert(!early, "the connect must still be pending 1ms before its deadline")
+            outcome match
+                case Result.Failure(e: NetConnectTimeoutException) => assert(e.timeout == timeout)
+                case Result.Success(conn)                          =>
+                    conn.close()
+                    fail("a connect to a black-hole address completed")
+                case other => fail(s"expected NetConnectTimeoutException($timeout) at the deadline's instant, got $other")
+            end match
+        end for
+    }
+
     // A listener that accepts is what makes this a test of the deadline: without it firing first, the connect would succeed.
     "a zero connect deadline fails the connect with NetConnectTimeoutException even when the peer would accept" - eachBackend { transport =>
         for

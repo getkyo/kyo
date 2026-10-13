@@ -91,11 +91,27 @@ abstract class Test extends kyo.test.Test[Any]:
             }
         }
 
-    private def backendLeaves(skipCell: String => Maybe[String])(
+    /** Like [[eachBackend]] but marks `pendingUntilFixed` (with the returned reason) every cell whose backend name `pendingCell` maps to
+      * `Present`, while every other cell runs as a plain leaf. Pins a contract violation that only some drivers have: the violating cells
+      * report Pending while they still fail and flip to a failure once fixed, and the conforming cells keep asserting the contract.
+      */
+    def eachBackendPending(pendingCell: String => Maybe[String])(
+        scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
+        backendLeaves(_ => Absent, pendingCell)(scenario)
+
+    /** A cell's leaf builder, marked pending with `pending`'s reason only when the cell can run: the runner reports a cancelled pending leaf
+      * as Pending, so marking a cell that cancels would hide that it never ran.
+      */
+    private def cellLeaf(name: String, runnable: => Boolean, pending: Maybe[String]): kyo.test.TestBuilder =
+        val leaf = name.tagged()
+        pending.filter(_ => runnable).fold(leaf)(reason => leaf.pendingUntilFixed(reason))
+
+    private def backendLeaves(skipCell: String => Maybe[String], pendingCell: String => Maybe[String] = _ => Absent)(
         scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(using Frame): Unit =
         TestBackends.all.foreach { entry =>
-            s"[${entry.name}]" in {
+            cellLeaf(s"[${entry.name}]", entry.isAvailable, pendingCell(entry.name)) in {
                 if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
                 else
                     skipCell(entry.name) match
@@ -134,7 +150,7 @@ abstract class Test extends kyo.test.Test[Any]:
             NetTlsConfig
         ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(using Frame): Unit =
-        eachBackendTls(NetConfig.default)(scenario)
+        tlsLeaves((_, _) => Absent)(scenario)
 
     /** Like [[eachBackendTls]] but cancels (with the returned reason) the one (backend, provider) cell `skipCell` maps to `Present`, while every
       * other cell still runs. Pins a documented PENDING reason on a single genuinely-broken (backend, provider) cell without dropping the passing
@@ -147,25 +163,35 @@ abstract class Test extends kyo.test.Test[Any]:
             NetTlsConfig
         ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(skipCell: (String, String) => Maybe[String])(using Frame): Unit =
-        tlsLeaves(NetConfig.default)(skipCell)(scenario)
+        tlsLeaves(skipCell)(scenario)
 
-    /** As [[eachBackendTls]], but passes `config` to each cell's operations instead of `NetConfig.default`, so a config-driven behavior
-      * (e.g. a non-default `readChunkSize` or an explicit `soRcvBuf`) is asserted across the same backend x TLS-impl matrix. A handshake
-      * deadline is NOT one of these: it rides `NetTlsConfig.handshakeTimeout`, which the cell's own TLS configs carry. The cell's provider pin
-      * and lifecycle handling are identical to the no-config form.
+    /** Like [[eachBackendTls]], but marks `pendingUntilFixed` (with the returned reason) every (backend, provider) cell `pendingCell` maps to
+      * `Present`; every other cell runs as a plain leaf. The TLS counterpart of [[eachBackendPending]].
       */
-    def eachBackendTls(config: NetConfig)(
+    def eachBackendTlsPending(pendingCell: (String, String) => Maybe[String])(
         scenario: (
             Transport,
             NetTlsConfig,
             NetTlsConfig
         ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(using Frame): Unit =
-        tlsLeaves(config)((_, _) => Absent)(scenario)
+        tlsLeaves((_, _) => Absent, pendingCell)(scenario)
 
-    private def tlsLeaves(config: NetConfig)(skipCell: (String, String) => Maybe[String])(
+    private def tlsLeaves(skipCell: (String, String) => Maybe[String], pendingCell: (String, String) => Maybe[String] = (_, _) => Absent)(
         scenario: (
             Transport,
+            NetTlsConfig,
+            NetTlsConfig
+        ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
+        tlsCells(skipCell, pendingCell)((entry, serverTls, clientTls) => scenario(entry.transport, serverTls, clientTls))
+
+    /** One leaf per (backend, TLS provider) cell, each running `runCell` with the cell's pinned server and client configs once the cell is known
+      * to be available, not skipped, and a pair the backend drives.
+      */
+    private def tlsCells(skipCell: (String, String) => Maybe[String], pendingCell: (String, String) => Maybe[String])(
+        runCell: (
+            TestBackends.Entry,
             NetTlsConfig,
             NetTlsConfig
         ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
@@ -178,7 +204,11 @@ abstract class Test extends kyo.test.Test[Any]:
             // Inert by default (unset = every registered provider).
             provider <- TlsProviderPlatform.registered.filter(p => Test.isolationEnv("KYO_NET_TLS_ONLY").forall(_ == p.name))
         do
-            s"[${entry.name} / ${provider.name}]" in {
+            cellLeaf(
+                s"[${entry.name} / ${provider.name}]",
+                entry.isAvailable && provider.probe.isAvailable && entry.transport.supportedTlsProviders.contains(provider.name),
+                pendingCell(entry.name, provider.name)
+            ) in {
                 if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
                 else if !provider.probe.isAvailable then cancel(s"TLS impl ${provider.name} not available on this host")
                 else
@@ -188,11 +218,9 @@ abstract class Test extends kyo.test.Test[Any]:
                     skipCell(entry.name, provider.name) match
                         case Present(reason) => cancel(reason)
                         case Absent          =>
-                            // Build the cell's transport eagerly so its TLS capability can be queried for a clean, visible cancel BEFORE the scenario
-                            // runs (the same eager-cancel placement the availability checks above use). An unsupported cell closes the just-built
-                            // transport and cancels rather than running a mislabeled handshake on a substituted implementation.
-                            val transport = entry.transport
-                            if !transport.supportedTlsProviders.contains(provider.name) then
+                            // Query the backend's shared transport for its TLS capability so an unsupported cell cancels visibly BEFORE the
+                            // scenario runs, rather than running a mislabeled handshake on a substituted implementation.
+                            if !entry.transport.supportedTlsProviders.contains(provider.name) then
                                 cancel(s"backend ${entry.name} does not drive TLS impl ${provider.name}")
                             else
                                 Sync.defer(()).andThen {
@@ -203,14 +231,119 @@ abstract class Test extends kyo.test.Test[Any]:
                                             tlsProvider = Present(provider.name)
                                         )
                                         val clientTls = NetTlsConfig(trustAll = true, tlsProvider = Present(provider.name))
-                                        scenario(transport, serverTls, clientTls)
+                                        runCell(entry, serverTls, clientTls)
                                     }
                                 }
                             end if
                     end match
             }
         end for
-    end tlsLeaves
+    end tlsCells
+
+    /** Like [[eachBackend]], but each cell runs on a transport of its own whose deadlines, backoffs and close graces are on a controlled clock.
+      * The scenario receives that transport and the clock's [[Clock.TimeControl]]; virtual time moves only when the scenario advances it, so a
+      * deadline fires at the exact instant the scenario chooses and never during an unrelated wait. The scenario itself runs on the live
+      * clock, so its own waits are not frozen with the transport's timers. The cell's drivers close after the scenario's own finalizers.
+      */
+    def eachBackendOnClock(
+        scenario: (Transport, Clock.TimeControl) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
+        TestBackends.all.foreach { entry =>
+            s"[${entry.name}]" in {
+                if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
+                else onClock(entry)(scenario)
+            }
+        }
+
+    /** [[eachBackendTls]] on a controlled clock, with the cell's transport and drivers as [[eachBackendOnClock]] describes. */
+    def eachBackendTlsOnClock(
+        scenario: (
+            Transport,
+            Clock.TimeControl,
+            NetTlsConfig,
+            NetTlsConfig
+        ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
+        tlsCells((_, _) => Absent, (_, _) => Absent) { (entry, serverTls, clientTls) =>
+            onClock(entry)((transport, timeControl) => scenario(transport, timeControl, serverTls, clientTls))
+        }
+
+    private def onClock(entry: TestBackends.Entry)(
+        scenario: (Transport, Clock.TimeControl) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using frame: Frame, as: kyo.test.AssertScope): Unit < (Async & Abort[NetException | Closed] & Scope) =
+        Clock.withTimeControl { timeControl =>
+            Clock.get.map { clock =>
+                Clock.let(Clock.live) {
+                    Sync.Unsafe.defer(entry.transportOn(clock)).map { transport =>
+                        Scope.ensure(Sync.Unsafe.defer(Test.closeDrivers(transport)))
+                            .andThen(Scope.run(scenario(transport, timeControl)))
+                    }
+                }
+            }
+        }
+    end onClock
+
+    /** One leaf per connection that no listener produces: the in-memory pair on every platform, plus each platform's [[TestEndpoints]] (the
+      * posix split-fd connection stdio uses and the blocking-reader connection over a regular file). The scenario receives the connection
+      * under test and its far end as a [[RawPeer]]; `pendingCell` marks a cell `pendingUntilFixed` as [[eachBackendPending]] does.
+      */
+    def eachEndpoint(pendingCell: String => Maybe[String] = _ => Absent)(
+        scenario: (Connection, RawPeer) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit = (Test.inMemoryCell +: TestEndpoints.all).foreach { cell =>
+        cellLeaf(s"[${cell.name}]", cell.unavailable.isEmpty, pendingCell(cell.name)) in {
+            cell.unavailable match
+                case Present(reason) => cancel(reason)
+                case Absent          => cell.open(summon[Frame]).map((conn, peer) => scenario(conn, peer))
+        }
+    }
+
+    /** How long [[armedThenAdvance]] waits for its timer before failing: half the suite's leaf timeout, so the failure names the timer instead
+      * of the leaf timing out. A leaf that fences carries no per-leaf timeout shorter than twice this budget.
+      */
+    def armedBudget: Duration = timeout * 0.5
+
+    /** Waits until `timeControl` holds a pending sleeper of exactly `duration`, then advances the clock by `duration`. Fails naming `timer`
+      * when no such sleeper is armed within [[armedBudget]]. A channel state or a parked put is no proof that a timer is armed: an advance
+      * taken before the arming is lost, and the timer then fires a whole `duration` later than the leaf assumes.
+      *
+      * The fence matches by duration alone. A timer that replaces another of the same duration arms the new sleeper before it cancels the
+      * old one, so a leaf first observes a state that follows the last such replacement, and the fence then sees only the timer it targets.
+      */
+    def armedThenAdvance(timeControl: Clock.TimeControl, timer: String, duration: Duration)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < Async =
+        armedThenAdvance(timeControl, timer, duration, duration)
+
+    /** [[armedThenAdvance]] advancing by `by` instead of the timer's whole `duration`, for a leaf that stops short of the deadline or crosses
+      * it in steps.
+      */
+    def armedThenAdvance(timeControl: Clock.TimeControl, timer: String, duration: Duration, by: Duration)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < Async =
+        awaitTimer(timeControl, timer, duration).andThen(timeControl.advance(by))
+
+    /** The fence of [[armedThenAdvance]] without the advance, for a leaf that acts on the peer's side once the timer is armed. */
+    def awaitTimer(timeControl: Clock.TimeControl, timer: String, duration: Duration)(using Frame, kyo.test.AssertScope): Unit < Async =
+        awaitArmed(timeControl, timer, duration, armedBudget).map {
+            case Present(missing) => fail(missing)
+            case Absent           => ()
+        }
+
+    /** Waits up to `within` for a sleeper of exactly `duration` on `timeControl`: `Absent` once one is pending, or the failure message naming
+      * `timer`. The bound is timed on the live clock, because a bound on the controlled clock would itself be a sleeper that never fires.
+      */
+    def awaitArmed(timeControl: Clock.TimeControl, timer: String, duration: Duration, within: Duration)(using
+        Frame
+    ): Maybe[String] < Async =
+        Clock.let(Clock.live) {
+            Abort.run[Timeout](Async.timeout(within)(timeControl.awaitPendingSleeper(duration))).map {
+                case Result.Success(_) => Absent
+                case _                 => Present(s"the $timer ($duration) was never armed on the controlled clock within $within")
+            }
+        }
+    end awaitArmed
 
     /** Run `scenario` against this backend's transport.
       *
@@ -228,6 +361,25 @@ end Test
 
 object Test:
 
+    /** A connection no listener produces, opened per leaf with its far end; `unavailable` is the reason the cell cannot run on this host. */
+    final case class EndpointCell(
+        name: String,
+        unavailable: Maybe[String],
+        open: Frame => (Connection, RawPeer) < (Async & Scope)
+    )
+
+    private[net] val inMemoryCell: EndpointCell =
+        EndpointCell(
+            "in-memory",
+            Absent,
+            frame =>
+                given Frame = frame
+                import AllowUnsafe.embrace.danger
+                Sync.defer(kyo.net.internal.transport.Connection.inMemoryPair()).map { (conn, other) =>
+                    Scope.ensure(Sync.defer { conn.close(); other.close() }).andThen((conn, RawPeer.overConnection(other)))
+                }
+        )
+
     /** An isolation variable's value, or `Absent` when it is unset.
       *
       * Read through `FlagPlatform` rather than `sys.env`, which is `System.getenv` and answers null for every name
@@ -236,5 +388,13 @@ object Test:
       */
     private[net] def isolationEnv(name: String): Maybe[String] =
         Maybe(FlagPlatform.env(name)).filter(_.nonEmpty)
+
+    /** Closes every driver of a transport built for one leaf. A transport has no close of its own (production's lives for the process), and
+      * `next()` taken `size` times visits each driver of the round-robin pool once.
+      */
+    private[net] def closeDrivers(transport: Transport)(using AllowUnsafe, Frame): Unit =
+        transport match
+            case impl: kyo.net.internal.transport.TransportImpl[?] => (0 until impl.pool.size).foreach(_ => impl.pool.next().close())
+            case _                                                 => ()
 
 end Test

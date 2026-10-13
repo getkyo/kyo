@@ -139,7 +139,7 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
                         driver.closeHandleCalls.get() == 0,
                         s"the flush must start out waiting; closeHandle=${driver.closeHandleCalls.get()}"
                     )
-                    tc.advance(1.second).map { _ =>
+                    armedThenAdvance(tc, "close-flush grace", 1.second).map { _ =>
                         assert(
                             driver.closeHandleCalls.get() == 1,
                             s"a window with no write progress must release the fd; closeHandle=${driver.closeHandleCalls.get()}"
@@ -160,11 +160,11 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
                     discard(conn.outbound.offer(Span.fromUnsafe(Array.fill[Byte](4)(1))))
                     conn.close()
                     for
-                        _      <- tc.advance(600.millis)
+                        _      <- armedThenAdvance(tc, "close-flush grace", 1.second, by = 600.millis)
                         _      <- Sync.defer(driver.peerReads())
-                        _      <- tc.advance(600.millis)
+                        _      <- armedThenAdvance(tc, "close-flush grace", 1.second, by = 600.millis)
                         _      <- Sync.defer(driver.peerReads())
-                        _      <- tc.advance(600.millis)
+                        _      <- armedThenAdvance(tc, "re-armed close-flush grace", 1.second, by = 600.millis)
                         midway <- Sync.defer(driver.closeHandleCalls.get())
                         _      <- Sync.defer(driver.peerReads())
                     yield

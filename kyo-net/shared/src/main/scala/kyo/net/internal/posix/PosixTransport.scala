@@ -76,7 +76,9 @@ final private[net] class PosixTransport private[posix] (
     // caller that closed the listeners can observe via [[activeAcceptLoops]] when every blocking `accept` has actually returned and its loop has
     // wound down. That matters for orderly shutdown: a blocking `accept` cannot be cancelled, so after closing a listen fd the only way to know
     // its parked `accept` has woken (and the fd is safe to recycle without a stale loop stealing a connection) is to watch this drop to 0.
-    acceptLoopsActive: AtomicLong.Unsafe
+    acceptLoopsActive: AtomicLong.Unsafe,
+    // Times every connect and handshake deadline, the accept-resource backoff and each connection's peerCloseGrace.
+    clock: Clock
 ) extends TransportImpl[PosixHandle]:
     // `representative` is one pool driver used ONLY for the transport-level, NON-per-handle paths that have no bound handle:
     //   - stdio (a single per-process handle; selectDriver bypasses the pool, so stdio rides the representative),
@@ -243,7 +245,7 @@ final private[net] class PosixTransport private[posix] (
         Frame
     ): InternalConnection[PosixHandle] =
         handle.driver = driver
-        InternalConnection.init(handle, driver, channelCapacity, handle.peerCloseGrace, handle.closeFlushGrace)
+        InternalConnection.init(handle, driver, channelCapacity, handle.peerCloseGrace, handle.closeFlushGrace, clock = clock)
     end openWith
 
     // ---------------------------------------------------------------------------------------------------------------------------------------
@@ -483,7 +485,7 @@ final private[net] class PosixTransport private[posix] (
     /** Arm a `Clock`-driven deadline for one in-flight client TCP connect, mirroring the accept-path `armHandshakeDeadline`. When the caller's
       * `connectTimeout` is finite (for a TCP host:port and for a Unix socket alike; `port < 0` selects the Unix leaf rather than skipping the
       * deadline, which is what it used to do),
-      * schedule `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the clock executor, never a blocked carrier) and fail `promise`
+      * schedule `clock.unsafe.sleep(d).onComplete(...)` on the transport's clock (a timer fiber, never a blocked carrier) and fail `promise`
       * with `NetConnectTimeoutException(host, port, connectTimeout)` when the deadline fires. `promise.completeDiscard` completes the promise at
       * most once, so the deadline and the OS connect outcome are mutually exclusive. This is the close-cause discrimination: the deadline arm is
       * the only producer of the typed timeout leaf, so a deadline-fired close surfaces `NetConnectTimeoutException` while an OS-failure close
@@ -511,7 +513,7 @@ final private[net] class PosixTransport private[posix] (
             // promise still pending through the handshake, makes it live: without this flag every TLS connect fails instantly with a connect
             // timeout at the moment its TCP phase completes.
             val disarmed = AtomicBoolean.Unsafe.init(false)
-            val timer    = kyo.net.internal.DeadlineTimer.arm(timeout)
+            val timer    = kyo.net.internal.DeadlineTimer.arm(clock, timeout)
             timer.onComplete { _ =>
                 if !disarmed.get() then
                     val leaf =
@@ -735,7 +737,7 @@ final private[net] class PosixTransport private[posix] (
                 // obligation above does: it must be serialized against any handshake step already in flight on the engine FIFO.
                 // `Duration.Infinity` arms no timer at all.
                 if cfg.handshakeTimeout.isFinite then
-                    val deadline = kyo.net.internal.DeadlineTimer.arm(cfg.handshakeTimeout)
+                    val deadline = kyo.net.internal.DeadlineTimer.arm(clock, cfg.handshakeTimeout)
                     deadline.onComplete { _ =>
                         if handshakeDisarm() then
                             unregisterHandshake(handshakeToken)
@@ -1054,6 +1056,7 @@ final private[net] class PosixTransport private[posix] (
                 connectTarget = Absent,
                 createdAt = listener.createdAt
             )
+        handle.clock = clock
 
         // Tear down this listener's accept interest AND its fd through the driver when the listener closes, so the two are sequenced safely
         // for the driver's model. On the readiness drivers `closeListener` fails the parked accept, queues the fd's deregistration as closing
@@ -1125,12 +1128,12 @@ final private[net] class PosixTransport private[posix] (
                 driver.awaitAccept(handle, acceptPromise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
         end scheduleNextAccept
 
-        // Re-arm accept interest after the resource-exhaustion backoff, without blocking the poll-loop carrier. `Clock.live.unsafe.sleep`
-        // schedules a timer on the clock executor and returns a fiber; its completion callback re-enters scheduleNextAccept. If the listener
+        // Re-arm accept interest after the resource-exhaustion backoff, without blocking the poll-loop carrier. `clock.unsafe.sleep`
+        // schedules a timer on the transport's clock and returns a fiber; its completion callback re-enters scheduleNextAccept. If the listener
         // closed during the backoff, scheduleNextAccept observes isClosed and winds the loop down (no re-arm on a dead fd).
         def scheduleAcceptAfterBackoff()(using AllowUnsafe, Frame): Unit =
             onAcceptResourceBackoff()
-            Clock.live.unsafe.sleep(acceptResourceBackoff).onComplete(_ => scheduleNextAccept())
+            clock.unsafe.sleep(acceptResourceBackoff).onComplete(_ => scheduleNextAccept())
 
         def acceptAll()(using AllowUnsafe, Frame): AcceptDrain =
             val noAddr = Buffer.alloc[Byte](SockAddr.inet6Size)
@@ -1320,7 +1323,7 @@ final private[net] class PosixTransport private[posix] (
       * OR the deadline's expiry) wins and proceeds; every later caller returns `false` and is a no-op. So the handshake outcome and the
       * deadline are mutually exclusive: only one runs the teardown / completion.
       *
-      *   - When the listener's `handshakeTimeout` is finite, this schedules `Clock.live.unsafe.sleep(d).onComplete(...)` (the same non-blocking timer
+      *   - When the listener's `handshakeTimeout` is finite, this schedules `clock.unsafe.sleep(d).onComplete(...)` (the same non-blocking timer
       *     idiom [[startAcceptLoop.scheduleAcceptAfterBackoff]] uses: a timer fiber on the clock executor, never a blocked carrier). If the
       *     deadline fires before the handshake completes, the timer wins the guard and runs `onDeadline` (the connection's fd + engine
       *     teardown), reaping a stalled handshake. When the handshake completes first it wins the guard and interrupts the timer fiber, so the
@@ -1343,7 +1346,7 @@ final private[net] class PosixTransport private[posix] (
         else
             val settled = AtomicBoolean.Unsafe.init(false)
             val fired   = AtomicBoolean.Unsafe.init(false)
-            val timer   = kyo.net.internal.DeadlineTimer.arm(timeout)
+            val timer   = kyo.net.internal.DeadlineTimer.arm(clock, timeout)
             timer.onComplete { _ =>
                 if settled.compareAndSet(false, true) then
                     // Published BEFORE onDeadline runs, so a caller that reads hasFired after publishing its registration token either sees
@@ -1809,7 +1812,7 @@ final private[net] class PosixTransport private[posix] (
                             // connect port for an upgrade, so the leaf carries -1, matching the convention the handshake-failure leaf uses here.
                             // `Duration.Infinity` arms no timer.
                             if tls.handshakeTimeout.isFinite then
-                                val deadline = kyo.net.internal.DeadlineTimer.arm(tls.handshakeTimeout)
+                                val deadline = kyo.net.internal.DeadlineTimer.arm(clock, tls.handshakeTimeout)
                                 deadline.onComplete { _ =>
                                     if handshakeDisarm() then
                                         unregisterHandshake(handshakeToken)
@@ -1875,7 +1878,8 @@ final private[net] class PosixTransport private[posix] (
                                                 handle.driver,
                                                 channelCapacity,
                                                 handle.peerCloseGrace,
-                                                handle.closeFlushGrace
+                                                handle.closeFlushGrace,
+                                                clock = clock
                                             )
                                         // Wire the cert-hash and re-upgrade functions on the upgraded connection, exactly as completeConnect /
                                         // spawnHandler do for a directly-connected or accepted connection. Without this the TLS connection
@@ -2585,8 +2589,12 @@ private[net] object PosixTransport:
       * is epoll (the regular-file fallback's gate; true only on Linux when epoll, not io_uring, is selected).
       */
     def init(pool: IoDriverPool[PosixHandle])(using AllowUnsafe): PosixTransport =
+        init(pool, Clock.live)
+
+    /** As [[init]], with every deadline, backoff and close grace on `clock`. */
+    def init(pool: IoDriverPool[PosixHandle], clock: Clock)(using AllowUnsafe): PosixTransport =
         val representative = pool.next()
-        init(pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative))
+        init(pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative), clock = clock)
 
     /** Build a transport over a caller-supplied pool, representative driver, socket bindings, and epoll flag, allocating the transport's unsafe
       * fields under the caller's `AllowUnsafe`: the construction site propagates the capability rather than each field bridging it. Shared by
@@ -2598,7 +2606,8 @@ private[net] object PosixTransport:
         sockets: SocketBindings,
         backendIsEpoll: Boolean,
         engineFactory: TlsEngineFactory = realEngineFactory,
-        onAcceptResourceBackoff: () => Unit = () => ()
+        onAcceptResourceBackoff: () => Unit = () => (),
+        clock: Clock = Clock.live
     )(using AllowUnsafe): PosixTransport =
         new PosixTransport(
             pool = pool,
@@ -2608,7 +2617,8 @@ private[net] object PosixTransport:
             engineFactory = engineFactory,
             stdioClaimed = AtomicBoolean.Unsafe.init(false),
             onAcceptResourceBackoff = onAcceptResourceBackoff,
-            acceptLoopsActive = AtomicLong.Unsafe.init(0)
+            acceptLoopsActive = AtomicLong.Unsafe.init(0),
+            clock = clock
         )
 
     /** True when `ioDriver` is the readiness poller AND that poller is epoll (the only backend the regular-file fallback applies to). io_uring's driver has

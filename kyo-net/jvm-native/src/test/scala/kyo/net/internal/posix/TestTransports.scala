@@ -17,16 +17,37 @@ object TestTransports:
       * [[PosixTransport.realEngineFactory]]) where a test needs to observe or script the engine the transport is otherwise the sole builder of.
       *
       * `onAcceptResourceBackoff` fires once per accept-loop re-arm under descriptor exhaustion (`EMFILE`/`ENFILE`), letting a test count re-arms as events, not time.
+      * `clock` times the transport's deadlines and backoffs, so a test under `Clock.withTimeControl` drives them with virtual time.
       */
     def forTesting(
         ioDriver: IoDriver[PosixHandle],
         sockets: SocketBindings,
         backendIsEpoll: Boolean,
         buildEngine: PosixTransport.TlsEngineFactory = PosixTransport.realEngineFactory,
-        onAcceptResourceBackoff: () => Unit = () => ()
+        onAcceptResourceBackoff: () => Unit = () => (),
+        clock: Clock = Clock.live
     )(using AllowUnsafe): PosixTransport =
         val pool = IoDriverPool.init(Array(ioDriver))
-        PosixTransport.init(pool, ioDriver, sockets, backendIsEpoll, buildEngine, onAcceptResourceBackoff)
+        PosixTransport.init(pool, ioDriver, sockets, backendIsEpoll, buildEngine, onAcceptResourceBackoff, clock)
     end forTesting
+
+    /** A started connection over a split-fd handle reading `readFd` and writing `writeFd`, built as `PosixTransport.stdio` builds fd 0 and
+      * 1. `blockingReader` reads through a [[BlockingReaderDriver]] over `ioDriver`, the fallback stdio takes for a descriptor epoll cannot
+      * poll; otherwise `ioDriver`, the transport's own driver, serves both directions.
+      */
+    def splitConnection(
+        transport: PosixTransport,
+        ioDriver: IoDriver[PosixHandle],
+        readFd: Int,
+        writeFd: Int,
+        channelCapacity: Int,
+        blockingReader: Boolean
+    )(using AllowUnsafe, Frame): kyo.net.Connection =
+        val handle = PosixHandle.split(readFd, writeFd, PosixHandle.DefaultReadBufferSize, summon[Frame])
+        val driver = if blockingReader then BlockingReaderDriver.init(ioDriver) else ioDriver
+        val conn   = transport.openWith(handle, driver, channelCapacity)
+        discard(conn.start())
+        conn
+    end splitConnection
 
 end TestTransports

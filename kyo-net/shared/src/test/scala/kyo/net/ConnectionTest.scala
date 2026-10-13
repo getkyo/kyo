@@ -157,18 +157,16 @@ class ConnectionTest extends Test:
     }
 
     "Connection.write propagates Closed abort" - {
-        "write to closed connection raises Abort[Closed] or succeeds" in {
-            val transport = NetPlatform.transport
+        "a write after close() fails Closed" - eachBackend { transport =>
             for
                 listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get
                 _        <- Scope.ensure(Sync.defer(listener.close()))
-                port = listener.port
-                conn <- transport.connect("127.0.0.1", port).safe.get
+                conn     <- transport.connect("127.0.0.1", listener.port).safe.get
                 _ = conn.close()
                 result <- Abort.run[Closed](conn.outbound.safe.put(Span.from("after-close".getBytes)))
-            yield
-                listener.close()
-                assert(!result.isPanic, s"expected Success or Closed failure on write-after-close, got Panic: $result")
+            yield result match
+                case Result.Failure(_: Closed) => succeed
+                case other                     => fail(s"a write after close() must fail Closed, got $other")
             end for
         }
     }

@@ -8,10 +8,9 @@ import kyo.*
   * These tests verify that each distinct close scenario maps to exactly the expected [[Connection.Status]] value, and that
   * clean-close (TLS close_notify) and local-close are distinguishable from each other and from [[Connection.Status.Active]].
   *
-  * The third close reason, [[Connection.Status.Truncated]] (bare TCP FIN without close_notify), is NOT achievable through the
-  * public [[Connection]] API: both `conn.close()` and `Transport.close()` emit a TLS close_notify before the TCP close. Testing
-  * Truncated requires raw socket access; it is covered at the driver level in NioTransportTlsCloseReasonTest (JVM NIO) and
-  * PollerIoDriverTlsHalfCloseEtTest (posix).
+  * The third close reason, [[Connection.Status.Truncated]] (bare TCP FIN without close_notify), needs a peer that sends a FIN with no
+  * close_notify, which no kyo connection does: both `conn.close()` and `Transport.close()` emit a TLS close_notify before the TCP close. The
+  * end-of-stream contract suite drives that peer through a raw relay on every backend cell.
   *
   * The TLS leaves run via [[eachBackendTls]]; the plaintext leaf runs via [[eachBackend]], since a plaintext connection reports no close reason
   * on any transport. A transport reports the TLS close reason only when it terminates TLS in-process (posix on every platform including JS, NIO

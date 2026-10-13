@@ -29,8 +29,13 @@ object TestBackends:
     final case class Entry(
         name: String,
         isAvailable: Boolean,
-        private val make: Frame => Transport
+        private val make: (Frame, Clock) => Transport
     ):
+        /** A transport of its own on `clock`, never shared: a deadline leaf's controlled clock scopes that leaf alone. The caller closes its
+          * drivers when the leaf ends.
+          */
+        def transportOn(clock: Clock)(using frame: Frame): Transport = make(frame, clock)
+
         // One transport per backend, built on first use and never torn down, mirroring production: a transport is process-lifetime, so the
         // harness holds one per backend for the run rather than building and discarding one per leaf. Cells share it exactly as every client
         // and server in a process shares NetPlatform.transport; per-connection settings travel with each operation, so sharing costs a cell
@@ -47,7 +52,7 @@ object TestBackends:
                         // stranded-op and fiber-leak gates allowlist. Without it those gates read a by-design-parked driver (idle, with
                         // reads armed on still-open connections) as a lost wakeup. This is the same exemption NetPlatform.transport gets,
                         // applied on the same grounds rather than a second convention.
-                        val t = kyo.net.internal.ProcessSharedTransport.whileBuilding(make(frame))
+                        val t = kyo.net.internal.ProcessSharedTransport.whileBuilding(make(frame, Clock.live))
                         built = Present(t)
                         t
                 end match
@@ -68,7 +73,7 @@ object TestBackends:
             Entry(
                 name = entry.name,
                 isAvailable = entry.probe.isAvailable,
-                make = frame => entry.build()(using summon[AllowUnsafe], frame)
+                make = (frame, clock) => entry.build(clock)(using summon[AllowUnsafe], frame)
             )
         }
     end all
