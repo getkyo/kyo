@@ -511,12 +511,17 @@ final class Scheduler private[scheduler] (
         }
     }
 
-    /** Counts the active workers currently flagged blocked (parked in a syscall or on a lock), as maintained by the
+    /** Counts the allocated workers currently flagged blocked (parked in a syscall or on a lock), as maintained by the
       * BlockingMonitor. Read by updateWorkers to floor the worker count at blocked + minWorkers.
+      *
+      * Workers above currentWorkers count too: a shrink leaves their parked carriers mounted and the monitor keeps flagging
+      * them, and a later grow takes them back into the window. Counting only the window would size it to hold just its own
+      * blocked carriers, and the ones it grows over would leave it with no running worker.
       */
     private def blockedWorkerCount(): Int = {
+        val allocated                            = allocatedWorkers
         @tailrec def loop(i: Int, acc: Int): Int =
-            if (i >= currentWorkers) acc
+            if (i >= allocated) acc
             else {
                 val w = workers(i)
                 loop(i + 1, if ((w ne null) && w.blocked) acc + 1 else acc)

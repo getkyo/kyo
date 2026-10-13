@@ -471,6 +471,26 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
                     s"went from $windowBefore to $windowAfter"
             )
         }
+
+        "a regrow past blocked carriers outside the window still admits a running worker" in withParkedCarriers { (s, carriers) =>
+            s.updateWorkers(-carriers.size)
+            assert(s.status().currentWorkers == 1, s"the shrink did not reach minWorkers: currentWorkers=${s.status().currentWorkers}")
+            carriers.foreach(_.worker.blocked = true)
+            s.updateWorkers(0)
+            val st      = s.status()
+            val running = st.workers.take(st.currentWorkers).count(!_.isBlocked)
+            assert(
+                running >= 1,
+                s"STARVED: all ${carriers.size} parked carriers are blocked, but the window grew only to currentWorkers=${st.currentWorkers}, " +
+                    s"every worker in it blocked: " + st.workers.map(w => s"worker ${w.id} blocked=${w.isBlocked}").mkString(", ")
+            )
+            val ran = new CountDownLatch(1)
+            s.schedule(TestTask(_run = () => {
+                ran.countDown()
+                Task.Done
+            }))
+            assert(ran.await(5, TimeUnit.SECONDS), "a task scheduled after the regrow found no running worker")
+        }
     }
 
     "regulator harness liveness" - {
