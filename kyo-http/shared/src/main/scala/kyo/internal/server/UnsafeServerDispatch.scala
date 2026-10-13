@@ -423,8 +423,8 @@ private[kyo] object UnsafeServerDispatch:
       *   Connection-scoped slot tracking the currently running handler fiber, watched by the connection-close watcher armed in `serveH1`
       *   (see the connection's `onClosing`) so a handler parked on a foreign await gets interrupted instead of leaking past connection close.
       * @param onClosing
-      *   The connection's close signal (Absent on the bare-channel test path). Used for the register-then-recheck in `spawnHandler` that
-      *   closes the dispatch-vs-close race: if the watcher already fired before the fiber was registered in the slot, the recheck catches it.
+      *   The connection's close signal (Absent on the bare-channel test path). Used for the register-then-recheck below that closes the
+      *   dispatch-vs-close race: if the watcher already fired before the fiber was registered in the slot, the recheck catches it.
       * @param handlers
       *   The server's count of running handler fibers, which its close waits on (Absent on the bare-channel test path).
       */
@@ -457,7 +457,7 @@ private[kyo] object UnsafeServerDispatch:
                 val leftover = parser.takeRemainingBytes()
                 if !leftover.isEmpty then
                     discard(streamCtx.inbound.offer(leftover))
-                dispatchWebSocket(wsHandler, streamCtx, request, closeNow, inflightHandler, onClosing, handlers)
+                dispatchWebSocket(wsHandler, streamCtx, request, closeNow, handlers)
             case _: WebSocketHttpHandler =>
                 // WS handler but no upgrade headers -- not a valid WS handshake
                 answerAndContinue(() => writeErrorResponse(streamCtx, HttpRouter.FindError.NotFound))
@@ -465,13 +465,18 @@ private[kyo] object UnsafeServerDispatch:
                 // Upgrade request on a non-WS route -- return 404
                 answerAndContinue(() => writeErrorResponse(streamCtx, HttpRouter.FindError.NotFound))
             case _ =>
-                spawnHandler(
-                    serveRequest(router, endpoint, lookup, streamCtx, request, config, clock),
-                    closeNow,
-                    inflightHandler,
-                    onClosing,
-                    handlers
-                ).foreach { fiber =>
+                spawnHandler(serveRequest(router, endpoint, lookup, streamCtx, request, config, clock), closeNow, handlers) { fiber =>
+                    handlers.foreach(_.track(fiber))
+                    inflightHandler.set(Present(fiber))
+                    // Recheck: the watcher may have already fired (and seen Absent, or a prior completed fiber)
+                    // before this fiber was registered. Consult the connection's close signal directly, not
+                    // channel.closed() (which reports only FullyClosed): the peer-FIN teardown uses
+                    // closeAwaitEmpty and sits in HalfOpen with pipelined bytes still queued while it closes,
+                    // whereas onClosing is completed unconditionally at close-start. Interrupting an already-completed
+                    // fiber is a harmless no-op.
+                    if onClosing.exists(_.done()) then
+                        discard(fiber.interrupt(Result.Panic(HandlerConnectionClosed)))
+                }.foreach { fiber =>
                     if request.isKeepAlive then
                         fiber.onComplete { _ =>
                             if streamCtx.mustCloseConnection then
@@ -493,15 +498,11 @@ private[kyo] object UnsafeServerDispatch:
         end match
     end dispatchHandler
 
-    /** Starts a handler fiber the connection's close interrupts and the server's close waits on, or, when the server's close has begun,
-      * closes the connection instead and answers Absent.
+    /** Starts a handler fiber, handing it to `started` to be tracked before anything else can see it, or, when the server's close has
+      * begun, closes the connection instead and answers Absent.
       */
-    private def spawnHandler(
-        handler: Unit < Async,
-        closeNow: () => Unit,
-        inflightHandler: AtomicRef.Unsafe[Maybe[Fiber.Unsafe[Unit, Any]]],
-        onClosing: Maybe[Fiber.Unsafe[Unit, Any]],
-        handlers: Maybe[InflightHandlers]
+    private def spawnHandler(handler: Unit < Async, closeNow: () => Unit, handlers: Maybe[InflightHandlers])(
+        started: Fiber.Unsafe[Unit, Any] => Unit
     )(using AllowUnsafe, Frame): Maybe[Fiber.Unsafe[Unit, Any]] =
         if !handlers.forall(_.enter()) then
             closeNow()
@@ -512,7 +513,7 @@ private[kyo] object UnsafeServerDispatch:
             // only inside kyo.Fiber's own defining scope, so exposing the scheduled task as the Fiber.Unsafe[Unit, Any] the inflight slot
             // holds needs this erased-boundary cast. Safe: the task runs a Unit computation and settles only with its result.
             val fiber = IOTask.detached(handler).asInstanceOf[Fiber.Unsafe[Unit, Any]]
-            handlers.foreach(_.track(fiber))
+            started(fiber)
             // Nothing reads a handler fiber's result, so a panic that is not a connection-lifecycle interrupt
             // (a Closed sentinel) would vanish silently.
             fiber.onComplete {
@@ -520,15 +521,6 @@ private[kyo] object UnsafeServerDispatch:
                     Log.live.unsafe.error("UnsafeServerDispatch: handler fiber panic", p.exception)
                 case _ => ()
             }
-            inflightHandler.set(Present(fiber))
-            // Recheck: the watcher may have already fired (and seen Absent, or a prior completed fiber)
-            // before this fiber was registered. Consult the connection's close signal directly, not
-            // channel.closed() (which reports only FullyClosed): the peer-FIN teardown uses
-            // closeAwaitEmpty and sits in HalfOpen with pipelined bytes still queued while it closes,
-            // whereas onClosing is completed unconditionally at close-start. Interrupting an already-completed
-            // fiber is a harmless no-op.
-            if onClosing.exists(_.done()) then
-                discard(fiber.interrupt(Result.Panic(HandlerConnectionClosed)))
             Present(fiber)
         end if
     end spawnHandler
@@ -537,15 +529,14 @@ private[kyo] object UnsafeServerDispatch:
       *
       * Creates a ChannelBackedStream from the connection's channels, sends the 101 Switching Protocols response via
       * WebSocketCodec.acceptUpgrade, then runs the HttpWebSocket session. The HTTP parser is NOT restarted — HttpWebSocket is terminal for
-      * the connection, so the session holds the connection's handler slot until it ends.
+      * the connection. The session stays out of the connection's handler slot: it sees its peer's close through its stream and must still
+      * run what follows, so the server's close interrupts it rather than its connection's.
       */
     private def dispatchWebSocket(
         wsHandler: WebSocketHttpHandler,
         streamCtx: Http1StreamContext,
         request: ParsedRequest,
         closeNow: () => Unit,
-        inflightHandler: AtomicRef.Unsafe[Maybe[Fiber.Unsafe[Unit, Any]]],
-        onClosing: Maybe[Fiber.Unsafe[Unit, Any]],
         handlers: Maybe[InflightHandlers]
     )(using AllowUnsafe, Frame): Unit =
         val headers = request.headers
@@ -566,7 +557,7 @@ private[kyo] object UnsafeServerDispatch:
                     Log.error("UnsafeServerDispatch: HttpWebSocket upgrade panic", t)
                 case Result.Success(_) => Kyo.unit
             }.unit
-        discard(spawnHandler(session, closeNow, inflightHandler, onClosing, handlers))
+        discard(spawnHandler(session, closeNow, handlers)(fiber => handlers.foreach(_.trackSession(fiber))))
     end dispatchWebSocket
 
     /** Three concurrent fibers: read loop, write loop, user handler. Server does NOT mask (RFC 6455 section 5.1).
