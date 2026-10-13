@@ -5,6 +5,9 @@ import kyo.stats.internal.*
 import kyo.stats.internal.TraceExporter
 
 /** A counter for tracking numeric values that only increase.
+  *
+  * A measurement carries the attributes of the series it belongs to, the way an OpenTelemetry data point carries attributes beside the
+  * metric; a series is made the first time its attributes are observed. The methods without attributes are the series with none.
   */
 abstract class Counter extends Serializable:
     /** The underlying unsafe counter implementation. */
@@ -25,9 +28,17 @@ abstract class Counter extends Serializable:
       *   The value to add
       */
     def add(v: Long)(using Frame): Unit < Sync
+
+    /** Add `v` to the series `attributes`. */
+    def add(v: Long, attributes: Attributes)(using Frame): Unit < Sync
+
+    /** Every series drained since its last read, the attribute-free one first: the read `get` is for one series. */
+    def series(using Frame): Seq[UnsafeCounter.Series] < Sync
 end Counter
 
 /** A histogram for observing the distribution of values.
+  *
+  * A measurement carries the attributes of the series it belongs to, as for `Counter`; every series shares the histogram's boundaries.
   */
 abstract class Histogram extends Serializable:
     /** The underlying unsafe histogram implementation. */
@@ -45,6 +56,12 @@ abstract class Histogram extends Serializable:
       */
     def observe(v: Double)(using Frame): Unit < Sync
 
+    /** Record `v` in the series `attributes`. */
+    def observe(v: Long, attributes: Attributes)(using Frame): Unit < Sync
+
+    /** Record `v` in the series `attributes`. */
+    def observe(v: Double, attributes: Attributes)(using Frame): Unit < Sync
+
     /** Read the current distribution: bucket counts, observation count, min, max and running sum.
       *
       * The safe-tier read that mirrors `Counter.get` and `Gauge.collect`. Reading is non-destructive: buckets
@@ -54,6 +71,9 @@ abstract class Histogram extends Serializable:
       *   A snapshot of the distribution, wrapped in Sync
       */
     def summary(using Frame): Summary < Sync
+
+    /** Every series' distribution, the attribute-free one first. Non-destructive, as `summary` is. */
+    def series(using Frame): Seq[UnsafeHistogram.Series] < Sync
 end Histogram
 
 /** A gauge for measuring a specific value that can go up and down.
@@ -67,6 +87,9 @@ abstract class Gauge extends Serializable:
       *   The current value as a Double, wrapped in Sync
       */
     def collect(using Frame): Double < Sync
+
+    /** Every series' current value, the attribute-free one first. */
+    def series(using Frame): Seq[UnsafeGauge.Series] < Sync
 end Gauge
 
 /** A gauge that specifically measures counter-like values.
@@ -80,6 +103,9 @@ abstract class CounterGauge extends Serializable:
       *   The current value as a Long, wrapped in Sync
       */
     def collect(using Frame): Long < Sync
+
+    /** Every series drained since its last read, the attribute-free one first. */
+    def series(using Frame): Seq[UnsafeCounterGauge.Series] < Sync
 end CounterGauge
 
 final class Stat(private val registryScope: StatsRegistry.Scope) extends Serializable:
@@ -94,22 +120,26 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
         new Stat(registryScope.scope(path*))
 
     /** Initialize a new Counter.
+      *
+      * `unit` is the OpenTelemetry unit string an exporter sends with the metric, `"1"` for a dimensionless
+      * count; a name carries no unit suffix. The counter's series are made as they are observed, with the
+      * attributes of each measurement.
+      *
       * @param name
       *   The name of the counter
       * @param description
       *   A description of the counter (default is "empty")
+      * @param unit
+      *   The unit of the counter (default is "1")
       * @return
       *   A new Counter instance
       */
     def initCounter(
         name: String,
-        description: String = "empty"
+        description: String = "empty",
+        unit: String = "1"
     ): Counter =
-        new Counter:
-            val unsafe                    = registryScope.counter(name, description)
-            def get(using Frame)          = Sync.Unsafe.defer(unsafe.get())
-            def inc(using Frame)          = Sync.Unsafe.defer(unsafe.inc())
-            def add(v: Long)(using Frame) = Sync.Unsafe.defer(unsafe.add(v))
+        Stat.counter(registryScope.counter(name, description, unit))
 
     /** The counter already registered at `name`, or `Absent`. Never registers.
       *
@@ -124,15 +154,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
       * exporter uses on the hot path.
       */
     def findCounter(name: String)(using Frame): Maybe[Counter] < Sync =
-        Sync.Unsafe.defer {
-            Maybe.fromOption(registryScope.findCounter(name)).map { u =>
-                new Counter:
-                    val unsafe                    = u
-                    def get(using Frame)          = Sync.Unsafe.defer(unsafe.get())
-                    def inc(using Frame)          = Sync.Unsafe.defer(unsafe.inc())
-                    def add(v: Long)(using Frame) = Sync.Unsafe.defer(unsafe.add(v))
-            }
-        }
+        Sync.Unsafe.defer(Maybe.fromOption(registryScope.findCounter(name)).map(Stat.counter))
 
     /** The histogram already registered at `name`, or `Absent`. Never registers.
       *
@@ -141,15 +163,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
       * does not disturb an exporter reading the same histogram.
       */
     def findHistogram(name: String)(using Frame): Maybe[Histogram] < Sync =
-        Sync.Unsafe.defer {
-            Maybe.fromOption(registryScope.findHistogram(name)).map { u =>
-                new Histogram:
-                    val unsafe                          = u
-                    def observe(v: Long)(using Frame)   = Sync.Unsafe.defer(unsafe.observe(v))
-                    def observe(v: Double)(using Frame) = Sync.Unsafe.defer(unsafe.observe(v))
-                    def summary(using Frame)            = Sync.Unsafe.defer(unsafe.summary())
-            }
-        }
+        Sync.Unsafe.defer(Maybe.fromOption(registryScope.findHistogram(name)).map(Stat.histogram))
 
     /** The gauge already registered at `name`, or `Absent`. Never registers.
       *
@@ -157,38 +171,41 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
       * instead of finding replaces what the producer publishes with whatever it happened to pass.
       */
     def findGauge(name: String)(using Frame): Maybe[Gauge] < Sync =
-        Sync.Unsafe.defer {
-            Maybe.fromOption(registryScope.findGauge(name)).map { u =>
-                new Gauge:
-                    val unsafe               = u
-                    def collect(using Frame) = Sync.Unsafe.defer(unsafe.collect())
-            }
-        }
+        Sync.Unsafe.defer(Maybe.fromOption(registryScope.findGauge(name)).map(Stat.gauge(_, Attributes.empty)))
 
     /** Initialize a new Histogram.
       * @param name
       *   The name of the histogram
       * @param description
       *   A description of the histogram (default is "empty")
+      * @param boundaries
+      *   The bucket boundaries, strictly ascending, shared by every series (default is OpenTelemetry's millisecond set)
+      * @param unit
+      *   The unit of the histogram (default is "1")
       * @return
       *   A new Histogram instance
       */
     def initHistogram(
         name: String,
         description: String = "empty",
-        boundaries: Array[Double] = UnsafeHistogram.defaultBoundaries
+        boundaries: Array[Double] = UnsafeHistogram.defaultBoundaries,
+        unit: String = "1"
     ): Histogram =
-        new Histogram:
-            val unsafe                          = registryScope.histogram(name, description, boundaries)
-            def observe(v: Double)(using Frame) = Sync.Unsafe.defer(unsafe.observe(v))
-            def observe(v: Long)(using Frame)   = Sync.Unsafe.defer(unsafe.observe(v))
-            def summary(using Frame)            = Sync.Unsafe.defer(unsafe.summary())
+        Stat.histogram(registryScope.histogram(name, description, boundaries, unit))
 
     /** Initialize a new Gauge.
+      *
+      * With `attributes`, `f` is registered as that series of the gauge at `name`, first-writer-wins per attribute
+      * set, and the `Gauge` returned reads that series.
+      *
       * @param name
       *   The name of the gauge
       * @param description
       *   A description of the gauge (default is "empty")
+      * @param unit
+      *   The unit of the gauge (default is "1")
+      * @param attributes
+      *   The attributes of the series `f` is (default is none)
       * @param f
       *   A function that returns the gauge's value
       * @return
@@ -196,17 +213,24 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
       */
     def initGauge(
         name: String,
-        description: String = "empty"
+        description: String = "empty",
+        unit: String = "1",
+        attributes: Attributes = Attributes.empty
     )(f: => Double): Gauge =
-        new Gauge:
-            val unsafe               = registryScope.gauge(name, description)(f)
-            def collect(using Frame) = Sync.Unsafe.defer(unsafe.collect())
+        Stat.gauge(registryScope.gauge(name, description, unit, attributes)(f), attributes)
 
     /** Initialize a new CounterGauge.
+      *
+      * With `attributes`, `f` is registered as that series of the counter gauge at `name`, as for `initGauge`.
+      *
       * @param name
       *   The name of the counter gauge
       * @param description
       *   A description of the counter gauge (default is "empty")
+      * @param unit
+      *   The unit of the counter gauge (default is "1")
+      * @param attributes
+      *   The attributes of the series `f` is (default is none)
       * @param f
       *   A function that returns the counter gauge's value
       * @return
@@ -214,11 +238,19 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
       */
     def initCounterGauge(
         name: String,
-        description: String = "empty"
+        description: String = "empty",
+        unit: String = "1",
+        attributes: Attributes = Attributes.empty
     )(f: => Long): CounterGauge =
+        val u = registryScope.counterGauge(name, description, unit, attributes)(f)
         new CounterGauge:
-            val unsafe               = registryScope.counterGauge(name, description)(f)
-            def collect(using Frame) = Sync.Unsafe.defer(unsafe.collect())
+            val unsafe               = u
+            def collect(using Frame) =
+                if attributes.get.isEmpty then Sync.Unsafe.defer(unsafe.collect())
+                else Sync.Unsafe.defer(unsafe.collect(attributes))
+            def series(using Frame) = Sync.Unsafe.defer(unsafe.series())
+        end new
+    end initCounterGauge
 
     /** Trace a span of execution.
       * @param name
@@ -238,6 +270,33 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
 end Stat
 
 object Stat:
+
+    private def counter(u: UnsafeCounter): Counter =
+        new Counter:
+            val unsafe                                            = u
+            def get(using Frame)                                  = Sync.Unsafe.defer(unsafe.get())
+            def inc(using Frame)                                  = Sync.Unsafe.defer(unsafe.inc())
+            def add(v: Long)(using Frame)                         = Sync.Unsafe.defer(unsafe.add(v))
+            def add(v: Long, attributes: Attributes)(using Frame) = Sync.Unsafe.defer(unsafe.add(v, attributes))
+            def series(using Frame)                               = Sync.Unsafe.defer(unsafe.series())
+
+    private def histogram(u: UnsafeHistogram): Histogram =
+        new Histogram:
+            val unsafe                                                  = u
+            def observe(v: Long)(using Frame)                           = Sync.Unsafe.defer(unsafe.observe(v))
+            def observe(v: Double)(using Frame)                         = Sync.Unsafe.defer(unsafe.observe(v))
+            def observe(v: Long, attributes: Attributes)(using Frame)   = Sync.Unsafe.defer(unsafe.observe(v, attributes))
+            def observe(v: Double, attributes: Attributes)(using Frame) = Sync.Unsafe.defer(unsafe.observe(v, attributes))
+            def summary(using Frame)                                    = Sync.Unsafe.defer(unsafe.summary())
+            def series(using Frame)                                     = Sync.Unsafe.defer(unsafe.series())
+
+    private def gauge(u: UnsafeGauge, attributes: Attributes): Gauge =
+        new Gauge:
+            val unsafe               = u
+            def collect(using Frame) =
+                if attributes.get.isEmpty then Sync.Unsafe.defer(unsafe.collect())
+                else Sync.Unsafe.defer(unsafe.collect(attributes))
+            def series(using Frame) = Sync.Unsafe.defer(unsafe.series())
 
     /** The single `TraceExporter` construction shared by the trace path and the eager class-init scan.
       *

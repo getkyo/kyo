@@ -144,6 +144,24 @@ case class InstrumentationScope(
 
 case class KeyValue(key: String, value: AnyValue) derives Schema
 
+object KeyValue:
+    import kyo.stats.Attributes
+    import kyo.stats.Attributes.Attribute
+
+    /** Attributes as OTLP key-values, for a span, an event or a metric data point; a list attribute is one comma-joined string. */
+    def of(attributes: Attributes): Seq[KeyValue] =
+        attributes.get.map {
+            case Attribute.BooleanAttribute(name, value)     => KeyValue(name, AnyValue.boolean(value))
+            case Attribute.DoubleAttribute(name, value)      => KeyValue(name, AnyValue.double(value))
+            case Attribute.LongAttribute(name, value)        => KeyValue(name, AnyValue.int(value))
+            case Attribute.StringAttribute(name, value)      => KeyValue(name, AnyValue.string(value))
+            case Attribute.BooleanListAttribute(name, value) => KeyValue(name, AnyValue.string(value.mkString(",")))
+            case Attribute.DoubleListAttribute(name, value)  => KeyValue(name, AnyValue.string(value.mkString(",")))
+            case Attribute.LongListAttribute(name, value)    => KeyValue(name, AnyValue.string(value.mkString(",")))
+            case Attribute.StringListAttribute(name, value)  => KeyValue(name, AnyValue.string(value.mkString(",")))
+        }
+end KeyValue
+
 /** OTLP AnyValue union type. Each variant has exactly one field set. */
 case class AnyValue(
     stringValue: Maybe[String] = Absent,

@@ -209,17 +209,20 @@ Span attributes from kyo-core's `Attributes` collection map to OTLP `KeyValue` e
 
 ```scala
 import kyo.*
+import kyo.stats.Attributes
 
 val scope    = Stat.initScope("http", "server")
-val requests = scope.initCounter("requests", "Total requests")
-val latency  = scope.initHistogram("latency_ms", "Request latency")
+val requests = scope.initCounter("requests", "Total requests", unit = "{request}")
+val latency  = scope.initHistogram("latency", "Request latency", unit = "ms")
 
 val handle: String < (Sync & Async) =
     for
-        _ <- requests.inc
-        _ <- latency.observe(12.3)
+        _ <- requests.add(1L, Attributes.add("http.route", "/orders"))
+        _ <- latency.observe(12.3, Attributes.add("http.route", "/orders"))
     yield "hi"
 ```
+
+A metric is exported under its dotted path with the description and unit it was registered with, and the attribute sets its instrument has observed are its series: one `Metric` with one data point per attribute set, each data point carrying its attributes as OTLP key-values. So `http.server.requests` above is one metric, and an `add` with `http.route` set to `/users` adds a second data point to it, which is how an OpenTelemetry backend groups and filters by attribute.
 
 ### Counters and counter-gauges
 

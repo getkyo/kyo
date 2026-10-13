@@ -62,7 +62,28 @@ assert(a eq b)
 
 > **Caution:** the registry holds instruments in a `WeakReference`. If every caller drops its handle the entry is evicted on next lookup and the next caller gets a fresh instrument with the count reset to zero. The user is responsible for holding a strong reference somewhere (typically a `val` in the module that owns the metric).
 
-> **Note:** the description argument is stored only on first registration. Re-declaring the same counter under the same path with a different description silently keeps the original description; the second description is discarded.
+> **Note:** the description and the unit are stored only on first registration. Re-declaring the same counter under the same key with a different description or unit silently keeps the original; the second is discarded.
+
+### Series: one instrument, one series per attribute set
+
+An instrument is the metric at its path, and a measurement carries the attributes of the series it belongs to, the way an OpenTelemetry SDK instrument records a value with attributes and owns one data point per attribute set. A series is made the first time its attributes are observed and lives as long as the instrument does; the series with no attributes is the instrument's own and costs no lookup. Attribute order is not identity: a set is normalized to name order before it keys a series.
+
+```scala
+import kyo.AllowUnsafe.embrace.danger
+
+val scope    = StatsRegistry.scope("ren", "request")
+val requests = scope.counter("requests", "requests per model", unit = "{request}")
+requests.inc(Attributes.add("model", "a"))
+requests.add(2, Attributes.add("model", "b"))
+requests.inc()
+
+assert(requests.get(Attributes.add("model", "b")) == 2)
+assert(requests.series().map(_.attributes.get.map(_.name)) == Seq(Nil, List("model"), List("model")))
+```
+
+`series()` is what an exporter reads: every series of the instrument, the attribute-free one first, with a counter's delta since its last read or a histogram's summary. A gauge's series is a thunk, registered with the gauge: `scope.gauge("depth", attributes = Attributes.add("queue", "orders"))(depth)` registers `depth` as that series of the gauge at `depth`, first-writer-wins per attribute set.
+
+`unit` is the OpenTelemetry unit string the exporter sends with the metric: `"1"` for a dimensionless count, `"ms"`, `"By"`, `"{request}"`. The name carries no unit of its own.
 
 ### Reading, without registering
 
@@ -89,7 +110,7 @@ A gauge makes this a correctness question rather than a hygiene one. A gauge's v
 
 ### Enumerating what a process produces
 
-`snapshot` returns every live instrument with its key, kind, description and handle, sorted by key:
+`snapshot` returns every live instrument with its path, kind, description, unit and handle, sorted by path:
 
 ```scala
 val all: Seq[StatsRegistry.Registration] = StatsRegistry.snapshot()
@@ -97,10 +118,10 @@ val all: Seq[StatsRegistry.Registration] = StatsRegistry.snapshot()
 val hostMetrics: Seq[StatsRegistry.Registration] = StatsRegistry.snapshot("machine")
 
 val kinds: Seq[String] = hostMetrics.map {
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Counter(_, _))      => path.mkString(".") + " counter"
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Histogram(_, _))    => path.mkString(".") + " histogram"
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Gauge(_, _))        => path.mkString(".") + " gauge"
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.CounterGauge(_, _)) => path.mkString(".") + " counter-gauge"
+    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Counter(_, _, _))      => path.mkString(".") + " counter"
+    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Histogram(_, _, _))    => path.mkString(".") + " histogram"
+    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Gauge(_, _, _))        => path.mkString(".") + " gauge"
+    case StatsRegistry.Registration(path, StatsRegistry.Instrument.CounterGauge(_, _, _)) => path.mkString(".") + " counter-gauge"
 }
 ```
 
