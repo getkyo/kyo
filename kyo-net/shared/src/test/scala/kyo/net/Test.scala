@@ -224,6 +224,33 @@ abstract class Test extends kyo.test.Test[Any]:
         Sync.defer(entry.transport).map(transport => scenario(transport))
     end withTransport
 
+    /** Poll `cond` on the fiber scheduler (never a thread block) until it holds.
+      *
+      * The wait has no bound of its own, because a leaf must not pass or fail on wall-clock time: a condition that never holds is failed by
+      * the leaf timeout, and its interrupt logs `what`, evaluated then so it carries the state the wait was left in.
+      */
+    def awaitCondition(what: => String)(cond: => Boolean)(using Frame): Unit < Async =
+        logIfInterrupted(what) {
+            Loop(()) { _ =>
+                if cond then Loop.done(())
+                else Async.sleep(2.millis).andThen(Loop.continue(()))
+            }
+        }
+    end awaitCondition
+
+    /** Await `fiber` with no bound of its own: one nothing completes is failed by the leaf timeout, whose interrupt logs `what`. */
+    def awaitOutcome[E, A](fiber: Fiber.Unsafe[A, Abort[E]], what: => String)(using ConcreteTag[E], Frame): Result[E, A] < Async =
+        Abort.run[E](logIfInterrupted(what)(fiber.safe.get))
+
+    /** Runs `v`, logging `what` when the leaf timeout's interrupt ends it. A failure `v` itself raises is the leaf's to assert, not logged. */
+    def logIfInterrupted[A, E, S](what: => String)(v: => A < (Abort[E] & S))(using ConcreteTag[E], Frame): A < (Abort[E] & S & Sync) =
+        Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
+            error match
+                case Present(_: Result.Panic) => Log.error(what)
+                case _                        => Kyo.unit
+        }(v)
+    end logIfInterrupted
+
 end Test
 
 object Test:
