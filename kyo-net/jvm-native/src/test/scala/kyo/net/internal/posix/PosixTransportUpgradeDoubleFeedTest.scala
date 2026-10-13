@@ -68,15 +68,6 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
     // fragment length), + 5 arbitrary body bytes. tlsRecordStart only validates the 5-byte header, so the body content is irrelevant.
     private val flight = Array[Byte](0x16, 0x03, 0x01, 0x00, 0x05, 1, 2, 3, 4, 5)
 
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     private def countFlightFeeds(engine: RecordingFeedEngine): Int =
         import scala.jdk.CollectionConverters.*
         engine.feeds.asScala.count(_.sameElements(flight))
@@ -108,25 +99,25 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                     val plaintext = transport.openWith(handle, driver, channelCapacity = 1)
                     plaintext.start()
                     assert(sock.sendNow(peerFd, Buffer.fromArray[Byte](signal), signal.length.toLong, 0).value == signal.length.toLong)
-                    awaitCondition(5.seconds)(plaintext.inbound.size().getOrElse(-1) == 1).map { landed =>
-                        assert(landed, "the signal byte never landed in the inbound channel (a hang, not the race under test)")
+                    awaitCondition("the signal byte never landed in the inbound channel (a hang, not the race under test)") {
+                        plaintext.inbound.size().getOrElse(-1) == 1
+                    }.andThen {
                         assert(sock.sendNow(peerFd, Buffer.fromArray[Byte](flight), flight.length.toLong, 0).value == flight.length.toLong)
                         // The channel is already full (capacity 1, the signal unconsumed) and nothing drains it, so the flight's read is
                         // guaranteed to have been dispatched (lastPlaintextRead set) well before its offer can ever succeed.
-                        awaitCondition(5.seconds)(handle.lastPlaintextRead.get() match
-                            case Present(a) => a.sameElements(flight)
-                            case Absent     => false).map { read =>
-                            assert(read, "the flight was never read off the socket (a hang, not the race under test)")
+                        awaitCondition("the flight was never read off the socket (a hang, not the race under test)") {
+                            handle.lastPlaintextRead.get() match
+                                case Present(a) => a.sameElements(flight)
+                                case Absent     => false
+                        }.andThen {
                             Abort.run[Closed](transport.upgradeToTls(
                                 plaintext,
                                 NetTlsConfig(trustAll = true),
                                 1
                             ).safe.get).map { upgraded =>
                                 // The handshake completes after exactly two feeds (the signal, then the flight), which is what lets
-                                // .safe.get above return; give the salvage's (possibly asynchronous) delivery a moment to land in case the
-                                // bug's extra feed arrives AFTER completion (onFinished's post-FINISHED drain), then assert on the
-                                // flight's total delivery count.
-                                awaitCondition(2.seconds)(countFlightFeeds(engine) >= 1).andThen {
+                                // .safe.get above return; wait for the flight's first delivery, then assert on its total delivery count.
+                                awaitCondition("the flight never reached the engine")(countFlightFeeds(engine) >= 1).andThen {
                                     assert(
                                         countFlightFeeds(engine) == 1,
                                         s"the coalesced flight must reach the engine EXACTLY ONCE, was fed ${countFlightFeeds(engine)} times"
@@ -174,8 +165,9 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                             signal.length.toLong,
                             0
                         ).value == signal.length.toLong)
-                        awaitCondition(5.seconds)(plaintext.inbound.size().getOrElse(-1) == 1).map { landed =>
-                            assert(landed, "the signal byte never landed in the inbound channel (a hang, not the race under test)")
+                        awaitCondition("the signal byte never landed in the inbound channel (a hang, not the race under test)") {
+                            plaintext.inbound.size().getOrElse(-1) == 1
+                        }.andThen {
                             assert(sockets.sendNow(
                                 peerFd,
                                 Buffer.fromArray[Byte](flight),
@@ -184,14 +176,15 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                             ).value == flight.length.toLong)
                             // io_uring's own recv is kernel-owned and asynchronous: hasInFlightRead dropping to false is the reap-carrier
                             // signal that the flight's CQE reaped and its put parked (mirrors IoUringUpgradeHandoffDropTest exactly).
-                            awaitCondition(5.seconds)(!driver.hasInFlightRead(handle)).map { parked =>
-                                assert(parked, "the flight's recv never reaped / its put never parked (a hang, not the race under test)")
+                            awaitCondition("the flight's recv never reaped / its put never parked (a hang, not the race under test)") {
+                                !driver.hasInFlightRead(handle)
+                            }.andThen {
                                 Abort.run[Closed](transport.upgradeToTls(
                                     plaintext,
                                     NetTlsConfig(trustAll = true),
                                     1
                                 ).safe.get).map { upgraded =>
-                                    awaitCondition(2.seconds)(countFlightFeeds(engine) >= 1).andThen {
+                                    awaitCondition("the flight never reached the engine")(countFlightFeeds(engine) >= 1).andThen {
                                         assert(
                                             countFlightFeeds(engine) == 1,
                                             s"the coalesced flight must reach the engine EXACTLY ONCE, was fed ${countFlightFeeds(engine)} times"
