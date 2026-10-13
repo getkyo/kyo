@@ -32,7 +32,11 @@ ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 // setting must be applied on every project that participates in resolution.
 val rootBase: File = file(".").getCanonicalFile
 val pinnedIvyPaths: Setting[IvyPaths] =
-    ivyPaths := IvyPaths(rootBase, Some(rootBase / "ivy-cache"))
+    ivyPaths := {
+        // IvyPaths takes Files on sbt 1, Strings on sbt 2.
+        implicit def pathOf(f: File): String = f.getPath
+        IvyPaths(rootBase, rootBase / "ivy-cache")
+    }
 
 // --------------------------------------------------------------------
 // fake kyo-compat-{future,kyo} stubs (JVM only).
@@ -117,7 +121,7 @@ val checkPerCellResource = taskKey[Unit](
 // shared-marker.txt must appear in every cell's published jar
 // with the expected content.
 checkSharedResourceInAllJars := {
-    val base = baseDirectory.value
+    val base = (ThisBuild / baseDirectory).value
     val cells = Seq("future", "kyo")
     cells.foreach { backend =>
         val jar = cellJar(base, backend)
@@ -150,7 +154,7 @@ checkSharedResourceInAllJars := {
 // per-backend: future/src/main/resources/future-marker.txt
 // must appear in myLibFuture's jar and must NOT appear in myLibKyo's jar.
 checkPerBackendResource := {
-    val base       = baseDirectory.value
+    val base       = (ThisBuild / baseDirectory).value
     val futureJar  = cellJar(base, "future")
     val kyoJar     = cellJar(base, "kyo")
 
@@ -198,7 +202,7 @@ checkPerBackendResource := {
 // matrix shape (2 backends x 1 platform) there is no other Future cell that
 // could falsely include it.
 checkPerCellResource := {
-    val base      = baseDirectory.value
+    val base      = (ThisBuild / baseDirectory).value
     val futureJar = cellJar(base, "future")
 
     if (!futureJar.isFile)

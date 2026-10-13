@@ -1,9 +1,8 @@
 package io.getkyo.compat
 
-import sbt._
-import sbt.Keys._
-import sbt.internal.ProjectMatrix
-import sbtprojectmatrix.ProjectMatrixPlugin
+import SbtCompat.ProjectMatrix
+import sbt.*
+import sbt.Keys.*
 
 /** kyo-compat — generate per-backend cross-platform rows on a `ProjectMatrix` so a single library declaration ships to every kyo-compat
   * backend.
@@ -31,7 +30,7 @@ object CompatPlugin extends AutoPlugin {
     // every project a compatLibrary matrix generates). Required because
     // the per-row libraryDependencies setting reads `compatKyoVersion.value`.
     override def trigger  = allRequirements
-    override def requires = sbt.plugins.JvmPlugin && ProjectMatrixPlugin
+    override def requires = SbtCompat.requiredPlugins
 
     object autoImport {
 
@@ -169,7 +168,7 @@ object CompatPlugin extends AutoPlugin {
                 val refs = m.projectRefs
                 Project(id, file(s".${id}-aggregate"))
                     .settings(publish / skip := true)
-                    .aggregate(refs: _*)
+                    .aggregate(refs*)
             }
 
             /** Named accessor: returns a view onto every (Future, *) row. */
@@ -202,7 +201,7 @@ object CompatPlugin extends AutoPlugin {
         }
     }
 
-    import autoImport._
+    import autoImport.*
 
     override lazy val globalSettings: Seq[Setting[?]] = Seq(
         compatKyoVersion := defaultCompatKyoVersion

@@ -31,7 +31,11 @@ ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 // into the projectMatrix below.
 val rootBase: File = file(".").getCanonicalFile
 val pinnedIvyPaths: Setting[IvyPaths] =
-    ivyPaths := IvyPaths(rootBase, Some(rootBase / "ivy-cache"))
+    ivyPaths := {
+        // IvyPaths takes Files on sbt 1, Strings on sbt 2.
+        implicit def pathOf(f: File): String = f.getPath
+        IvyPaths(rootBase, rootBase / "ivy-cache")
+    }
 
 // --------------------------------------------------------------------
 // fake kyo-compat-<backend> stubs (Future/Kyo/Zio × JVM/JS/Native)
@@ -50,7 +54,9 @@ def fakeCompat(backend: String, platform: String, ver: String = "STUB-FOR-SCRIPT
         organization := "io.getkyo",
         moduleName   := s"kyo-compat-$backend",
         version      := ver,
-        scalaVersion := "3.3.4"
+        scalaVersion := "3.3.4",
+        // sbt 2 names output dirs by moduleName, which both stub versions share.
+        target := baseDirectory.value / "target"
     )
     platform match {
         case "jvm"    => base
@@ -153,7 +159,7 @@ def localDir(base: File, backend: String, suffix: String): File =
         s"my-lib-${backend}${suffix}_3" / "0.1.0-SNAPSHOT"
 
 checkPublishedJars := {
-    val base = baseDirectory.value
+    val base = (ThisBuild / baseDirectory).value
     cells.foreach { case (backend, suffix) =>
         val artifact = s"my-lib-${backend}${suffix}_3"
         val jar = localDir(base, backend, suffix) / "jars" / s"$artifact.jar"
@@ -174,7 +180,7 @@ def pomDeps(pom: File): Seq[(String, String)] = {
 }
 
 checkPomDeps := {
-    val base = baseDirectory.value
+    val base = (ThisBuild / baseDirectory).value
     cells.foreach { case (backend, suffix) =>
         val pom = pomFile(base, backend, suffix)
         if (!pom.isFile)
@@ -209,7 +215,7 @@ checkPomDeps := {
 }
 
 checkPomCrossVersionMarkers := {
-    val base = baseDirectory.value
+    val base = (ThisBuild / baseDirectory).value
     // For each (backend, JS-platform): expect _sjs1_3 suffix on the
     // kyo-compat-<backend> dep.
     val jsCases     = cells.filter(_._2 == "_sjs1")
@@ -254,7 +260,7 @@ checkPomCrossVersionMarkers := {
 }
 
 checkAggregatorNotPublished := {
-    val aggDir = baseDirectory.value / "ivy-cache" / "local" / "com.example" /
+    val aggDir = (ThisBuild / baseDirectory).value / "ivy-cache" / "local" / "com.example" /
         "my-lib-all" / "0.1.0-SNAPSHOT"
     if (aggDir.exists)
         sys.error(
@@ -285,7 +291,7 @@ def pomDepsWithVersion(pom: File): Seq[(String, String, String)] = {
 }
 
 checkVersionOverride := {
-    val base = baseDirectory.value
+    val base = (ThisBuild / baseDirectory).value
     // myOverride opted in Future + Kyo (Future is implicit), JVM-only.
     val overrideCells = Seq("future", "kyo")
     overrideCells.foreach { backend =>
