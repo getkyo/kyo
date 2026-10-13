@@ -555,13 +555,56 @@ class NioIoDriverTest extends Test:
       * window between awaitRead's staging pre-check (which saw Absent) and armRead installing the pump cell. The staged bytes then sit
       * against an armed read that nothing completes: the socket is empty so the selector never fires again, and no path re-checks staging
       * after the arm. Each iteration re-runs the race; the randomized sub-selector-latency spin scans the alignment between the probe's
-      * dispatch and the arm so the overlap lands within the iteration budget. A bounded read that never completes while stagedBytes is
-      * non-empty is the strand.
+      * dispatch and the arm so the overlap lands within the iteration budget. Waits carry no bound of their own: a strand never completes,
+      * so the leaf timeout is what fails it, and its interrupt logs the arm, interest and staging state the strand left.
       *
       * `encode` turns the plaintext the peer sends into its wire bytes: identity for plain TCP, one wrapped TLS record for TLS. On the TLS
       * leaf the probe therefore stages CIPHERTEXT and delivery must route it through the engine (feed + unwrap); reads always assert the
       * decoded plaintext.
       */
+    /** One pump read of the staging race: arms it and waits for its bytes. */
+    private def stagingRead(driver: NioIoDriver, handle: NioHandle, iter: Int)(using Frame, kyo.test.AssertScope): Array[Byte] < Async =
+        awaitStagingRead(driver, handle, armStagingRead(driver, handle), iter)
+
+    private def armStagingRead(driver: NioIoDriver, handle: NioHandle)(using Frame): IOPromise[Closed, ReadOutcome] =
+        val p = new IOPromise[Closed, ReadOutcome]
+        driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+        p
+    end armStagingRead
+
+    /** Waits for an armed staging-race read, logging the race state if the leaf timeout interrupts the wait. */
+    private def awaitStagingRead(driver: NioIoDriver, handle: NioHandle, p: IOPromise[Closed, ReadOutcome], iter: Int)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Array[Byte] < Async =
+        Abort.run[Closed](logIfInterrupted(s"iteration $iter: the read never completed", driver, handle)(
+            p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get
+        )).map {
+            case Result.Success(ReadOutcome.Bytes(span)) => span.toArray
+            case other                                   =>
+                assert(false, s"iteration $iter: unexpected read outcome $other")
+                Array.emptyByteArray
+        }
+    end awaitStagingRead
+
+    /** Runs `v`, logging `what` with the driver's read state for `handle` when `v` ends without completing, as the leaf timeout's interrupt
+      * ends it.
+      */
+    private def logIfInterrupted[A, E, S](what: String, driver: NioIoDriver, handle: NioHandle)(v: => A < (Abort[E] & S))(using
+        ConcreteTag[E],
+        Frame
+    ): A < (Abort[E] & S & Sync) =
+        Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
+            if error.isEmpty then Kyo.unit
+            else
+                Log.error(
+                    s"$what (pendingRead=${driver.hasPendingRead(handle)}, staged=${driver.stagedBytes(handle)}, " +
+                        s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}, " +
+                        s"peerClosed=${handle.peerClosed})"
+                )
+        }(v)
+    end logIfInterrupted
+
     private def stagingRaceLoop(driver: NioIoDriver, handle: NioHandle, sv: SocketChannel, encode: Array[Byte] => Array[Byte])(using
         Frame,
         kyo.test.AssertScope
@@ -574,17 +617,7 @@ class NioIoDriverTest extends Test:
         val iterations = 600
         val rng        = new java.util.Random(0x57a11)
 
-        def readBytes(iter: Int, bound: Duration): Maybe[Array[Byte]] < Async =
-            val p = new IOPromise[Closed, ReadOutcome]
-            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
-            Abort.run[Closed | Timeout](Async.timeout(bound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
-                case Result.Success(ReadOutcome.Bytes(span)) => Present(span.toArray)
-                case Result.Failure(_: Timeout)              => Absent
-                case other                                   =>
-                    assert(false, s"iteration $iter: unexpected read outcome $other")
-                    Absent
-            }
-        end readBytes
+        def readBytes(iter: Int): Array[Byte] < Async = stagingRead(driver, handle, iter)
 
         Sync.ensure(Sync.defer {
             sv.close()
@@ -598,17 +631,14 @@ class NioIoDriverTest extends Test:
                     // probe re-armed as a standing FIN watch holding OP_READ (the n == 0 re-install after the staging read drains the socket).
                     discard(driver.isPeerClosed(handle))
                     discard(sv.write(ByteBuffer.wrap(encode(sentinel))))
-                    awaitCondition(4.seconds)(driver.stagedBytes(handle) >= 1).map { staged =>
-                        assert(
-                            staged,
-                            s"iteration $iter: the probe never staged the sentinel " +
-                                s"(pendingRead=${driver.hasPendingRead(handle)}, staged=${driver.stagedBytes(handle)}, " +
-                                s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}, " +
-                                s"peerClosed=${handle.peerClosed})"
-                        )
+                    logIfInterrupted(s"iteration $iter: the probe never staged the sentinel", driver, handle) {
+                        Loop(()) { _ =>
+                            if driver.stagedBytes(handle) >= 1 then Loop.done(())
+                            else Async.sleep(2.millis).andThen(Loop.continue(()))
+                        }
                     }.andThen {
-                        readBytes(iter, 4.seconds).map { got =>
-                            assert(got.exists(_.toList == sentinel.toList), s"iteration $iter: sentinel drain got $got")
+                        readBytes(iter).map { got =>
+                            assert(got.toList == sentinel.toList, s"iteration $iter: sentinel drain got ${got.toList}")
                         }
                     }.andThen {
                         // The race: fresh bytes toward a socket whose standing probe holds OP_READ, then a pump arm on this carrier.
@@ -620,16 +650,7 @@ class NioIoDriverTest extends Test:
                                 assert(received.toList == payload.toList, s"iteration $iter: payload round-trip got ${received.toList}")
                                 Loop.done(())
                             else
-                                readBytes(iter, 2.seconds).map {
-                                    case Present(bytes) => Loop.continue(received ++ bytes)
-                                    case Absent         =>
-                                        assert(
-                                            false,
-                                            s"iteration $iter: read never completed with stagedBytes=${driver.stagedBytes(handle)}; " +
-                                                "staged grace-probe bytes stranded against an armed read"
-                                        )
-                                        Loop.done(())
-                                }
+                                readBytes(iter).map(bytes => Loop.continue(received ++ bytes))
                         }
                     }.andThen(Loop.continue(iter + 1))
             }
@@ -715,6 +736,32 @@ class NioIoDriverTest extends Test:
             // delivery must route it through the engine gate, the TLS arm of the staged handoff.
             val handle = NioHandle.initTls(client, 4096, serverEngine, Duration.Infinity, Duration.Infinity, Frame.internal)
             stagingRaceLoop(driver, handle, sv, wrapRecord(clientEngine, _))
+        }
+    }
+
+    "a staging-race read the selector delivers late is not reported stranded" in {
+        // The driver's loop starts only once the clock has run 5 seconds past the arm, as a starved selector carrier would: the read is late,
+        // never stranded, and the staging race must not count it as a strand.
+        NioLoopbackPair.open().map { (client, sv) =>
+            val driver = NioIoDriver.init()
+            val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+            driver.registerChannel(handle)
+            Clock.withTimeControl { tc =>
+                for
+                    armed <- Sync.defer(armStagingRead(driver, handle))
+                    read  <- Fiber.initUnscoped(awaitStagingRead(driver, handle, armed, 0))
+                    _     <- tc.advance(5.seconds)
+                    _     <- Sync.defer {
+                        discard(sv.write(ByteBuffer.wrap(Array[Byte](4, 5, 6))))
+                        discard(driver.start())
+                    }
+                    got <- read.get
+                yield
+                    sv.close()
+                    driver.closeHandle(handle)
+                    driver.close()
+                    assert(got.toList == List[Byte](4, 5, 6), s"a late read was not delivered: got ${got.toList}")
+            }
         }
     }
 
