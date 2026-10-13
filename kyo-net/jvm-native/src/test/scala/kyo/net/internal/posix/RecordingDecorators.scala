@@ -154,11 +154,37 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     def recv(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         real.recv(fd, buf, len, flags)
 
+    // fd -> the promise a held send waits on, and fd -> the held send's result, standing in for an @Ffi.blocking send whose fiber has not
+    // completed by the time the caller reads it.
+    private val sendHolds   = new ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
+    private val heldSendsOf = new ConcurrentHashMap[Int, Promise.Unsafe[Ffi.Outcome[Long], Any]]()
+
+    /** The bytes the held send of each fd was asked to send, copied when the send was issued. */
+    val heldSendBytes: ConcurrentHashMap[Int, Array[Byte]] = new ConcurrentHashMap[Int, Array[Byte]]()
+
+    /** Holds the next `send` on `fd`: it returns a pending fiber at once, and the real send runs, and the fiber completes, only when the returned
+      * promise completes.
+      */
+    def holdSend(fd: Int)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
+        discard(heldSendsOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[Ffi.Outcome[Long], Any]()))
+        sendHolds.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]())
+
+    /** The fiber of the held send on `fd`, completing once the released real send returns. */
+    def heldSend(fd: Int)(using AllowUnsafe): Promise.Unsafe[Ffi.Outcome[Long], Any] =
+        heldSendsOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[Ffi.Outcome[Long], Any]())
+
     def send(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         sendBufs.add(buf)
         // One-shot EINTR injection (JVM/Native flush path uses sockets.send): return (-1, EINTR) once, no bytes sent, without delegating.
         if injectSendEintrOnce.compareAndSet(true, false) then
             Fiber.Unsafe.fromResult(Result.succeed(Ffi.Outcome.fromValueErrno(-1L, PosixConstants.EINTR)))
+        else if sendHolds.containsKey(fd) then
+            val hold = sendHolds.remove(fd)
+            val out  = heldSend(fd)
+            discard(heldSendBytes.put(fd, Buffer.copyToArray[Byte](buf, 0, len.toInt)))
+            discard(callOrder.add(s"send($fd)"))
+            hold.onComplete(_ => real.send(fd, buf, len, flags).onComplete(r => out.completeDiscard(r)))
+            out
         else
             // Fire the onSend hook before delegating so it fires while beginWrite is held on JVM/Native (where PollerIoDriver uses
             // sockets.send for the flush path, not sendNow). This mirrors the HookSockets.send -> onSend() ordering.

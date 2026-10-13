@@ -1075,10 +1075,7 @@ final private[net] class PollerIoDriver private[posix] (
                     else if n >= len then WriteResult.Done
                     else WriteResult.Partial(data, offset + n) // same span, advanced offset, no Span.drop
                     end if
-                case Absent =>
-                    // Unreachable: the JVM/Native @Ffi.blocking send inline-completes. Treat a stray pending fiber as transient
-                    // backpressure so the caller awaits writability rather than mis-reporting a completed write.
-                    WriteResult.Partial(data, offset)
+                case Absent => WriteResult.Error
             end match
         end if
         // mirror is NOT closed here: it is the per-handle reused buffer, freed only in freeResources.
@@ -1202,18 +1199,18 @@ final private[net] class PollerIoDriver private[posix] (
                                 if n < 0 then
                                     if isWouldBlock(r.errorCode) then 0 else -1
                                 else n
-                            case Absent => 0 // stray pending fiber: treat as backpressure, park on writability
+                            case Absent => -1
                         end match
                     end sent
                     // mirror is NOT closed here: it is the per-handle reused buffer, freed only in freeResources.
                     if sent < 0 then
-                        // Hard send error (peer reset): discard the tail and stop. The recv side surfaces Closed through normal teardown; do
+                        // Hard send error (peer reset, or a send that did not complete inline): discard the tail and stop. The recv side surfaces Closed through normal teardown; do
                         // NOT closeHandle from inside the engine op.
                         Log.live.unsafe.debug(s"flushPending hard send error fd=${handle.writeFd}; discarding pending ciphertext tail")
                         buf.reset()
                         handle.pendingCipherSent = 0
                         continue = false
-                    else if sent == 0 then continue = false // EAGAIN / stray pending: stop, arm writability below
+                    else if sent == 0 then continue = false // EAGAIN: stop, arm writability below
                     else handle.pendingCipherSent += sent   // strictly-positive progress; the loop terminates
                     end if
                 end while
@@ -2392,8 +2389,11 @@ final private[net] class PollerIoDriver private[posix] (
 
     /** The JVM/Native `@Ffi.blocking` `send` (inline-completed, read via [[takeNow]]) with a bounded in-place EINTR retry. Same POSIX send(2)
       * contract as [[sendNowWithRetry]]: only EINTR is retried, bounded by [[maxTransientIoRetries]]; a would-block or genuine error returns to the
-      * caller for the existing branches. An `Absent` (a stray pending fiber, not an interruption) is returned as-is so the caller's backpressure
-      * fallback applies.
+      * caller for the existing branches.
+      *
+      * `Absent` means the send's fiber had not completed, or failed, which the inline completion rules out. Callers fail the write on it: a send
+      * that has not completed may still put its bytes on the wire, so treating it as backpressure and sending the same region again could
+      * deliver those bytes twice.
       */
     private def sendBlockingWithRetry(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using
         AllowUnsafe,
@@ -2404,6 +2404,12 @@ final private[net] class PollerIoDriver private[posix] (
             takeNow(sockets.send(fd, buf, len, flags)) match
                 case Present(r) if r.value < 0 && r.errorCode == PosixConstants.EINTR && attempt < maxTransientIoRetries =>
                     loop(attempt + 1)
+                case Absent =>
+                    Log.live.unsafe.error(
+                        s"PollerIoDriver invariant violated: the @Ffi.blocking send on fd=$fd did not complete inline; failing the write " +
+                            "rather than sending the same bytes again"
+                    )
+                    Absent
                 case other => other
         loop(0)
     end sendBlockingWithRetry
