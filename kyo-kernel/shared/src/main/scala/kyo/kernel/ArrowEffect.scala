@@ -699,7 +699,7 @@ object ArrowEffect:
       *   Function to transform the final result if no effect is found
       */
     @nowarn("msg=anonymous")
-    private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
+    inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
         inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
