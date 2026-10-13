@@ -630,13 +630,41 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     end recordRead
 
     def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
-        discard(registerWriteCount.getAndIncrement())
+        val count = registerWriteCount.incrementAndGet()
         registeredWriteFds.add(fd)
         discard(callLogQueue.add(s"registerWrite($fd)"))
-        val rc = real.registerWrite(pollerFd, fd, id, scratch)
+        val rc = if withholdWriteInterest.get() then 0 else real.registerWrite(pollerFd, fd, id, scratch)
         registeredWrite(fd).completeDiscard(Result.succeed(()))
+        registerWriteReached(count).completeDiscard(Result.succeed(()))
         rc
     end registerWrite
+
+    // When true, registerWrite records the arm but never hands it to the kernel, so no real writable event can fire for it: the only
+    // writable readiness the driver sees is one a test injects with injectWritable. Set before the first arm.
+    val withholdWriteInterest: AtomicBoolean = new AtomicBoolean(false)
+
+    // Per-count latch: registerWriteReached(n) completes when the n-th registerWrite (across all fds) runs on the change worker.
+    private val registerWriteReachedOf: ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]] = new ConcurrentHashMap()
+
+    /** A promise that completes when the `n`-th registerWrite runs. Created on first request, completed at once if the count is already past. */
+    def registerWriteReached(n: Int)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
+        val p = registerWriteReachedOf.computeIfAbsent(n, _ => Promise.Unsafe.init[Unit, Any]())
+        if registerWriteCount.get() >= n then p.completeDiscard(Result.succeed(()))
+        p
+    end registerWriteReached
+
+    // Authorized one-shot synthetic writable: the fd the next poll appends one write-ready entry for, or -1 when none is pending. It stands in
+    // for the kernel send buffer draining, which a test cannot time from Scala.
+    private val syntheticWritableFd: AtomicInteger = new AtomicInteger(-1)
+    @volatile private var lastPollerFd: Int        = -1
+
+    /** Deliver one write-ready event for `fd` on the next poll cycle. The wake returns the parked poll, and the cycle after it carries the
+      * entry.
+      */
+    def injectWritable(fd: Int)(using AllowUnsafe, Frame): Unit =
+        syntheticWritableFd.set(fd)
+        real.wake(lastPollerFd, lastScratch)
+    end injectWritable
 
     def deregister(pollerFd: Int, fd: Int, fdClosing: Boolean, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
         deregisteredFds.add(fd)
@@ -660,6 +688,7 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         val pollHook = onPoll
         if pollHook != null then pollHook(changelist, nChanges)
         lastPollTimeoutMs = timeoutMs.toLong
+        lastPollerFd = pollerFd
         pollEventsBufs.add(scratch.eventsBuffer)
         pollFdsArrays.add(scratch.fds)
         if nChanges > 0 then discard(pollWithChangesCount.getAndIncrement())
@@ -676,16 +705,35 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         val hasInject = injFd >= 0 && syntheticErrorFd.compareAndSet(injFd, -1)
         // Once set, every wait runs the real syscall against fd -1, which kevent and epoll_wait refuse with EBADF: the poller fd is gone, with no
         // recycled fd number for a concurrent leaf to land on.
-        val waitFd    = if pollerLost.get() then -1 else pollerFd
-        val realFiber = real.poll(waitFd, timeoutMs, changelist, nChanges, scratch)
+        val waitFd = if pollerLost.get() then -1 else pollerFd
+        // A pending synthetic writable makes this cycle's wait non-blocking, so the changelist still reaches the kernel and the entry is
+        // appended without waiting for real readiness.
+        val wFd       = syntheticWritableFd.get()
+        val inject    = wFd >= 0 && syntheticWritableFd.compareAndSet(wFd, -1)
+        val polled    = real.poll(waitFd, if inject then 0 else timeoutMs, changelist, nChanges, scratch)
+        val realFiber =
+            if !inject then polled
+            else
+                polled.map { n =>
+                    if n < MaxEvents then
+                        scratch.fds(n) = wFd
+                        scratch.flags(n) = PollFlags.Write
+                        scratch.ids(n) = PollScratch.IdNoCheck
+                        scratch.readyCount = n + 1
+                        n + 1
+                    else n
+                }
         if hasInject then
             // After the real poll returns n events, append one synthetic error-flag entry at index n for the target fd, guarded to stay
-            // within the scratch arrays (MaxEvents). The driver's drainReady calls dispatchError(fd) which calls getsockopt(SO_ERROR) on the
+            // within the scratch arrays (MaxEvents), and count it in scratch.readyCount: the poll loop dispatches readyCount entries and
+            // ignores the fiber's value. The driver's drainReady calls dispatchError(fd) which calls getsockopt(SO_ERROR) on the
             // real fd. A healthy fd returns SO_ERROR=0 and the event is dropped, proving the stale-error code path runs correctly.
             realFiber.map { n =>
                 if n < MaxEvents then
                     scratch.fds(n) = injFd
                     scratch.flags(n) = PollFlags.Error
+                    scratch.ids(n) = PollScratch.IdNoCheck
+                    scratch.readyCount = n + 1
                     n + 1
                 else n
             }
