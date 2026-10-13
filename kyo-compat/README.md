@@ -539,18 +539,17 @@ Write your library against `CIO`, `CFiber`, `CPromise`, and the rest of the `kyo
 
 ### Cross-publishing with the sbt plugin
 
-The bundled `kyo-compat-plugin` sbt plugin extends `sbt-projectmatrix`'s `ProjectMatrix` builder with a terminal `.compatLibrary(extras*)(platforms*)(scalaVersions)` method. Each call adds one row per `(backend × supported-platform × scala-version)` to the matrix, generating the per-backend cells your library needs to ship to every runtime from a single source tree.
+The bundled `kyo-compat-plugin` sbt plugin extends sbt's `ProjectMatrix` builder (built into sbt 2, from `sbt-projectmatrix` on sbt 1) with a terminal `.compatLibrary(extras*)(platforms*)(scalaVersions)` method. Each call adds one row per `(backend × supported-platform × scala-version)` to the matrix, generating the per-backend cells your library needs to ship to every runtime from a single source tree.
 
 #### Setup
 
+The plugin is published for sbt 1 and sbt 2. On sbt 1 it brings in `sbt-projectmatrix` and the crossproject plugins it builds on. Add the Scala.js and Scala Native plugins when the library has JS or Native rows:
+
 ```scala doctest:expect=skipped
 // project/plugins.sbt
-addSbtPlugin("io.getkyo"          % "kyo-compat-plugin"             % "<latest version>")
-addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.10.1")
-addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.3.2")
-addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.20.2")
-addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % "0.5.10")
-addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.3.2")
+addSbtPlugin("io.getkyo"        % "kyo-compat-plugin" % "<latest version>")
+addSbtPlugin("org.scala-js"     % "sbt-scalajs"       % "1.22.0")
+addSbtPlugin("org.scala-native" % "sbt-scala-native"  % "0.5.12")
 ```
 
 ```scala doctest:expect=skipped
@@ -652,7 +651,7 @@ lazy val myHttp = (projectMatrix in file("my-http"))
     .dependsOn(myFetcher) // myHttpFuture depends on myFetcherFuture, etc.
 ```
 
-`dependsOn` is sbt-projectmatrix's own API and returns a `ProjectMatrix`, so the matrix continues to auto-discover.
+`dependsOn` is the project matrix's own API and returns a `ProjectMatrix`, so the matrix continues to auto-discover.
 
 #### Aggregator project for CI
 

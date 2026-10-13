@@ -20,7 +20,11 @@ ThisBuild / compatKyoVersion := "STUB-COMPAT-VERSION"
 // per-project Defaults, so it is applied on every participating project).
 val rootBase: File = file(".").getCanonicalFile
 val pinnedIvyPaths: Setting[IvyPaths] =
-    ivyPaths := IvyPaths(rootBase, Some(rootBase / "ivy-cache"))
+    ivyPaths := {
+        // IvyPaths takes Files on sbt 1, Strings on sbt 2.
+        implicit def pathOf(f: File): String = f.getPath
+        IvyPaths(rootBase, rootBase / "ivy-cache")
+    }
 
 // Fake empty io.getkyo:kyo-compat-future stub so the auto-injected dependency resolves.
 lazy val fakeFutureJVM = Project("fakeFutureJVM", file("fake-compat/future/jvm")).settings(

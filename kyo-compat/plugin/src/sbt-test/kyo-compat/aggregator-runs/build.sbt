@@ -25,7 +25,11 @@ ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 // every project explicitly.
 val rootBase: File = file(".").getCanonicalFile
 val pinnedIvyPaths: Setting[IvyPaths] =
-    ivyPaths := IvyPaths(rootBase, Some(rootBase / "ivy-cache"))
+    ivyPaths := {
+        // IvyPaths takes Files on sbt 1, Strings on sbt 2.
+        implicit def pathOf(f: File): String = f.getPath
+        IvyPaths(rootBase, rootBase / "ivy-cache")
+    }
 
 val sentinelsDir: File = rootBase / "sentinels"
 

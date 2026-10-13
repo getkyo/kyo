@@ -1,21 +1,21 @@
 package io.getkyo.compat
 
-import org.portablescala.sbtplatformdeps.PlatformDepsPlugin.autoImport._ // brings %%%
-import sbt._
-import sbt.Keys._
-import sbt.internal.ProjectMatrix
-import sbtprojectmatrix.ProjectMatrixKeys
-import sbtprojectmatrix.ReflectionUtil
+import SbtCompat.ProjectMatrix
+import sbt.*
+import sbt.Keys.*
+import scala.util.Success
+import scala.util.Try
 
 /** Internal helpers + per-matrix metadata for the [[CompatPlugin]] extension method. The user-facing `compatLibrary` extension is defined
   * in [[CompatPlugin.autoImport]].
   *
-  * sbt-projectmatrix's `jvmPlatform` / `jsPlatform` / `nativePlatform` builders are used as the row-creation primitives — they handle
-  * plugin enablement (ScalaJSPlugin / ScalaNativePlugin) for us. We pass the [[CompatBackendAxis]] as an extra `axisValues` so each row
-  * carries its backend identity, then add a per-row `process` callback that injects:
+  * Rows are added with the project matrix's `customRow` (sbt-projectmatrix on sbt 1, built into sbt 2). We pass the [[CompatBackendAxis]]
+  * as an extra `axisValues` so each row carries its backend identity, and a per-row `process` callback that enables the Scala.js / Scala
+  * Native plugin on JS / Native rows and injects:
   *
   *   - `moduleName := name.value + backend.directorySuffix`
-  *   - `libraryDependencies +=` the backend's artifact coordinates (`organization %%% artifactName % version`, defaulting to `io.getkyo %%% s"kyo-compat-<name>" % compatKyoVersion.value`; suppressed when the backend is locally bound)
+  *   - `libraryDependencies +=` the backend's artifact for the row's platform (`organization %%% artifactName % version`, defaulting to
+  *     `io.getkyo %%% s"kyo-compat-<name>" % compatKyoVersion.value`; suppressed when the backend is locally bound)
   *   - shared/per-backend `unmanagedSourceDirectories`
   *
   * `dependsOn(other: ProjectMatrix)` between two compat libraries works out-of-the-box — `WeakAxis` semantics on [[CompatBackendAxis]]
@@ -146,34 +146,19 @@ private[compat] object CompatLibrary {
             val backendBase     = sourceBase / backendDir / platformDir
 
             // Plugin enabler. JS/Native platforms must enable the corresponding
-            // sbt plugin; we do the same reflection lookup pmx itself does in
-            // its private jsPlatform/nativePlatform helpers (we sidestep those
+            // sbt plugin; we do the same reflection lookup the project matrix
+            // does in its jsPlatform/nativePlatform helpers (we sidestep those
             // because they hard-code `scalaABIVersion(sv)` whose value
             // collapses 3.3.4 and 3.4.0 to "3", colliding target dirs and
             // project ids on multi-scala matrices).
             val enablePlatformPlugin: Project => Project = platform match {
                 case VirtualAxis.jvm => identity
                 case VirtualAxis.js  =>
-                    p =>
-                        p.enablePlugins(
-                            ReflectionUtil.getSingletonObject[AutoPlugin](
-                                getClass.getClassLoader,
-                                "org.scalajs.sbtplugin.ScalaJSPlugin$"
-                            ).getOrElse(sys.error(
-                                "Scala.js plugin was not found. Add the sbt-scalajs plugin into project/plugins.sbt:\n" +
-                                    "  addSbtPlugin(\"org.scala-js\" % \"sbt-scalajs\" % \"x.y.z\")"
-                            ))
-                        )
+                    p => p.enablePlugins(platformPlugin("org.scalajs.sbtplugin.ScalaJSPlugin$", "org.scala-js", "sbt-scalajs"))
                 case VirtualAxis.native =>
                     p =>
                         p.enablePlugins(
-                            ReflectionUtil.getSingletonObject[AutoPlugin](
-                                getClass.getClassLoader,
-                                "scala.scalanative.sbtplugin.ScalaNativePlugin$"
-                            ).getOrElse(sys.error(
-                                "Scala Native plugin was not found. Add the sbt-scala-native plugin into project/plugins.sbt:\n" +
-                                    "  addSbtPlugin(\"org.scala-native\" % \"sbt-scala-native\" % \"x.y.z\")"
-                            ))
+                            platformPlugin("scala.scalanative.sbtplugin.ScalaNativePlugin$", "org.scala-native", "sbt-scala-native")
                         )
                 case other => sys.error(s"compatLibrary: unsupported PlatformAxis $other")
             }
@@ -215,8 +200,9 @@ private[compat] object CompatLibrary {
                         val isBound = metaOf(matrixId).exists(_.bindings.contains(backend.name))
                         if (isBound) Seq.empty
                         else Seq(
-                            backend.organization %%% backend.resolvedArtifactName %
-                                backend.version.getOrElse(CompatPlugin.autoImport.compatKyoVersion.value)
+                            (backend.organization % backend.resolvedArtifactName %
+                                backend.version.getOrElse(CompatPlugin.autoImport.compatKyoVersion.value))
+                                .cross(SbtCompat.platformCrossVersion.value)
                         )
                     }
                 )
@@ -226,7 +212,7 @@ private[compat] object CompatLibrary {
                 }
                 // Apply per-platform extras LAST so they win over both the
                 // plugin-injected defaults above and the receiver's universal
-                // `.settings(...)` (which sbt-projectmatrix applies before
+                // `.settings(...)` (which the project matrix applies before
                 // customRow process closures run). Re-read at materialization
                 // time so `.jvmSettings(...)` calls placed AFTER
                 // `.compatLibrary(...)` are picked up.
@@ -249,7 +235,7 @@ private[compat] object CompatLibrary {
                     }
                 val extras = platformExtras ++ conformanceExtras
                 if (extras.isEmpty) withLocal
-                else withLocal.settings(extras: _*)
+                else withLocal.settings(extras*)
             }
 
             // Add one row per scala version, tagging the row with a
@@ -266,13 +252,23 @@ private[compat] object CompatLibrary {
         }
     }
 
+    /** Loads a platform's sbt plugin by class name, so this plugin can enable Scala.js or Scala Native on a row without depending on it. */
+    private def platformPlugin(className: String, organization: String, artifact: String): AutoPlugin =
+        Try(getClass.getClassLoader.loadClass(className).getField("MODULE$").get(null)) match {
+            case Success(plugin: AutoPlugin) => plugin
+            case _                           =>
+                sys.error(
+                    s"""$artifact was not found. Add it to project/plugins.sbt:\n  addSbtPlugin("$organization" % "$artifact" % "x.y.z")"""
+                )
+        }
+
     /** Test-scope settings that wire the plugin-bundled conformance suite into one generated row: extract the suite for `platformValue`
       * (the `shared` buckets plus this platform's bucket) into `Test / sourceManaged`, add scalatest, and set `-Xmax-inlines` (the suite
       * relies on it). Applied per row by the `process` closure when `.compatConformance` is enabled.
       */
     private def conformanceSettings(platformValue: String, scalatestVersion: String): Seq[Setting[?]] =
         Seq(
-            libraryDependencies += "org.scalatest" %%% "scalatest" % scalatestVersion % Test,
+            libraryDependencies += ("org.scalatest" % "scalatest" % scalatestVersion % Test).cross(SbtCompat.platformCrossVersion.value),
             Test / scalacOptions += "-Xmax-inlines:1024",
             Test / sourceGenerators += Def.task {
                 CompatConformance.extract(
