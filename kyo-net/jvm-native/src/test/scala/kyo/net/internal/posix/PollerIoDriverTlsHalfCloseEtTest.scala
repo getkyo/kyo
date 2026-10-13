@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.TlsEngine
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
@@ -30,9 +31,13 @@ import kyo.scheduler.IOPromise
   * the TCP write side (shutdown SHUT_WR). The accepted side runs a TLS-armed `PollerIoDriver` in a re-arming standing-read loop (mirroring
   * the production `ReadPump`). The test asserts:
   *   - ALL decrypted plaintext bytes are delivered in order, byte-exact.
-  *   - The terminal read is `Span.empty` (Success, orderly EOF), NOT a `Closed` failure or a timeout (the stranded-strand symptom).
+  *   - The terminal read is `Span.empty` (Success, orderly EOF), NOT a `Closed` failure; a strand never completes and fails by the leaf
+  *     timeout.
   *
-  * Gated on `TlsRealEngines.assumeTlsReady()` (BoringSSL staged) and `PosixTestSockets.assumePoller()` (Linux epoll or macOS kqueue).
+  * The driver owns the server engine through the accepted handle and frees it in the teardown `closeHandle` queues, so no out-of-band free can
+  * race that teardown; the client engine never reaches the driver. Both are released in `Sync.ensure`, so an interrupted leaf releases them too.
+  *
+  * Gated on `TlsRealEngines.assumeBoringSslReady()` (BoringSSL staged) and `PosixTestSockets.assumePoller()` (Linux epoll or macOS kqueue).
   * Validated on podman epoll with STAGE_BORINGSSL=1. No sleep; all synchronization on real promises and real kernel events.
   */
 class PollerIoDriverTlsHalfCloseEtTest extends Test:
@@ -43,7 +48,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
 
     /** A re-arming standing TLS reader that accumulates every delivered plaintext chunk and records the terminal outcome on the first
       * non-data result: an empty Span completes `done` with [[TlsHalfCloseReader.EofSeen]] (orderly close, correct), a `Closed` failure
-      * with [[TlsHalfCloseReader.ClosedSeen]] (regression), a timeout with [[TlsHalfCloseReader.TimedOut]] (stranded-strand symptom).
+      * with [[TlsHalfCloseReader.ClosedSeen]] (regression).
       */
     final private class TlsHalfCloseReader(
         driver: PollerIoDriver,
@@ -81,12 +86,44 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
         val ClosedSeen: String            = "closed"
         val BecomeAvailableFailed: String = "becomeAvailable-failed"
         val NoResult: String              = "no-result"
-        val TimedOut: String              = "timeout"
     end TlsHalfCloseReader
 
-    /** Poll a real condition until it holds or the bound elapses, re-checking each turn after a short Async.sleep. Mirrors
-      * [[IoUringFatalRecordCloseRaceTest.awaitCondition]].
-      */
+    /** Runs `body` over a driver, a loopback pair, and a handshaken engine pair whose server side is attached to the accepted handle. */
+    private def withTlsAccepted[A](
+        body: (PollerIoDriver, Int, PosixHandle, TlsEngine) => A < (Async & Abort[Closed])
+    )(using Frame, kyo.test.AssertScope): A < (Async & Abort[Closed]) =
+        val clientEngine = TlsRealEngines.singleEngine(isServer = false)
+        val serverEngine = TlsRealEngines.singleEngine(isServer = true)
+        val driver       = PollerIoDriver.init()
+        discard(driver.start())
+        Sync.ensure(Sync.defer(driver.close())) {
+            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                acceptedH.tls = Present(serverEngine)
+                Sync.ensure(Sync.defer {
+                    driver.closeHandle(acceptedH)
+                    discard(sock.close(client))
+                    clientEngine.free()
+                }) {
+                    // Complete the TLS handshake in-memory; the accepted side uses the server engine for decryption.
+                    assert(
+                        TlsEngineLoopback.handshake(clientEngine, serverEngine),
+                        "TLS handshake must complete before the half-close test"
+                    )
+                    body(driver, client, acceptedH, clientEngine)
+                }
+            }
+        }
+    end withTlsAccepted
+
+    private def sendRaw(fd: Int, bytes: Array[Byte])(using kyo.test.AssertScope): Unit =
+        val buf   = Buffer.fromArray[Byte](bytes)
+        val sendR =
+            try sock.sendNow(fd, buf, bytes.length.toLong, PosixConstants.MSG_NOSIGNAL)
+            finally buf.close()
+        assert(sendR.value.toInt > 0, s"send failed: errno=${sendR.errorCode}")
+    end sendRaw
+
     "PollerIoDriver TLS ET half-close drain" - {
 
         /** Core case: the peer sends encrypted data and immediately half-closes. The ciphertext and the TCP FIN both arrive in the kernel
@@ -100,80 +137,42 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
         "TLS plaintext delivered in full and Span.empty surfaces on ET half-close with buffered ciphertext" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
-                TlsRealEngines.assumeTlsReady()
+                TlsRealEngines.assumeBoringSslReady()
                 PosixTestSockets.assumePoller()
-                TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
-                    val driver = PollerIoDriver.init()
-                    discard(driver.start())
-                    Sync.ensure(Sync.defer(driver.close())) {
-                        PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                            // Complete the TLS handshake in-memory (no socket involvement for the handshake bytes here; both engines share
-                            // memory. The accepted side uses the server engine for decryption.
-                            val handshakeDone = TlsEngineLoopback.handshake(clientEngine, serverEngine)
-                            assert(handshakeDone, "TLS handshake must complete before the half-close test")
-                            // A known plaintext, distinct per index so reordering or truncation is caught byte-for-byte. Two TLS records
-                            // to ensure the driver handles multi-record plaintext, not just a single record.
-                            val record1 = Array.tabulate[Byte](4096)(i => (i % 251).toByte)
-                            val record2 = Array.tabulate[Byte](4096)(i => ((i + 7) % 251).toByte)
-                            val plain   = record1 ++ record2
-                            // Encrypt both records through the client engine (in-memory, produces raw ciphertext bytes). The driver
-                            // recvs these bytes from the socket and feeds the server engine via submitEngineOp -> feedAndDecrypt; no
-                            // pre-feeding here (that would double-feed the engine and cause a TLS protocol error).
-                            val cipher1 = TlsEngineLoopback.encrypt(clientEngine, record1)
-                            val cipher2 = TlsEngineLoopback.encrypt(clientEngine, record2)
-                            val cipher  = cipher1 ++ cipher2
-                            // Attach the server engine to the accepted handle so dispatchReadTls uses it.
-                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                            acceptedH.tls = Present(serverEngine)
-                            // Send the ciphertext on the raw socket, then half-close for writing. Both the ciphertext and the TCP FIN
-                            // arrive in the accepted side's kernel recv buffer before the reader below starts. On epoll, this guarantees
-                            // EPOLLIN + EPOLLRDHUP will be co-reported in one poll event (the half-close path this guards).
-                            val cipherBuf = Buffer.fromArray[Byte](cipher)
-                            val sendR     =
-                                try sock.sendNow(client, cipherBuf, cipher.length.toLong, PosixConstants.MSG_NOSIGNAL)
-                                finally cipherBuf.close()
-                            assert(sendR.value.toInt > 0, s"send failed: errno=${sendR.errorCode}")
-                            PosixTestSockets.halfClose(sock, client)
-                            // Start the standing reader after the data and FIN are queued, so the test is deterministic.
-                            val acc  = new java.io.ByteArrayOutputStream
-                            val done = Promise.Unsafe.init[String, Any]()
-                            val r    = new TlsHalfCloseReader(driver, acceptedH, acc, done)
-                            r.start()
-                            Abort.run[Timeout](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
-                                driver.closeHandle(acceptedH)
-                                discard(sock.close(client))
-                                // The driver's TLS teardown (dischargeClose -> shutdownTls -> freeResources) is queued, not inline: it clears
-                                // acceptedH.tls only once it actually runs on the poll thread. TlsRealEngines.withEngines' own `ensure` frees
-                                // BOTH engines out-of-band the instant this body's result value completes; without waiting here that free can
-                                // race the still-queued dischargeClose's SSL_shutdown, a native use-after-free on the freed engine (see
-                                // TlsRealEngines.withEngines' ownership-rule doc). Waiting for tls to go Absent settles that race first, so
-                                // withEngines' free becomes a harmless CAS-guarded second free.
-                                awaitCondition("the driver's own TLS teardown never settled (a hang, not the race this guard targets)") {
-                                    !acceptedH.tls.isDefined
-                                }.andThen {
-                                    outcome match
-                                        case Result.Success(TlsHalfCloseReader.EofSeen) =>
-                                            assert(
-                                                acc.toByteArray.toList == plain.toList,
-                                                s"TLS plaintext not delivered in full before EOF: got ${acc.size()} of ${plain.length} bytes"
-                                            )
-                                        case Result.Success(TlsHalfCloseReader.ClosedSeen) =>
-                                            fail(
-                                                s"TLS half-close surfaced Closed after ${acc.size()} of ${plain.length} bytes instead of " +
-                                                    "Span.empty EOF (dispatchReadTls did not propagate eofPending to halfClose == PeerHalfClosePending)"
-                                            )
-                                        case Result.Success(other) => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
-                                        case Result.Failure(_: Timeout) =>
-                                            fail(
-                                                s"TLS half-close read stalled after ${acc.size()} of ${plain.length} bytes " +
-                                                    "(no EOF delivered; readMightHaveMore not set from halfClose == PeerHalfClosePending, " +
-                                                    "strand waiting for an EPOLLRDHUP edge that ET will not re-fire)"
-                                            )
-                                        case other => fail(s"unexpected outcome: $other")
-                                    end match
-                                }
-                            }
-                        }
+                withTlsAccepted { (driver, client, acceptedH, clientEngine) =>
+                    // A known plaintext, distinct per index so reordering or truncation is caught byte-for-byte. Two TLS records to ensure the
+                    // driver handles multi-record plaintext, not just a single record.
+                    val record1 = Array.tabulate[Byte](4096)(i => (i % 251).toByte)
+                    val record2 = Array.tabulate[Byte](4096)(i => ((i + 7) % 251).toByte)
+                    val plain   = record1 ++ record2
+                    // Encrypt both records through the client engine (in-memory, produces raw ciphertext bytes). The driver recvs these bytes from
+                    // the socket and feeds the server engine via submitEngineOp -> feedAndDecrypt; no pre-feeding here (that would double-feed the
+                    // engine and cause a TLS protocol error).
+                    val cipher = TlsEngineLoopback.encrypt(clientEngine, record1) ++ TlsEngineLoopback.encrypt(clientEngine, record2)
+                    // Send the ciphertext on the raw socket, then half-close for writing. Both the ciphertext and the TCP FIN arrive in the
+                    // accepted side's kernel recv buffer before the reader below starts. On epoll, this guarantees EPOLLIN + EPOLLRDHUP will be
+                    // co-reported in one poll event (the half-close path this guards).
+                    sendRaw(client, cipher)
+                    PosixTestSockets.halfClose(sock, client)
+                    // Start the standing reader after the data and FIN are queued, so the test is deterministic.
+                    val acc  = new java.io.ByteArrayOutputStream
+                    val done = Promise.Unsafe.init[String, Any]()
+                    new TlsHalfCloseReader(driver, acceptedH, acc, done).start()
+                    logIfInterrupted(
+                        s"TLS half-close read stalled after ${acc.size()} of ${plain.length} bytes (no EOF delivered; readMightHaveMore not set " +
+                            "from halfClose == PeerHalfClosePending, strand waiting for an EPOLLRDHUP edge that ET will not re-fire)"
+                    )(done.safe.get).map {
+                        case TlsHalfCloseReader.EofSeen =>
+                            assert(
+                                acc.toByteArray.toList == plain.toList,
+                                s"TLS plaintext not delivered in full before EOF: got ${acc.size()} of ${plain.length} bytes"
+                            )
+                        case TlsHalfCloseReader.ClosedSeen =>
+                            fail(
+                                s"TLS half-close surfaced Closed after ${acc.size()} of ${plain.length} bytes instead of " +
+                                    "Span.empty EOF (dispatchReadTls did not propagate eofPending to halfClose == PeerHalfClosePending)"
+                            )
+                        case other => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
                     }
                 }
         }
@@ -188,68 +187,40 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
           *   - If first recv delivers data (n > 0 with eofPending): covered by the first leaf above.
           *   - If first recv returns EAGAIN (eofPending set, no data yet): the EAGAIN branch must advance halfClose to PeerHalfClosePending
           *     and deliver EOF after subsequent edges bring the data + FIN; otherwise the strand parks forever on a missing re-edge.
-          * The test accepts either outcome (both paths are correct); only a Closed failure or a timeout is a regression.
+          * The test accepts either outcome (both paths are correct); only a Closed failure or a strand is a regression.
           */
         "TLS Span.empty surfaces on ET half-close when initial recv returns EAGAIN" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
-                TlsRealEngines.assumeTlsReady()
+                TlsRealEngines.assumeBoringSslReady()
                 PosixTestSockets.assumePoller()
-                TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
-                    val driver = PollerIoDriver.init()
-                    discard(driver.start())
-                    Sync.ensure(Sync.defer(driver.close())) {
-                        PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                            val handshakeDone = TlsEngineLoopback.handshake(clientEngine, serverEngine)
-                            assert(handshakeDone, "TLS handshake must complete before the half-close test")
-                            val plainData = Array.tabulate[Byte](2048)(i => (i % 127).toByte)
-                            // Encrypt through the client engine; the driver will recv the wire bytes and feed the server engine via
-                            // submitEngineOp -> feedAndDecrypt. No pre-feeding: that would double-feed and trigger a TLS protocol error.
-                            val cipher    = TlsEngineLoopback.encrypt(clientEngine, plainData)
-                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                            acceptedH.tls = Present(serverEngine)
-                            // Register the awaitRead FIRST so the reader is parked when the data arrives.
-                            val acc  = new java.io.ByteArrayOutputStream
-                            val done = Promise.Unsafe.init[String, Any]()
-                            val r    = new TlsHalfCloseReader(driver, acceptedH, acc, done)
-                            r.start()
-                            // Send data + half-close after the reader is registered, allowing an initial EAGAIN race.
-                            val cipherBuf = Buffer.fromArray[Byte](cipher)
-                            val sendR     =
-                                try sock.sendNow(client, cipherBuf, cipher.length.toLong, PosixConstants.MSG_NOSIGNAL)
-                                finally cipherBuf.close()
-                            assert(sendR.value.toInt > 0, s"send failed: errno=${sendR.errorCode}")
-                            PosixTestSockets.halfClose(sock, client)
-                            Abort.run[Timeout](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
-                                driver.closeHandle(acceptedH)
-                                discard(sock.close(client))
-                                // See the sibling leaf above: wait for the queued TLS teardown to actually settle before returning, so
-                                // TlsRealEngines.withEngines' out-of-band free of serverEngine cannot race the driver's own SSL_shutdown.
-                                awaitCondition("the driver's own TLS teardown never settled (a hang, not the race this guard targets)") {
-                                    !acceptedH.tls.isDefined
-                                }.andThen {
-                                    outcome match
-                                        case Result.Success(TlsHalfCloseReader.EofSeen) =>
-                                            assert(
-                                                acc.toByteArray.toList == plainData.toList,
-                                                s"TLS plaintext not delivered in full before EOF: got ${acc.size()} of ${plainData.length} bytes"
-                                            )
-                                        case Result.Success(TlsHalfCloseReader.ClosedSeen) =>
-                                            fail(
-                                                s"TLS half-close surfaced Closed after ${acc.size()} of ${plainData.length} bytes " +
-                                                    "(regression: should be Span.empty EOF)"
-                                            )
-                                        case Result.Success(other) => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
-                                        case Result.Failure(_: Timeout) =>
-                                            fail(
-                                                s"TLS half-close EAGAIN read stalled after ${acc.size()} of ${plainData.length} bytes " +
-                                                    "(halfClose not advanced to PeerHalfClosePending in EAGAIN branch; strand waiting for a missing re-edge)"
-                                            )
-                                        case other => fail(s"unexpected outcome: $other")
-                                    end match
-                                }
-                            }
-                        }
+                withTlsAccepted { (driver, client, acceptedH, clientEngine) =>
+                    val plainData = Array.tabulate[Byte](2048)(i => (i % 127).toByte)
+                    // Encrypt through the client engine; the driver will recv the wire bytes and feed the server engine via
+                    // submitEngineOp -> feedAndDecrypt. No pre-feeding: that would double-feed and trigger a TLS protocol error.
+                    val cipher = TlsEngineLoopback.encrypt(clientEngine, plainData)
+                    // Register the awaitRead FIRST so the reader is parked when the data arrives.
+                    val acc  = new java.io.ByteArrayOutputStream
+                    val done = Promise.Unsafe.init[String, Any]()
+                    new TlsHalfCloseReader(driver, acceptedH, acc, done).start()
+                    // Send data + half-close after the reader is registered, allowing an initial EAGAIN race.
+                    sendRaw(client, cipher)
+                    PosixTestSockets.halfClose(sock, client)
+                    logIfInterrupted(
+                        s"TLS half-close EAGAIN read stalled after ${acc.size()} of ${plainData.length} bytes (halfClose not advanced to " +
+                            "PeerHalfClosePending in EAGAIN branch; strand waiting for a missing re-edge)"
+                    )(done.safe.get).map {
+                        case TlsHalfCloseReader.EofSeen =>
+                            assert(
+                                acc.toByteArray.toList == plainData.toList,
+                                s"TLS plaintext not delivered in full before EOF: got ${acc.size()} of ${plainData.length} bytes"
+                            )
+                        case TlsHalfCloseReader.ClosedSeen =>
+                            fail(
+                                s"TLS half-close surfaced Closed after ${acc.size()} of ${plainData.length} bytes " +
+                                    "(regression: should be Span.empty EOF)"
+                            )
+                        case other => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
                     }
                 }
         }

@@ -28,9 +28,8 @@ import kyo.net.internal.transport.ReadOutcome
   * engine is freed exactly once after the guard releases.
   *
   * Anti-flakiness: the engine handshakes in-memory via `TlsEngineLoopback.handshake` before the race; `onFeedCiphertext` is a one-shot re-entrant
-  * latch fired while `beginDispatch` is held. `Async.timeout(5.seconds)` is the deadlock ceiling (a driver that stranded the dispatch would hang), not the
-  * synchronization primitive; `readPromise.safe.get` latches on the real dispatch completion; the pre-sent bytes guarantee `recvNow` returns
-  * immediately, so the race fires on the first poll. Two `fifoBarrier`s after the dispatch settle the deferred free (a separate FIFO op). No sleep.
+  * latch fired while `beginDispatch` is held. `readPromise.safe.get` latches on the real dispatch completion, and a stranded dispatch fails by
+  * the leaf timeout; the pre-sent bytes guarantee `recvNow` returns immediately, so the race fires on the first poll. Two `fifoBarrier`s after the dispatch settle the deferred free (a separate FIFO op). No sleep.
   *
   * Drives a real BoringSSL engine through a `RecordingTlsEngine` decorator and asserts `freeCount.get() == 1`, `!usedAfterFree`,
   * a terminal `readPromise`, and `spy.closeCounts == 1`.
@@ -104,7 +103,14 @@ class PollerIoDriverRaceTest extends Test:
                 // Handshake + encrypt the peer's record on the engine FIFO (drained by the poll loop), then pre-send the REAL TLS ciphertext from the
                 // client so the kernel buffers it before awaitRead. When the poll loop fires recvNow on acceptedFd it returns these bytes immediately
                 // (no parking) and feedCiphertext consumes a valid record.
-                handshakeAndEncrypt(driver, clientEngine, serverEngine, knownPlain).safe.get.map { ciphertext =>
+                // The race's own closeHandle frees the engine and closes acceptedFd; the finalizer closes the handle only if the race never
+                // reached it, so a recycled fd number is never closed twice.
+                Sync.ensure(Sync.defer {
+                    if !handle.isClosing() then driver.closeHandle(handle)
+                    driver.close()
+                    // driver.close does not close socket fds.
+                    PosixTestSockets.closePeerForEof(spy, clientFd)
+                })(handshakeAndEncrypt(driver, clientEngine, serverEngine, knownPlain).safe.get.map { ciphertext =>
                     val preSendBuf = Buffer.fromArray[Byte](ciphertext)
                     discard(Ffi.load[SocketBindings].sendNow(clientFd, preSendBuf, ciphertext.length.toLong, PosixConstants.MSG_NOSIGNAL))
                     preSendBuf.close()
@@ -114,13 +120,10 @@ class PollerIoDriverRaceTest extends Test:
 
                     // The dispatch runs on the FIFO worker: recvNow returns the real ciphertext (pre-buffered), feedCiphertext fires closeHandle (the
                     // race), decryptAll runs on the live engine and recovers knownPlain, finishDispatch delivers it, endDispatch releases the guard and
-                    // submits the deferred free. The readPromise resolves within the bounded window.
-                    Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get)).map { outcome =>
+                    // submits the deferred free.
+                    awaitOutcome(readPromise, "the dispatch never completed: the read promise was stranded").map { outcome =>
                         // Settle the deferred free (a separate FIFO op submitted at endDispatch).
                         fifoBarrier(driver).safe.get.andThen(fifoBarrier(driver).safe.get).map { _ =>
-                            driver.close()
-                            // Close the client fd (driver.close does not close socket fds; closeHandle closed acceptedFd via spy).
-                            PosixTestSockets.closePeerForEof(spy, clientFd)
                             assert(
                                 engine.freeCount.get() == 1,
                                 s"closeHandle must free the engine exactly once, was ${engine.freeCount.get()}"
@@ -136,9 +139,7 @@ class PollerIoDriverRaceTest extends Test:
                             )
                             outcome match
                                 // genuine close-during-decrypt race; read may resolve Success or Closed, the free-once/no-UAF invariant is pinned unconditionally above
-                                case Result.Failure(_: Closed)  => succeed
-                                case Result.Failure(_: Timeout) =>
-                                    fail("the dispatch did not complete within the timeout (read promise stranded)")
+                                case Result.Failure(_: Closed)               => succeed
                                 case Result.Success(ReadOutcome.Bytes(span)) =>
                                     // The dispatch ran on a LIVE engine (free deferred), so it correctly recovers the known plaintext (or delivers
                                     // an empty span if it bailed before decrypting). Either proves no use-after-free; corrupt data is the failure.
@@ -152,7 +153,7 @@ class PollerIoDriverRaceTest extends Test:
                             end match
                         }
                     }
-                }
+                })
             }
         }
     }

@@ -33,8 +33,10 @@ import kyo.net.internal.posix.TestDrivers
   * SQE is now submitted (the deferred ciphertext is sent once the raw block clears).
   *
   * Gate: PosixTestSockets.assumeUring() (cancels cleanly off Linux or where the production ring cannot init) and
-  * TlsRealEngines.assumeTlsReady() (cancels when no TLS provider is staged). Anti-flakiness: all waits use FIFO-barrier promises
-  * (submitEngineOp thunk submitted after the test op); no sleep. Async.timeout is only the deadlock ceiling.
+  * TlsRealEngines.assumeBoringSslReady() (cancels when BoringSSL is not staged). Anti-flakiness: all waits use FIFO-barrier promises
+  * (submitEngineOp thunk submitted after the test op); no sleep. A hang fails by the leaf timeout. The test owns both engines: the handle's
+  * `engineFreeSink` is a no-op, and [[withTlsHandle]] releases the handle and both engines in `Sync.ensure` as one engine op, behind every op
+  * still queued for the connection, so an interrupted leaf releases them too.
   */
 class IoUringDriverCrossTailSendOrderTest extends Test:
 
@@ -59,6 +61,35 @@ class IoUringDriverCrossTailSendOrderTest extends Test:
         Sync.ensure(Sync.defer(driver.close()))(body(driver, recording))
     end withRecordingDriver
 
+    /** Runs `body` over a driver handle on a loopback pair in the post-STARTTLS state (a handshaken server engine attached). The handle is
+      * detached from its engine and closed, and both engines freed, in one engine op submitted from `Sync.ensure`.
+      */
+    private def withTlsHandle[A](
+        body: (IoUringDriver, RecordingIoUringBindings, PosixHandle) => A < (Abort[Closed] & Async)
+    )(using Frame, kyo.test.AssertScope): A < (Abort[Closed] & Async) =
+        withRecordingDriver { (drv, recording) =>
+            PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
+                val clientEngine = TlsRealEngines.singleEngine(isServer = false)
+                val serverEngine = TlsRealEngines.singleEngine(isServer = true)
+                val handle       = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                handle.tls = Present(serverEngine)
+                handle.engineFreeSink = _ => ()
+                Sync.ensure(Sync.defer {
+                    drv.submitEngineOp { () =>
+                        handle.tls = Absent
+                        drv.closeHandle(handle)
+                        serverEngine.free()
+                        clientEngine.free()
+                    }
+                    discard(sock.close(peerFd))
+                }) {
+                    assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the test write")
+                    body(drv, recording, handle)
+                }
+            }
+        }
+    end withTlsHandle
+
     /** Submit a marker engine op and return a promise that completes once the FIFO worker runs it, proving every engine op submitted before it
       * (including the preceding writeTls FIFO op) has run.
       */
@@ -72,94 +103,68 @@ class IoUringDriverCrossTailSendOrderTest extends Test:
 
         "raw-in-flight-defers-tls-send: flushTls must not submit a TLS SQE while rawSendInFlight is set" in {
             PosixTestSockets.assumeUring()
-            TlsRealEngines.assumeTlsReady()
-            TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
-                assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the test write")
-                withRecordingDriver { (drv, recording) =>
-                    PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        // Post-STARTTLS state: upgrade has fired, TLS engine is present.
-                        handle.tls = Present(serverEngine)
-                        // Prevent double-free: the driver calls engineFreeSink when it tears down the handle, but withEngines
-                        // owns the single real free. A no-op sink keeps the native session alive for withEngines.
-                        handle.engineFreeSink = _ => ()
-                        // Simulate: the handshake's final raw flight is still in flight (its send SQE has not reaped yet).
-                        handle.rawSendInFlight = true
+            TlsRealEngines.assumeBoringSslReady()
+            withTlsHandle { (drv, recording, handle) =>
+                // Simulate: the handshake's final raw flight is still in flight (its send SQE has not reaped yet).
+                handle.rawSendInFlight = true
 
-                        val plain       = Array.tabulate[Byte](16)(i => (i + 1).toByte)
-                        val sendsBefore = recording.sendBufs.size()
+                val plain       = Array.tabulate[Byte](16)(i => (i + 1).toByte)
+                val sendsBefore = recording.sendBufs.size()
 
-                        // drv.write routes to writeTls (handle.tls is Present) and enqueues a FIFO op:
-                        //   appendPending (encrypts plain into pendingCipher) then flushTls.
-                        // flushTls sees rawSendInFlight = true and DEFERS: no kyo_uring_prep_send must be called.
-                        discard(drv.write(handle, Span.fromUnsafe(plain), 0))
+                // drv.write routes to writeTls (handle.tls is Present) and enqueues a FIFO op:
+                //   appendPending (encrypts plain into pendingCipher) then flushTls.
+                // flushTls sees rawSendInFlight = true and DEFERS: no kyo_uring_prep_send must be called.
+                discard(drv.write(handle, Span.fromUnsafe(plain), 0))
 
-                        // FIFO barrier: submitted after the writeTls FIFO op, so it fires only after that op has fully run.
-                        Abort.run[Timeout | Closed](Async.timeout(30.seconds)(fifoBarrier(drv).safe.get)).map { _ =>
-                            val sendsAfter = recording.sendBufs.size()
-                            // Teardown: clear tls before closeHandle so the driver does not free the engine (withEngines owns the free).
-                            handle.tls = Absent
-                            drv.closeHandle(handle)
-                            discard(sock.close(peerFd))
-                            assert(
-                                sendsAfter == sendsBefore,
-                                s"the defer must fire: no kyo_uring_prep_send may be called while rawSendInFlight is set, " +
-                                    s"but got ${sendsAfter - sendsBefore} extra send(s)"
-                            )
-                        }
-                    }
+                // FIFO barrier: submitted after the writeTls FIFO op, so it fires only after that op has fully run.
+                fifoBarrier(drv).safe.get.map { _ =>
+                    val sendsAfter = recording.sendBufs.size()
+                    assert(
+                        sendsAfter == sendsBefore,
+                        s"the defer must fire: no kyo_uring_prep_send may be called while rawSendInFlight is set, " +
+                            s"but got ${sendsAfter - sendsBefore} extra send(s)"
+                    )
                 }
             }.map(_ => succeed)
         }
 
         "raw-drain-kick-sends-tls: once rawSendInFlight clears, flushTls must submit the deferred TLS SQE" in {
             PosixTestSockets.assumeUring()
-            TlsRealEngines.assumeTlsReady()
-            TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
-                assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the test writes")
-                withRecordingDriver { (drv, recording) =>
-                    PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        handle.tls = Present(serverEngine)
-                        handle.engineFreeSink = _ => ()
-                        // Simulate: raw send in flight (the handshake's final flight).
-                        handle.rawSendInFlight = true
+            TlsRealEngines.assumeBoringSslReady()
+            withTlsHandle { (drv, recording, handle) =>
+                // Simulate: raw send in flight (the handshake's final flight).
+                handle.rawSendInFlight = true
 
-                        val plain = Array.tabulate[Byte](16)(i => (i + 1).toByte)
+                val plain = Array.tabulate[Byte](16)(i => (i + 1).toByte)
 
-                        // Write 1: rawSendInFlight = true -> flushTls defers; ciphertext lands in pendingCipher, no SQE submitted.
-                        discard(drv.write(handle, Span.fromUnsafe(plain), 0))
+                // Write 1: rawSendInFlight = true -> flushTls defers; ciphertext lands in pendingCipher, no SQE submitted.
+                discard(drv.write(handle, Span.fromUnsafe(plain), 0))
 
-                        // FIFO barrier 1: confirms the Write 1 FIFO op (appendPending + deferred flushTls) has fully run.
-                        Abort.run[Timeout | Closed](Async.timeout(30.seconds)(fifoBarrier(drv).safe.get)).flatMap { _ =>
-                            assert(
-                                !handle.sendInFlight,
-                                "after the defer: sendInFlight must be false (the TLS SQE was deferred, not submitted)"
-                            )
+                // FIFO barrier 1: confirms the Write 1 FIFO op (appendPending + deferred flushTls) has fully run.
+                fifoBarrier(drv).safe.get.flatMap { _ =>
+                    assert(
+                        !handle.sendInFlight,
+                        "after the defer: sendInFlight must be false (the TLS SQE was deferred, not submitted)"
+                    )
 
-                            // Simulate: the raw tail is now fully drained (onRawSendComplete would clear these after the raw CQE reaps).
-                            handle.rawSendInFlight = false
-                            handle.rawPending = Absent
+                    // Simulate: the raw tail is now fully drained (onRawSendComplete would clear these after the raw CQE reaps).
+                    handle.rawSendInFlight = false
+                    handle.rawPending = Absent
 
-                            val sendsBefore = recording.sendBufs.size()
+                    val sendsBefore = recording.sendBufs.size()
 
-                            // Write 2: rawSendInFlight is now clear, rawTailHasUnsent is false; flushTls must submit the deferred
-                            // ciphertext (from Write 1) plus any new ciphertext from Write 2 as a TLS send SQE.
-                            discard(drv.write(handle, Span.fromUnsafe(plain), 0))
+                    // Write 2: rawSendInFlight is now clear, rawTailHasUnsent is false; flushTls must submit the deferred
+                    // ciphertext (from Write 1) plus any new ciphertext from Write 2 as a TLS send SQE.
+                    discard(drv.write(handle, Span.fromUnsafe(plain), 0))
 
-                            // FIFO barrier 2: fires after the Write 2 FIFO op runs, which called flushTls and submitted the SQE.
-                            Abort.run[Timeout | Closed](Async.timeout(30.seconds)(fifoBarrier(drv).safe.get)).map { _ =>
-                                val sendsAfter = recording.sendBufs.size()
-                                handle.tls = Absent
-                                drv.closeHandle(handle)
-                                discard(sock.close(peerFd))
-                                assert(
-                                    sendsAfter > sendsBefore,
-                                    s"the kick must fire: kyo_uring_prep_send must be called once rawSendInFlight is cleared, " +
-                                        s"but sendBufs before=$sendsBefore after=$sendsAfter"
-                                )
-                            }
-                        }
+                    // FIFO barrier 2: fires after the Write 2 FIFO op runs, which called flushTls and submitted the SQE.
+                    fifoBarrier(drv).safe.get.map { _ =>
+                        val sendsAfter = recording.sendBufs.size()
+                        assert(
+                            sendsAfter > sendsBefore,
+                            s"the kick must fire: kyo_uring_prep_send must be called once rawSendInFlight is cleared, " +
+                                s"but sendBufs before=$sendsBefore after=$sendsAfter"
+                        )
                     }
                 }
             }.map(_ => succeed)

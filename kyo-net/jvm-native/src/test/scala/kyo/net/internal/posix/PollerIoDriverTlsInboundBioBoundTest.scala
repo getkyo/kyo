@@ -42,8 +42,9 @@ import kyo.scheduler.IOPromise
   *
   * Built on the same real loopback + real epoll/kqueue + real BoringSSL infrastructure as [[PollerIoDriverTlsStagingAliasTest]]. JVM/Native
   * only (JS uses a different recv shape). Deterministic: every record is encrypted and queued before the reader runs, the sender parks on real
-  * writable readiness when the kernel send buffer fills, the reader frees it, and the bounded await resolves on the real plaintext-byte count
-  * (no sleep, no timeout-as-synchronization). The FIFO ordering driving the bound is the production mechanism, not a scripted sequence.
+  * writable readiness when the kernel send buffer fills, the reader frees it, and the wait resolves on the real plaintext-byte count (no sleep,
+  * no timeout-as-synchronization). The FIFO ordering driving the bound is the production mechanism, not a scripted sequence. The engine and
+  * handle teardown runs in `Sync.ensure`, so a leaf interrupted by its timeout releases them the same way a finished one does.
   */
 class PollerIoDriverTlsInboundBioBoundTest extends Test:
 
@@ -157,7 +158,14 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                         val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         acceptedH.tls = Present(recordingServer)
                         val readBufferSize = acceptedH.readBufferSize
-                        onFifo(driver, TlsEngineLoopback.handshake(clientEngine, serverEngine)).safe.get.flatMap { handshakeDone =>
+                        val clientH        = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        // In ensure, so an interrupted leaf releases the client engine and both handles too; each runs on the engine FIFO
+                        // behind any engine op still queued for the connection.
+                        Sync.ensure(Sync.defer {
+                            driver.submitEngineOp(() => clientEngine.free())
+                            driver.closeHandle(acceptedH)
+                            driver.closeHandle(clientH)
+                        })(onFifo(driver, TlsEngineLoopback.handshake(clientEngine, serverEngine)).safe.get.flatMap { handshakeDone =>
                             assert(handshakeDone, "handshake must complete before the reads")
                             val n = 16
                             // N large distinct application records near the TLS max record size, so the ciphertext stream is ~256 KB: far larger
@@ -175,7 +183,6 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                                     onFifo(driver, TlsEngineLoopback.encrypt(clientEngine, records(k))).safe.get
                                         .map(c => encryptAll(k + 1, acc ++ c))
                             encryptAll(0, Array.emptyByteArray).flatMap { allCipher =>
-                                val clientH  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                                 val plainAcc = new java.io.ByteArrayOutputStream
                                 val done     = Promise.Unsafe.init[Unit, Abort[Closed]]()
                                 val reader   = new StandingReader(driver, acceptedH, expectedPlain.length, plainAcc, done)
@@ -185,57 +192,48 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                                 reader.start()
                                 Fiber.initUnscoped(Abort.run[Closed](sendAllBackpressured(driver, clientH, client, allCipher))).flatMap {
                                     _ =>
-                                        Abort.run[Timeout | Closed](Async.timeout(20.seconds)(done.safe.get)).map { outcome =>
+                                        logIfInterrupted(
+                                            s"standing read stalled after ${plainAcc.size()} of ${expectedPlain.length} plaintext bytes"
+                                        )(done.safe.get).map { _ =>
                                             import scala.jdk.CollectionConverters.*
                                             val feedLens = recordingServer.feedLens.iterator().asScala.toList
                                             val maxIn    = recordingServer.maxInFlight.get()
-                                            driver.submitEngineOp(() => clientEngine.free())
-                                            driver.closeHandle(acceptedH)
-                                            driver.closeHandle(clientH)
-                                            outcome match
-                                                case Result.Success(()) =>
-                                                    // Byte-exact, in-order plaintext: the bound did not cost correctness.
-                                                    assert(
-                                                        plainAcc.toByteArray.toList == expectedPlain.toList,
-                                                        s"decrypted plaintext mismatch: got ${plainAcc.size()} bytes, expected ${expectedPlain.length}"
-                                                    )
-                                                    // The amplification bound: NO single feed carried the whole burst. Every feed is bounded by
-                                                    // readBufferSize, so the read-BIO never received more than readBufferSize bytes in one feed.
-                                                    feedLens.zipWithIndex.foreach { case (len, i) =>
-                                                        assert(
-                                                            len <= readBufferSize,
-                                                            s"feed $i carried $len bytes, exceeds readBufferSize=$readBufferSize: the BIO took more than one recv-sized chunk"
-                                                        )
-                                                    }
-                                                    // Incremental drain: the ~256 KB burst arrived across at least ceil(totalCipher /
-                                                    // readBufferSize) feeds, proving the BIO is consumed as it fills, not accumulated whole.
-                                                    val minFeeds = (allCipher.length + readBufferSize - 1) / readBufferSize
-                                                    assert(
-                                                        feedLens.size >= minFeeds,
-                                                        s"expected >= $minFeeds feeds for ${allCipher.length} ciphertext bytes at readBufferSize=$readBufferSize, got ${feedLens.size}: the burst was not fed incrementally"
-                                                    )
-                                                    // The total fed equals the whole ciphertext stream (no bytes dropped by the bound).
-                                                    assert(
-                                                        feedLens.sum == allCipher.length,
-                                                        s"fed ${feedLens.sum} bytes total, expected the whole ciphertext stream ${allCipher.length}"
-                                                    )
-                                                    // Single-in-flight: no feed ran before the prior feed's drain completed, so the inter-feed
-                                                    // BIO peak is bounded by one feed (<= readBufferSize) plus at most one partial-record tail.
-                                                    assert(
-                                                        maxIn == 1,
-                                                        s"engine ops overlapped: maxInFlight=$maxIn (expected 1); a feed ran before the prior drain finished, so the BIO could accumulate"
-                                                    )
-                                                    succeed
-                                                case Result.Failure(_: Timeout) =>
-                                                    fail(
-                                                        s"standing read stalled after ${plainAcc.size()} of ${expectedPlain.length} plaintext bytes"
-                                                    )
-                                                case other => fail(s"unexpected standing-read outcome: $other")
-                                            end match
+                                            // Byte-exact, in-order plaintext: the bound did not cost correctness.
+                                            assert(
+                                                plainAcc.toByteArray.toList == expectedPlain.toList,
+                                                s"decrypted plaintext mismatch: got ${plainAcc.size()} bytes, expected ${expectedPlain.length}"
+                                            )
+                                            // The amplification bound: NO single feed carried the whole burst. Every feed is bounded by
+                                            // readBufferSize, so the read-BIO never received more than readBufferSize bytes in one feed.
+                                            feedLens.zipWithIndex.foreach { case (len, i) =>
+                                                assert(
+                                                    len <= readBufferSize,
+                                                    s"feed $i carried $len bytes, exceeds readBufferSize=$readBufferSize: the BIO took more than one recv-sized chunk"
+                                                )
+                                            }
+                                            // Incremental drain: the ~256 KB burst arrived across at least ceil(totalCipher / readBufferSize) feeds,
+                                            // proving the BIO is consumed as it fills, not accumulated whole.
+                                            val minFeeds = (allCipher.length + readBufferSize - 1) / readBufferSize
+                                            assert(
+                                                feedLens.size >= minFeeds,
+                                                s"expected >= $minFeeds feeds for ${allCipher.length} ciphertext bytes at readBufferSize=$readBufferSize, got ${feedLens.size}: the burst was not fed incrementally"
+                                            )
+                                            // The total fed equals the whole ciphertext stream (no bytes dropped by the bound).
+                                            assert(
+                                                feedLens.sum == allCipher.length,
+                                                s"fed ${feedLens.sum} bytes total, expected the whole ciphertext stream ${allCipher.length}"
+                                            )
+                                            // Single-in-flight: no feed ran before the prior feed's drain completed, so the inter-feed BIO peak is
+                                            // bounded by one feed (<= readBufferSize) plus at most one partial-record tail.
+                                            assert(
+                                                maxIn == 1,
+                                                s"engine ops overlapped: maxInFlight=$maxIn (expected 1); a feed ran before the prior drain finished, so the BIO could accumulate"
+                                            )
+                                            succeed
                                         }
                                 }
                             }
-                        }
+                        })
                     }
                 }.map { result =>
                     // The loop's terminal exit runs every withdrawal still pending, so the handles' deferred close(fd) calls have run once it is done.

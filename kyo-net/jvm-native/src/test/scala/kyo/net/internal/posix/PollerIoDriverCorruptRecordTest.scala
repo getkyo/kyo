@@ -22,14 +22,14 @@ import kyo.net.internal.transport.ReadOutcome
   * coalesced in one wire write, so both records arrive in a single recv, and reads once via the driver. It asserts the read fails with the
   * typed decrypt failure, the handle is closing, and neither the good prefix nor a bare `Closed` is delivered.
   *
-  * Gate: [[PosixTestSockets.assumePoller]] (Linux epoll or macOS kqueue) and [[TlsRealEngines.assumeTlsReady]] (a staged BoringSSL/OpenSSL
-  * provider); cancels cleanly on JS, off a poller platform, or where no provider is staged, so this is CI-validated on native Linux with
-  * BoringSSL staged.
+  * Gate: [[PosixTestSockets.assumePoller]] (Linux epoll or macOS kqueue) and [[TlsRealEngines.assumeBoringSslReady]] (a staged BoringSSL);
+  * cancels cleanly on JS, off a poller platform, or where BoringSSL is not staged, so this is CI-validated on native Linux with BoringSSL
+  * staged.
   *
   * Anti-flakiness: the read synchronizes on the read promise (completed only when the recv edge dispatches and the decrypt engine op runs),
-  * never a timer; `Async.timeout` is only the deadlock ceiling. The settle-wait on `tls` going Absent lets the driver's own queued TLS
-  * teardown run its engine free before `withEngines` frees the same engine out of band, so that becomes a harmless CAS-guarded second free.
-  * No sleep, no busy-spin.
+  * never a timer; a hang fails by the leaf timeout. The driver owns the server engine through the accepted handle and frees it in the teardown
+  * `closeHandle` queues, so no out-of-band free races that teardown; the client engine never reaches the driver. Both are released in
+  * `Sync.ensure`, so an interrupted leaf releases them too. No sleep, no busy-spin.
   */
 class PollerIoDriverCorruptRecordTest extends Test:
 
@@ -37,23 +37,28 @@ class PollerIoDriverCorruptRecordTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    /** Poll a real condition until it holds or the bound elapses, re-checking each turn after a short Async.sleep. */
     "PollerIoDriver corrupt-record (real epoll/kqueue, real engine)" - {
 
         "a fatal TLS record on a read fails the read with a typed decrypt error and tears the connection down, never delivering the good prefix" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
-                TlsRealEngines.assumeTlsReady()
+                TlsRealEngines.assumeBoringSslReady()
                 PosixTestSockets.assumePoller()
-                TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
-                    val driver = PollerIoDriver.init()
-                    discard(driver.start())
-                    Sync.ensure(Sync.defer(driver.close())) {
-                        PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                val clientEngine = TlsRealEngines.singleEngine(isServer = false)
+                val serverEngine = TlsRealEngines.singleEngine(isServer = true)
+                val driver       = PollerIoDriver.init()
+                discard(driver.start())
+                Sync.ensure(Sync.defer(driver.close())) {
+                    PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        acceptedH.tls = Present(serverEngine)
+                        Sync.ensure(Sync.defer {
+                            driver.closeHandle(acceptedH)
+                            discard(sock.close(client))
+                            clientEngine.free()
+                        }) {
                             val handshakeDone = TlsEngineLoopback.handshake(clientEngine, serverEngine)
                             assert(handshakeDone, "TLS handshake must complete before the read")
-                            val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                            acceptedH.tls = Present(serverEngine)
 
                             val good = "GOOD-application-record".getBytes("UTF-8")
                             val bad  = "TAMPERED-application-record".getBytes("UTF-8")
@@ -68,9 +73,7 @@ class PollerIoDriverCorruptRecordTest extends Test:
                             val corrupted = badRecord.clone()
                             corrupted(corrupted.length - 1) = (corrupted(corrupted.length - 1) ^ 0xff).toByte
                             // Coalesce [good record][corrupted record] in one wire write, exactly the on-wire batching the driver sees under load.
-                            val coalesced = new Array[Byte](goodRecord.length + corrupted.length)
-                            java.lang.System.arraycopy(goodRecord, 0, coalesced, 0, goodRecord.length)
-                            java.lang.System.arraycopy(corrupted, 0, coalesced, goodRecord.length, corrupted.length)
+                            val coalesced = goodRecord ++ corrupted
                             // Send BEFORE arming the read so both records are in the accepted side's kernel buffer, delivered in one recv.
                             val cipherBuf = Buffer.fromArray[Byte](coalesced)
                             val sendR     =
@@ -80,48 +83,38 @@ class PollerIoDriverCorruptRecordTest extends Test:
 
                             val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             driver.awaitRead(acceptedH, promise)
-                            Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
+                            awaitOutcome(
+                                promise,
+                                "the read hung on a fatal record: the fatal path did not complete the read (a torn-down handle was re-armed)"
+                            ).map { outcome =>
                                 // requestClose fired inside the fatal completion (poll carrier), which happens-before this outcome, so isClosing is
-                                // already settled here. Capture it before our own closeHandle below.
+                                // already settled here, before the closeHandle in the finalizer.
                                 val closing = acceptedH.isClosing()
-                                driver.closeHandle(acceptedH)
-                                discard(sock.close(client))
-                                // Let the driver's queued TLS teardown run its own engine free before withEngines frees the same engine out of band.
-                                awaitCondition(
-                                    "the driver's own TLS teardown never settled (a hang, not the fatal-record path this guard targets)"
-                                ) {
-                                    !acceptedH.tls.isDefined
-                                }.andThen {
-                                    outcome match
-                                        case Result.Success(ReadOutcome.Failed(e: NetConnectionIoException)) =>
-                                            // RFC 5246 §7.2.2: the fatal record tears the connection down, surfaced as the typed decrypt failure
-                                            // (never a misleading Closed, and never the good prefix). The handle must be closing, not re-armed.
-                                            assert(
-                                                e.operation == NetConnectionIoException.Operation.Decrypt,
-                                                s"the fatal record must surface as a TLS decrypt failure; got operation ${e.operation}"
-                                            )
-                                            assert(
-                                                closing,
-                                                "the fatal record must mark the handle closing (requestClose), tearing it down rather than re-arming a freed handle"
-                                            )
-                                        case Result.Success(ReadOutcome.Bytes(got)) =>
-                                            fail(
-                                                s"a fatal TLS record was swallowed: the read delivered ${got.size} bytes (${got.toArray.toList}) " +
-                                                    "instead of the typed decrypt failure; RFC 5246 §7.2.2 requires the connection to be torn down"
-                                            )
-                                        case Result.Failure(_: Closed) =>
-                                            fail(
-                                                "a fatal TLS record surfaced as a bare Closed instead of the typed decrypt failure: the fatal " +
-                                                    "path fell through to the endDispatch closing check. io_uring and the poller must agree"
-                                            )
-                                        case Result.Failure(_: Timeout) =>
-                                            fail(
-                                                "the read hung on a fatal record: the fatal path did not complete the read (a torn-down handle was re-armed)"
-                                            )
-                                        case other =>
-                                            fail(s"a fatal TLS record must surface as the typed decrypt failure; got: $other")
-                                    end match
-                                }
+                                outcome match
+                                    case Result.Success(ReadOutcome.Failed(e: NetConnectionIoException)) =>
+                                        // RFC 5246 §7.2.2: the fatal record tears the connection down, surfaced as the typed decrypt failure
+                                        // (never a misleading Closed, and never the good prefix). The handle must be closing, not re-armed.
+                                        assert(
+                                            e.operation == NetConnectionIoException.Operation.Decrypt,
+                                            s"the fatal record must surface as a TLS decrypt failure; got operation ${e.operation}"
+                                        )
+                                        assert(
+                                            closing,
+                                            "the fatal record must mark the handle closing (requestClose), tearing it down rather than re-arming a freed handle"
+                                        )
+                                    case Result.Success(ReadOutcome.Bytes(got)) =>
+                                        fail(
+                                            s"a fatal TLS record was swallowed: the read delivered ${got.size} bytes (${got.toArray.toList}) " +
+                                                "instead of the typed decrypt failure; RFC 5246 §7.2.2 requires the connection to be torn down"
+                                        )
+                                    case Result.Failure(_: Closed) =>
+                                        fail(
+                                            "a fatal TLS record surfaced as a bare Closed instead of the typed decrypt failure: the fatal " +
+                                                "path fell through to the endDispatch closing check. io_uring and the poller must agree"
+                                        )
+                                    case other =>
+                                        fail(s"a fatal TLS record must surface as the typed decrypt failure; got: $other")
+                                end match
                             }
                         }
                     }
