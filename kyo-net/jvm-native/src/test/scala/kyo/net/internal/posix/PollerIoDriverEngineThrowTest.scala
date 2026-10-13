@@ -22,8 +22,7 @@ import kyo.net.Test
   *
   * Anti-flakiness: B is submitted only AFTER A's throw is observed (the `aThrew` latch fires from inside A's op, on the drain carrier, before it
   * throws), so the ordering is deterministic with no race on which op the drain sees first. The leaf synchronizes on B's promise resolving (the real
-  * drain) rather than a timer; `Async.timeout` is only the deadlock ceiling so a dead drain fails the test fast instead of hanging the suite. No
-  * sleep, no busy-spin.
+  * drain) rather than a timer; a dead drain fails by the leaf timeout. No sleep, no busy-spin.
   */
 class PollerIoDriverEngineThrowTest extends Test:
 
@@ -65,14 +64,9 @@ class PollerIoDriverEngineThrowTest extends Test:
                 // Submit B only after A's throw is observed, so B is provably enqueued behind a throwing A (the worker-death window).
                 aThrew.safe.get.map { _ =>
                     driver.submitEngineOp(opB)
-                    Abort.run[Timeout](Async.timeout(5.seconds)(bRan.safe.get)).map {
-                        case Result.Success(_)          => succeed
-                        case Result.Failure(_: Timeout) =>
-                            fail(
-                                "engine op B never ran: a throwing op A escaped the FIFO drain loop and abandoned the rest of the queue (Netty #7337)"
-                            )
-                        case other => fail(s"unexpected outcome: $other")
-                    }
+                    logIfInterrupted(
+                        "engine op B never ran: a throwing op A escaped the FIFO drain loop and abandoned the rest of the queue (Netty #7337)"
+                    )(bRan.safe.get).andThen(succeed)
                 }
             }
         }

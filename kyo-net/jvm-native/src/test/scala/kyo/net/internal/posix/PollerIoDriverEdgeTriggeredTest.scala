@@ -81,23 +81,23 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         Loop(()) { _ =>
             val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(handle, p)
-            Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](p.safe.get))).map {
-                case Result.Success(Result.Success(ReadOutcome.Bytes(span))) =>
+            awaitOutcome(p, s"awaitRead never completed after ${acc.size()} bytes").map {
+                case Result.Success(ReadOutcome.Bytes(span)) =>
                     acc.write(span.toArrayUnsafe)
                     Loop.continue(())
-                case Result.Success(Result.Success(_)) =>
+                case Result.Success(_) =>
                     Loop.done(acc.toByteArray) // EOF (PeerFin, CleanClose, etc.)
-                case Result.Success(Result.Failure(closed: Closed)) =>
+                case Result.Failure(closed) =>
                     Abort.fail(closed)
-                case _ =>
-                    Abort.fail(Closed("PollerIoDriverEdgeTriggeredTest", summon[Frame], "awaitRead timed out or panicked"))
+                case Result.Panic(e) =>
+                    Abort.fail(Closed("PollerIoDriverEdgeTriggeredTest", summon[Frame], s"awaitRead panicked: $e"))
             }
         }
     end collectUntilEof
 
     /** Collect bytes from successive awaitRead calls on `handle` until exactly `want` bytes have arrived. The peer must send at least
-      * `want` bytes before this returns; no close or half-close is required. Each awaitRead has a 10-second timeout so a stranded residual
-      * surfaces as a timed-out failure rather than hanging indefinitely.
+      * `want` bytes before this returns; no close or half-close is required. A stranded residual is failed by the leaf timeout, with the
+      * byte count reached logged.
       */
     private def collectExactBytes(
         driver: PollerIoDriver,
@@ -110,20 +110,16 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             else
                 val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, p)
-                Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](p.safe.get))).map {
-                    case Result.Success(Result.Success(ReadOutcome.Bytes(span))) =>
+                awaitOutcome(p, s"awaitRead never completed after ${acc.size()} of $want bytes (residual stranded on ET)").map {
+                    case Result.Success(ReadOutcome.Bytes(span)) =>
                         acc.write(span.toArrayUnsafe)
                         Loop.continue(())
-                    case Result.Success(Result.Success(_)) =>
+                    case Result.Success(_) =>
                         Loop.done(acc.toByteArray) // EOF
-                    case Result.Success(Result.Failure(closed: Closed)) =>
+                    case Result.Failure(closed) =>
                         Abort.fail(closed)
-                    case _ =>
-                        Abort.fail(Closed(
-                            "PollerIoDriverEdgeTriggeredTest",
-                            summon[Frame],
-                            "awaitRead timed out (residual stranded on ET)"
-                        ))
+                    case Result.Panic(e) =>
+                        Abort.fail(Closed("PollerIoDriverEdgeTriggeredTest", summon[Frame], s"awaitRead panicked: $e"))
                 }
         }
     end collectExactBytes
@@ -263,7 +259,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                             val sendBuf = Buffer.fromArray[Byte](Array[Byte]((i % 127).toByte))
                             sock.send(clientFd, sendBuf, 1L, PosixConstants.MSG_NOSIGNAL).safe.get.map { _ =>
                                 sendBuf.close()
-                                Abort.run[Timeout](Async.timeout(5.seconds)(p.safe.get)).map {
+                                awaitOutcome(p, s"$label read $i never completed").map {
                                     case Result.Success(_) => Loop.continue(i + 1)
                                     case other             => fail(s"$label read $i failed: $other")
                                 }
@@ -362,16 +358,16 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             // Two sequential write arms on the same fd. Each must resolve (the fd is always writable on a loopback with no backpressure).
             val p1 = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
             driver.awaitWritable(handle, p1)
-            Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](p1.safe.get))).map { r1 =>
-                assert(r1.isSuccess, s"first write arm must resolve without timeout: $r1")
+            awaitOutcome(p1, "the first write arm never resolved").map { r1 =>
+                assert(r1.isSuccess, s"first write arm must resolve: $r1")
                 // Re-arm after the first resolves.
                 val p2 = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                 driver.awaitWritable(handle, p2)
-                Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](p2.safe.get))).map { r2 =>
+                awaitOutcome(p2, "the second write arm never resolved (a deadlock)").map { r2 =>
                     driver.close()
                     PosixTestSockets.closePeerForEof(spy, clientFd)
                     PosixTestSockets.closePeerForEof(spy, acceptedFd)
-                    assert(r2.isSuccess, s"second write arm must resolve without deadlock or timeout: $r2")
+                    assert(r2.isSuccess, s"second write arm must resolve: $r2")
                     // registerWrite fires once per awaitWritable call: 2 write arms must produce exactly 2 registerWrite calls.
                     val wc = backend.registerWriteCount.get()
                     assert(wc == 2, s"exactly 2 registerWrite calls expected for 2 awaitWritable arms; got $wc")
@@ -416,7 +412,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                 driver.closeHandle(handle)
                 // Wait until the deregister is actually processed by the poll loop (the OpDeregister command is in the changeQueue;
                 // the poll loop drains it asynchronously). The deregisteredFd latch fires when deregister() executes on the backend.
-                Abort.run[Timeout](Async.timeout(5.seconds)(backend.deregisteredFd(acceptedFd).safe.get)).map { _ =>
+                logIfInterrupted("the deregister never ran on the poll loop")(backend.deregisteredFd(acceptedFd).safe.get).map { _ =>
                     driver.close()
                     PosixTestSockets.closePeerForEof(spy, clientFd)
                     // acceptedFd is ALREADY closed: closeHandle above ran closeNow, which closes the OS fd (readFd == writeFd) through the
@@ -462,7 +458,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                             sock.send(client2Fd, sendBuf, 1L, PosixConstants.MSG_NOSIGNAL).safe.get.map { _ =>
                                 sendBuf.close()
                                 // The read must deliver exactly the byte we sent, not a stale empty span or a phantom delivery.
-                                Abort.run[Timeout](Async.timeout(5.seconds)(p2.safe.get)).map { outcome =>
+                                awaitOutcome(p2, s"the read on recycled fd=$accepted2Fd never completed").map { outcome =>
                                     driver2.close()
                                     PosixTestSockets.closePeerForEof(spy2, client2Fd)
                                     PosixTestSockets.closePeerForEof(spy2, accepted2Fd)
@@ -524,8 +520,8 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                 sendAll(clientFd, firstPayload).map { _ =>
                     // Collect the first payload. Because firstPayload.length < readBufferSize, dispatchReadPlain sets
                     // readMightHaveMore=false after this recv. The consumer-paced drain therefore does NOT re-dispatch.
-                    Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](p1.safe.get))).map {
-                        case Result.Success(Result.Success(ReadOutcome.Bytes(span))) =>
+                    awaitOutcome(p1, "the first awaitRead never completed").map {
+                        case Result.Success(ReadOutcome.Bytes(span)) =>
                             assert(
                                 span.size == firstPayload.length,
                                 s"first delivery must match firstPayload size: got ${span.size}"
@@ -563,10 +559,8 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                                     end match
                                 }
                             }
-                        case Result.Success(Result.Failure(closed: Closed)) =>
-                            fail(s"first awaitRead got Closed: $closed")
-                        case _ =>
-                            fail("first awaitRead timed out or panicked")
+                        case other =>
+                            fail(s"first awaitRead did not deliver bytes: $other")
                     }
                 }
             }
@@ -576,8 +570,8 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
     "wakeLatencyBounded: awaitRead on a data-ready fd completes promptly via the poll-loop wake" in {
         PosixTestSockets.assumePoller()
         // Send a byte to make the accepted fd immediately read-ready. Submit awaitRead while the poll loop may be parked.
-        // The wake (backend.wake) must cut the park short so the read delivers within 5 seconds, not just after the 100ms timeout.
-        // The wakeCount assertion pins the wake path (a regression that drops the wake would still deliver after the timeout).
+        // The poll parks with no timeout, so only the wake (backend.wake) cutting the park short delivers the read; without it the leaf
+        // timeout fails it. The wakeCount assertion pins the wake path.
         PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
             val real     = PollerBackend.default()
             val pollerFd = real.create()
@@ -592,7 +586,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                 sendBuf.close()
                 val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, p)
-                Abort.run[Timeout](Async.timeout(5.seconds)(p.safe.get)).map { outcome =>
+                awaitOutcome(p, s"awaitRead on a data-ready fd never delivered; wakeCount=${backend.wakeCount.get()}").map { outcome =>
                     driver.close()
                     PosixTestSockets.closePeerForEof(spy, clientFd)
                     PosixTestSockets.closePeerForEof(spy, acceptedFd)

@@ -25,8 +25,8 @@ import kyo.net.internal.transport.ReadOutcome
   * value 104 (ECONNRESET is 54 on macOS, 104 on Linux) to remain cross-platform.
   *
   * Anti-flakiness: per-fd registration latches arm the injection only after both interests have executed on the change worker;
-  * `Async.timeout(5.seconds)` is the deadlock ceiling for leaf 1 (a driver that dropped the event would hang); leaf 2 uses a 2s timeout that expires as the
-  * PASS signal.
+  * leaf 1 waits with no bound, so a driver that dropped the event fails by the leaf timeout; leaf 2 asserts the event is dropped, a negative
+  * only a window can show, so its 2s timeout expiring is the PASS signal.
   *
   * Uses a `RecordingPollerBackend(PollerBackend.default())` with the authorized synthetic error-only injection. SO_ERROR is read from the
   * real kernel via `RecordingSocketBindings`, not a scripted value. Per-fd registration latches arm the injection only after both interests
@@ -66,7 +66,7 @@ class PollerIoDriverErrorEventTest extends Test:
             // can run dispatchError; there is no constructible interleaving that yields Closed).
             //
             // Anti-flakiness: registeredRead/registeredWrite latch on the real registrations executing on the change worker, then the injection
-            // is armed; Async.timeout(5.seconds) is only the deadlock ceiling (a driver that dropped the event would hang).
+            // is armed; a driver that dropped the event fails by the leaf timeout.
             PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
                 val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
                 val real     = PollerBackend.default()
@@ -90,10 +90,9 @@ class PollerIoDriverErrorEventTest extends Test:
                     _ <- backend.registeredRead(acceptedFd).safe.get
                     _ <- backend.registeredWrite(acceptedFd).safe.get
                     _ = backend.syntheticErrorFd.set(acceptedFd)
-                    // The pending read must be failed Closed by the error dispatch (confirmed real SO_ERROR). Bounded so a driver
-                    // that dropped the event and left the read pending forever fails fast with a timeout rather than hanging.
-                    readOutcome  <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
-                    writeOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(writePromise.safe.get))
+                    // The pending read must be failed Closed by the error dispatch (confirmed real SO_ERROR).
+                    readOutcome  <- awaitOutcome(readPromise, "error event dropped: the pending read was never failed")
+                    writeOutcome <- awaitOutcome(writePromise, "error event dropped: the pending writable was stranded")
                     _            <- Sync.defer {
                         driver.close()
                         // Close the accepted fd (driver.close does not close socket fds; closeHandle would, but it wasn't called here).
@@ -105,9 +104,7 @@ class PollerIoDriverErrorEventTest extends Test:
                         // The pending read is failed by the real error: either the error dispatch fails it Closed, or the recv itself reaps the
                         // errno and surfaces a typed receive failure (ReadOutcome.Failed). Both mean the read was failed, not stranded.
                         case Result.Success(ReadOutcome.Failed(_)) => succeed
-                        case Result.Failure(_: Timeout)            =>
-                            fail("error event dropped: the pending read was never failed and hung")
-                        case other => fail(s"unexpected read outcome: $other")
+                        case other                                 => fail(s"unexpected read outcome: $other")
                     end match
                     writeOutcome match
                         // A real reset fd is genuinely write-ready: the real kernel delivers the write bit and dispatchWritable completes
@@ -116,8 +113,6 @@ class PollerIoDriverErrorEventTest extends Test:
                         case Result.Success(_)         => succeed
                         case Result.Failure(_: Closed) =>
                             fail("a real reset fd is write-ready; the pending writable must complete Success, not Closed")
-                        case Result.Failure(_: Timeout) =>
-                            fail("error event dropped: the pending writable was stranded and hung")
                         case other => fail(s"unexpected write outcome: $other")
                     end match
                 end for

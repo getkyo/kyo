@@ -19,7 +19,7 @@ import kyo.scheduler.IOPromise
   * This leaf drives the REAL [[PollerIoDriver]] over a real loopback pair (epoll on Linux, kqueue on macOS/BSD). It mirrors the `ReadPump`
   * standing-read exactly with a reused [[IOPromise]] that, on every completion, re-arms the next read via `awaitRead`, and asserts that a burst
   * of N back-to-back peer writes is delivered in full and in order. An epoll path that lost a re-arm to the `rearmSurvivors` clear
-  * would strand one of the writes and time out the bounded await for the expected byte count.
+  * would strand one of the writes, leaving the wait for the expected byte count parked until the leaf timeout fails it.
   */
 class PollerIoDriverStandingReadTest extends Test:
 
@@ -147,14 +147,12 @@ class PollerIoDriverStandingReadTest extends Test:
                             val payload = Array.tabulate[Byte](msgSize)(j => (i + j).toByte)
                             sendAll(client, payload).andThen(Loop.continue(i + 1))
                     }.andThen {
-                        Abort.run[Timeout | Closed](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
+                        awaitOutcome(done, s"lost re-arm: standing read stalled after ${acc.size()} of $total bytes").map { outcome =>
                             driver.closeHandle(acceptedH)
                             discard(sock.close(client))
                             outcome match
                                 case Result.Success(()) =>
                                     assert(acc.size() == total, s"collected ${acc.size()} bytes, expected $total")
-                                case Result.Failure(_: Timeout) =>
-                                    fail(s"lost re-arm: standing read stalled after ${acc.size()} of $total bytes")
                                 case other => fail(s"unexpected standing-read outcome: $other")
                             end match
                         }

@@ -268,8 +268,8 @@ class CloseDuringBackpressuredFlushTest extends Test:
                 // smaller payload does NOT park reliably: at these shrunk buffers the kernel drains the loopback in the background fast enough that a
                 // payload at or below ~256 KB sometimes flushes in full with no EAGAIN, so no writability is armed and the close-vs-writable race
                 // window disappears. The per-iteration cost is dominated by encrypting 600 KB up to the park point (~0.3 s on Scala Native, which has
-                // no JIT and slower crypto); 50 iterations overran the Test base's 15 s deadlock ceiling, so the count is 10 (~3 s here, comfortable
-                // margin for a slower CI host) while keeping the parking mechanism and the free-once / no-UAF assertions below unchanged.
+                // no JIT and slower crypto), so 10 iterations take ~3 s there; the parking mechanism and the free-once / no-UAF assertions below
+                // hold for any count.
                 val iterations = 10
 
                 def oneRace(i: Int): Unit < Async =

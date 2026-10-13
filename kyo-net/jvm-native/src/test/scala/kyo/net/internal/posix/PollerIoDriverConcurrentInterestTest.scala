@@ -108,18 +108,20 @@ class PollerIoDriverConcurrentInterestTest extends Test:
 
                     for
                         // The writable must complete (the socket is writable). This is the point past which a last-write-wins epoll would have lost the read.
-                        writeOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(writePromise.safe.get))
+                        writeOutcome <- awaitOutcome(writePromise, "the writable on the shared fd never fired")
                         // Only now does the peer send: with the read interest clobbered + ONESHOT-disabled, a last-write-wins epoll would never report this
                         // readiness. The driver re-arms the read survivor, so it fires and delivers the bytes.
                         _           <- sendAll(client, payload)
-                        readOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
+                        readOutcome <- awaitOutcome(
+                            readPromise,
+                            "interest starvation: the parked read was clobbered by the writable arm and its readiness was never delivered"
+                        )
                         _ = driver.closeHandle(acceptedH)
                         _ <- sock.close(client).safe.get
                     yield
                         writeOutcome match
-                            case Result.Success(())         => succeed
-                            case Result.Failure(_: Timeout) => fail("the writable on the shared fd never fired")
-                            case other                      => fail(s"unexpected writable outcome: $other")
+                            case Result.Success(()) => succeed
+                            case other              => fail(s"unexpected writable outcome: $other")
                         end match
                         readOutcome match
                             case Result.Success(ReadOutcome.Bytes(got)) =>
@@ -129,10 +131,6 @@ class PollerIoDriverConcurrentInterestTest extends Test:
                                 )
                             case Result.Success(other) =>
                                 fail(s"expected ReadOutcome.Bytes, got $other")
-                            case Result.Failure(_: Timeout) =>
-                                fail(
-                                    "interest starvation: the parked read was clobbered by the writable arm and its readiness was never delivered"
-                                )
                             case other => fail(s"unexpected read outcome: $other")
                         end match
                     end for

@@ -57,7 +57,10 @@ class PollerIoDriverStaleWritableTest extends Test:
                     // activeFds.containsKey check would find newId present and deliver Success to the wrong (prior) owner.
                     discard(driver.start())
 
-                    Abort.run[Timeout | Closed](Async.timeout(10.seconds)(oldWritable.safe.get)).map { result =>
+                    awaitOutcome(
+                        oldWritable,
+                        "writable event never fired: the accepted side of a loopback pair should be immediately writable"
+                    ).map { result =>
                         driver.closeHandle(newHandle)
                         discard(sock.close(client))
                         // A stale writable for a recycled fd must resolve Closed (stale-dropped), never Success.
@@ -67,8 +70,6 @@ class PollerIoDriverStaleWritableTest extends Test:
                                 fail(
                                     "stale writable delivered Success to the prior owner: dispatchWritable stale-id guard failed"
                                 )
-                            case Result.Failure(_: Timeout) =>
-                                fail("writable event never fired: the accepted side of a loopback pair should be immediately writable")
                             case other => fail(s"expected stale writable dropped as Closed, got $other")
                         end match
                     }

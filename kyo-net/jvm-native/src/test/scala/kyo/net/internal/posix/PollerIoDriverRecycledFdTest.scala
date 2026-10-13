@@ -129,7 +129,7 @@ class PollerIoDriverRecycledFdTest extends Test:
             discard(sock.sendNow(client, sendBuf, payload.length.toLong, PosixConstants.MSG_NOSIGNAL))
             sendBuf.close()
 
-            Abort.run[Timeout | Closed](Async.timeout(5.seconds)(liveRead.safe.get)).map { outcome =>
+            awaitOutcome(liveRead, "the live registration was evicted by the stale deregister: the read stranded").map { outcome =>
                 driver.closeHandle(live)
                 discard(sock.close(client))
                 Sync.defer(driver.close()).map { _ =>
@@ -139,8 +139,6 @@ class PollerIoDriverRecycledFdTest extends Test:
                                 got.toArray.sameElements(payload),
                                 s"the live registration must survive the stale deregister and deliver the bytes, got ${got.toArray.toList}"
                             )
-                        case Result.Failure(_: Timeout) =>
-                            fail("the live registration was evicted by the stale deregister: the read stranded")
                         case other =>
                             fail(s"unexpected read outcome for the surviving registration: $other")
                     end match
@@ -182,22 +180,24 @@ class PollerIoDriverRecycledFdTest extends Test:
             discard(sock.sendNow(client, sendBuf, payload.length.toLong, PosixConstants.MSG_NOSIGNAL))
             sendBuf.close()
 
-            Abort.run[Timeout | Closed](Async.timeout(5.seconds)(liveRead.safe.get)).map { outcome =>
-                driver.closeHandle(live)
-                discard(sock.close(client))
-                Sync.defer(driver.close()).map { _ =>
-                    outcome match
-                        case Result.Success(ReadOutcome.Bytes(got)) =>
-                            assert(
-                                got.toArray.sameElements(payload),
-                                s"the live registration must survive the closing handle's stale register and deliver the bytes, got ${got.toArray.toList}"
-                            )
-                        case Result.Failure(_: Timeout) =>
-                            fail("the live registration was evicted by the closing handle's dangling read re-arm: the read stranded")
-                        case other =>
-                            fail(s"unexpected read outcome for the surviving registration: $other")
-                    end match
-                }
+            awaitOutcome(
+                liveRead,
+                "the live registration was evicted by the closing handle's dangling read re-arm: the read stranded"
+            ).map {
+                outcome =>
+                    driver.closeHandle(live)
+                    discard(sock.close(client))
+                    Sync.defer(driver.close()).map { _ =>
+                        outcome match
+                            case Result.Success(ReadOutcome.Bytes(got)) =>
+                                assert(
+                                    got.toArray.sameElements(payload),
+                                    s"the live registration must survive the closing handle's stale register and deliver the bytes, got ${got.toArray.toList}"
+                                )
+                            case other =>
+                                fail(s"unexpected read outcome for the surviving registration: $other")
+                        end match
+                    }
             }
         }
     }
@@ -230,7 +230,10 @@ class PollerIoDriverRecycledFdTest extends Test:
         val client     = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (ca, cl)   = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
         val connecting = Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get)
-        connecting.andThen(Abort.run[Timeout | Closed | NetException](Async.timeout(5.seconds)(liveAccept.safe.get))).map { outcome =>
+        connecting.andThen(awaitOutcome(
+            liveAccept,
+            "the closed listener's late accept registration evicted the live listener: the connection never reached it"
+        )).map { outcome =>
             Abort.run[Closed | NetException](deadAccept.safe.get).map { deadOutcome =>
                 driver.closeHandle(live)
                 discard(spy.close(client))
@@ -243,12 +246,8 @@ class PollerIoDriverRecycledFdTest extends Test:
                     )
                     assert(deadOutcome.isFailure, s"the closed listener's late accept must be failed Closed, got $deadOutcome")
                     outcome match
-                        case Result.Success(_)          => succeed
-                        case Result.Failure(_: Timeout) =>
-                            fail(
-                                "the closed listener's late accept registration evicted the live listener: the connection never reached it"
-                            )
-                        case other => fail(s"unexpected accept outcome for the live listener: $other")
+                        case Result.Success(_) => succeed
+                        case other             => fail(s"unexpected accept outcome for the live listener: $other")
                     end match
                 }
             }

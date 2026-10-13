@@ -76,9 +76,9 @@ class PollerWakeCloseRaceTest extends Test:
             val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
             driver.awaitConnect(handle, promise)
 
-            // Synchronize on the wake fd actually being closed (the driver's terminal exit ran closeWake). Bounded so a regression that never closes
-            // surfaces as a timeout rather than a hang. After it fires the close-vs-wake race has fully resolved.
-            Abort.run[Timeout](Async.timeout(5.seconds)(closeWakeDone.safe.get)).map { outcome =>
+            // Synchronize on the wake fd actually being closed (the driver's terminal exit ran closeWake); a regression that never closes it is
+            // failed by the leaf timeout. After it fires the close-vs-wake race has fully resolved.
+            awaitOutcome(closeWakeDone, "closeWake never ran at the driver's terminal exit").map { outcome =>
                 PosixTestSockets.closePeerForEof(spy, clientFd)
                 PosixTestSockets.closePeerForEof(spy, acceptedFd)
                 assert(outcome.isSuccess, s"the wake fd must be closed at the driver's terminal exit (closeWake must run): $outcome")
