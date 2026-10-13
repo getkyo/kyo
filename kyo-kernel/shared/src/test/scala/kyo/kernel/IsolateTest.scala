@@ -101,6 +101,16 @@ class IsolateTest extends Test:
             typeCheckFailure("Isolate.derive[NotContextEffect, Any, Any]")(error)
         }
 
+        "an effect a kept effect is a subtype of needs no isolate" in {
+            val isolate                                                = Isolate.derive[NotContextEffect, NotContextEffectSub, Any]
+            val _: Isolate[NotContextEffect, NotContextEffectSub, Any] = isolate
+            succeed
+        }
+
+        "a kept effect does not cover its own subtypes" in {
+            typeCheckFailure("Isolate.derive[NotContextEffectSub, NotContextEffect, Any]")(error)
+        }
+
         "resolves implicitly for context effects" in {
             val i = summon[Isolate[TestEffect1, Any, TestEffect1]]
             val v = i.run(ContextEffect.suspend(Tag[TestEffect1]))

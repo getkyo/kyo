@@ -261,4 +261,19 @@ class IsolatePreludeTest extends kyo.test.Test[Any]:
             assert(memoCount == 2)
         }
     }
+
+    "kept by subtyping" - {
+        "an Abort of a subtype is kept by an Abort of its supertype, derived" in {
+            val isolate = Isolate.derive[Abort[IllegalStateException], Abort[Throwable], Abort[IllegalStateException]]
+            val v       = isolate.run(Abort.fail(new IllegalStateException("boom")))
+            Abort.run[Throwable](v).map(result => assert(result.failure.exists(_.getMessage == "boom")))
+        }
+
+        "an Abort of a subtype is kept by an Abort of its supertype, resolved for a using clause" in {
+            def keeping[S](using isolate: Isolate[S, Abort[Throwable], S])(v: Int < (S & Abort[IllegalStateException])) =
+                isolate.run(v)
+            val v = keeping[Abort[IllegalStateException]](Abort.fail(new IllegalStateException("boom")))
+            Abort.run[Throwable](v).map(result => assert(result.failure.exists(_.getMessage == "boom")))
+        }
+    }
 end IsolatePreludeTest

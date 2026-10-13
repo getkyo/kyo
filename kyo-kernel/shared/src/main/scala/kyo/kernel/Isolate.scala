@@ -383,9 +383,11 @@ object Isolate:
                 )
             }
 
+            // An effect is kept when a kept effect is a subtype of it, as the rows already allow: a computation pending Sync runs
+            // where Async is kept, and one pending Abort[Sub] where Abort[Super] is.
             val isolates =
                 remove
-                    .filterNot(t => keep.exists(t =:= _))
+                    .filterNot(t => keep.exists(_ <:< t))
                     .filterNot(_ <:< TypeRepr.of[ContextEffect[Any]])
                     .map { t =>
                         t.asType match

@@ -1521,4 +1521,11 @@ class FiberTest extends kyo.test.Test[Any]:
         }
     }
 
+    "isolate" - {
+        "a Sync row is kept by a fiber that keeps Async" in {
+            def keeping[S](using isolate: Isolate[S, Async, S])(v: Int < (S & Async)): Int < (S & Async) = isolate.run(v)
+            keeping[Sync](Sync.defer(21).map(_ * 2)).map(result => assert(result == 42))
+        }
+    }
+
 end FiberTest
