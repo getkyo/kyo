@@ -29,8 +29,8 @@ import kyo.net.internal.transport.WriteResult
   * Anti-flakiness: each leaf arms the one-shot `-EINTR` override BEFORE the targeted operation is prepped, so the injection both suppresses
   * the real transfer (a non-blocking recv on an empty socket; a length-0 send) and rewrites that operation's CQE, exactly the no-byte-moved
   * state a real signal interruption produces; nothing else is in flight on the fresh driver, so the one-shot can only hit the targeted op.
-  * Leaves synchronize on the real reap (`cqeSeen` / `awaitReap`) and the engine FIFO barrier rather than a timer. `Async.timeout` is only the
-  * deadlock ceiling. No sleep, no busy-spin.
+  * Leaves synchronize on the real reap (`cqeSeen` / `awaitReap`) and the engine FIFO barrier rather than a timer; a reap that never comes
+  * fails by the leaf timeout. No sleep, no busy-spin.
   */
 class IoUringDriverEintrRetryTest extends Test:
 
@@ -122,18 +122,26 @@ class IoUringDriverEintrRetryTest extends Test:
     end fifoBarrier
 
     /** Drain `want` bytes from `fd` via recvNow into one running accumulator (the peer is a plain socket, no driver involved). */
-    private def recvAll(fd: Int, want: Int)(using AllowUnsafe): Array[Byte] =
+    /** Receive until `want` bytes arrived, yielding the carrier between non-blocking attempts so the leaf timeout can interrupt a peer that
+      * never receives them.
+      */
+    private def recvAll(fd: Int, want: Int)(using AllowUnsafe, Frame): Array[Byte] < Async =
         val out = new java.io.ByteArrayOutputStream()
         val buf = Buffer.alloc[Byte](65536)
-        try
-            while out.size() < want do
-                val r = sock.recvNow(fd, buf, 65536L, PosixConstants.MSG_DONTWAIT)
-                val n = r.value.toInt
-                if n > 0 then out.write(Buffer.copyToArray[Byte](buf, 0, n))
-            end while
-            out.toByteArray
-        finally buf.close()
-        end try
+        Sync.ensure(Sync.defer(buf.close())) {
+            logIfInterrupted(s"the peer received only ${out.size()} of $want bytes") {
+                Loop(()) { _ =>
+                    if out.size() >= want then Loop.done(out.toByteArray)
+                    else
+                        val n = sock.recvNow(fd, buf, 65536L, PosixConstants.MSG_DONTWAIT).value.toInt
+                        if n > 0 then
+                            out.write(Buffer.copyToArray[Byte](buf, 0, n))
+                            Loop.continue(())
+                        else Async.sleep(1.millis).andThen(Loop.continue(()))
+                        end if
+                }
+            }
+        }
     end recvAll
 
     "IoUringDriver EINTR retry" - {
@@ -155,23 +163,22 @@ class IoUringDriverEintrRetryTest extends Test:
                     drv.awaitRead(acceptedH, promise)
                     recording.eintrFired.safe.get.flatMap { _ =>
                         assert(sock.sendNow(client, Buffer.fromArray[Byte](payload), payload.length.toLong, 0).value == 16L)
-                        Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
-                            drv.closeHandle(acceptedH)
-                            discard(sock.close(client))
-                            outcome match
-                                case Result.Success(ReadOutcome.Bytes(got)) =>
-                                    assert(
-                                        got.toArray.toList == payload.toList,
-                                        s"the retried recv must deliver the full payload; got ${got.toArray.toList}"
-                                    )
-                                case Result.Failure(_: Closed) =>
-                                    fail(
-                                        "a -EINTR read CQE was treated as a hard error and failed the read Closed; it must re-submit the recv (POSIX recv)"
-                                    )
-                                case Result.Failure(_: Timeout) =>
-                                    fail("the read hung: an EINTR retry never re-submitted the recv to deliver the data")
-                                case other => fail(s"unexpected read outcome: $other")
-                            end match
+                        awaitOutcome(promise, "the read hung: an EINTR retry never re-submitted the recv to deliver the data").map {
+                            outcome =>
+                                drv.closeHandle(acceptedH)
+                                discard(sock.close(client))
+                                outcome match
+                                    case Result.Success(ReadOutcome.Bytes(got)) =>
+                                        assert(
+                                            got.toArray.toList == payload.toList,
+                                            s"the retried recv must deliver the full payload; got ${got.toArray.toList}"
+                                        )
+                                    case Result.Failure(_: Closed) =>
+                                        fail(
+                                            "a -EINTR read CQE was treated as a hard error and failed the read Closed; it must re-submit the recv (POSIX recv)"
+                                        )
+                                    case other => fail(s"unexpected read outcome: $other")
+                                end match
                         }
                     }
                 }
@@ -194,24 +201,16 @@ class IoUringDriverEintrRetryTest extends Test:
                     assert(w == WriteResult.Done, s"write result=$w")
                     fifoBarrier(drv).safe.get.flatMap { _ =>
                         reaped.safe.get.flatMap { _ =>
-                            // After the -EINTR send CQE reaps, drive the FIFO so the re-flush (an engine op) runs, then drain the peer. The peer
-                            // read is bounded by a deadline so the test fails fast rather than hanging if the bytes were dropped.
+                            // After the -EINTR send CQE reaps, drive the FIFO so the re-flush (an engine op) runs, then drain the peer.
                             fifoBarrier(drv).safe.get.flatMap { _ =>
-                                Abort.run[Timeout](Async.timeout(5.seconds)(Sync.defer(recvAll(accepted, payload.length)))).map { got =>
+                                // A -EINTR send CQE that discarded the unsent tail leaves the peer short, which the leaf timeout fails.
+                                recvAll(accepted, payload.length).map { bytes =>
                                     drv.closeHandle(clientH)
                                     discard(sock.close(accepted))
-                                    got match
-                                        case Result.Success(bytes) =>
-                                            assert(
-                                                bytes.toList == payload.toList,
-                                                s"the re-flushed send must deliver the full payload to the peer; got ${bytes.toList}"
-                                            )
-                                        case Result.Failure(_: Timeout) =>
-                                            fail(
-                                                "a -EINTR send CQE discarded the unsent tail; the peer never received the re-flushed bytes (POSIX send)"
-                                            )
-                                        case other => fail(s"unexpected drain outcome: $other")
-                                    end match
+                                    assert(
+                                        bytes.toList == payload.toList,
+                                        s"the re-flushed send must deliver the full payload to the peer; got ${bytes.toList}"
+                                    )
                                 }
                             }
                         }

@@ -17,15 +17,6 @@ class IoUringDriverPeerClosedTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(5.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     private def withDriver[A](body: IoUringDriver => A < (Abort[Closed] & Async))(using Frame): A < (Abort[Closed] & Async) =
         val driver = IoUringDriver.init()
         discard(driver.start())
@@ -41,9 +32,11 @@ class IoUringDriverPeerClosedTest extends Test:
                     val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     assert(!driver.isPeerClosed(handle), "a live peer must read as not closed")
                     PosixTestSockets.closePeerForEof(sock, peerFd) // FIN
-                    awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { closed =>
+                    awaitCondition("io_uring isPeerClosed never observed the peer FIN via poll(2) POLLRDHUP")(
+                        driver.isPeerClosed(handle)
+                    ).andThen {
                         driver.closeHandle(handle)
-                        assert(closed, "io_uring isPeerClosed must observe the peer FIN via poll(2) POLLRDHUP")
+                        succeed
                     }
                 }
             }
@@ -55,9 +48,11 @@ class IoUringDriverPeerClosedTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
                     val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     PosixTestSockets.resetPeer(sock, peerFd) // RST
-                    awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { closed =>
+                    awaitCondition("io_uring isPeerClosed never observed a peer RST via poll(2) POLLERR/POLLHUP")(
+                        driver.isPeerClosed(handle)
+                    ).andThen {
                         driver.closeHandle(handle)
-                        assert(closed, "io_uring isPeerClosed must observe a peer RST via poll(2) POLLERR/POLLHUP")
+                        succeed
                     }
                 }
             }

@@ -44,15 +44,6 @@ class IoUringStalePumpRecvRoutingTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     "IoUringDriver stale pre-upgrade pump recv" - {
 
         "reaping after onFinished has fully run feeds the engine directly instead of staging a now-dead upgrade-handoff Carryover" in {
@@ -84,8 +75,9 @@ class IoUringStalePumpRecvRoutingTest extends Test:
 
                         // Wait for the real submit (hasInFlightRead observes the registered PendingOp) before simulating the upgrade:
                         // flipping flags too early would race submitRecv's own tls-keyed buffer choice.
-                        awaitCondition(5.seconds)(driver.hasInFlightRead(acceptedH)).map { armed =>
-                            assert(armed, "stale pump recv's submitRecv never ran (a hang, not the routing hazard under test)")
+                        awaitCondition("stale pump recv's submitRecv never ran (a hang, not the routing hazard under test)") {
+                            driver.hasInFlightRead(acceptedH)
+                        }.andThen {
 
                             // Simulate the WHOLE upgrade lifecycle running to completion while the recv above stays kernel-owned and in flight,
                             // ending in onFinished's exact final state (PosixTransport.scala:1303-1309 write order): upgradeActive false,
@@ -114,11 +106,11 @@ class IoUringStalePumpRecvRoutingTest extends Test:
                             // Not valid TLS ciphertext for a never-handshaked engine: the expected outcome is a fatal-record teardown (the
                             // same `closeHandle` path IoUringMutualTlsStressTest's real handshakes exercise on genuinely bad data), not
                             // delivered plaintext. What this test actually pins is the ABSENCE of a mis-routed plaintext delivery.
-                            awaitCondition(5.seconds)(acceptedH.isClosing()).map { closed =>
-                                assert(
-                                    closed,
-                                    "stale recv's post-onFinished feed never reached a terminal state (a hang, not the fix under test)"
-                                )
+                            awaitCondition(
+                                "stale recv's post-onFinished feed never reached a terminal state (a hang, not the fix under test)"
+                            ) {
+                                acceptedH.isClosing()
+                            }.andThen {
                                 // The core regression guard: the bytes must NEVER be staged as a Carryover. Once onFinished has fully run, that
                                 // slot has no consumer left, so staging it there would silently lose the bytes forever (the actual "Closed at
                                 // collect" loss mechanism) instead of being fed to the engine (whatever the engine then does with them).

@@ -173,7 +173,7 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                     val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     clientH.tls = Present(clientEngine)
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    Async.timeout(14.seconds) {
+                    logIfInterrupted("the slow peer never recovered the whole written plaintext (ciphertext dropped)") {
                         for
                             // Handshake the engines on the FIFO worker so the client encrypt and server decrypt both run on one carrier.
                             handshakeDone <- handshakeOnDriver(driver, clientEngine, serverEngine).safe.get
@@ -183,7 +183,7 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                             w <- Sync.defer(driver.write(clientH, Span.fromUnsafe(plaintext), 0))
                             _ = assert(w == WriteResult.Done, s"TLS write should return Done, got $w")
                             // Drain the peer and decrypt until the full plaintext is recovered. A dropping spin would never recover the whole payload
-                            // (bytes dropped) so the 14s bound trips; here every byte arrives as the flush re-arms and re-submits.
+                            // (bytes dropped) so the leaf timeout trips; here every byte arrives as the flush re-arms and re-submits.
                             got <- drainAndDecrypt(driver, acceptedH, serverEngine, plaintext.length)
                         yield
                             // Free the engines on the FIFO worker (closeHandle routes the client free; the server free is submitted), then the fds.
@@ -225,7 +225,9 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                         client2H.tls = Present(clientEngine2)
                         val accepted1H = PosixHandle.socket(accepted1, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val accepted2H = PosixHandle.socket(accepted2, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        Async.timeout(14.seconds) {
+                        logIfInterrupted(
+                            "a connection was starved while the other was backpressured, or a peer never recovered its plaintext"
+                        ) {
                             for
                                 // Handshake both pairs on the FIFO worker so every client encrypt and server decrypt runs on one carrier.
                                 h1 <- handshakeOnDriver(driver, clientEngine1, serverEngine1).safe.get
@@ -236,7 +238,7 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                                 w1 <- Sync.defer(driver.write(client1H, Span.fromUnsafe(bigPlain), 0))
                                 _ = assert(w1 == WriteResult.Done, s"connection 1 write should return Done, got $w1")
                                 // Connection 2: a small write that fits in one flush pass. If the FIFO worker were held by connection 1's
-                                // retry loop, this op could not run and connection 2's bytes would never go out, tripping the 14s bound.
+                                // retry loop, this op could not run and connection 2's bytes would never go out, tripping the leaf timeout.
                                 w2 <- Sync.defer(driver.write(client2H, Span.fromUnsafe(smallPlain), 0))
                                 _ = assert(w2 == WriteResult.Done, s"connection 2 write should return Done, got $w2")
                                 // Assert connection 2 progressed (recovered its full small payload) WHILE connection 1 is still

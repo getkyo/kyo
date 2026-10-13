@@ -36,15 +36,6 @@ class IoUringExclusiveUseSqFullTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     /** Allocate a REAL io_uring ring at `depth`, build a driver over it with its reap loop started, run `body`, then close the driver. */
     private def withDriver[A](depth: Int)(
         body: IoUringDriver => A < (Abort[Closed] & Async)
@@ -99,11 +90,11 @@ class IoUringExclusiveUseSqFullTest extends Test:
                             // scheduler jitter (this exact two-step check can flake under concurrent load). Waiting on
                             // `recvInFlight` directly -- the stronger, later-arriving signal -- removes the false assumption that the two writes
                             // are simultaneous.
-                            awaitCondition(5.seconds)(targetH.recvInFlight).map { rearmed =>
-                                assert(
-                                    rearmed,
-                                    "target recv was never re-armed after the SQ-full park (a hang, not the guard hazard under test)"
-                                )
+                            awaitCondition(
+                                "target recv was never re-armed after the SQ-full park (a hang, not the guard hazard under test)"
+                            ) {
+                                targetH.recvInFlight
+                            }.andThen {
                                 // The guard must not have fired during the rearm: the target's own promise must still be pending (not failed
                                 // Closed by the exclusive-use guard).
                                 assert(
@@ -119,8 +110,9 @@ class IoUringExclusiveUseSqFullTest extends Test:
                                     0
                                 ).value == payload.length.toLong)
 
-                                awaitCondition(5.seconds)(targetP.poll().isDefined).map { resolved =>
-                                    assert(resolved, "target recv never resolved after real data arrived post-rearm")
+                                awaitCondition("target recv never resolved after real data arrived post-rearm")(
+                                    targetP.poll().isDefined
+                                ).andThen {
                                     targetP.poll() match
                                         case Present(Result.Success(ReadOutcome.Bytes(bytes))) =>
                                             assert(

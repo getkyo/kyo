@@ -67,15 +67,6 @@ class IoUringOrphanFeedOrderNoDuplicationTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     "IoUringDriver post-onFinished orphan feed" - {
 
         "delivers the orphan's chunk exactly once, in order, before a queued second recv's own chunk, over a real completed handshake" in {
@@ -111,8 +102,9 @@ class IoUringOrphanFeedOrderNoDuplicationTest extends Test:
                         val orphanPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(acceptedH, orphanPromise)
 
-                        awaitCondition(5.seconds)(driver.hasInFlightRead(acceptedH)).map { orphanArmed =>
-                            assert(orphanArmed, "orphan recv's submitRecv never ran (a hang, not the race under test)")
+                        awaitCondition("orphan recv's submitRecv never ran (a hang, not the race under test)") {
+                            driver.hasInFlightRead(acceptedH)
+                        }.andThen {
 
                             // Step 2: flip flags to onFinished's exact final state (PosixTransport.scala:1307-1313's write order) while the
                             // orphan recv stays kernel-owned and in flight.
@@ -135,8 +127,9 @@ class IoUringOrphanFeedOrderNoDuplicationTest extends Test:
                                 case _: PosixHandle.QueuedRecv.Queued => true
                                 case _                                => false
 
-                            awaitCondition(5.seconds)(isQueued).map { queued =>
-                                assert(queued, "second recv never queued behind the in-flight orphan -- it may have raced a competing SQE")
+                            awaitCondition("second recv never queued behind the in-flight orphan -- it may have raced a competing SQE")(
+                                isQueued
+                            ).andThen {
 
                                 // Step 4: send chunk1's REAL ciphertext (encrypted by the client engine against the completed handshake) so the
                                 // already-armed orphan recv's real SQE reaps it.
@@ -154,8 +147,7 @@ class IoUringOrphanFeedOrderNoDuplicationTest extends Test:
                                 // The orphan's feed must land in `order` exactly once, via inboundSink (never via secondPromise, never
                                 // duplicated): confirms the driver drains the orphan's real bytes -- feeding them to the SAME (handshaked) engine
                                 // every other recv on this handle shares -- rather than losing them in a dead upgradeHandoff slot.
-                                awaitCondition(5.seconds)(!order.isEmpty).map { orphanDelivered =>
-                                    assert(orphanDelivered, "orphan's chunk1 never reached inboundSink (lost, not fed)")
+                                awaitCondition("orphan's chunk1 never reached inboundSink (lost, not fed)")(!order.isEmpty).andThen {
                                     assert(order.size() == 1, s"orphan delivered more than once (duplicated): ${order.asScala.toSeq}")
                                     assert(
                                         secondPromise.poll().isEmpty,
@@ -165,8 +157,9 @@ class IoUringOrphanFeedOrderNoDuplicationTest extends Test:
                                     // Step 5: the queued second recv must now have drained to a genuine new SQE (IoUringDriver.complete's
                                     // drainQueuedRecv, called immediately after the orphan's direct-feed submitEngineOp is already enqueued:
                                     // this ordering is what guarantees chunk1 decodes before chunk2 even reaches the wire-order question).
-                                    awaitCondition(5.seconds)(driver.hasInFlightRead(acceptedH)).map { secondArmed =>
-                                        assert(secondArmed, "second recv's queued request never drained to a real SQE (a hang)")
+                                    awaitCondition("second recv's queued request never drained to a real SQE (a hang)") {
+                                        driver.hasInFlightRead(acceptedH)
+                                    }.andThen {
 
                                         // Step 6: send chunk2's REAL ciphertext so the second recv's real SQE reaps it, taking the ORDINARY
                                         // (non-orphan) TLS-feed path this time (armedPostUpgrade=true at its own arm time, since isUpgraded was
@@ -182,8 +175,9 @@ class IoUringOrphanFeedOrderNoDuplicationTest extends Test:
                                             0
                                         ).value == chunk2Cipher.length.toLong)
 
-                                        awaitCondition(5.seconds)(secondPromise.poll().isDefined).map { resolved =>
-                                            assert(resolved, "second recv never resolved after its own real chunk arrived")
+                                        awaitCondition("second recv never resolved after its own real chunk arrived") {
+                                            secondPromise.poll().isDefined
+                                        }.andThen {
                                             secondPromise.poll() match
                                                 case Present(Result.Success(ReadOutcome.Bytes(bytes))) =>
                                                     discard(order.add(

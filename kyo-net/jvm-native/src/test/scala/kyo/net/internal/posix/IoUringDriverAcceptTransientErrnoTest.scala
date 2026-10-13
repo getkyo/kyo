@@ -149,7 +149,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                     // The first accept CQE reports -EMFILE (injected). The driver re-arms on the transient errno; connect
                     // a second client so the re-armed accept has a real connection to accept.
                     connectClient(port).map { client2 =>
-                        Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
+                        awaitOutcome(promise, "accept hung: a transient errno was neither failed nor retried").map { outcome =>
                             drv.closeHandle(listenH)
                             discard(sockets.close(client1))
                             discard(sockets.close(client2))
@@ -157,9 +157,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                                 case Result.Success(fd) =>
                                     assert(fd >= 0, s"the re-armed accept must deliver a valid fd; got $fd")
                                     discard(sockets.close(fd)) // close the re-armed accept's connection so it does not outlive the test
-                                case Result.Failure(_: Timeout) =>
-                                    fail("accept hung: a transient errno was neither failed nor retried")
-                                case Result.Failure(c: Closed) =>
+                                case Result.Failure(c) =>
                                     fail(
                                         s"the accept promise was failed Closed (\"$c\") on a TRANSIENT accept errno; the io_uring accept " +
                                             "path did not classify it as transient, so the transport accept loop would stop and wedge the listener"
@@ -187,9 +185,12 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                     // cycle of the EMFILE reap against the reap cycle of the re-arm. On EMFILE the kernel does NOT dequeue the pending
                     // connection, so an IMMEDIATE re-arm reaps -EMFILE again in the same cycle and the shared reap carrier busy-spins (libuv
                     // #690, asyncio Tulip #78). The poller defers re-arming these two errnos by a resource backoff, and this asserts io_uring
-                    // does the same by re-arming in a strictly later cycle. The 5s ceiling turns a never-re-armed regression (a wedged listener)
-                    // into a failed test rather than a hang.
-                    Abort.run[Timeout | Closed](Async.timeout(5.seconds)(recording.reArmSeen.safe.get)).map { seen =>
+                    // does the same by re-arming in a strictly later cycle. A never-re-armed regression (a wedged listener) is failed by the
+                    // leaf timeout.
+                    awaitOutcome(
+                        recording.reArmSeen,
+                        "the accept was never re-armed after the EMFILE errno; the listener would be wedged"
+                    ).map { seen =>
                         drv.closeHandle(listenH)
                         discard(sockets.close(client1))
                         seen match
@@ -202,8 +203,6 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                                         s"The EMFILE was reaped in cycle $reapCycle and the accept was re-armed in cycle $reArmCycle. " +
                                         "A same-cycle re-arm is the immediate re-arm (the spin)."
                                 )
-                            case Result.Failure(_: Timeout) =>
-                                fail("the accept was never re-armed after the EMFILE errno; the listener would be wedged")
                             case other => fail(s"unexpected accept re-arm outcome: $other")
                         end match
                         serverFd

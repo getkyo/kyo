@@ -87,18 +87,6 @@ class IoUringFatalRecordCloseRaceTest extends Test:
         observed
     end feedFatalAndObserve
 
-    /** Poll a real condition until it holds or the bound elapses, re-checking each turn after a short Async.sleep. Mirrors
-      * [[IoUringCloseHalfCloseRaceTest.awaitCondition]] / [[IoUringHandshakeTimeoutOrderingTest.awaitCondition]].
-      */
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     private def newRing()(using Frame): Buffer[Byte] =
         val depth = math.max(256, kyo.net.ioPoolSize() * 64)
         val uring = Ffi.load[IoUringBindings]
@@ -195,10 +183,9 @@ class IoUringFatalRecordCloseRaceTest extends Test:
                                     "Present); freeing here would UAF the still-outstanding recv's eventual CQE processing"
                             )
                             discard(sock.close(client))
-                            awaitCondition(5.seconds)(!acceptedH.tls.isDefined).map { settled =>
-                                assert(settled, "the driver's own close sequence never settled (a hang, not the race under test)")
-                                succeed
-                            }
+                            awaitCondition("the driver's own close sequence never settled (a hang, not the race under test)") {
+                                !acceptedH.tls.isDefined
+                            }.andThen(succeed)
                         }
                     }
                 }

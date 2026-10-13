@@ -38,15 +38,6 @@ class PollerIoDriverCorruptRecordTest extends Test:
     private def sock = Ffi.load[SocketBindings]
 
     /** Poll a real condition until it holds or the bound elapses, re-checking each turn after a short Async.sleep. */
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     "PollerIoDriver corrupt-record (real epoll/kqueue, real engine)" - {
 
         "a fatal TLS record on a read fails the read with a typed decrypt error and tears the connection down, never delivering the good prefix" in {
@@ -96,11 +87,11 @@ class PollerIoDriverCorruptRecordTest extends Test:
                                 driver.closeHandle(acceptedH)
                                 discard(sock.close(client))
                                 // Let the driver's queued TLS teardown run its own engine free before withEngines frees the same engine out of band.
-                                awaitCondition(5.seconds)(!acceptedH.tls.isDefined).map { settled =>
-                                    assert(
-                                        settled,
-                                        "the driver's own TLS teardown never settled (a hang, not the fatal-record path this guard targets)"
-                                    )
+                                awaitCondition(
+                                    "the driver's own TLS teardown never settled (a hang, not the fatal-record path this guard targets)"
+                                ) {
+                                    !acceptedH.tls.isDefined
+                                }.andThen {
                                     outcome match
                                         case Result.Success(ReadOutcome.Failed(e: NetConnectionIoException)) =>
                                             // RFC 5246 §7.2.2: the fatal record tears the connection down, surfaced as the typed decrypt failure

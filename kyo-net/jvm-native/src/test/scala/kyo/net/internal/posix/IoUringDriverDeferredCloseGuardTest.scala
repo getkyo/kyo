@@ -80,13 +80,10 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                                 // it to EOF soon, but has not necessarily reaped yet); the real close(fd) can only run once that CQE
                                 // reaps and discharges closeAfterDrain. Bounded, not a sleep: a real settle would need to reap a CQE on
                                 // the driver's own dedicated thread, which happens on its own schedule.
-                                Abort.run[Closed | Timeout](Async.timeout(5.seconds)(spy.closed(accepted).safe.get)).map { outcome =>
-                                    assert(
-                                        outcome.isSuccess,
-                                        "the real close(fd) for the deferred handle never ran: the racing PosixHandle.close call stole " +
-                                            s"the one-shot terminal free before the credit existed, stranding it forever. Got $outcome"
-                                    )
-                                }
+                                logIfInterrupted(
+                                    "the real close(fd) for the deferred handle never ran: the racing PosixHandle.close call stole " +
+                                        "the one-shot terminal free before the credit existed, stranding it forever"
+                                )(spy.closed(accepted).safe.get).andThen(succeed)
                             }
                         }
                     }
@@ -127,13 +124,10 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                             driver.closeHandle(handle)
                             // Bounded, not a sleep: the real close(fd) runs only once the recv's CQE reaps and discharges closeAfterDrain,
                             // on the driver's own dedicated reap thread. spy.closed is a per-fd latch completed only by the real close(fd).
-                            Abort.run[Closed | Timeout](Async.timeout(5.seconds)(spy.closed(accepted).safe.get)).map { outcome =>
-                                assert(
-                                    outcome.isSuccess,
-                                    "the real close(fd) never ran: a second closeHandle stacked a redundant deferred-close guard hold behind " +
-                                        s"the single closeAfterDrain entry, stranding the terminal free forever. Got $outcome"
-                                )
-                            }
+                            logIfInterrupted(
+                                "the real close(fd) never ran: a second closeHandle stacked a redundant deferred-close guard hold behind " +
+                                    "the single closeAfterDrain entry, stranding the terminal free forever"
+                            )(spy.closed(accepted).safe.get).andThen(succeed)
                         }
                     }
                 }

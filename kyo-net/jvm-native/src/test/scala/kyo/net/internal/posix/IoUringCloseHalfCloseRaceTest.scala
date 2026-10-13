@@ -46,18 +46,6 @@ class IoUringCloseHalfCloseRaceTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    /** Poll a real condition until it holds or the bound elapses, re-checking each turn after a short Async.sleep. Mirrors
-      * [[IoUringHandshakeTimeoutOrderingTest.awaitCondition]].
-      */
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     "IoUringDriver local-close half-close-state race" - {
 
         "closing a connection with an in-flight recv and no peer FIN must not stamp PeerEof (LocalClose, not Truncated)" in {
@@ -81,8 +69,9 @@ class IoUringCloseHalfCloseRaceTest extends Test:
                     driver.awaitRead(acceptedH, promise)
                     // Local close; no peer-initiated close ever happens (the test never sends on or closes `client` before this).
                     driver.closeHandle(acceptedH)
-                    awaitCondition(5.seconds)(acceptedH.isClosing()).map { settled =>
-                        assert(settled, "close sequence did not settle within 5s (closeNow never ran: a hang, not the race under test)")
+                    awaitCondition("close sequence never settled (closeNow never ran: a hang, not the race under test)")(
+                        acceptedH.isClosing()
+                    ).andThen {
                         promise.poll() match
                             case Present(Result.Failure(_: Closed)) => ()
                             case other => fail(s"in-flight recv promise must resolve Closed (not stranded) on local close; got $other")
