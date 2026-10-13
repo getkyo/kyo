@@ -292,19 +292,19 @@ class PosixTransportSurfaceTest extends Test:
             // blocking pool, not panic). This exercises the full resolve-then-fail path through transport.connect: the host is non-numeric
             // and not a loopback name, so it goes through HostResolver, the real system resolver yields a failure, and the connect promise
             // must complete with it. The host is under the RFC 6761 reserved `.invalid` TLD, which never resolves (the system resolver
-            // returns NXDOMAIN), so the lookup fails against the REAL resolver with no injected stub. A real negative lookup is not bounded
-            // by the transport (a pathological host resolver can stall on an upstream query before returning NXDOMAIN), so a generous
-            // Async.timeout bounds it: either the resolver fails (NetDnsResolutionException) or the bound expires (Timeout), both clean
-            // failures with no hang and no crash. The numeric and loopback round-trip leaves above cover the resolve-SUCCESS path against
-            // the real resolver.
+            // returns NXDOMAIN), so the lookup fails against the REAL resolver with no injected stub. The numeric and loopback round-trip
+            // leaves above cover the resolve-SUCCESS path against the real resolver.
             assumePoller()
             withTransport { transport =>
-                Abort.run[NetException | Closed | Timeout](
-                    Async.timeout(10.seconds)(transport.connect("kyo-net-unresolvable-host.invalid", 80).safe.get)
+                awaitOutcome(
+                    transport.connect("kyo-net-unresolvable-host.invalid", 80),
+                    "connecting to an unresolvable host never failed"
                 ).map { outcome =>
                     // Defensive: see the dead-port leaf above for why an unexpected success is still closed here.
                     outcome.foreach(_.close())
-                    assert(outcome.isFailure, s"expected a clean failure connecting to an unresolvable host, got $outcome")
+                    outcome match
+                        case Result.Failure(_: kyo.net.NetDnsResolutionException) => succeed
+                        case other => fail(s"expected a NetDnsResolutionException connecting to an unresolvable host, got $other")
                 }
             }
         }

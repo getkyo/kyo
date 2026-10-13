@@ -24,8 +24,8 @@ import kyo.net.internal.posix.PosixConstants
   * epoll/kqueue (required by [[PollerIoDriver]]).
   *
   * Anti-flakiness: no Thread.sleep. The responsive leaf latches on the real kernel accept (fiber completion inside
-  * [[TlsRealEngines.realTlsLoopback]]). The stalled leaf uses [[Async.timeout]](5.seconds) as an upper bound so a missed reap fails rather
-  * than hanging; 5s >> 150ms handshakeTimeout on any loopback host.
+  * [[TlsRealEngines.realTlsLoopback]]). The stalled leaf waits for the reap itself; a missed reap leaves the read parked, which the leaf timeout
+  * fails.
   */
 class PosixTransportHandshakeLivenessTest extends Test:
 
@@ -56,8 +56,8 @@ class PosixTransportHandshakeLivenessTest extends Test:
 
             // A raw TCP client connects to a TLS server with handshakeTimeout=150ms but sends no
             // ClientHello. The server parks in WantRead; after 150ms the deadline fires teardown(),
-            // closing the server fd. The client observes its inbound ending (empty span or Closed)
-            // within the 5s window. Timeout means no reap (regression). The handler is never invoked
+            // closing the server fd. The client observes its inbound ending (empty span or Closed);
+            // no reap leaves the take parked, which the leaf timeout fails. The handler is never invoked
             // (it runs only on a successful handshake via onFinished; the deadline path skips it).
             "stalled: deadline reaps a TCP-only client that sends no ClientHello" in {
                 assumeTlsAndPoller()
@@ -75,20 +75,18 @@ class PosixTransportHandshakeLivenessTest extends Test:
                         // Plain TCP connect (no TLS): the client completes the TCP handshake but never
                         // sends a ClientHello. The server driveHandshake stays in WantRead until teardown.
                         transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                            Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map {
-                                outcome =>
-                                    client.close()
-                                    listener.close()
-                                    // Reap: inbound ends with an empty EOF span or a Closed abort.
-                                    // Timeout (the 5s window expired with no reap) is the regression symptom.
-                                    val reaped = outcome match
-                                        case Result.Success(Result.Success(span)) => span.isEmpty
-                                        case Result.Success(Result.Failure(_))    => true
-                                        case _                                    => false
-                                    assert(
-                                        reaped,
-                                        s"stalled: deadline must reap the handshake within 5s (handshakeTimeout=150ms), got $outcome"
-                                    )
+                            // Reap: inbound ends with an empty EOF span or a Closed abort. No reap leaves the take parked, the regression
+                            // symptom, which the leaf timeout fails.
+                            logIfInterrupted("stalled: the deadline never reaped the handshake (handshakeTimeout=150ms)")(
+                                Abort.run[Closed](client.inbound.safe.take)
+                            ).map { outcome =>
+                                client.close()
+                                listener.close()
+                                val reaped = outcome match
+                                    case Result.Success(span) => span.isEmpty
+                                    case Result.Failure(_)    => true
+                                    case _                    => false
+                                assert(reaped, s"stalled: the deadline must reap the handshake (handshakeTimeout=150ms), got $outcome")
                             }
                         }
                 }

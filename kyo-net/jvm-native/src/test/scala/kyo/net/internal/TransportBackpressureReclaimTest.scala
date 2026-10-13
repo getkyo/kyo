@@ -13,17 +13,6 @@ class TransportBackpressureReclaimTest extends kyo.net.Test:
 
     import AllowUnsafe.embrace.danger
 
-    // Poll a condition that settles on the transport's own carriers (the pump parking on the full channel, the grace reclaim closing the
-    // connection), out of the test's reach, so there is no latch to await. The bound is a ceiling; every caller asserts on the settled state.
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(5.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     "an abandoned backpressured connection is reclaimed after the peer FIN within the grace window" in {
         val transport = NetPlatform.transport
         // Cap-1 channel + 64-byte read chunk so 128 bytes become two reads, the second overflowing the channel and parking the accepted-side
@@ -43,17 +32,14 @@ class TransportBackpressureReclaimTest extends kyo.net.Test:
             _        <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](128)(1))))
             // An overflowing pump parks by registering a put, so a pending put IS the parked state. Awaiting it guarantees the FIN below lands on a
             // parked pump: a FIN arriving earlier would be observed by an armed read and reclaimed via the EOF path, leaving the grace reclaim untested.
-            parked <- awaitCondition(5.seconds)(accepted.inbound.pendingPuts().getOrElse(0) > 0)
-            _ = assert(
-                parked,
+            _ <- awaitCondition(
                 "the accepted-side ReadPump never parked on the full inbound channel, so the FIN below would not exercise the grace reclaim"
-            )
-            _         <- Sync.defer(client.close()) // FIN with the accepted-side pump parked
-            reclaimed <- awaitCondition(5.seconds)(!accepted.isOpen)
-        yield assert(
-            reclaimed,
-            "the abandoned backpressured accepted connection must be reclaimed (closed) after the client FIN via the peer-close grace"
-        )
+            )(accepted.inbound.pendingPuts().getOrElse(0) > 0)
+            _ <- Sync.defer(client.close()) // FIN with the accepted-side pump parked
+            _ <- awaitCondition(
+                "the abandoned backpressured accepted connection was never reclaimed (closed) after the client FIN via the peer-close grace"
+            )(!accepted.isOpen)
+        yield succeed
         end for
     }
 

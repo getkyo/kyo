@@ -165,7 +165,7 @@ class ConnectionInitTest extends Test:
             val conn   = Connection.init(handle, spy, channelCapacity = 8)
             conn.start()
             discard(sock.close(peerFd)) // peer FIN -> ReadPump EOF -> teardown -> closeFn
-            Async.timeout(5.seconds)(conn.onClosing.safe.get).andThen {
+            logIfInterrupted("onClosing never completed on a peer-driven ReadPump teardown")(conn.onClosing.safe.get).andThen {
                 assert(conn.onClosing.done(), "onClosing must complete on a peer-driven ReadPump teardown")
                 spy.close()
                 succeed

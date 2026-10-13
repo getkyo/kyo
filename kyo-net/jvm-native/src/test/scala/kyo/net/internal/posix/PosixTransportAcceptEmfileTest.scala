@@ -28,7 +28,8 @@ import kyo.net.Test
   * tears down cleanly (the real accept then succeeds).
   *
   * Completion: no clock is read. The leaf settles on whichever event lands first and the assertion reads which: a resource-backoff re-arm
-  * (the `onAcceptResourceBackoff` hook) or the spy's `spinThreshold` spin cap, which only a spinning loop reaches. `Async.timeout` is only the deadlock ceiling.
+  * (the `onAcceptResourceBackoff` hook) or the spy's `spinThreshold` spin cap, which only a spinning loop reaches. A loop that reaches
+  * neither fails by the leaf timeout.
   */
 class PosixTransportAcceptEmfileTest extends Test:
 
@@ -46,10 +47,6 @@ class PosixTransportAcceptEmfileTest extends Test:
     // Spin cap: once acceptNow is called this many times for ONE pending connection (a bounded-backoff loop issues only a handful), the spy
     // settles the leaf with Spun and stops injecting EMFILE so a regressed build's real accept drains the backlog and teardown is clean.
     private val spinThreshold = 200
-
-    // Deadlock ceiling, not a pass condition: the assertion reads which event settled the leaf, never elapsed time. This turns an accept loop
-    // that neither backs off nor spins (a listener wedged with no re-arm at all) into a failed test instead of a hang.
-    private val settleCeiling = 15.seconds
 
     private def assumePollerReady(): Unit =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
@@ -151,22 +148,19 @@ class PosixTransportAcceptEmfileTest extends Test:
                             }
                         }
                     // Settles on the first backoff re-arm or on the spin cap, whichever the accept loop reaches first.
-                    outcome <- Abort.run[Timeout](Async.timeout(settleCeiling)(settled.safe.get))
+                    outcome <- logIfInterrupted(
+                        "the accept loop neither backed off nor spun: it never re-armed under EMFILE, so the listener is wedged and the " +
+                            "pending connection is never accepted"
+                    )(settled.safe.get)
                 yield outcome match
-                    case Result.Success(AcceptGuard.BackedOff) => succeed
-                    case Result.Success(AcceptGuard.Spun)      =>
+                    case AcceptGuard.BackedOff => succeed
+                    case AcceptGuard.Spun      =>
                         fail(
                             s"accept loop spun: it re-armed immediately under a persistent EMFILE instead of backing off, issuing acceptNow up " +
                                 s"to the spin cap ($spinThreshold) for ONE pending connection. EMFILE leaves the connection in the backlog, so an " +
                                 "immediate re-arm re-fires the still-ready listen fd at once and the loop livelocks; the fix re-arms only after a " +
                                 "bounded backoff."
                         )
-                    case Result.Failure(_: Timeout) =>
-                        fail(
-                            "the accept loop neither backed off nor spun: it never re-armed under EMFILE, so the listener is wedged and the " +
-                                "pending connection is never accepted"
-                        )
-                    case other => fail(s"unexpected accept-loop outcome: $other")
                 end for
             }
         }

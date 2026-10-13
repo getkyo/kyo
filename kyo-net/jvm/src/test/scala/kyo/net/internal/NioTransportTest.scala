@@ -35,16 +35,6 @@ class NioTransportTest extends Test:
             }).andThen(t)
         }
 
-    /** Poll a condition driven by a real FIN through the OS (the reclaim runs on the transport carrier, out of the test's reach). */
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(5.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     // -----------------------------------------------------------------------
     // Construction
     // -----------------------------------------------------------------------
@@ -137,23 +127,16 @@ class NioTransportTest extends Test:
                     ByteBuffer.allocate(engine.getSession.getPacketBufferSize),
                     ByteBuffer.allocate(engine.getSession.getApplicationBufferSize)
                 ))
-                Abort.run[kyo.net.NetException | Timeout](
-                    Async.timeout(5.seconds)(
-                        transport.upgradeToTls(
-                            conn,
-                            kyo.net.NetTlsConfig(trustAll = true, sniHostname = Present("localhost")),
-                            16
-                        ).safe.get
-                    )
+                awaitOutcome(
+                    transport.upgradeToTls(conn, kyo.net.NetTlsConfig(trustAll = true, sniHostname = Present("localhost")), 16),
+                    "the re-upgrade hung instead of failing typed (the reject is missing)"
                 ).map { second =>
                     latch.countDown()
                     conn.close()
                     serverSock.close()
                     second match
                         case Result.Failure(_: kyo.net.NetException) => succeed
-                        case Result.Failure(_: Timeout)              =>
-                            assert(false, "the re-upgrade hung instead of failing typed (the reject is missing)")
-                        case other =>
+                        case other                                   =>
                             assert(false, s"a second upgrade of an upgraded handle must fail typed; got $other")
                     end match
                 }
@@ -199,16 +182,16 @@ class NioTransportTest extends Test:
             val tls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
             def released(connect: Fiber.Unsafe[kyo.net.Connection, Abort[NetException]]) =
                 for
-                    seen    <- awaitCondition(5.seconds)(blackHoleSocketOpen())
+                    _       <- awaitCondition("the black-hole connect's socket never appeared")(blackHoleSocketOpen())
                     outcome <- Abort.run[NetException](connect.safe.get)
-                    gone    <- awaitCondition(5.seconds)(!blackHoleSocketOpen())
-                yield (seen, outcome.failure.map(_.getClass.getSimpleName), gone)
+                    _       <- awaitCondition("the timed-out connect's socket was never released")(!blackHoleSocketOpen())
+                yield outcome.failure.map(_.getClass.getSimpleName)
             for
                 plain  <- released(transport.connect("192.0.2.77", 80, 1.second))
                 secure <- released(transport.connectTls("192.0.2.77", 80, tls, 1.second))
             yield
-                assert(plain == (true, Present("NetConnectTimeoutException"), true), s"plaintext: $plain")
-                assert(secure == (true, Present("NetConnectTimeoutException"), true), s"TLS: $secure")
+                assert(plain == Present("NetConnectTimeoutException"), s"plaintext: $plain")
+                assert(secure == Present("NetConnectTimeoutException"), s"TLS: $secure")
             end for
         }
     }
@@ -281,13 +264,11 @@ class NioTransportTest extends Test:
                 returned.set(true)
                 started
             })
-            parked <- awaitCondition(10.seconds)(lookup.started.getCount == 0)
+            _ <- awaitCondition(s"the transport never asked the resolver for $host")(lookup.started.getCount == 0)
             early = returned.get()
             _     = lookup.released.countDown()
             a <- starting.get
-        yield
-            assert(parked, s"the transport never asked the resolver for $host")
-            (early, a)
+        yield (early, a)
         end for
     end startWhileResolving
 
@@ -764,13 +745,11 @@ class NioTransportTest extends Test:
                                     assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount == 0)).map { _ =>
                                         // The discharge fails the handshake promise, whose existing teardown arm reaps the handle and closes the channel,
                                         // which this still-connected client observes as its inbound terminating.
-                                        Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take))).map {
-                                            outcome =>
-                                                client.close()
-                                                assert(
-                                                    outcome.isSuccess,
-                                                    s"the listener close must release its stalled handshake's channel, got $outcome"
-                                                )
+                                        logIfInterrupted("the listener close never released its stalled handshake's channel")(
+                                            Abort.run[Closed](client.inbound.safe.take)
+                                        ).map { _ =>
+                                            client.close()
+                                            succeed
                                         }
                                     }
                                 }
@@ -844,18 +823,15 @@ class NioTransportTest extends Test:
                 }
                 // A pump that overflows the channel parks by registering a put, so awaiting a pending put guarantees the
                 // FIN lands on a parked pump; a FIN before parking is reclaimed via the EOF path, leaving grace reclaim untested.
-                parked <- awaitCondition(5.seconds)(accepted.inbound.pendingPuts().getOrElse(0) > 0)
-                _ = assert(
-                    parked,
+                _ <- awaitCondition(
                     "the accepted-side pump never parked on the full inbound channel, so the FIN below would not exercise the grace reclaim"
-                )
-                _         <- Sync.defer(client.close()) // FIN with the pump parked
-                reclaimed <- awaitCondition(5.seconds)(!accepted.isOpen)
-                _         <- Sync.defer(listener.close())
-            yield assert(
-                reclaimed,
-                "NioTransport must thread peerCloseGrace so an abandoned backpressured accepted connection is reclaimed after the client FIN"
-            )
+                )(accepted.inbound.pendingPuts().getOrElse(0) > 0)
+                _ <- Sync.defer(client.close()) // FIN with the pump parked
+                _ <- awaitCondition(
+                    "NioTransport must thread peerCloseGrace so an abandoned backpressured accepted connection is reclaimed after the client FIN"
+                )(!accepted.isOpen)
+                _ <- Sync.defer(listener.close())
+            yield succeed
             end for
         }
     }
