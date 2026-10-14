@@ -213,7 +213,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *
       * Capture and isolate must come from the same instance, so a spawn holds the result of one call rather than calling this twice.
       */
-    final private[kyo] def crossing: Isolate[Remove, Keep, Restore] =
+    final def crossing: Isolate[Remove, Keep, Restore] =
         Contextual.andThen(this)
 
 end Isolate

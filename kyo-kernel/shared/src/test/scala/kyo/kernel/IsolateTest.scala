@@ -180,6 +180,34 @@ class IsolateTest extends Test:
         }
     }
 
+    "crossing" - {
+        "a state captured inside a region is read by a run outside it" in {
+            val isolate         = summon[Isolate[Any, Any, Any]].crossing
+            val captured        = ContextEffect.handleInheritable(Tag[TestEffect1], 7)(isolate.capture(state => state)).eval
+            val read: Int < Any = ContextEffect.suspend(Tag[TestEffect1], -1)
+            assert(isolate.run(captured, read).eval == 7)
+        }
+
+        "each run of one captured state forks the region from the captured value" in {
+            val isolate  = summon[Isolate[Any, Any, Any]].crossing
+            var forks    = 0
+            val captured =
+                ContextEffect.handle(
+                    Tag[TestEffect1],
+                    (_: Maybe[Int]) => 7,
+                    fork = (parent: Int) =>
+                        forks += 1
+                        parent + forks
+                    ,
+                    join = (parent: Int, _: Int, _: Int) => parent
+                )(isolate.capture(state => state)).eval
+            val read: Int < Any = ContextEffect.suspend(Tag[TestEffect1], -1)
+            assert(isolate.run(captured, read).eval == 8)
+            assert(isolate.run(captured, read).eval == 9)
+            assert(forks == 2)
+        }
+    }
+
     "isolate application" - {
         "no context effect suspension" in {
             // `capture` hands the isolate the contextual regions in scope; with no handler outside there are none.

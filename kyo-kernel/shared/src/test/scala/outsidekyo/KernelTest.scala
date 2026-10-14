@@ -515,6 +515,12 @@ class KernelTest extends AnyFreeSpec:
             val r       = ContextEffect.handleInheritable(Tag[Level], 1)(ContextEffect.handleInheritable(Tag[Level2], 10)(isolate.run(v)))
             assert(r.eval == 11)
         }
+
+        "a crossing carries a region's state to a run outside it" in {
+            val isolate  = Isolate.derive[Level, Any, Any].crossing
+            val captured = ContextEffect.handleInheritable(Tag[Level], 6)(isolate.capture(state => state)).eval
+            assert(isolate.run(captured, level).eval == 6)
+        }
     }
 
     "context binding edges" - {

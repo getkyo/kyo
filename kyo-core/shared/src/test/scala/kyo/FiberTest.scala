@@ -1526,6 +1526,18 @@ class FiberTest extends kyo.test.Test[Any]:
             def keeping[S](using isolate: Isolate[S, Async, S])(v: Int < (S & Async)): Int < (S & Async) = isolate.run(v)
             keeping[Sync](Sync.defer(21).map(_ * 2)).map(result => assert(result == 42))
         }
+
+        "a crossing captured inside Env.run carries the Env to every fiber a run of it is forked into" in {
+            val isolate = Isolate.derive[Env[Int], Any, Any].crossing
+            for
+                state  <- Env.run(7)(isolate.capture(state => state))
+                first  <- Fiber.init(isolate.run(state, Env.get[Int]))
+                second <- Fiber.init(isolate.run(state, Env.get[Int].map(_ * 2)))
+                a      <- first.get
+                b      <- second.get
+            yield assert(a == 7 && b == 14)
+            end for
+        }
     }
 
 end FiberTest
