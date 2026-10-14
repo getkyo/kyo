@@ -1796,21 +1796,15 @@ class ContainerItTest extends BasePodTest:
 
     "export" - {
         "streams non-empty container filesystem" - runBackends {
-            // Note: podman export may not work on remote/machine setups
-            Container.init(alpine).map { c =>
-                Abort.run[Timeout] {
-                    Async.timeout(10.seconds) {
+            logStepIfInterrupted("export") { step =>
+                step("start the container").andThen(Container.init(alpine)).map { c =>
+                    step("stream the export").andThen {
                         Scope.run {
                             c.exportFs.take(4096).run.map { bytes =>
                                 assert(bytes.size >= 512) // at least one tar block
                             }
                         }
                     }
-                }.map {
-                    case Result.Success(_) => ()
-                    case Result.Failure(_) =>
-                        succeed("timed out or export not supported on this runtime; acceptable")
-                    case Result.Panic(t) => fail(s"panic: $t")
                 }
             }
         }
@@ -3536,40 +3530,44 @@ class ContainerItTest extends BasePodTest:
 
         "removing a volume mounted by two stopped containers fails until both are removed" - runBackends {
             val volName = Container.Volume.Id(uniqueName("kyo-vol-multi"))
-            Abort.run[Timeout] {
-                Async.timeout(30.seconds) {
-                    Scope.run {
-                        for
-                            _  <- Container.Volume.init(Container.Volume.Config.default.copy(name = Present(volName)))
-                            c1 <- Container.init(alpine.volume(volName, Path("/data")).autoRemove(false))
-                            c2 <- Container.init(alpine.volume(volName, Path("/data")).autoRemove(false))
-                            _  <- c1.stop
-                            i1 <- c1.inspect
-                            _ = assert(i1.state == Container.State.Stopped, s"c1 not Stopped: ${i1.state}")
-                            _  <- c2.stop
-                            i2 <- c2.inspect
-                            _ = assert(i2.state == Container.State.Stopped, s"c2 not Stopped: ${i2.state}")
-                            r1 <- Abort.run[ContainerException](Container.Volume.remove(volName))
-                            _ = r1 match
-                                case Result.Failure(_: ContainerException) => ()
-                                case other                                 => fail(s"expected typed Failure, got: $other")
-                            _  <- c1.remove(force = true)
-                            r2 <- Abort.run[ContainerException](Container.Volume.remove(volName))
-                            _ = r2 match
-                                case Result.Failure(_: ContainerException) => ()
-                                case other                                 => fail(s"expected typed Failure, got: $other")
-                            _  <- c2.remove(force = true)
-                            r3 <- Abort.run[ContainerException](Container.Volume.remove(volName))
-                        yield r3 match
-                            case Result.Success(_) => ()
-                            case other             => fail(s"volume remove must succeed once all referencers gone, got $other")
-                        end for
-                    }
+            logStepIfInterrupted("volume multi-attach") { step =>
+                Scope.run {
+                    for
+                        _  <- step("create the volume")
+                        _  <- Container.Volume.init(Container.Volume.Config.default.copy(name = Present(volName)))
+                        _  <- step("start the first container")
+                        c1 <- Container.init(alpine.volume(volName, Path("/data")).autoRemove(false))
+                        _  <- step("start the second container")
+                        c2 <- Container.init(alpine.volume(volName, Path("/data")).autoRemove(false))
+                        _  <- step("stop the first container")
+                        _  <- c1.stop
+                        i1 <- c1.inspect
+                        _ = assert(i1.state == Container.State.Stopped, s"c1 not Stopped: ${i1.state}")
+                        _  <- step("stop the second container")
+                        _  <- c2.stop
+                        i2 <- c2.inspect
+                        _ = assert(i2.state == Container.State.Stopped, s"c2 not Stopped: ${i2.state}")
+                        _  <- step("remove the volume with both containers")
+                        r1 <- Abort.run[ContainerException](Container.Volume.remove(volName))
+                        _ = r1 match
+                            case Result.Failure(_: ContainerException) => ()
+                            case other                                 => fail(s"expected typed Failure, got: $other")
+                        _  <- step("remove the first container")
+                        _  <- c1.remove(force = true)
+                        _  <- step("remove the volume with the second container")
+                        r2 <- Abort.run[ContainerException](Container.Volume.remove(volName))
+                        _ = r2 match
+                            case Result.Failure(_: ContainerException) => ()
+                            case other                                 => fail(s"expected typed Failure, got: $other")
+                        _  <- step("remove the second container")
+                        _  <- c2.remove(force = true)
+                        _  <- step("remove the volume with no container")
+                        r3 <- Abort.run[ContainerException](Container.Volume.remove(volName))
+                    yield r3 match
+                        case Result.Success(_) => ()
+                        case other             => fail(s"volume remove must succeed once all referencers gone, got $other")
+                    end for
                 }
-            }.map {
-                case Result.Success(_) => ()
-                case Result.Failure(_) => fail("volume multi-attach test timed out after 30 seconds")
-                case Result.Panic(t)   => fail(s"panic: $t")
             }
         }
 
