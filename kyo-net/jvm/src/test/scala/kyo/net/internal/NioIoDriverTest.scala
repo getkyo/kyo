@@ -716,7 +716,7 @@ class NioIoDriverTest extends Test:
         arr
     end wrapRecord
 
-    "staged grace-probe bytes racing a fresh read arm are never stranded".times(10) in {
+    "staged grace-probe bytes racing a fresh read arm are never stranded".times(100) in {
         NioLoopbackPair.open().map { (client, sv) =>
             val driver = NioIoDriver.init()
             val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
