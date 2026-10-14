@@ -2,9 +2,9 @@ package kyo.net.internal
 
 import java.net.InetSocketAddress
 import java.net.StandardProtocolFamily
-import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import kyo.*
+import kyo.net.NetBindException
 import kyo.net.NetConfig
 import kyo.net.NetConnectionClosedException
 import kyo.net.NetException
@@ -131,12 +131,7 @@ class NioTransportTest extends Test:
                 val handle = conn.asInstanceOf[kyo.net.internal.transport.Connection[NioHandle]].handle
                 val engine = javax.net.ssl.SSLContext.getDefault.createSSLEngine()
                 engine.setUseClientMode(true)
-                handle.tls = Present(NioTlsState(
-                    engine,
-                    ByteBuffer.allocate(engine.getSession.getPacketBufferSize),
-                    ByteBuffer.allocate(engine.getSession.getPacketBufferSize),
-                    ByteBuffer.allocate(engine.getSession.getApplicationBufferSize)
-                ))
+                handle.tls = Present(NioTlsState.init(engine))
                 Abort.run[kyo.net.NetException | Timeout](
                     Async.timeout(5.seconds)(
                         transport.upgradeToTls(
@@ -754,6 +749,24 @@ class NioTransportTest extends Test:
                     }
                 }
             }.map(Abort.get)
+        }
+    }
+
+    "a bind failure carries the driver's cause" in {
+        val transport = NioTransport.init()
+        Sync.defer {
+            import kyo.AllowUnsafe.embrace.danger
+            // close() closes the selector before it returns, so the listen's registration throws.
+            transport.driver.close()
+        }.andThen {
+            Abort.run[NetException](transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get).map {
+                case Result.Failure(e: NetBindException) =>
+                    assert(
+                        e.getCause.isInstanceOf[java.nio.channels.ClosedSelectorException],
+                        s"the bind failure must carry the registration's exception as its cause, got ${e.getCause}"
+                    )
+                case other => fail(s"a listen on a closed driver must fail with NetBindException, got $other")
+            }
         }
     }
 

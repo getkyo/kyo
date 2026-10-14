@@ -196,6 +196,9 @@ final private[kyo] class JsIoDriver private (
     // Node's sockets are objects, never fd numbers this driver keys anything by, so a recycled number cannot reach a closed handle's state.
     def releaseFd(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
 
+    // Single threaded: every Node callback already runs on the one event loop.
+    def runOwned(handle: JsHandle)(op: () => Unit)(using AllowUnsafe, Frame): Unit = op()
+
     def closeListener(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         discard(handle.life.claimRelease())
         try cancel(handle)

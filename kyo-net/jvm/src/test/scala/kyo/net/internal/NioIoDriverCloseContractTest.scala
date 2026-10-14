@@ -144,9 +144,9 @@ class NioIoDriverCloseContractTest extends Test:
             val read   = new IOPromise[Closed, ReadOutcome]
             val hooked = Promise.Unsafe.init[Unit, Any]()
             val closer = Promise.Unsafe.init[Unit, Any]()
-            // The release runs on its own thread while the selector carrier holds the engine gate inside the dispatch. Its sweep fails the
-            // parked read, which is where the hook lets the dispatch go on to its need-more-data path; the release then waits on the gate
-            // until the dispatch ends.
+            // The release is decided on its own thread while the selector carrier holds the gate inside the dispatch: it takes the release
+            // claim and leaves its sweep to the gate's holder. Once the claim is taken the hook lets the dispatch go on to its need-more-data
+            // path, which must not re-put the read entry of a released handle.
             engine.onUnwrap { _ =>
                 if !hooked.done() then
                     hooked.completeDiscard(Result.succeed(()))
@@ -156,7 +156,7 @@ class NioIoDriverCloseContractTest extends Test:
                     )
                     t.setDaemon(true)
                     t.start()
-                    while !read.done() do java.lang.Thread.onSpinWait()
+                    while !closer.done() do java.lang.Thread.onSpinWait()
             }
             driver.registerChannel(handle)
             discard(driver.start())

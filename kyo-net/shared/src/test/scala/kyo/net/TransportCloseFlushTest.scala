@@ -69,10 +69,12 @@ class TransportCloseFlushTest extends Test:
                 // release comes; the exact window rule is pinned on a scripted driver, where no kernel moves bytes. The cap is half the leaf
                 // budget at the about 100 ms of real time each advance yields, so a release that never comes fails with the count.
                 windows <- Loop(0) { windows =>
-                    if server.isReleased || windows >= nonTerminationCap then Loop.done(windows)
+                    if windows >= nonTerminationCap then Loop.done(windows)
                     else
-                        armedThenAdvance(control, s"close-flush grace (window ${windows + 1})", grace)
-                            .andThen(Loop.continue(windows + 1))
+                        releasedOrArmed(server.isReleased, control, s"close-flush grace (window ${windows + 1})", grace).map { released =>
+                            if released then Loop.done(windows)
+                            else control.advance(grace).andThen(Loop.continue(windows + 1))
+                        }
                 }
             yield assert(
                 server.isReleased,

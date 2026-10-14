@@ -399,6 +399,34 @@ class PollerIoDriverTest extends Test:
             driver.close()
             succeed
         }
+
+        "C1: a close decided while the engine FIFO moves bytes from the queue to the tail never under-counts what is owed" in {
+            assumePoller()
+            TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
+                assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the write")
+                withDriver { driver =>
+                    PosixTestSockets.smallBufferedPair(sndBuf = 128, rcvBuf = 128).map { case (writeFd, peerFd) =>
+                        val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        handle.tls = Present(clientEngine)
+                        val payload = 64 * 1024
+                        assert(driver.write(handle, Span.fromUnsafe(Array.fill[Byte](payload)(0x42.toByte)), 0) == WriteResult.Done)
+                        // The write's FIFO op moves its bytes from the queued count to the ciphertext tail. The decision runs on the owner, after
+                        // that op, so none of the write is still counted as queued and the count it reads is not split across the move.
+                        val owed = Promise.Unsafe.init[(Int, Int), Any]()
+                        driver.runOwned(handle) { () =>
+                            val inTail = handle.pendingCipher.fold(0)(_.size - handle.pendingCipherSent)
+                            owed.completeDiscard(Result.succeed((handle.unsentTailBytes, inTail)))
+                        }
+                        owed.safe.get.map { (atDecision, inTail) =>
+                            handle.tls = Absent
+                            driver.closeHandle(handle)
+                            discard(sock.close(peerFd))
+                            assert(atDecision == inTail, s"owed at the decision: $atDecision, of which ${atDecision - inTail} still queued")
+                        }
+                    }
+                }
+            }.map(_ => succeed)
+        }
     }
 
     "PollerIoDriver allocation seams" - {

@@ -161,6 +161,8 @@ final class ScriptedIoDriver(steps: ScriptedIoDriver.Step*) extends IoDriver[Uni
 
     def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
 
+    def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit = op()
+
     def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         try cancel(handle)
         finally releaseFd(handle, closeFd)

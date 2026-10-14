@@ -206,6 +206,16 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit = op()
 
+    /** Run `op` on the carrier that owns `handle`'s write side and its arms, after every engine or write op already submitted for the
+      * handle. A close decision, a read of what the handle still owes that decides anything, and the release run only inside it, so no two
+      * of them run at once for one handle and none of them reads state a write in progress is changing. A foreign carrier only enqueues:
+      * `op` may run before this returns or later, and an `op` that calls `runOwned` again runs after the outer one finishes.
+      *
+      * Abstract, as are [[releaseFd]] and [[closeListener]]: a wrapping driver that inherited a default would drop the wrapped driver's
+      * ordering.
+      */
+    def runOwned(handle: Handle)(op: () => Unit)(using AllowUnsafe, Frame): Unit
+
     /** Driver label for logging (e.g., "PollerIoDriver"). */
     def label: String
 

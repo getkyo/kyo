@@ -75,6 +75,9 @@ class IoDriverPoolTest extends Test:
         def releaseFd(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
             real.releaseFd(handle, closeFd)
 
+        def runOwned(handle: JsHandle)(op: () => Unit)(using AllowUnsafe, Frame): Unit =
+            real.runOwned(handle)(op)
+
         def closeListener(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
             real.closeListener(handle, closeFd)
 

@@ -345,6 +345,31 @@ abstract class Test extends kyo.test.Test[Any]:
         }
     end awaitArmed
 
+    /** Waits for `released` to hold (true) or for a sleeper of exactly `duration` to be armed (false), failing naming `timer` when neither
+      * comes within [[armedBudget]]. A connection decides between releasing and arming its next close-flush window on the handle's owner,
+      * after the close or the expiry that prompted it returns, so a leaf cannot read the outcome the moment it advances the clock.
+      */
+    def releasedOrArmed(released: => Boolean, timeControl: Clock.TimeControl, timer: String, duration: Duration)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Boolean < Async =
+        Clock.let(Clock.live) {
+            val untilReleased =
+                Loop(()) { _ =>
+                    if released then Loop.done(true)
+                    else Async.sleep(1.millis).andThen(Loop.continue(()))
+                }
+            Abort.run[Timeout](Async.timeout(armedBudget)(Async.race(
+                untilReleased,
+                timeControl.awaitPendingSleeper(duration).andThen(false)
+            )))
+                .map {
+                    case Result.Success(isReleased) => isReleased
+                    case _ => fail(s"neither the release nor the $timer ($duration) came on the controlled clock within $armedBudget")
+                }
+        }
+    end releasedOrArmed
+
     /** Run `scenario` against this backend's transport.
       *
       * The transport is the entry's process-lifetime instance, built on first use and shared by every leaf for that backend, exactly as

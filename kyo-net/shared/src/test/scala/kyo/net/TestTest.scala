@@ -52,4 +52,31 @@ class TestTest extends Test:
         }
     }
 
+    "releasedOrArmed" - {
+
+        "reports the release once it holds, with no timer armed" in {
+            Clock.withTimeControl { tc =>
+                val released = AtomicBoolean.Unsafe.init(false)
+                Fiber.initUnscoped(releasedOrArmed(released.get(), tc, "close-flush grace", 200.millis)).map { waiting =>
+                    released.set(true)
+                    waiting.get.map(result => assert(result, "a release that holds must be reported as the release"))
+                }
+            }
+        }
+
+        "reports the armed timer when no release comes, advancing nothing" in {
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    Fiber.initUnscoped(releasedOrArmed(false, tc, "close-flush grace", 200.millis)).map { waiting =>
+                        val timer = clock.unsafe.sleep(200.millis)
+                        waiting.get.map { result =>
+                            assert(!result, "a timer of the duration armed with no release must be reported as the timer")
+                            assert(!timer.done(), "the fence advances nothing")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end TestTest

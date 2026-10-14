@@ -82,6 +82,7 @@ class ConnectionCloseContractTest extends Test:
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
         def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = released.set(true)
         def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
         def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
             try cancel(handle)
             finally releaseFd(handle, closeFd)
@@ -250,10 +251,12 @@ class ConnectionCloseContractTest extends Test:
                 // Kernel timing decides how many windows still see bytes leave, so the leaf asserts that every window is timed on the transport's
                 // clock and that the release comes; the cap turns a release that never comes into a failure carrying the count.
                 windows <- Loop(0) { windows =>
-                    if server.isReleased || windows >= nonTerminationCap then Loop.done(windows)
+                    if windows >= nonTerminationCap then Loop.done(windows)
                     else
-                        armedThenAdvance(control, s"close-flush grace (window ${windows + 1})", grace)
-                            .andThen(Loop.continue(windows + 1))
+                        releasedOrArmed(server.isReleased, control, s"close-flush grace (window ${windows + 1})", grace).map { released =>
+                            if released then Loop.done(windows)
+                            else control.advance(grace).andThen(Loop.continue(windows + 1))
+                        }
                 }
             yield
                 assert(windows >= 1, "the close released a pump parked on unsent bytes before any grace window")

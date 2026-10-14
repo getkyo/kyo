@@ -236,21 +236,23 @@ final private[kyo] class Connection[Handle] private (
         val timer = clock.unsafe.sleep(closeFlushGrace)
         closeFlushTimer = Present(timer)
         timer.onComplete { _ =>
-            if teardown.get() == Connection.Teardown.ReleaseRequested then
-                val now     = writePump.current
-                val stalled = now.eq(seen) &&
-                    (now match
-                        case WriteState.AwaitingWritable(_, _) | WriteState.Backpressured(_, _) => true
-                        case _                                                                  => false)
-                // The abandon is a CAS on the parked instance: a writable that resumed the pump since `now` was read wins it, and the
-                // window starts over instead of releasing under a write in progress.
-                if stalled && writePump.abandon(now) then
-                    Log.live.unsafe.debug(
-                        s"close flush grace (${closeFlushGrace.show}) elapsed with no write progress on ${driver.handleLabel(handle)}; releasing"
-                    )
-                    release()
-                else armCloseFlushGrace(writePump.current)
-                end if
+            driver.runOwned(handle) { () =>
+                if teardown.get() == Connection.Teardown.ReleaseRequested then
+                    val now     = writePump.current
+                    val stalled = now.eq(seen) &&
+                        (now match
+                            case WriteState.AwaitingWritable(_, _) | WriteState.Backpressured(_, _) => true
+                            case _                                                                  => false)
+                    // The abandon is a CAS on the parked instance: a writable that resumed the pump since `now` was read wins it, and the
+                    // window starts over instead of releasing under a write in progress.
+                    if stalled && writePump.abandon(now) then
+                        Log.live.unsafe.debug(
+                            s"close flush grace (${closeFlushGrace.show}) elapsed with no write progress on ${driver.handleLabel(handle)}; releasing"
+                        )
+                        release()
+                    else armCloseFlushGrace(writePump.current)
+                    end if
+            }
         }
         // Publish-then-recheck: a flush that finished between the arm and the publish disarmed the previous timer, not this one.
         if teardown.get() != Connection.Teardown.ReleaseRequested then disarmCloseFlushGrace()
@@ -392,23 +394,27 @@ private[kyo] object Connection:
                 // fully flushed" signal.
                 //
                 // When the channel is already empty and no offer is in flight, this call fails the pump's parked take inline, so the pump
-                // tears down and re-enters below before it returns: an idle close() reaches driver.closeHandle within its own call. Neither
-                // an empty channel nor an Idle pump is enough on its own: the channel may have handed its last span to the pump's take while
-                // the pump has not yet moved to Flushing, and releasing there lets that write land on a released handle.
+                // tears down and re-enters below before it returns. Neither an empty channel nor an Idle pump is enough on its own: the
+                // channel may have handed its last span to the pump's take while the pump has not yet moved to Flushing, and releasing there
+                // lets that write land on a released handle.
                 discard(outbound.closeAwaitEmpty())
-                if wonUnstarted then self.release()
-                else
-                    val pumpState = self.writePump.current
-                    if pumpState == WriteState.TornDown then self.release()
-                    else if closeFlushGrace.isFinite then self.armCloseFlushGrace(pumpState)
+                // The release decision runs on the handle's owner, so it never reads the pump's state while a write it started is still
+                // changing what the handle owes.
+                driver.runOwned(handle) { () =>
+                    if wonUnstarted then self.release()
+                    else
+                        val pumpState = self.writePump.current
+                        if pumpState == WriteState.TornDown then self.release()
+                        else if closeFlushGrace.isFinite then self.armCloseFlushGrace(pumpState)
+                        end if
                     end if
-                end if
+                }
             else if state.get() == Connection.State.Closing then
                 // A later teardown source: the WritePump finishing (it took Closed from the drained channel, or a write or writable wait
                 // failed), a second close(), or the ReadPump seeing a peer byte, FIN or error after the close. Only the first of these
                 // means the outbound side is finished; the others release only if the pump already is, and otherwise leave the flush to
                 // end in the pump's own teardown or the close-flush grace.
-                self.releaseIfFlushed()
+                driver.runOwned(handle)(() => self.releaseIfFlushed())
             end if
 
         val readPump  = new ReadPump(handle, driver, inbound, closeFn, grace, clock)
