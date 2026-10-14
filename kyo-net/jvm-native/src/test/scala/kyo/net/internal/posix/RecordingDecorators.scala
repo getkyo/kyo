@@ -241,8 +241,29 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     def connectNow(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
         real.connectNow(fd, addr, addrlen)
 
+    private val readsOf   = new ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
+    private val enteredOf = new ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
+
+    /** Set when a `read` returns into a buffer that was freed while the read held it. */
+    val readIntoFreedBuffer: AtomicBoolean = new AtomicBoolean(false)
+
+    /** Completes once the next `read` of `fd` has returned from the real binding, before the caller sees its result. */
+    def readReturned(fd: Int)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
+        readsOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]())
+
+    /** Completes once a `read` of `fd` is about to enter the real binding, where a blocking `read(2)` then waits for bytes. */
+    def readEntered(fd: Int)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
+        enteredOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]())
+
     def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
-        real.read(fd, buf, count)
+        Maybe(enteredOf.remove(fd)).foreach(_.completeDiscard(Result.succeed(())))
+        val r = real.read(fd, buf, count)
+        r.onComplete { _ =>
+            if buf.isClosed then readIntoFreedBuffer.set(true)
+            Maybe(readsOf.remove(fd)).foreach(_.completeDiscard(Result.succeed(())))
+        }
+        r
+    end read
 
     // fd -> the promise a held close waits on, standing in for a close(2) that has not returned yet.
     private val closeHolds = new ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
@@ -1038,9 +1059,26 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         real.awaitRead(handle, promise)
     end awaitRead
 
+    // When true, the next awaitWritable is held here instead of reaching the real driver, so a test chooses when a writable is delivered
+    // (completing the held promise) or when the wait reaches the driver (releaseHeldWritable). Fixes one interleaving of a writable event
+    // and a close that a real poll loop only produces by chance.
+    @volatile var holdNextWritable: Boolean                                                              = false
+    @volatile var heldWritable: Maybe[(PosixHandle, Promise.Unsafe[Unit, Abort[Closed | NetException]])] = Absent
+
+    /** Hands the held writable wait to the real driver. */
+    def releaseHeldWritable()(using AllowUnsafe, Frame): Unit =
+        val held = heldWritable
+        heldWritable = Absent
+        held.foreach((handle, promise) => real.awaitWritable(handle, promise))
+    end releaseHeldWritable
+
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         discard(awaitWritableCalls.getAndIncrement())
-        real.awaitWritable(handle, promise)
+        if holdNextWritable then
+            holdNextWritable = false
+            heldWritable = Present((handle, promise))
+        else real.awaitWritable(handle, promise)
+        end if
         val hook = onAwaitWritable
         if hook != null then
             onAwaitWritable = null

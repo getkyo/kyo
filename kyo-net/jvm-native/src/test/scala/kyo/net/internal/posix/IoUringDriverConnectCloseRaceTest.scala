@@ -9,8 +9,8 @@ import kyo.net.Test
   * ring.
   *
   * `awaitConnect` only ENQUEUES the arm on the engine FIFO; the SQE is prepped later, on the reap carrier. The connect-phase close in
-  * `PosixTransport.closeUnwiredHandle` closes the fd IMMEDIATELY on the caller's carrier rather than through the driver's deferred path, so a
-  * close that lands between the enqueue and the drain frees the fd number while the arm is still queued. The kernel is free to hand that
+  * `PosixTransport.closeUnwiredHandle` closes the fd without waiting for the driver's deferred path, so a close that lands between the
+  * enqueue and the drain frees the fd number while the arm is still queued. The kernel is free to hand that
   * number to the next socket, and a late-draining arm would then prep `IORING_OP_CONNECT` against a socket belonging to somebody else. The
   * same window opens a second way: on a full submission queue the arm parks in `stalledSubmits` and `reArmStalledSubmits` re-enters the
   * submit later, by which point the handle may be long closed.
@@ -43,18 +43,27 @@ class IoUringDriverConnectCloseRaceTest extends Test:
                 PosixHandle.socket(ClosingFd, PosixHandle.DefaultReadBufferSize, Present((closingAddr, 16)), Frame.internal)
             val healthy =
                 PosixHandle.socket(HealthyFd, PosixHandle.DefaultReadBufferSize, Present((healthyAddr, 16)), Frame.internal)
-            // Reproduce the production shape exactly, which is what makes this leaf load-bearing. The connect-phase close in
-            // `PosixTransport.closeUnwiredHandle` wins `claimFdClose()` and closes the fd on the CALLER's carrier; it never calls
-            // `requestClose()`, because on a connection handle that would free buffers a kernel-owned recv may still reference. So the
-            // handle's guard bit stays unset here, and a guard keyed on `isClosing()` would read false at exactly the moment the fd number
-            // has already been handed back to the kernel. The claim is the only state that moves when the fd does.
-            assert(closing.claimFdClose(), "the leaf must be the one that claims the fd close")
             stub.setConnectBarrierFd(HealthyFd)
             val closingPromise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
             val healthyPromise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
-            drv.awaitConnect(closing, closingPromise)
-            drv.awaitConnect(healthy, healthyPromise)
-            stub.connectBarrierP.safe.get.andThen {
+            // Pin the reap carrier so the closing handle's arm is still queued when the close runs, which is the window under test.
+            val gate  = new java.util.concurrent.CountDownLatch(1)
+            val pinIn = Promise.Unsafe.init[Unit, Any]()
+            drv.submitEngineOp { () =>
+                pinIn.completeDiscard(Result.succeed(()))
+                gate.await()
+            }
+            pinIn.safe.get.andThen {
+                drv.awaitConnect(closing, closingPromise)
+                // The connect-phase close in `PosixTransport.closeUnwiredHandle`, in its order: the driver release takes the release claim,
+                // then the fd close is claimed. It never calls `requestClose()` on the handle, so a gate keyed on the guard's closing bit
+                // would read false here while the fd number is already back with the kernel.
+                drv.closeHandle(closing)
+                assert(closing.claimFdClose(), "the leaf must be the one that claims the fd close")
+                drv.awaitConnect(healthy, healthyPromise)
+                gate.countDown()
+                stub.connectBarrierP.safe.get
+            }.andThen {
                 val armed = stub.prepConnectFds
                 assert(
                     !armed.contains(ClosingFd),

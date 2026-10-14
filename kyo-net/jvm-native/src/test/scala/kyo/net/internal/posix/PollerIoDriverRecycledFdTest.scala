@@ -153,10 +153,10 @@ class PollerIoDriverRecycledFdTest extends Test:
         PosixTestSockets.assumePoller()
         // The register-side re-arm race. Two handles share one fd (the recycled-fd shape): `live` is the new owner registered for reads; `stale` is
         // the prior handle (later generation) whose connection has CLOSED. The ReadPump always re-arms (ReadPump.requestNextRead), so `stale` can
-        // issue a dangling awaitRead after its close. applyRegistration must reject a registration from a closing handle: applying it would overwrite
-        // `live`'s activeFds/pendingReads entry and re-arm the kernel under the dead handle's id, so `live`'s read would never dispatch. Verified end
-        // to end: after the stale register, bytes sent to the fd still dispatch to `live`. At base (no isClosing guard) the stale register evicts
-        // `live` and the read strands (a timeout).
+        // issue a dangling awaitRead after its close. applyRegistration must reject a registration from a released handle: applying it would
+        // overwrite `live`'s activeFds/pendingReads entry and re-arm the kernel under the dead handle's id, so `live`'s read would never dispatch.
+        // Verified end to end: after the stale register, bytes sent to the fd still dispatch to `live`. Without the release-claim gate the stale
+        // register evicts `live` and the read strands (a timeout).
         PosixTestSockets.loopbackPair().map { case (client, accepted) =>
             val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
             val real     = PollerBackend.default()
@@ -172,7 +172,8 @@ class PollerIoDriverRecycledFdTest extends Test:
 
             val liveRead = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(live, liveRead) // registers `live` for reads on `accepted` (FIFO: applies before the stale register below)
-            stale.requestClose() // mark `stale` closing without closing the shared fd (freeResources never closes the socket fd)
+            // The release claim the connection's close takes first, without the release's own fd close, which would close the shared number.
+            discard(stale.life.claimRelease())
             val staleRead = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(stale, staleRead) // the dangling re-arm from the closed handle; applyRegistration must reject it
 
@@ -184,6 +185,7 @@ class PollerIoDriverRecycledFdTest extends Test:
 
             Abort.run[Timeout | Closed](Async.timeout(5.seconds)(liveRead.safe.get)).map { outcome =>
                 driver.closeHandle(live)
+                stale.requestClose() // frees the stale handle's buffers; it never closes the socket fd
                 discard(sock.close(client))
                 Sync.defer(driver.close()).map { _ =>
                     outcome match

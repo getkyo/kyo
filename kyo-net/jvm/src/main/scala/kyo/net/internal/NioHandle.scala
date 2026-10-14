@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import javax.net.ssl.SSLEngine
 import kyo.*
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.util.HandleId
 import scala.annotation.tailrec
@@ -60,6 +61,10 @@ final private[kyo] class NioHandle private (
     // carry the same promise, the two wrapper objects are distinct, so the stale CAS fails.
     // Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
     val readArm: AtomicRef.Unsafe[Maybe[ReadArmCell]] = AtomicRef.Unsafe.init(Absent)
+    // The release claim and every parked promise (see HandleLife). readArm and the driver's pending maps only route the selector's readiness
+    // to the right waiter; cancel and the release fail what is parked here.
+    // Unsafe: HandleLife initialized at object-construction time inside the class body.
+    val life: HandleLife = HandleLife.init()
 
     // STARTTLS handoff guard. Set true for the duration of a STARTTLS upgrade on this handle (from before the plaintext detach until the
     // handshake completes). While set, a plaintext read whose delivery the upgrade's inbound close has already failed is SALVAGED

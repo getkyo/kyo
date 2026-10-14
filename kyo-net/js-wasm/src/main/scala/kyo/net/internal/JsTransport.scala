@@ -1074,13 +1074,13 @@ final private[kyo] class JsTransport private (
                 return ()
             end if
 
-            // Detach the plaintext "data" listener with removeListener, not just removeAllListeners: it is the ONLY removal that
-            // clears Node's internal kDataListening flag. Left stale, updateReadableListening re-resumes the raw socket on the
-            // next tick and flows the unshifted flight to no listener. Remove the remaining listeners afterward; the TLSSocket
-            // constructor below re-registers its own "close"/"error" on the raw socket, so a later removeAllListeners would strip
-            // them. Both must precede the unshift and the constructor.
-            discard(socket.removeListener("data", handle.dataListener))
-            discard(socket.removeAllListeners())
+            // The detach's cancel already failed every op parked on the handle, a writable wait on "drain" included, and that settlement
+            // removed the wait's own listeners. Remove exactly the listeners JsHandle.init attached, by reference: removeListener("data", _)
+            // is the ONLY removal that clears Node's internal kDataListening flag (left stale, updateReadableListening re-resumes the raw
+            // socket on the next tick and flows the unshifted flight to no listener), and a blanket removeAllListeners would also strip the
+            // listeners Node registers on the socket itself. The TLSSocket constructor below re-registers its own "close"/"error" on the raw
+            // socket, so this must precede the unshift and the constructor.
+            handle.removeOwnListeners()
 
             // Push pre-read bytes and any peer-close-probe-staged leftover back into the socket (unshift) so the TLS engine sees them first. Order:
             // channel-drained preRead is older than the listener-stashed leftover, so preRead precedes it; draining leftover here also fixes its pre-existing silent drop at upgrade.

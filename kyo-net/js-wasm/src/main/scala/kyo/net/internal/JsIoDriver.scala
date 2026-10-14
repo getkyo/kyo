@@ -79,11 +79,11 @@ final private[kyo] class JsIoDriver private (
         armedOps += 1
         // Node's net.Socket#destroyed / #readableEnded are documented boolean properties; js.Dynamic erases them to untyped JS values, so recovering
         // the typed Boolean needs these narrowing casts. Safe per Node's documented property types.
-        if handle.hasLeftover then
+        if !handle.life.armable then promise.completeDiscard(Result.fail(released(handle)))
+        else if handle.hasLeftover then
             // (i) Deliver any staged/leftover chunk FIRST, in order, even if the socket has since ended/been destroyed: a peer-close-probe-induced
-            // 'end' (and Node's allowHalfOpen=false auto-destroy) must not drop bytes the probe already staged. deliverLeftover needs pendingRead set.
-            handle.pendingRead = Present(promise)
-            deliverLeftover(handle)
+            // 'end' (and Node's allowHalfOpen=false auto-destroy) must not drop bytes the probe already staged.
+            deliverLeftover(handle, promise)
         else if handle.socket.readableEnded.asInstanceOf[Boolean] then
             // (ii) The readable side ended (peer FIN, buffer fully consumed). Surface EOF. MANDATORY after a probe-induced 'end' fired with no pending
             // read (signalEof dropped it): a resume() on an already-ended stream would park forever, since no further 'data'/'end' will come.
@@ -91,13 +91,16 @@ final private[kyo] class JsIoDriver private (
         else if handle.socket.destroyed.asInstanceOf[Boolean] then
             // (iii) Socket destroyed (RST, or a completed close) with nothing staged: fail Closed.
             promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "socket destroyed")))
-        else
+        else if handle.life.read.park(promise, released(handle)) then
             // (iv) Request the next chunk: the permanent 'data' listener delivers it (or 'end'/'error' the EOF/failure).
-            handle.pendingRead = Present(promise)
             readArmed += handle
             discard(handle.socket.resume())
         end if
     end awaitRead
+
+    /** The failure of an op parked after the handle's release claim. */
+    private def released(handle: JsHandle)(using Frame): Closed =
+        Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "released")
 
     /** Whether the peer has closed, for the ReadPump's grace poll (poll-on-expiry). Node gives no non-consuming FIN signal on a PAUSED socket:
       * `pause()` calls `readStop`, so while backpressured libuv does not read the kernel socket and a FIN/RST never reaches Node (`readableEnded`/
@@ -143,40 +146,33 @@ final private[kyo] class JsIoDriver private (
         // net.Socket.
         if handle.socket.destroyed.asInstanceOf[Boolean] then
             promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "socket destroyed")))
-        else
-            // Register one-shot listeners for drain/close/error
-            var drainFn: js.Function0[Unit]             = null
-            var closeFn: js.Function0[Unit]             = null
-            var errorFn: js.Function1[js.Dynamic, Unit] = null
-
-            def removeAll(): Unit =
-                pendingWritables -= 1
-                discard(handle.socket.removeListener("drain", drainFn))
-                discard(handle.socket.removeListener("close", closeFn))
-                discard(handle.socket.removeListener("error", errorFn))
-            end removeAll
-
+        else if handle.life.writable.park(promise, released(handle)) then
             // The `drain` event is the success signal (the socket is writable again); `close`/`error` mean the socket went away before it became
             // writable, so the awaiting write must fail with a typed Closed, never spuriously succeed. A single `complete()` shared by all three
             // listeners would report Done for a write parked over a dying socket and then write into a destroyed socket, so success and failure
             // have separate completions here. This matches every other driver, where a close/error on a pending op fails the promise with Closed.
-            def completeSuccess(): Unit =
-                removeAll()
+            val drainFn: js.Function0[Unit] = () =>
+                discard(handle.life.writable.clearIf(promise))
                 promise.completeDiscard(Result.succeed(()))
-
-            def completeFailure(reason: String): Unit =
-                removeAll()
+            def failFn(reason: String): Unit =
+                discard(handle.life.writable.clearIf(promise))
                 promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, reason)))
-
-            drainFn = (() => completeSuccess()): js.Function0[Unit]
-            closeFn = (() => completeFailure("socket closed before writable")): js.Function0[Unit]
-            errorFn = ((_: js.Dynamic) => completeFailure("socket error before writable")): js.Function1[js.Dynamic, Unit]
+            val closeFn: js.Function0[Unit]             = () => failFn("socket closed before writable")
+            val errorFn: js.Function1[js.Dynamic, Unit] = (_: js.Dynamic) => failFn("socket error before writable")
 
             armedOps += 1
             pendingWritables += 1
             discard(handle.socket.once("drain", drainFn))
             discard(handle.socket.once("close", closeFn))
             discard(handle.socket.once("error", errorFn))
+            // However the wait settles (drain, close, error, or a cancel or release failing it in the slot), its listeners come off the socket,
+            // so a cancelled wait leaves nothing behind for a later event to fire.
+            promise.onComplete { _ =>
+                pendingWritables -= 1
+                discard(handle.socket.removeListener("drain", drainFn))
+                discard(handle.socket.removeListener("close", closeFn))
+                discard(handle.socket.removeListener("error", errorFn))
+            }
         end if
     end awaitWritable
 
@@ -201,18 +197,15 @@ final private[kyo] class JsIoDriver private (
     def releaseFd(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
 
     def closeListener(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        discard(handle.life.claimRelease())
         try cancel(handle)
         finally releaseFd(handle, closeFd)
+    end closeListener
 
+    /** Fails every op parked on the handle, the read and a writable wait on `drain` alike, and pauses the socket. Takes no release claim. */
     def cancel(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
         discard(handle.socket.pause())
-        val closed = Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "canceled")
-        handle.pendingRead match
-            case Present(pending) =>
-                pending.completeDiscard(Result.fail(closed))
-                handle.clearPendingRead()
-            case Absent => ()
-        end match
+        handle.life.cancel(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "canceled"))
     end cancel
 
     /** A graceful close ends the writable side and destroys the socket once Node reports it finished, instead of destroying at once.
@@ -230,9 +223,13 @@ final private[kyo] class JsIoDriver private (
       * and a peer reset destroy the socket themselves before this runs, and a socket Node already destroyed is left alone.
       */
     def closeHandle(handle: JsHandle)(using allow: AllowUnsafe, frame: Frame): Unit =
+        if handle.life.claimRelease() then release(handle)
+
+    private def release(handle: JsHandle)(using allow: AllowUnsafe, frame: Frame): Unit =
         // Node's net.Socket#destroyed and #writableFinished are documented boolean properties; js.Dynamic erases them to untyped JS values,
         // so recovering the typed Boolean needs these narrowing casts. Safe per Node's documented property types; they cannot dissolve
         // without a typed facade for Node's net.Socket.
+        handle.life.cancel(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "closed"))
         readArmed -= handle
         val socket = handle.socket
         if !socket.destroyed.asInstanceOf[Boolean] then
@@ -253,7 +250,7 @@ final private[kyo] class JsIoDriver private (
             discard(socket.end())
             if socket.writableFinished.asInstanceOf[Boolean] then settle()
         end if
-    end closeHandle
+    end release
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
@@ -264,13 +261,13 @@ final private[kyo] class JsIoDriver private (
     end close
 
     /** The handles whose armed read is still outstanding, dropping the ones whose read has since completed or been cancelled. */
-    private def pendingReadHandles(): List[JsHandle] =
-        readArmed.filterInPlace(_.pendingRead.isDefined)
+    private def pendingReadHandles()(using AllowUnsafe): List[JsHandle] =
+        readArmed.filterInPlace(_.life.read.current.exists(!_.done()))
         readArmed.toList
     end pendingReadHandles
 
-    private def deliverLeftover(handle: JsHandle)(using AllowUnsafe): Unit =
-        // Deliver exactly ONE queued chunk (the oldest), the FIFO head; a later awaitRead delivers the next. Called only with a pending read set.
+    private def deliverLeftover(handle: JsHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe): Unit =
+        // Deliver exactly ONE queued chunk (the oldest), the FIFO head; a later awaitRead delivers the next.
         handle.dequeueLeftover() match
             case Present(JsHandle.Leftover(buf, off, len)) =>
                 val arr =
@@ -279,12 +276,7 @@ final private[kyo] class JsIoDriver private (
                         buf
                     else
                         java.util.Arrays.copyOfRange(buf, off, off + len)
-                handle.pendingRead match
-                    case Present(pending) =>
-                        handle.clearPendingRead()
-                        pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
-                    case Absent => ()
-                end match
+                promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
             case Absent => ()
         end match
     end deliverLeftover

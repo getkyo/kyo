@@ -7,12 +7,12 @@ import kyo.net.internal.transport.WriteResult
 
 /** Reproduce-first coverage for the STARTTLS detach-vs-read strands on the poller backends: a pump read promise the upgrade detach cannot
   * see must still be failed, never stranded. The upgrade order (PosixTransport.upgradeToTls) is `upgradeActive`/`upgrading` set, then
-  * detachForUpgrade (the default driver `cancel`, whose promise sweep reads `pendingReadPromise`), then `isUpgraded` set. Three promises
+  * detachForUpgrade (the default driver `cancel`, whose promise sweep takes the handle's read slot), then `isUpgraded` set. Three promises
   * escape that sweep:
   *
   *   - a stray pump re-arm DEPOSITED AFTER the sweep ran (the registration apply rejects it while `upgradeActive && !handshakeReading`, and
   *     the rejection deliberately does not fail it, deferring to a sweep that already happened);
-  *   - a pump read CONSUMED BY THE UPGRADE WINDOW: a dispatch under `upgradeActive` clears `pendingReadPromise`, routes the peer flight into
+  *   - a pump read CONSUMED BY THE UPGRADE WINDOW: a dispatch under `upgradeActive` takes the read slot, routes the peer flight into
   *     the upgrade handoff, and never completes the promise, so the later sweep finds Absent;
   *   - a stray deposit IN THE GAP between the sweep and the `isUpgraded` write, which only the handshake's first producer arm can observe.
   *
@@ -77,7 +77,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                             assert(
                                 false,
                                 "read deposited after the upgrade sweep was stranded: nothing completed it " +
-                                    s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined}, upgradeActive=${handle.upgradeActive})"
+                                    s"(parked read=${handle.life.read.current.isDefined}, upgradeActive=${handle.upgradeActive})"
                             )
                         case other =>
                             assert(false, s"unexpected outcome $other")
@@ -102,7 +102,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                 }) {
                     // A legitimately armed pump read, then the upgrade window opens and the peer's first flight arrives BEFORE the detach
                     // sweep runs (the server-side STARTTLS shape: the flight rides right behind the negotiation byte). The dispatch routes
-                    // the flight into the upgrade handoff and consumes the promise out of pendingReadPromise, so the sweep finds Absent.
+                    // the flight into the upgrade handoff and takes the promise out of the read slot, so the sweep finds Absent.
                     val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(handle, p)
                     // Applied barrier: the arm above must be APPLIED on the poll carrier before the window opens, or the registration apply
@@ -131,7 +131,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                             assert(
                                 consumed,
                                 "the upgrade-window dispatch never routed the flight into the handoff " +
-                                    s"(handoff=${handle.upgradeHandoff.get()}, pendingReadPromise=${handle.pendingReadPromise.get().isDefined})"
+                                    s"(handoff=${handle.upgradeHandoff.get()}, parked read=${handle.life.read.current.isDefined})"
                             )
                         }.andThen {
                             driver.cancel(handle)
@@ -149,7 +149,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                                     assert(
                                         false,
                                         "pump read consumed by the upgrade window was stranded: the sweep missed it " +
-                                            s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined})"
+                                            s"(parked read=${handle.life.read.current.isDefined})"
                                     )
                                 case other =>
                                     assert(false, s"unexpected outcome $other")
@@ -188,10 +188,48 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                             assert(
                                 false,
                                 "stray deposit in the sweep-to-marker gap was stranded: the producer arm did not fail the occupant " +
-                                    s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined})"
+                                    s"(parked read=${handle.life.read.current.isDefined})"
                             )
                         case other =>
                             assert(false, s"unexpected outcome $other")
+                    }
+                }
+            }
+        }
+    }
+
+    "a cancel that lands while the poll carrier reads for the upgrade producer fails the producer instead of re-parking it" in {
+        assumePoller()
+        // The producer arm forces one read; the spy runs the cancel from inside that read's recv, so it lands while the dispatch holds the
+        // producer and before the EAGAIN re-arm.
+        val spy     = RecordingSocketBindings(sock)
+        val backend = PollerBackend.default()
+        val driver  = TestDrivers.forBackend(backend, backend.create(), spy)
+        discard(driver.start())
+        Sync.ensure(Sync.defer(driver.close())) {
+            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                Sync.ensure(Sync.defer {
+                    driver.closeHandle(handle)
+                    discard(sock.close(client).poll())
+                }) {
+                    handle.upgradeActive = true
+                    handle.upgrading = true
+                    val cancelled = Promise.Unsafe.init[Unit, Any]()
+                    spy.onRecvNow = _ =>
+                        driver.cancel(handle)
+                        cancelled.completeDiscard(Result.succeed(()))
+                    val producer = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                    driver.armUpgradeProducerRead(handle, producer)
+                    cancelled.safe.get.andThen {
+                        // Runs on the poll carrier after the dispatch that ran the cancel has re-armed or failed the producer.
+                        val dispatched = Promise.Unsafe.init[Unit, Any]()
+                        driver.submitEngineOp(() => dispatched.completeDiscard(Result.succeed(())))
+                        dispatched.safe.get
+                    }.map { _ =>
+                        producer.poll() match
+                            case Present(Result.Failure(_: Closed)) => succeed
+                            case other                              => fail(s"a cancel during the producer's read must fail it, got $other")
                     }
                 }
             }

@@ -558,4 +558,50 @@ class JsTransportTlsTest extends Test:
         end for
     }
 
+    // The upgrade detaches the plaintext connection; the write pump parked on Node's `drain` must be settled by that detach, or it waits for a
+    // `drain` whose listener the upgrade removes and never tears down.
+    "a STARTTLS upgrade over a write parked on drain settles that write" in {
+        val transport = JsTransport.init(poolSize = 1)
+        val net       = sjs.Dynamic.global.require("net")
+        Promise.init[Int, Any].map { listening =>
+            val accepted = new java.util.concurrent.atomic.AtomicReference[sjs.Dynamic](null)
+            val server   = net.createServer({ (socket: sjs.Dynamic) =>
+                // The peer never reads, so the client's writes back up until Node asks the pump to wait for `drain`.
+                discard(socket.pause())
+                accepted.set(socket)
+            }: sjs.Function1[sjs.Dynamic, Unit])
+            discard(server.listen(
+                0,
+                "127.0.0.1",
+                { () => listening.unsafe.completeDiscard(Result.succeed(server.address().port.asInstanceOf[Int])) }: sjs.Function0[Unit]
+            ))
+            val chunk = Span.from(Array.fill[Byte](64 * 1024)(7))
+            for
+                port <- listening.get
+                conn <- transport.connect("127.0.0.1", port).safe.get
+                internal = conn.asInstanceOf[kyo.net.internal.transport.Connection[?]]
+                _ <- assertEventually(Sync.defer {
+                    discard(conn.outbound.offer(chunk))
+                    internal.writeState match
+                        case kyo.net.internal.transport.WriteState.AwaitingWritable(_, _) => true
+                        case _                                                            => false
+                })
+                _     = discard(transport.upgradeToTls(conn, NetTlsConfig(trustAll = true), 16))
+                state = internal.writeState
+                _ <- Sync.defer {
+                    conn.close()
+                    Maybe(accepted.get()).foreach(s => discard(s.destroy()))
+                    discard(server.close())
+                }
+            yield assert(
+                state match
+                    case kyo.net.internal.transport.WriteState.AwaitingWritable(_, _) => false
+                    case _                                                            => true
+                ,
+                s"the upgrade's detach left the write pump parked on drain: writeState=$state"
+            )
+            end for
+        }
+    }
+
 end JsTransportTlsTest

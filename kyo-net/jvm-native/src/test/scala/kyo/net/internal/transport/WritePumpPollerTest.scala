@@ -2,6 +2,7 @@ package kyo.net.internal.transport
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.posix.PollerIoDriver
 import kyo.net.internal.posix.PosixHandle
@@ -166,6 +167,45 @@ class WritePumpPollerTest extends Test:
                     // closeHandle closed clientFd; only peerFd remains to close.
                     discard(sock.close(peerFd))
                     succeed
+                }
+            }
+        }
+
+        // The one interleaving of the race above that a lost close strands: the writable wins, the resumed pump parks again, and that second
+        // wait reaches the driver while the close is failing the wait it found. The spy holds both pump waits, and a wait parked ahead of the
+        // close delivers the second one from inside the close's sweep, so the order is fixed rather than left to the poll loop. The socket
+        // can open room after the first wait, so the resumed pump is fed until it parks rather than trusted to park on its tail.
+        "a writable that wins the race with a handle close and re-parks during it fails the new wait Closed and tears the pump down" in {
+            PosixTestSockets.assumePoller()
+            val spy         = new RecordingIoDriver(PollerIoDriver.init())
+            val closedLatch = Promise.Unsafe.init[Unit, Any]()
+            val reParked    = Promise.Unsafe.init[Unit, Any]()
+            discard(spy.start())
+            PosixTestSockets.smallBufferedPair(2048, 2048).map { case (clientFd, peerFd) =>
+                val channel       = Channel.Unsafe.init[Span[Byte]](16)
+                val (pump, state) = newPump(spy, clientFd, channel, () => closedLatch.completeDiscard(Result.succeed(())))
+                spy.holdNextWritable = true
+                pump.start()
+                discard(feedUntilParked(spy, pump, channel))
+                val (handle, first) = spy.heldWritable.getOrElse(fail("the pump's first wait must be held"))
+                spy.heldWritable = Absent
+
+                spy.holdNextWritable = true
+                spy.onAwaitWritable = _ => reParked.completeDiscard(Result.succeed(()))
+                // The feed ends when the teardown closes the channel.
+                Fiber.initUnscoped(Abort.run[Closed](Loop.forever(channel.safe.put(span(9, 128 * 1024))))).andThen {
+                    first.completeDiscard(Result.succeed(()))
+                }.andThen(reParked.safe.get).andThen {
+                    val swept = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
+                    swept.onComplete(_ => spy.releaseHeldWritable())
+                    spy.awaitWritable(handle, swept)
+                    spy.closeHandle(handle)
+                    closedLatch.safe.get.map { _ =>
+                        assert(state.get() == WriteState.TornDown)
+                        spy.close()
+                        discard(sock.close(peerFd))
+                        succeed
+                    }
                 }
             }
         }

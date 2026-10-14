@@ -296,11 +296,29 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         // Upgrading, so this can never fire pre-CAS and a pre-detach arm is never spuriously failed: that arm is taken by the detach sweep,
         // or, landing between the sweep and the first producer arm, by applyUpgradeArm's occupant fail. upgrading scopes the reject to the
         // window: it clears at handshake completion, so the upgraded connection's own reads pass.
-        if handle.upgrading && handle.handshakeReading then
+        if !handle.life.armable then promise.completeDiscard(Result.fail(released(handle)))
+        else if handle.upgrading && handle.handshakeReading then
             promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "detached for upgrade")))
         else
             awaitReadAdmitted(handle, promise)
     end awaitRead
+
+    /** The failure of an op parked after the handle's release claim. */
+    private def released(handle: NioHandle)(using Frame): Closed =
+        Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "released")
+
+    /** Put `handle`'s pendingReads entry for a read armed on it, then re-check the release claim. A release claims before it sweeps the entry,
+      * so either that sweep runs after this put or the re-check sees the claim and takes the entry back here: no entry outlives the release.
+      * False when the claim is taken.
+      */
+    private def putPendingRead(channel: SocketChannel, handle: NioHandle)(using AllowUnsafe): Boolean =
+        pendingReads.put(channel, handle)
+        if handle.life.armable then true
+        else
+            discard(pendingReads.remove(channel))
+            false
+        end if
+    end putPendingRead
 
     private def awaitReadAdmitted(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         // Check for buffered TLS data before registering with selector.
@@ -344,44 +362,50 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     // an older ReadArmCell heap object (distinct from the current arm's object even when both carry the
     // same promise), so its CAS fails.
     private[net] def armRead(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        val newCell = Present(ReadArmCell(promise))
-        // getAndSet, not set: fail the occupant this arm replaces. The occupant is normally Absent, or a standing grace probe whose promise
-        // is a throwaway; the case that matters is a stray pre-upgrade pump cell a stalled carrier left behind after every upgrade-window
-        // catcher ran, for which this overwrite is the last owner. Idempotent against occupants already completed elsewhere. Displacing a
-        // still-armed live cell surfaces promptly as a typed Closed its owner handles as teardown, rather than as a silent hang.
-        handle.readArm.getAndSet(newCell).foreach { previous =>
-            previous.promise.completeDiscard(Result.fail(Closed(
-                s"connection ${handleLabel(handle)}",
-                handle.createdAt,
-                "read arm replaced"
-            )))
-        }
-        pendingReads.put(handle.channel, handle)
-        Log.live.unsafe.debug(s"$label awaitRead registered ${handleLabel(handle)}")
-        if !registerInterest(handle.channel, SelectionKey.OP_READ) then
-            discard(handle.readArm.compareAndSet(newCell, Absent))
-            discard(pendingReads.remove(handle.channel))
-            promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "registerRead failed")))
-        else
-            if handle.forceReadArmWakeup then
-                // First post-STARTTLS read arm (NioHandle.forceReadArmWakeup): registerInterest's cross-carrier OP_READ set can be lost to the
-                // selector's own interestOps write and its guarded wakeup can coalesce, so on a selector quiescing between repeated upgrades the
-                // reassert backstop never runs and this read strands. Force an UNCONDITIONAL selector.wakeup() (Netty's cross-thread discipline:
-                // never rely on a coalesced wakeup for a one-shot arm) so the poll carrier runs one cycle and reassertPendingInterest re-applies
-                // OP_READ on the selector carrier. One-shot: cleared here so steady-state reads keep the coalesced wakeup.
-                handle.forceReadArmWakeup = false
-                discard(selector.wakeup())
+        if handle.life.read.park(promise, released(handle)) then
+            val newCell = Present(ReadArmCell(promise))
+            // getAndSet, not set: fail the occupant this arm replaces. The occupant is normally Absent, or a standing grace probe whose promise
+            // is a throwaway; the case that matters is a stray pre-upgrade pump cell a stalled carrier left behind after every upgrade-window
+            // catcher ran, for which this overwrite is the last owner. Idempotent against occupants already completed elsewhere. Displacing a
+            // still-armed live cell surfaces promptly as a typed Closed its owner handles as teardown, rather than as a silent hang.
+            handle.readArm.getAndSet(newCell).foreach { previous =>
+                previous.promise.completeDiscard(Result.fail(Closed(
+                    s"connection ${handleLabel(handle)}",
+                    handle.createdAt,
+                    "read arm replaced"
+                )))
+            }
+            Log.live.unsafe.debug(s"$label awaitRead registered ${handleLabel(handle)}")
+            if !putPendingRead(handle.channel, handle) then
+                discard(handle.readArm.compareAndSet(newCell, Absent))
+                promise.completeDiscard(Result.fail(released(handle)))
+            else if !registerInterest(handle.channel, SelectionKey.OP_READ) then
+                discard(handle.readArm.compareAndSet(newCell, Absent))
+                discard(pendingReads.remove(handle.channel))
+                promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "registerRead failed")))
+            else
+                if handle.forceReadArmWakeup then
+                    // First post-STARTTLS read arm (NioHandle.forceReadArmWakeup): registerInterest's cross-carrier OP_READ set can be lost to the
+                    // selector's own interestOps write and its guarded wakeup can coalesce, so on a selector quiescing between repeated upgrades
+                    // the reassert backstop never runs and this read strands. Force an UNCONDITIONAL selector.wakeup() (Netty's cross-thread
+                    // discipline: never rely on a coalesced wakeup for a one-shot arm) so the poll carrier runs one cycle and
+                    // reassertPendingInterest re-applies OP_READ on the selector carrier. One-shot: cleared here so steady-state reads keep the
+                    // coalesced wakeup.
+                    handle.forceReadArmWakeup = false
+                    discard(selector.wakeup())
+                end if
+                // Post-arm staging re-check (pump side of the staging handoff). awaitRead's staging pre-check and this arm are not atomic
+                // against the probe dispatch: a probe holding OP_READ can consume fresh socket bytes into graceStaging between the pre-check
+                // (which saw Absent) and the readArm.set above, after which nothing fires (the socket is empty) and the staged bytes would
+                // strand against this armed read forever. Re-checking AFTER the arm closes that window from this side: the probe stashes then
+                // reads the arm slot (dispatchGraceProbe's tail deliverStagedToArm), this carrier arms then re-reads staging, so one of the two
+                // always observes the other. Delivery is deferred to the poll carrier (selector-confined, like the probe arms themselves) with an
+                // UNCONDITIONAL wakeup: there is no socket readiness to ride, so a coalesced wakeup lost to an in-flight select would strand the
+                // delivery.
+                if stagedDeliveryDue(handle) then
+                    discard(pendingStagedDeliveries.offer(handle))
+                    discard(selector.wakeup())
             end if
-            // Post-arm staging re-check (pump side of the staging handoff). awaitRead's staging pre-check and this arm are not atomic against
-            // the probe dispatch: a probe holding OP_READ can consume fresh socket bytes into graceStaging between the pre-check (which saw
-            // Absent) and the readArm.set above, after which nothing fires (the socket is empty) and the staged bytes would strand against
-            // this armed read forever. Re-checking AFTER the arm closes that window from this side: the probe stashes then reads the arm slot
-            // (dispatchGraceProbe's tail deliverStagedToArm), this carrier arms then re-reads staging, so one of the two always observes the
-            // other. Delivery is deferred to the poll carrier (selector-confined, like the probe arms themselves) with an UNCONDITIONAL
-            // wakeup: there is no socket readiness to ride, so a coalesced wakeup lost to an in-flight select would strand the delivery.
-            if stagedDeliveryDue(handle) then
-                discard(pendingStagedDeliveries.offer(handle))
-                discard(selector.wakeup())
         end if
     end armRead
 
@@ -475,8 +499,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 "detached for upgrade"
             )))
         }
-        pendingReads.put(handle.channel, handle)
-        val registered = registerInterest(handle.channel, SelectionKey.OP_READ)
+        val registered = putPendingRead(handle.channel, handle) && registerInterest(handle.channel, SelectionKey.OP_READ)
         if !registered then
             discard(handle.readArm.getAndSet(Absent))
             discard(pendingReads.remove(handle.channel))
@@ -591,10 +614,11 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         else
             val probeCell = Present(ReadArmCell(Promise.Unsafe.init[ReadOutcome, Abort[Closed]](), probe = true))
             if handle.readArm.compareAndSet(Absent, probeCell) then
-                pendingReads.put(handle.channel, handle)
-                if !registerInterest(handle.channel, SelectionKey.OP_READ) then
+                if !putPendingRead(handle.channel, handle) then discard(handle.readArm.compareAndSet(probeCell, Absent))
+                else if !registerInterest(handle.channel, SelectionKey.OP_READ) then
                     discard(handle.readArm.compareAndSet(probeCell, Absent))
                     discard(pendingReads.remove(handle.channel))
+                end if
             end if
         end if
     end applyGraceProbeArm
@@ -634,8 +658,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                         // re-install as a standing FIN watch; CAS against Absent so a pump re-arm that won the slot is not clobbered.
                         val nextCell = Present(ReadArmCell(Promise.Unsafe.init[ReadOutcome, Abort[Closed]](), probe = true))
                         if handle.readArm.compareAndSet(Absent, nextCell) then
-                            pendingReads.put(channel, handle)
-                            discard(registerInterest(channel, SelectionKey.OP_READ))
+                            if putPendingRead(channel, handle) then discard(registerInterest(channel, SelectionKey.OP_READ))
+                            else discard(handle.readArm.compareAndSet(nextCell, Absent))
                         armed = false
                     end if
                 end while
@@ -798,8 +822,11 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     failConsumedUpgradeRead(handle, cell)
             else
                 // n == 0: spurious selector wakeup, no data ready. Keep the producer armed (re-register on the selector carrier) for the real edge.
-                pendingReads.put(channel, handle)
-                discard(registerInterest(channel, SelectionKey.OP_READ))
+                if putPendingRead(channel, handle) then discard(registerInterest(channel, SelectionKey.OP_READ))
+                else if handle.readArm.compareAndSet(cell, Absent) then
+                    failUpgradeHandoff(handle)
+                    failConsumedUpgradeRead(handle, cell)
+                end if
             end if
         catch
             case _: IOException =>
@@ -893,11 +920,13 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     end stopUpgradeProducer
 
     def awaitWritable(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
-        pendingWritables.put(handle.channel, promise)
-        Log.live.unsafe.debug(s"$label awaitWritable registered ${handleLabel(handle)}")
-        if !registerInterest(handle.channel, SelectionKey.OP_WRITE) then
-            discard(pendingWritables.remove(handle.channel))
-            promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "registerWrite failed")))
+        if handle.life.writable.park(promise, released(handle)) then
+            pendingWritables.put(handle.channel, promise)
+            Log.live.unsafe.debug(s"$label awaitWritable registered ${handleLabel(handle)}")
+            if !registerInterest(handle.channel, SelectionKey.OP_WRITE) then
+                discard(pendingWritables.remove(handle.channel))
+                promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "registerWrite failed")))
+            end if
         end if
     end awaitWritable
 
@@ -919,25 +948,28 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     end armConnectInterest
 
     def awaitConnect(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
-        Maybe(pendingConnects.putIfAbsent(handle.channel, (promise, handle))) match
-            case Absent =>
-                Log.live.unsafe.debug(s"$label awaitConnect registered ${handleLabel(handle)}")
-                if !armConnectInterest(handle.channel) then
-                    discard(pendingConnects.remove(handle.channel))
-                    promise.completeDiscard(Result.fail(Closed(
-                        s"connection ${handleLabel(handle)}",
-                        handle.createdAt,
-                        "registerConnect failed"
-                    )))
-                end if
-            case Present(_) =>
-                // NoStackTrace: constructed on the driver carrier, whose stack crosses C poller
-                // frames the Scala Native unwinder cannot step through on arm64; the trace would
-                // record driver internals anyway, not the misusing caller on its own fiber.
-                promise.completeDiscard(Result.panic(new IllegalStateException(
-                    s"$label duplicate awaitConnect for ${handleLabel(handle)}"
-                ) with scala.util.control.NoStackTrace))
-        end match
+        if !handle.life.armable then promise.completeDiscard(Result.fail(released(handle)))
+        else
+            Maybe(pendingConnects.putIfAbsent(handle.channel, (promise, handle))) match
+                case Absent =>
+                    Log.live.unsafe.debug(s"$label awaitConnect registered ${handleLabel(handle)}")
+                    if !handle.life.connect.park(promise, released(handle)) then discard(pendingConnects.remove(handle.channel))
+                    else if !armConnectInterest(handle.channel) then
+                        discard(pendingConnects.remove(handle.channel))
+                        promise.completeDiscard(Result.fail(Closed(
+                            s"connection ${handleLabel(handle)}",
+                            handle.createdAt,
+                            "registerConnect failed"
+                        )))
+                    end if
+                case Present(_) =>
+                    // NoStackTrace: constructed on the driver carrier, whose stack crosses C poller
+                    // frames the Scala Native unwinder cannot step through on arm64; the trace would
+                    // record driver internals anyway, not the misusing caller on its own fiber.
+                    promise.completeDiscard(Result.panic(new IllegalStateException(
+                        s"$label duplicate awaitConnect for ${handleLabel(handle)}"
+                    ) with scala.util.control.NoStackTrace))
+            end match
     end awaitConnect
 
     /** IoDriver contract stub for the NIO driver. The NIO driver uses its own private accept seam (ServerSocketChannel-based); callers must
@@ -1071,36 +1103,35 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         Maybe(pendingConnects.remove(handle.channel)).foreach { case (promise, _) =>
             promise.completeDiscard(Result.fail(closed))
         }
+        handle.life.cancel(closed)
     end cleanupPending
 
     // NIO keys every registration by its channel object, never by fd number, so a recycled number cannot reach a closed handle's state.
     def releaseFd(handle: NioHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
 
     def closeListener(handle: NioHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
-        try cancel(handle)
+        discard(handle.life.claimRelease())
+        try
+            cancelKey(handle)
+            cleanupPending(handle)
         finally releaseFd(handle, closeFd)
+        end try
+    end closeListener
 
-    def cancel(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
+    private def cancelKey(handle: NioHandle)(using AllowUnsafe): Unit =
         try
             val key = handle.channel.keyFor(selector)
-            if (key ne null) && key.isValid then
-                key.cancel()
-                if wakeupPending.compareAndSet(false, true) then
-                    discard(selector.wakeup())
-            end if
+            if (key ne null) && key.isValid then key.cancel()
         catch
             case _: CancelledKeyException => ()
         end try
-        cleanupPending(handle)
-    end cancel
+    end cancelKey
 
-    /** STARTTLS detach that KEEPS the channel's SelectionKey. The same channel is re-driven as a TLS handshake immediately after, so instead of
-      * cancelling the key (which marks it for removal at the next select() and makes the subsequent channel.register throw CancelledKeyException
-      * and defer, opening the no-live-key window a concurrent handshake arm fails on), this resets the key's interest to 0 and keeps it. The
-      * handshake then re-arms OP_READ/OP_WRITE on the SAME live key via registerInterest, with no re-registration race. Pending plaintext promises
-      * are still failed (cleanupPending) so the plaintext pumps tear down, exactly as cancel does.
+    /** Fails every op parked on the handle and withdraws its interest, but KEEPS the channel's SelectionKey: cancel takes no release claim, so
+      * an op parked after it is live and re-arms interest on the SAME key via registerInterest. Cancelling the key instead would mark it for
+      * removal at the next select() and make every later arm on the channel fail. Only the release cancels the key.
       */
-    override def detachForUpgrade(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
+    def cancel(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
         try
             val key = handle.channel.keyFor(selector)
             if (key ne null) && key.isValid then
@@ -1112,21 +1143,26 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             case _: CancelledKeyException => ()
         end try
         cleanupPending(handle)
+    end cancel
+
+    /** STARTTLS detach: a [[cancel]], so the same channel is re-driven as a TLS handshake on the same live key, plus the staging salvage. */
+    override def detachForUpgrade(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
+        cancel(handle)
         // Backstop for the resume-then-probe window: onInboundClosedDuringRead salvages graceStaging only when the pump parked, but a probe can stage
         // the peer's flight after the pump resumed. Salvage it here so the handshake sees it; a no-op (empty) when the inline hook already drained it.
         drainGraceStaging(handle).foreach(staged => stashUpgradeBytes(handle, staged))
     end detachForUpgrade
 
+    /** The handle's one release: takes the release claim before the sweep, so a repeat call is a no-op and no op is parked or re-armed after
+      * it, then cancels the key and closes the channel.
+      */
     def closeHandle(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
+        if handle.life.claimRelease() then release(handle)
+
+    private def release(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
         Log.live.unsafe.debug(s"$label closeHandle ${handleLabel(handle)}")
         cleanupPending(handle)
-        try
-            val key = handle.channel.keyFor(selector)
-            if (key ne null) && key.isValid then
-                key.cancel()
-        catch
-            case _: CancelledKeyException => ()
-        end try
+        cancelKey(handle)
         NioHandle.close(handle)
         // Wake the selector so the cancelled key is deregistered, and on JDK 11+ the channel's fd actually kill()ed, on the next select()
         // pass. channel.close defers both to a selection operation, and the loop parks in an indefinite select() with no timeout, so on an
@@ -1134,7 +1170,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         // leave the fd stranded in CLOSE_WAIT until an unrelated event happened to wake the loop. Coalesced via wakeupPending, matching the
         // transport and listener closes that wake the selector for the identical deferred-kill() reason.
         wakeup()
-    end closeHandle
+    end release
 
     /** Remove a pending accept entry for a server channel and fail its promise with Closed. */
     def cleanupAccept(serverChannel: ServerSocketChannel, createdAt: Frame)(using AllowUnsafe, Frame): Unit =
@@ -1893,8 +1929,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
             else
                 // n == 0: no data ready (selector spurious wakeup). Re-arm: restore the entry and interest.
-                pendingReads.put(channel, handle)
-                discard(registerInterest(channel, SelectionKey.OP_READ))
+                if putPendingRead(channel, handle) then discard(registerInterest(channel, SelectionKey.OP_READ))
+                else if handle.readArm.compareAndSet(cell, Absent) then promise.completeDiscard(Result.fail(released(handle)))
             end if
         catch
             case _: IOException =>
@@ -1917,8 +1953,9 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         // concurrently. If the write path holds the gate, re-arm for the next selector wakeup rather
         // than spinning on the selector carrier (which would block other connections' read events).
         if !handle.engineGate.compareAndSet(false, true) then
-            pendingReads.put(channel, handle)
-            discard(registerInterest(channel, SelectionKey.OP_READ))
+            if putPendingRead(channel, handle) then discard(registerInterest(channel, SelectionKey.OP_READ))
+            else if handle.readArm.compareAndSet(cell, Absent) then
+                promise.completeDiscard(Result.fail(released(handle)(using Frame.internal)))
         else
             // Collect the completion thunk; the gate is released in finally BEFORE the thunk runs so
             // synchronous teardown callbacks (ReadPump.onComplete -> closeHandle -> NioHandle.close ->
@@ -1959,8 +1996,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                                     complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
                             else if n == 0 then
                                 // Spurious wakeup: no data ready. Restore entry and re-arm.
-                                pendingReads.put(channel, handle)
-                                discard(registerInterest(channel, SelectionKey.OP_READ))
+                                rearmTlsRead(channel, cell, promise, handle).foreach(complete = _)
                             else
                                 buf.flip()
                                 // Grow netInBuf if needed to hold existing data + new data
@@ -1986,8 +2022,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                                             complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
                                     case Absent =>
                                         // Got ciphertext but no complete TLS record yet: need more data, re-arm.
-                                        pendingReads.put(channel, handle)
-                                        discard(registerInterest(channel, SelectionKey.OP_READ))
+                                        rearmTlsRead(channel, cell, promise, handle).foreach(complete = _)
                                 end match
                             end if
                     end match
@@ -2009,6 +2044,23 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             else complete()
         end if
     end dispatchReadTls
+
+    /** Keep a TLS read armed under the engine gate, or, once the release claim is taken, take its cell and return the completion that fails
+      * it, to run after the gate is released.
+      */
+    private def rearmTlsRead(
+        channel: SocketChannel,
+        cell: Maybe[ReadArmCell],
+        promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
+        handle: NioHandle
+    )(using AllowUnsafe): Maybe[() => Unit] =
+        if putPendingRead(channel, handle) then
+            discard(registerInterest(channel, SelectionKey.OP_READ))
+            Absent
+        else if handle.readArm.compareAndSet(cell, Absent) then
+            Present(() => promise.completeDiscard(Result.fail(released(handle)(using Frame.internal))))
+        else Absent
+    end rearmTlsRead
 
     private def dispatchWritable(channel: SocketChannel)(using AllowUnsafe): Unit =
         Maybe(pendingWritables.remove(channel)) match

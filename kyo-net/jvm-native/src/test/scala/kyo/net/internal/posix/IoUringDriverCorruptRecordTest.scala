@@ -16,14 +16,14 @@ import kyo.net.internal.transport.ReadOutcome
   * the read-path KeyUpdate stall (a `SSL_read` that queues outbound ciphertext must send it) both live on the shared [[TlsEngineIo]] decrypt path.
   * The io_uring read CQE completion drives that same path inside its engine FIFO op
   * ([[IoUringDriver]] `complete` -> `feedAndDecrypt`), detects the fatal record via `feedAndDecrypt`'s `onFatal` signal, and fails the read with
-  * the typed decrypt error (`ReadOutcome.Failed(NetConnectionIoException(Decrypt))`) while tearing the connection down, then calls `flushTls` to
-  * send any ciphertext the read produced. This test pins that the io_uring path behaves identically to the poller path on a REAL ring with a REAL
-  * BoringSSL engine.
+  * the typed decrypt error (`ReadOutcome.Failed(NetConnectionIoException(Decrypt))`), which the connection turns into its own release, then
+  * calls `flushTls` to send any ciphertext the read produced. This test pins that the io_uring path behaves identically to the poller path on a
+  * REAL ring with a REAL BoringSSL engine.
   *
   * Leaf 1 (fatal-record abort) feeds `[good record][corrupted record]` (the corruption flips a body byte of the second record so its AEAD tag
   * fails) coalesced on the wire and reads via the driver. The driver's read CQE feeds the engine; `feedAndDecrypt` reaches the fatal record,
-  * fires `onFatal` (tearing the connection down), and the completion fails the read with the typed decrypt error rather than delivering the good
-  * prefix or re-arming a freed handle. Leaf 2 (read-produced-ciphertext drain) reads a real inbound record through the same CQE path and asserts the
+  * fires `onFatal` (which only records it), and the completion fails the read with the typed decrypt error rather than delivering the good
+  * prefix, releasing nothing in the driver. Leaf 2 (read-produced-ciphertext drain) reads a real inbound record through the same CQE path and asserts the
   * engine's write side was drained (`drainCiphertext` ran), the wiring by which a TLS 1.3 KeyUpdate response queued during the read reaches the
   * wire via `flushTls` (a real end-to-end KeyUpdate is not drivable: the shims bind no `SSL_key_update`, the same limitation the poller's
   * read-drain leaf documents).
@@ -34,7 +34,7 @@ import kyo.net.internal.transport.ReadOutcome
   * Anti-flakiness: each leaf synchronizes on the read promise (completed only when the recv CQE reaps and the decrypt engine op runs) and a
   * FIFO barrier (the decrypt engine op has run), never a timer. `Async.timeout` is only the deadlock ceiling. The probe engines are freed in a
   * finally; the driver handle's `engineFreeSink` is set to a no-op so `withEngines` owns the single real free (no double-free of the native
-  * session when `requestClose` tears the handle down). No sleep, no busy-spin.
+  * session when the test's own `closeHandle` tears the handle down). No sleep, no busy-spin.
   */
 class IoUringDriverCorruptRecordTest extends Test:
 
@@ -70,7 +70,7 @@ class IoUringDriverCorruptRecordTest extends Test:
 
     "IoUringDriver corrupt-record + read-drain (real ring, real engine)" - {
 
-        "a fatal TLS record on a read CQE fails the read with a typed decrypt error and tears the connection down, never delivering the good prefix" in {
+        "a fatal TLS record on a read CQE fails the read with a typed decrypt error and leaves the release to the connection, never delivering the good prefix" in {
             PosixTestSockets.assumeUring()
             TlsRealEngines.assumeTlsReady()
             TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
@@ -79,8 +79,8 @@ class IoUringDriverCorruptRecordTest extends Test:
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
                         val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(serverEngine)
-                        // The driver handle must NOT free the engine on teardown: withEngines owns the single real free. requestClose (fired by
-                        // the fatal record) routes the engine free through this sink, so a no-op sink keeps the native session alive for withEngines.
+                        // The driver handle must NOT free the engine on teardown: withEngines owns the single real free. The handle's release
+                        // routes the engine free through this sink, so a no-op sink keeps the native session alive for withEngines.
                         handle.engineFreeSink = _ => ()
 
                         val good = "GOOD-application-record".getBytes("UTF-8")
@@ -106,23 +106,24 @@ class IoUringDriverCorruptRecordTest extends Test:
                         val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         drv.awaitRead(handle, promise)
                         Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
-                            // The decrypt engine op (which ran requestClose on the fatal record) has run once the FIFO barrier fires.
+                            // The decrypt engine op has run once the FIFO barrier fires. Captured before the closeHandle below, which stands in
+                            // for the connection's release.
                             fifoBarrier(drv).safe.get.map { _ =>
-                                val closing = handle.isClosing()
+                                val releasedByDriver = !handle.life.armable || handle.isClosing()
                                 handle.tls = Absent
                                 drv.closeHandle(handle)
                                 discard(sock.close(peerFd))
                                 outcome match
                                     case Result.Success(ReadOutcome.Failed(e: NetConnectionIoException)) =>
                                         // RFC 5246 §7.2.2: the fatal record tears the connection down, surfaced as the typed decrypt failure (never a
-                                        // misleading Closed, and never the good prefix). The handle must be closing (onFatal tore it down), not re-armed.
+                                        // misleading Closed, and never the good prefix).
                                         assert(
                                             e.operation == NetConnectionIoException.Operation.Decrypt,
                                             s"the fatal record must surface as a TLS decrypt failure; got operation ${e.operation}"
                                         )
                                         assert(
-                                            closing,
-                                            "the fatal record must mark the handle closing (onFatal), tearing it down rather than re-arming a freed handle"
+                                            !releasedByDriver,
+                                            "the fatal record must leave the release to the connection, not release the handle in the driver"
                                         )
                                     case Result.Success(ReadOutcome.Bytes(got)) =>
                                         fail(

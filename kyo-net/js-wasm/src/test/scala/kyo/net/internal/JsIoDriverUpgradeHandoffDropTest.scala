@@ -78,12 +78,12 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
                 discard(clientSock.write(buffer(chunkA)))
 
                 Sync.ensure(cleanup) {
-                    assertEventually(conn.inbound.size().getOrElse(-1) == 1 && handle.pendingRead.isDefined).andThen {
+                    assertEventually(conn.inbound.size().getOrElse(-1) == 1 && handle.life.read.current.isDefined).andThen {
                         discard(clientSock.write(buffer(chunkB)))
 
-                        // Chunk B's 'data' clears the pending read and offerToChannel parks its put (channel full, A unconsumed); the pump does NOT
-                        // re-arm while parked, so pendingRead stays empty.
-                        assertEventually(handle.pendingRead.isEmpty)
+                        // Chunk B's 'data' takes the parked read and offerToChannel parks its put (channel full, A unconsumed); the pump does NOT
+                        // re-arm while parked, so the read slot stays empty.
+                        assertEventually(handle.life.read.current.isEmpty)
                     }.andThen {
                         handle.upgrading = true
                         val buffered = conn.detachForUpgrade().poll() match
@@ -114,7 +114,7 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
 
         "stages the peer's first flight as leftover when the handle is upgrading (afterDetach replays it)" in {
             val driver = JsIoDriver.init()
-            val handle = new JsHandle(inertSocket(), HandleId.next(0), Frame.internal)
+            val handle = new JsHandle(inertSocket(), HandleId.next(0), Frame.internal, HandleLife.init())
             handle.upgrading = true
             val bytes = Array[Byte](11, 22, 33)
             driver.onInboundClosedDuringRead(handle, Span.fromUnsafe(bytes))
@@ -128,7 +128,7 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
 
         "discards the bytes when the handle is not upgrading (ordinary close, unchanged behavior)" in {
             val driver = JsIoDriver.init()
-            val handle = new JsHandle(inertSocket(), HandleId.next(0), Frame.internal)
+            val handle = new JsHandle(inertSocket(), HandleId.next(0), Frame.internal, HandleLife.init())
             driver.onInboundClosedDuringRead(handle, Span.fromUnsafe(Array[Byte](44, 55)))
             assert(!handle.hasLeftover, "an ordinary (non-upgrade) close must discard the read, not stage it as leftover")
         }

@@ -238,12 +238,33 @@ final private[net] class IoUringDriver private[posix] (
         // or armUpgradeProducerRead's occupant fail (deposit in the sweep-to-marker gap).
         // The handshake's own ciphertext recv never enters here: it arms via awaitReadHandshake (which does not gate). False on the pollers
         // (upgradeActive is never set there: synchronous reads hold no kernel-owned recv), so this is io_uring-only.
-        if handle.upgradeActive then
-            handle.pendingReadPromise.set(Present(promise))
-            if handle.isUpgraded then
+        if handle.life.read.park(promise, released(handle)) then
+            if !handle.upgradeActive then submitDeferredRecv(handle, promise, handshakeOwned = false)
+            else if handle.isUpgraded then
+                discard(handle.life.read.clearIf(promise))
                 promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "detached for upgrade")))
-        else submitDeferredRecv(handle, promise, handshakeOwned = false)
+            end if
+        end if
     end awaitRead
+
+    /** The failure of a park that lands after the handle's release claim. */
+    private def released(handle: PosixHandle)(using Frame): Closed =
+        Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "released")
+
+    /** Hand a read failure found off any read's own path (a stale recv decoded after the upgrade, the upgrade-handoff salvage) to the read
+      * parked on the handle, or carry it to the next one, so the connection ends through its own release. Runs on the reap carrier, as does
+      * the carried check before each read's arm in [[submitDeferredRecv]], so a read parked concurrently is either taken here or finds the
+      * carried failure there.
+      */
+    private def failNextRead(handle: PosixHandle, cause: NetConnectionIoException)(using AllowUnsafe, Frame): Unit =
+        handle.life.read.take() match
+            case Present(read) => read.completeDiscard(Result.succeed(ReadOutcome.Failed(cause)))
+            case Absent        => discard(handle.life.carry(ReadOutcome.Failed(cause)))
+
+    private def fatalRecordFailure(handle: PosixHandle): NetConnectionIoException =
+        NetConnectionIoException(s"connection ${handleLabel(handle)}", NetConnectionIoException.Operation.Decrypt, "fatal record")(using
+            handle.createdAt
+        )
 
     /** The STARTTLS handshake's own ciphertext recv. Never gated by `upgradeActive` (it is the legitimate read owner, not a stray plaintext-pump
       * re-arm), and tagged `handshakeOwned` so the reap exempts it from the upgrade-window handoff routing and feeds it to the engine.
@@ -252,26 +273,32 @@ final private[net] class IoUringDriver private[posix] (
         AllowUnsafe,
         Frame
     ): Unit =
-        submitDeferredRecv(handle, promise, handshakeOwned = true)
+        if handle.life.read.park(promise, released(handle)) then submitDeferredRecv(handle, promise, handshakeOwned = true)
 
     /** io_uring STARTTLS upgrade producer (single-source): arm the handshake's own ciphertext recv as a producer whose CQE the reap routes to the
       * handle's [[PosixHandle.upgradeHandoff]] slot (the reap's `upgradeActive` branch, which stays set for the whole upgrade), fulfilling the waiter
       * `driveUpgradeRead` parked. The handshake never feeds a recv promise directly, so there is no second read source to orphan a staged Carryover.
-      * `producer` is a vehicle to hold the recv armed and be failed on close; the handshake observes only the slot. handshakeOwned so the single-recv
-      * `upgradeActive` gate in [[awaitRead]] does not drop it. Demand-driven: `driveUpgradeRead` calls this once per read it needs.
+      * The recv's promise is a vehicle nothing observes, so it is not parked in the handle's read slot: a read failure found off a read's own
+      * path ([[failNextRead]]) goes to whatever that slot holds, and must reach the connection's next read, not a recv the handshake left in
+      * flight. A release before the arm drains is refused by [[submitRecv]]'s claim check. handshakeOwned so the single-recv `upgradeActive`
+      * gate in [[awaitRead]] does not drop it. Demand-driven: `driveUpgradeRead` calls this once per read it needs.
       */
     override def armUpgradeProducerRead(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        // Atomically take and fail a stray pump re-arm deposited in the gap between detachForUpgrade's cancel sweep and the isUpgraded write
-        // (awaitRead's upgrade-window deposit): invisible to both, so this first producer arm is the last point that can complete it. This
-        // driver never arms through pendingReadPromise itself, so the field is cleared, not replaced. Idempotent against an already-failed
-        // deposit.
-        handle.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(Closed(
-            s"connection ${handleLabel(handle)}",
-            handle.createdAt,
-            "detached for upgrade"
-        ))))
-        val producer = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-        awaitReadHandshake(handle, producer)
+        armUpgradeProducerRead(handle, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
+
+    /** As [[armUpgradeProducerRead]], over a given producer promise, so the cancel contract can observe it. */
+    private[posix] def armUpgradeProducerRead(handle: PosixHandle, producer: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using
+        AllowUnsafe,
+        Frame
+    ): Unit =
+        // Fail a stray pump re-arm deposited in the gap between detachForUpgrade's cancel sweep and the isUpgraded write (awaitRead's
+        // upgrade-window deposit): invisible to both, so this producer arm is the last point that can complete it. Idempotent against an
+        // already-failed deposit.
+        handle.life.read.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "detached for upgrade"))
+        // Outside the read slot, cancel still reaches the producer: through onCancel while its arm is queued, and through the pending sweep
+        // once its recv is registered. Registered after the release claim, onCancel fails it at once and nothing is armed.
+        handle.life.onCancel(closed => producer.completeDiscard(Result.fail(closed)))
+        if handle.life.armable then submitDeferredRecv(handle, producer, handshakeOwned = true)
     end armUpgradeProducerRead
 
     /** Arm the recv on the reap carrier (via the engine queue) so get_sqe has a single producer. The closedFlag check runs there too: a submit on a
@@ -286,9 +313,18 @@ final private[net] class IoUringDriver private[posix] (
             if closedFlag.get() then
                 promise.completeDiscard(Result.fail(Closed(label, Frame.internal, "driver closed")))
             else
-                // Snapshot handle.isUpgraded HERE, on the reap carrier, at the moment this recv is actually armed -- not at the (possibly much
-                // earlier, possibly different-carrier) awaitRead/awaitReadHandshake call. See PendingOp.Read's armedPostUpgrade doc.
-                submitRecv(handle, promise, eintrRetries = 0, handshakeOwned = handshakeOwned, armedPostUpgrade = handle.isUpgraded)
+                // A failure carried by failNextRead is this read's outcome. Checked here, on the carrier failNextRead runs on, so neither can
+                // miss the other.
+                val carried = if handshakeOwned || promise.done() then Absent else handle.life.takeCarried()
+                carried match
+                    case Present(outcome) =>
+                        discard(handle.life.read.clearIf(promise))
+                        promise.completeDiscard(Result.succeed(outcome))
+                    case Absent =>
+                        // Snapshot handle.isUpgraded HERE, on the reap carrier, at the moment this recv is actually armed -- not at the (possibly
+                        // much earlier, possibly different-carrier) awaitRead/awaitReadHandshake call. See PendingOp.Read's armedPostUpgrade doc.
+                        submitRecv(handle, promise, eintrRetries = 0, handshakeOwned = handshakeOwned, armedPostUpgrade = handle.isUpgraded)
+                end match
         }
 
     /** Submit one recv SQE for `promise`, recording `eintrRetries` (the count of prior re-submissions caused by a `-EINTR` read CQE) on the
@@ -305,10 +341,16 @@ final private[net] class IoUringDriver private[posix] (
         AllowUnsafe,
         Frame
     ): Unit =
-        if handle.readBuffer.isClosed then
-            // The handle was closed (its buffers freed) before this deferred arm ran on the reap carrier; never point a recv SQE at freed memory.
-            // Fail the read so the caller's pump tears down. closeNow (the buffer free) also runs on the reap carrier, so this arm and the free are
-            // serialized: either the arm wins and the close defers behind the recv CQE, or the buffer is already closed and this branch fires.
+        if promise.done() && !handle.upgradeActive && !handle.upgrading then
+            // A cancel failed this read between its park and this deferred arm: nothing waits for it, and a recv armed for it would hold the
+            // buffer against the next read the caller parks. During an upgrade the recv is armed anyway: the reap routes its bytes to the
+            // handshake, which may already be waiting on it because hasInFlightRead counted it (a stale recv the detach failed while it sat
+            // in stalledSubmits, or one re-submitted after EINTR).
+            ()
+        else if handle.readBuffer.isClosed || !handle.ownsFd() then
+            // The handle was released (and possibly its buffers freed) before this deferred arm ran on the reap carrier; never point a recv SQE
+            // at freed memory or at a number the release may already have closed. Fail the read so the caller's pump tears down. closeNow (the
+            // buffer free) also runs on the reap carrier, so this arm and the free are serialized.
             promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "closed before read arm")))
         else if handle.isUpgraded && hasInFlightRead(handle) then
             // Single-recv-ordering enforcement: this handle went through a STARTTLS upgrade (PosixHandle.isUpgraded) and ANOTHER recv is
@@ -334,13 +376,13 @@ final private[net] class IoUringDriver private[posix] (
                 s"fd=${handle.readFd} id=${handle.id.packed} exclusive-use violation: a recv was requested while another was already " +
                     "kernel-owned for this handle's buffer"
             Log.live.unsafe.error(s"$label $msg")
-            // Exclusive-use discipline breach: a structural defect, not an environmental failure. Abort the connection via the panic channel.
+            // Exclusive-use discipline breach: a structural defect, not an environmental failure. Abort the connection via the panic channel:
+            // its reader tears the connection down, and the connection's release closes the handle.
             promise.completeDiscard(Result.Panic(NetConnectionIoException(
                 s"connection ${handleLabel(handle)}",
                 NetConnectionIoException.Operation.Receive,
                 msg
             )(using handle.createdAt)))
-            closeHandle(handle)
         else
             val key = keyGen.getAndIncrement()
             // Cheap snapshot of WHICH buffer this recv is about to target (Present -> recvStagingFor's staging buffer, Absent -> the raw
@@ -425,31 +467,33 @@ final private[net] class IoUringDriver private[posix] (
     end drainQueuedRecv
 
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
-        if handle.unsentTailBytes >= PosixHandle.WriteTailLowWater then
-            // Tail-bound park (CWE-400): the pump suspended because the write tail reached the high-water mark, not because of a kernel send-buffer
-            // limit (io_uring's send is async and self-drains via the in-flight SQE's CQE re-flush). Completing the promise now would busy-loop:
-            // the pump would retry, hit the high-water bound again, get Partial, and await again with no progress. Instead,
-            // hold the promise on the handle; the CQE re-flush path (onTlsSendComplete / onRawSendComplete) completes it via releaseBackpressureWaiter
-            // once the tail falls below the low-water mark. An in-flight send is guaranteed: the tail only reaches the high-water mark through a write
-            // whose flush submitted a send SQE (or coalesced behind one), and that SQE's reap re-flushes and re-checks the waiter.
-            handle.backpressurePromise = Present(promise)
-            // Double-check on the FIFO worker: a CQE re-flush may have drained the tail below the low-water mark between the check above and this
-            // registration (the reap runs on the FIFO worker, this runs on the pump carrier). Routing the re-check through the FIFO observes a
-            // consistent tail snapshot (no race with onTlsSendComplete) and completes the just-registered waiter if the drain already happened, so
-            // the pump is never stranded. A waiter parked while the handle is closing is failed by PosixHandle.freeResources, so the close-vs-park
-            // race never strands the pump.
-            submitEngineOp(() => handle.releaseBackpressureWaiter())
-        else
-            // Below the bound: io_uring buffers the unsent bytes in the pending tail, holds AT MOST ONE send SQE in flight per handle, and re-flushes
-            // the remainder when that send's CQE reaps, so a write always returns Done and there is no kernel send-buffer to drain before the next
-            // write. The completion arm signals writability immediately (no readiness re-arm: the send is already in flight / pending and self-drains).
-            promise.completeDiscard(Result.succeed(()))
+        if handle.life.writable.park(promise, released(handle)) then
+            if handle.unsentTailBytes >= PosixHandle.WriteTailLowWater then
+                // Tail-bound park (CWE-400): the pump suspended because the write tail reached the high-water mark, not because of a kernel
+                // send-buffer limit (io_uring's send is async and self-drains via the in-flight SQE's CQE re-flush). Completing the promise now
+                // would busy-loop: the pump would retry, hit the high-water bound again, get Partial, and await again with no progress. Instead
+                // the promise stays parked; the CQE re-flush path (onTlsSendComplete / onRawSendComplete) completes it via
+                // releaseBackpressureWaiter once the tail falls below the low-water mark. An in-flight send is guaranteed: the tail only reaches
+                // the high-water mark through a write whose flush submitted a send SQE (or coalesced behind one), and that SQE's reap re-flushes
+                // and re-checks the waiter.
+                //
+                // Double-check on the FIFO worker: a CQE re-flush may have drained the tail below the low-water mark between the check above
+                // and the park (the reap runs on the FIFO worker, this runs on the pump carrier). Routing the re-check through the FIFO observes
+                // a consistent tail snapshot (no race with onTlsSendComplete) and completes the parked waiter if the drain already happened.
+                submitEngineOp(() => handle.releaseBackpressureWaiter())
+            else
+                // Below the bound: io_uring buffers the unsent bytes in the pending tail, holds AT MOST ONE send SQE in flight per handle, and
+                // re-flushes the remainder when that send's CQE reaps, so a write always returns Done and there is no kernel send-buffer to drain
+                // before the next write. Writability is signaled immediately (the send is already in flight / pending and self-drains).
+                discard(handle.life.writable.clearIf(promise))
+                promise.completeDiscard(Result.succeed(()))
+            end if
         end if
     end awaitWritable
 
     def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // Arm the connect on the reap carrier (single get_sqe producer); see [[submitEngineOp]].
-        submitEngineOp(() => submitConnect(promise, handle))
+        if handle.life.connect.park(promise, released(handle)) then submitEngineOp(() => submitConnect(promise, handle))
     end awaitConnect
 
     /** Submit one connect SQE for `promise`, reading the stashed `connectTarget` off the handle. The public [[awaitConnect]] enters via the engine
@@ -461,6 +505,9 @@ final private[net] class IoUringDriver private[posix] (
         Frame
     ): Unit =
         handle.connectTarget match
+            case Present(_) if promise.done() =>
+                // A cancel failed this connect between its park and this deferred arm; nothing waits for it.
+                ()
             case Present((addr, len)) =>
                 val key = keyGen.getAndIncrement()
                 register(key, PendingOp.Connect(promise, handle))
@@ -468,12 +515,12 @@ final private[net] class IoUringDriver private[posix] (
                     unregister(key)
                     promise.completeDiscard(Result.fail(Closed(label, Frame.internal, "driver closed")))
                 else if !handle.ownsFd() then
-                    // The close was requested or the fd close claimed, so the number may already name a different socket: prepping a connect
-                    // here would dial out on somebody else's connection. `awaitConnect` only enqueues this submit on the engine FIFO, so a
-                    // connect-phase teardown can land before the arm drains, and a full SQ parks the arm in `stalledSubmits`, where
-                    // `reArmStalledSubmits` re-enters this submit long after. The connect-phase close claims through [[releaseFd]], on this
-                    // carrier, so the check and the prep below cannot straddle it. Fail the promise rather than merely skipping the submit,
-                    // which would park the caller on a completion that can never arrive.
+                    // The release claim is taken, so the number may already name a different socket: prepping a connect here would dial out
+                    // on somebody else's connection. `awaitConnect` only enqueues this submit on the engine FIFO, so a connect-phase teardown
+                    // can land before the arm drains, and a full SQ parks the arm in `stalledSubmits`, where `reArmStalledSubmits` re-enters
+                    // this submit long after. The teardown takes the claim before it queues [[releaseFd]] on this carrier, so the check and
+                    // the prep below cannot straddle the close. Fail the promise rather than merely skipping the submit, which would park the
+                    // caller on a completion that can never arrive.
                     unregister(key)
                     promise.completeDiscard(Result.fail(Closed(handleLabel(handle), handle.createdAt, "handle closed")))
                 else
@@ -518,14 +565,16 @@ final private[net] class IoUringDriver private[posix] (
       * would wedge the accept loop, whose `onComplete` reads Failure as "listener closed" and stops re-arming).
       */
     def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
-        // Placeholder buffers that kyo_uring_prep_accept requires; the kernel may write the peer address into addr, which we discard.
-        // The accepted fd comes from the CQE res field. These must stay alive until the CQE is reaped (kept in PendingOp.Accept) and across a
-        // park+re-arm, so they are allocated here once and threaded through submitAccept rather than re-allocated per re-arm.
-        val noAddr = Buffer.alloc[Byte](SockAddr.inet6Size)
-        val noLen  = Buffer.alloc[Int](1)
-        noLen.set(0, SockAddr.inet6Size)
-        // Arm the accept on the reap carrier (single get_sqe producer); see [[submitEngineOp]].
-        submitEngineOp(() => submitAccept(promise, handle, noAddr, noLen))
+        if handle.life.accept.park(promise, Closed(s"listener ${handleLabel(handle)}", handle.createdAt, "released")) then
+            // Placeholder buffers that kyo_uring_prep_accept requires; the kernel may write the peer address into addr, which we discard.
+            // The accepted fd comes from the CQE res field. These must stay alive until the CQE is reaped (kept in PendingOp.Accept) and across
+            // a park+re-arm, so they are allocated here once and threaded through submitAccept rather than re-allocated per re-arm.
+            val noAddr = Buffer.alloc[Byte](SockAddr.inet6Size)
+            val noLen  = Buffer.alloc[Int](1)
+            noLen.set(0, SockAddr.inet6Size)
+            // Arm the accept on the reap carrier (single get_sqe producer); see [[submitEngineOp]].
+            submitEngineOp(() => submitAccept(promise, handle, noAddr, noLen))
+        end if
     end awaitAccept
 
     /** Submit one accept SQE for `promise` over the supplied (already-allocated) addr/len placeholder buffers. The public [[awaitAccept]]
@@ -539,21 +588,19 @@ final private[net] class IoUringDriver private[posix] (
         noAddr: Buffer[Byte],
         noLen: Buffer[Int]
     )(using AllowUnsafe, Frame): Unit =
-        val key = keyGen.getAndIncrement()
-        register(key, PendingOp.Accept(promise, handle, noAddr, noLen))
-        if closedFlag.get() then
-            unregister(key)
+        if closedFlag.get() || promise.done() || !handle.ownsFd() then
+            // The driver is closing; or a cancel failed this accept between its park and this deferred arm, so nothing waits for it; or the
+            // listener was released (closeListener claims before this arm drains), so its fd may be closed and the number may already name a
+            // different socket, and arming would accept on that socket and steal its connections.
             noAddr.close()
             noLen.close()
-            promise.completeDiscard(Result.fail(Closed(label, Frame.internal, "driver closed")))
-        else if !handle.ownsFd() then
-            // The listener was torn down (closeListener ran on this carrier before this arm drained): its fd is closed and the number may
-            // already name a different socket, so arming would accept on that socket and steal its connections. Reject instead.
-            unregister(key)
-            noAddr.close()
-            noLen.close()
-            promise.completeDiscard(Result.fail(Closed(s"listener ${handleLabel(handle)}", handle.createdAt, "listener closed")))
+            promise.completeDiscard(Result.fail(
+                if closedFlag.get() then Closed(label, Frame.internal, "driver closed")
+                else Closed(s"listener ${handleLabel(handle)}", handle.createdAt, "listener closed")
+            ))
         else
+            val key = keyGen.getAndIncrement()
+            register(key, PendingOp.Accept(promise, handle, noAddr, noLen))
             uring.kyo_uring_get_sqe(ring) match
                 case Present(sqe) =>
                     uring.kyo_uring_prep_accept(sqe, handle.readFd, noAddr, noLen, 0) // single-shot; flags=0
@@ -572,8 +619,9 @@ final private[net] class IoUringDriver private[posix] (
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
         given Frame = Frame.internal
         // Reject a write once the driver is closing: flushRaw/flushTls would get_sqe on a ring the reap carrier is tearing down.
-        // beginWrite() guards the per-HANDLE lifecycle but not the driver's; the pump treats Error as teardown, which is correct here.
-        if closedFlag.get() then WriteResult.Error
+        // beginWrite() guards the per-HANDLE lifecycle but not the driver's; the pump treats Error as teardown, which is correct here. A
+        // released handle refuses the write too: the release's own engine op may already have queued the close behind it.
+        if closedFlag.get() || !handle.life.armable then WriteResult.Error
         else if data.isEmpty || offset >= data.size then WriteResult.Done
         else if handle.unsentTailBytes >= PosixHandle.WriteTailHighWater then
             // Write-backpressure bound (CWE-400): the write tail (pendingCipher for TLS, rawPending for raw) has reached the high-water mark because
@@ -616,11 +664,13 @@ final private[net] class IoUringDriver private[posix] (
         submitEngineOp { () =>
             // endWrite is called inside this FIFO thunk after the append+flush, keeping the write guard held until they finish: a concurrent
             // closeHandle defers freeResources (which clears the pending tail) until this endWrite fires, so the tail is never cleared while
-            // the flush reads it. The send SQE submitted below reaps asynchronously; its CQE re-flush runs as a SEPARATE later engine op.
+            // the flush reads it. The send SQE submitted below reaps asynchronously; its CQE re-flush runs as a SEPARATE later engine op. An
+            // op the FIFO runs after the release's own op drops its bytes rather than prepping a send against a descriptor that release may
+            // close before the next submit; one queued ahead of it was accepted before the release and is sent.
             try
-                try appendRaw(handle, data, offset)
+                try if !handle.sendsSealed then appendRaw(handle, data, offset)
                 finally handle.landQueuedWrite(queued)
-                flushRaw(handle)
+                if !handle.sendsSealed then flushRaw(handle)
             finally discard(handle.endWrite())
             end try
         }
@@ -729,9 +779,11 @@ final private[net] class IoUringDriver private[posix] (
             // endWrite is called inside this FIFO thunk after the engine ops, keeping the write guard held until the engine is done: a
             // concurrent closeHandle defers the engine free until this endWrite fires, so the engine is never freed while writePlain /
             // drainCiphertext run. The send SQE submitted below reaps asynchronously; its CQE re-flush runs as a SEPARATE later engine op.
+            // As in writeRaw, an op the FIFO runs after the release's own op drops its bytes: that op already queued the close_notify, and no
+            // record may follow it.
             try
                 val ok =
-                    try encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n))
+                    try !handle.sendsSealed && encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n))
                     finally handle.landQueuedWrite(data.size)
                 if ok then flushTls(handle)
             finally discard(handle.endWrite())
@@ -974,21 +1026,16 @@ final private[net] class IoUringDriver private[posix] (
     end onRawSendComplete
 
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        // Fail every pending promise for `handle` immediately so the caller stops waiting, but do NOT remove the pending entries and do NOT
+        // Fail every parked promise for `handle` immediately so the caller stops waiting, but do NOT remove the pending entries and do NOT
         // free any buffer: the SQEs are still in flight and the kernel still owns their memory. Their CQEs are still reaped, which
-        // is what decrements the in-flight count and releases the per-op memory in order.
+        // is what decrements the in-flight count and releases the per-op memory in order. The handle's life holds every park, including an
+        // arm still queued for the reap carrier and the STARTTLS gate's never-armed stray deposit; the `pending` sweep covers the upgrade
+        // producer, which is never parked in the slot, and a read the slot no longer holds while its recv is still in flight.
         val closed = Closed(handleLabel(handle), handle.createdAt, "canceled")
+        handle.life.cancel(closed)
         pending.forEach { (_, op) =>
             if op.handle.id.packed == handle.id.packed then op.failPromise(closed)
         }
-        // Atomically take and fail a stray pump re-arm the STARTTLS single-recv gate deposited on the handle (awaitRead's upgrade-window
-        // branch): it was never armed, so it is in neither `pending` nor `stalledSubmits`, and this sweep is what covers a deposit that
-        // landed before the upgrade's detach reached this cancel. Idempotent against the deposit's own isUpgraded re-check.
-        handle.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
-        // Fail any WritePump promise parked at the write-backpressure high-water bound. It is held on the handle (a tail-bound park, not a pending
-        // SQE), so it is not in `pending`; releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
-        handle.backpressurePromise.foreach(_.completeDiscard(Result.fail(closed)))
-        handle.backpressurePromise = Absent
     end cancel
 
     /** Listener teardown, sequenced on the reap carrier so a queued accept arm can never outlive the listen fd (the ghost-accept hazard the
@@ -998,8 +1045,8 @@ final private[net] class IoUringDriver private[posix] (
       * promise and handler, stealing one connection per ghost. Running the teardown as an engine op closes every window:
       *   - an arm queued BEFORE this op drains first and preps against the still-open listen fd (the genuine socket), then `cancel` here
       *     fails its now-registered promise;
-      *   - `requestClose` marks the handle so an arm queued AFTER this op (a re-arm racing the close) rejects inside [[submitAccept]]
-      *     instead of arming, since both run on this carrier;
+      *   - the release claim, taken before this op is queued, makes an arm queued AFTER it (a re-arm racing the close) reject inside
+      *     [[submitAccept]] instead of arming;
       *   - `flushSubmits` pushes the prepped SQEs to the kernel while the fd is still open (the kernel resolves the fd at submit), so no
       *     unsubmitted SQE can resolve the number after `closeFd` releases it. The shutdown inside `closeFd` then completes the in-kernel
       *     accept, whose CQE reaps the pending entry onto the already-failed promise.
@@ -1010,6 +1057,7 @@ final private[net] class IoUringDriver private[posix] (
       * those here cannot be observed by an accept still in the kernel, and the accept's own ordering is handled by the three steps above.
       */
     override def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        discard(handle.life.claimRelease())
         submitEngineOp { () =>
             // The engine drain contains a throwing op and carries on, so `closeFd` is in a `finally`: a throw from the cancel's inline
             // promise callbacks must not leave the listen fd open with its release never reported.
@@ -1065,7 +1113,15 @@ final private[net] class IoUringDriver private[posix] (
     override def isPeerClosed(handle: PosixHandle)(using AllowUnsafe, Frame): Boolean =
         !handle.isClosing() && uring.kyo_uring_poll_peer_closed(handle.readFd) == 1
 
+    /** The handle's one release: takes the release claim on the calling carrier, so a repeat call is a no-op and a park or a write after it
+      * is refused at once, then runs the close on the reap carrier, the one that preps every SQE.
+      */
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        if handle.life.claimRelease() then release(handle)
+
+    private def release(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        // Fail every parked op now, on the releasing carrier: the engine op below runs later, and a park after the claim already fails at once.
+        handle.life.cancel(Closed(handleLabel(handle), handle.createdAt, "closed"))
         // Mark the close as requested NOW (synchronously, before the deferred engine-FIFO close machinery), so a teardown that races the deferred
         // close can force-complete it and reclaim the fd. Removed in closeNow when the fd actually closes.
         discard(pendingCloses.put(handle.id.packed, handle))
@@ -1100,6 +1156,7 @@ final private[net] class IoUringDriver private[posix] (
             // that never comes, a hang), and the in-flight check + closeNow is serialized with the arm so the readBuffer is never freed under a live SQE.
             submitEngineOp { () =>
                 // cancel fails the handle's pending promises now; the actual fd/buffer close is deferred until the in-flight count drops to 0.
+                handle.sendsSealed = true
                 cancel(handle)
                 handle.tls match
                     case Present(engine) =>
@@ -1117,7 +1174,7 @@ final private[net] class IoUringDriver private[posix] (
                 end match
             }
         end if
-    end closeHandle
+    end release
 
     /** Submit an `IORING_OP_ASYNC_CANCEL` for every connect this handle still has in flight, so the kernel completes it and the handle's
       * in-flight count can reach zero. Without this a connect against a peer that never answers pins its deferred close forever.
@@ -2116,18 +2173,12 @@ final private[net] class IoUringDriver private[posix] (
                                             try
                                                 val buf         = if armedForStaging then recvStagingFor(h) else h.readBuffer
                                                 var fatalRecord = false
-                                                val plain       = feedAndDecrypt(
-                                                    engine,
-                                                    buf,
-                                                    res,
-                                                    h,
-                                                    () =>
-                                                        fatalRecord = true; closeHandle(h)
-                                                )
-                                                if !fatalRecord && !h.isClosing() && plain.length > 0 then
+                                                val plain       = feedAndDecrypt(engine, buf, res, h, () => fatalRecord = true)
+                                                if fatalRecord then failNextRead(h, fatalRecordFailure(h))
+                                                else if !h.isClosing() && plain.length > 0 then
                                                     h.inboundSink(Span.fromUnsafe(plain))
                                                     flushTls(h)
-                                                else if !fatalRecord && !h.isClosing() then
+                                                else if !h.isClosing() then
                                                     flushTls(h)
                                                 end if
                                             catch
@@ -2135,7 +2186,14 @@ final private[net] class IoUringDriver private[posix] (
                                                     Log.live.unsafe.warn(
                                                         s"$label TLS engine read failed (post-onFinished stale recv) fd=${h.readFd}: ${e.getMessage}"
                                                     )
-                                                    closeHandle(h)
+                                                    failNextRead(
+                                                        h,
+                                                        NetConnectionIoException(
+                                                            s"connection ${handleLabel(h)}",
+                                                            NetConnectionIoException.Operation.Decrypt,
+                                                            e
+                                                        )(using h.createdAt)
+                                                    )
                                         }
                                     case Absent => () // unreachable: h.tls.isDefined was just checked on the same read
                             else if h.tls.isDefined then
@@ -2186,15 +2244,14 @@ final private[net] class IoUringDriver private[posix] (
                                             NetConnectionIoException.Operation.Receive,
                                             msg
                                         )(using h.createdAt)))
-                                        closeHandle(h)
                                     // ALWAYS-ON ownership invariant (a plain branch, not an elidable `assert`; see PosixHandle.recvStagingOwnerId):
                                     // the staging buffer this recv just filled must be tagged with THIS handle's own id. A mismatch means
                                     // recvStagingFor resolved a buffer belonging to a DIFFERENT handle -- a cross-connection ciphertext leak
                                     // (the bad_record_mac shape) caught at the exact point it would occur, both ids attributed, instead of
-                                    // surfacing later as an unattributed decode failure. Safe-abort THIS connection only (fail this read, then
-                                    // closeHandle): the mismatched owner's own connection is left completely untouched (reaching across to it
-                                    // would itself be a cross-connection operation) and keeps running normally. Never deliver the mis-owned
-                                    // bytes: fail-closed, not fail-open.
+                                    // surfacing later as an unattributed decode failure. Safe-abort THIS connection only (fail this read; its reader
+                                    // tears the connection down and the connection's release closes the handle): the mismatched owner's own
+                                    // connection is left completely untouched (reaching across to it would itself be a cross-connection operation)
+                                    // and keeps running normally. Never deliver the mis-owned bytes: fail-closed, not fail-open.
                                     // No decrementInFlight in either branch above: deferredDecrement stays false on this branch, so the shared
                                     // fallback at the end of the Read case (mirroring every other non-deferred branch, e.g. the stale-recv
                                     // branch above) decrements exactly once; calling it here too would double-decrement.
@@ -2209,38 +2266,18 @@ final private[net] class IoUringDriver private[posix] (
                                             NetConnectionIoException.Operation.Receive,
                                             msg
                                         )(using h.createdAt)))
-                                        closeHandle(h)
                                     else
                                         deferredDecrement = true
                                         submitEngineOp { () =>
                                             try
-                                                // onFatal routes through closeHandle rather than a bare handle.requestClose(): io_uring never
-                                                // acquires the read half of the handle's guard (reads are async/kernel-owned, tracked by
-                                                // inFlight/pendingCloses/closeAfterDrain instead), so requestClose() alone would free the
-                                                // handle's buffers and engine immediately, unconditionally -- unsafe when a second kernel-owned
-                                                // recv for this same handle (the STARTTLS upgrade-handoff window allows more than one) is still
-                                                // in flight and has already captured a reference to those buffers. closeHandle defers the actual
-                                                // free until every op still in flight for the handle (this deferred decrement included) drains.
-                                                // This is a rule about CONNECTION handles, not a blanket ban on requestClose: what makes the bare
-                                                // form unsafe is an in-flight op holding the freed buffers, and only a recv does that. closeListener
-                                                // does use the bare form, correctly, because an accept SQE captures none of that state.
-                                                // fatalRecord is a LOCAL flag, not a shared/ambient signal: closeHandle only marks pendingCloses
-                                                // (shared across every close reason for this handle) synchronously, so checking pendingCloses here
-                                                // would also misfire for an unrelated concurrent close racing a read that decoded cleanly.
+                                                // fatalRecord is a LOCAL flag, set exactly when THIS call's decrypt hit a fatal record. The driver
+                                                // releases nothing for it: the connection turns the typed failure into its own release, the one
+                                                // path that closes the fd.
                                                 var fatalRecord = false
-                                                val plain       = feedAndDecrypt(
-                                                    engine,
-                                                    staging,
-                                                    res,
-                                                    h,
-                                                    () =>
-                                                        fatalRecord = true; closeHandle(h)
-                                                )
-                                                // Fatal-record check: fatalRecord is set exactly when THIS call's onFatal fired. isClosing() is kept
-                                                // too for any other concurrent close that already ran the guard's free (a rare path independent of
-                                                // this read). Either way the read completes with the typed decrypt failure, never a bare Closed and
-                                                // never the good prefix (feedAndDecrypt discarded it per RFC 5246 7.2.2). The closeHandle queued by
-                                                // onFatal runs the actual teardown behind this op on the engine FIFO.
+                                                val plain       = feedAndDecrypt(engine, staging, res, h, () => fatalRecord = true)
+                                                // isClosing() is kept for any other concurrent close that already ran the guard's free (a rare
+                                                // path independent of this read). Either way the read completes with the typed decrypt failure,
+                                                // never a bare Closed and never the good prefix (feedAndDecrypt discarded it per RFC 5246 7.2.2).
                                                 if fatalRecord || h.isClosing() then
                                                     promise.completeDiscard(Result.succeed(ReadOutcome.Failed(NetConnectionIoException(
                                                         s"connection ${handleLabel(h)}",
@@ -2505,18 +2542,12 @@ final private[net] class IoUringDriver private[posix] (
                             val cipherBuf = Buffer.fromArray[Byte](arr)
                             try
                                 var fatalRecord = false
-                                val plain       = feedAndDecrypt(
-                                    engine,
-                                    cipherBuf,
-                                    arr.length,
-                                    handle,
-                                    () =>
-                                        fatalRecord = true; closeHandle(handle)
-                                )
-                                if !fatalRecord && !handle.isClosing() && plain.length > 0 then
+                                val plain       = feedAndDecrypt(engine, cipherBuf, arr.length, handle, () => fatalRecord = true)
+                                if fatalRecord then failNextRead(handle, fatalRecordFailure(handle))
+                                else if !handle.isClosing() && plain.length > 0 then
                                     handle.inboundSink(Span.fromUnsafe(plain))
                                     flushTls(handle)
-                                else if !fatalRecord && !handle.isClosing() then
+                                else if !handle.isClosing() then
                                     flushTls(handle)
                                 end if
                             catch
@@ -2524,7 +2555,14 @@ final private[net] class IoUringDriver private[posix] (
                                     Log.live.unsafe.warn(
                                         s"$label TLS engine read failed (upgrade-handoff salvage) fd=${handle.readFd}: ${e.getMessage}"
                                     )
-                                    closeHandle(handle)
+                                    failNextRead(
+                                        handle,
+                                        NetConnectionIoException(
+                                            s"connection ${handleLabel(handle)}",
+                                            NetConnectionIoException.Operation.Decrypt,
+                                            e
+                                        )(using handle.createdAt)
+                                    )
                             finally cipherBuf.close()
                             end try
                         case Absent => deliverToUpgradeHandoff(handle, arr)

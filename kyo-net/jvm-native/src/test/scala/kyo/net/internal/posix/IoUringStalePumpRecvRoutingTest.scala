@@ -29,9 +29,9 @@ import kyo.net.internal.transport.ReadOutcome
   * through a full simulated upgrade lifecycle ending in the post-`onFinished` state (both flags false, `tls` Present) WHILE the recv is
   * still kernel-owned, and only then lets the peer's bytes reap it for real over io_uring. The sent bytes are not valid ciphertext for the
   * never-handshaked `serverEngine` (constructing a real paired handshake is exactly what the full-stack `IoUringMutualTlsStressTest`
-  * exercises), so the observable outcome is a fatal-record teardown rather than delivered plaintext; the assertions that matter here are
-  * that (a) `upgradeHandoff` NEVER becomes a `Carryover` (the bytes are never routed to the dead slot) and (b) the handle reaches a terminal
-  * state (the new path was genuinely exercised, not silently skipped).
+  * exercises), so the observable outcome is a fatal record rather than delivered plaintext; the assertions that matter here are that (a)
+  * `upgradeHandoff` NEVER becomes a `Carryover` (the bytes are never routed to the dead slot) and (b) the connection's next read fails with
+  * the decrypt error (the new path was genuinely exercised, not silently skipped).
   *
   * io_uring-only ([[PosixTestSockets.assumeUring]]): only io_uring has a kernel-owned recv that can outlive the whole upgrade this way.
   *
@@ -89,9 +89,10 @@ class IoUringStalePumpRecvRoutingTest extends Test:
 
                             // Simulate the WHOLE upgrade lifecycle running to completion while the recv above stays kernel-owned and in flight,
                             // ending in onFinished's exact final state (PosixTransport.scala:1303-1309 write order): upgradeActive false,
-                            // handshakeReading false, tls Present, upgrading false.
+                            // handshakeReading false, tls Present, upgrading false. The detach fails the pump's read, as the upgrade's own does.
                             acceptedH.isUpgraded = true
                             acceptedH.upgradeActive = true
+                            driver.detachForUpgrade(acceptedH)
                             acceptedH.upgradeActive = false
                             acceptedH.handshakeReading = false
                             acceptedH.tls = Present(serverEngine)
@@ -111,14 +112,24 @@ class IoUringStalePumpRecvRoutingTest extends Test:
                                 0
                             ).value == payload.length.toLong)
 
-                            // Not valid TLS ciphertext for a never-handshaked engine: the expected outcome is a fatal-record teardown (the
-                            // same `closeHandle` path IoUringMutualTlsStressTest's real handshakes exercise on genuinely bad data), not
-                            // delivered plaintext. What this test actually pins is the ABSENCE of a mis-routed plaintext delivery.
-                            awaitCondition(5.seconds)(acceptedH.isClosing()).map { closed =>
-                                assert(
-                                    closed,
-                                    "stale recv's post-onFinished feed never reached a terminal state (a hang, not the fix under test)"
-                                )
+                            // Not valid TLS ciphertext for a never-handshaked engine: the expected outcome is a fatal record, handed to the
+                            // connection's next read as a decrypt failure, not delivered plaintext. What this test actually pins is the ABSENCE
+                            // of a mis-routed plaintext delivery.
+                            val next = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                            driver.awaitRead(acceptedH, next)
+                            Abort.run[Timeout | Closed](Async.timeout(5.seconds)(next.safe.get)).map { outcome =>
+                                // The leaf owns the engine's free, so the release must not reach the engine after it.
+                                acceptedH.tls = Absent
+                                driver.closeHandle(acceptedH)
+                                outcome match
+                                    case Result.Success(ReadOutcome.Failed(e: kyo.net.NetConnectionIoException)) =>
+                                        assert(
+                                            e.operation == kyo.net.NetConnectionIoException.Operation.Decrypt,
+                                            s"got operation ${e.operation}"
+                                        )
+                                    case other =>
+                                        fail(s"stale recv's post-onFinished feed must fail the next read with a decrypt error, got $other")
+                                end match
                                 // The core regression guard: the bytes must NEVER be staged as a Carryover. Once onFinished has fully run, that
                                 // slot has no consumer left, so staging it there would silently lose the bytes forever (the actual "Closed at
                                 // collect" loss mechanism) instead of being fed to the engine (whatever the engine then does with them).
@@ -134,9 +145,11 @@ class IoUringStalePumpRecvRoutingTest extends Test:
                                     delivered.get() == null,
                                     s"unexpected plaintext delivered from an undecodable record: ${delivered.get().toSeq}"
                                 )
-                                // The stale recv's own throwaway producer promise must never complete: its bytes are delivered via
-                                // inboundSink (or dropped on a fatal record), never through this recv's own promise.
-                                assert(producer.poll().isEmpty, s"producer promise must stay pending (orphaned); got ${producer.poll()}")
+                                // The stale recv's own promise, failed by the detach, never carries its bytes: they are delivered via
+                                // inboundSink (or end in a fatal record), never through this recv's own promise.
+                                producer.poll() match
+                                    case Present(Result.Failure(_: Closed)) => ()
+                                    case other => fail(s"the detach must have failed the stale recv's promise; got $other")
                                 discard(sock.close(client))
                                 succeed
                             }

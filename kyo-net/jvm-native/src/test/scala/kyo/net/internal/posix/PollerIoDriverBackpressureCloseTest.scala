@@ -9,12 +9,11 @@ import kyo.net.internal.util.GrowableByteBuffer
 /** Reproduction + regression guard: a write-backpressure waiter parked on a handle while it is being closed must be FAILED with Closed, never
   * left stranded.
   *
-  * The write-backpressure tail bound parks the WritePump's writable promise on [[PosixHandle.backpressureWaiter]] when the unsent tail reaches the
-  * high-water mark, and relies on [[PollerIoDriver.cancel]] (run first on every close path) to fail it. But a waiter parked in the window AFTER
-  * cancel and before [[PosixHandle]] freeResources is only CLEARED by freeResources (set to Absent), not completed, so its promise is stranded and
-  * the WritePump fiber that parked on it hangs forever. The close-vs-writable interleaving hits exactly this window; under CPU contention the window
-  * widens and the hang reproduces (CloseDuringBackpressuredFlushTest times out). This leaf drives the precise interleaving deterministically:
-  * cancel, then park, then teardown, then a non-blocking [[Promise.Unsafe.done]] check, so there is no sleep, no timer, and no load dependency.
+  * The write-backpressure tail bound parks the WritePump's writable promise in the handle's writable slot when the unsent tail reaches the
+  * high-water mark, and relies on [[PollerIoDriver.cancel]] (run first on every close path) to fail it. A waiter parked in the window AFTER
+  * cancel and before [[PosixHandle]] freeResources must be failed by that teardown, or the WritePump fiber that parked on it hangs forever. This
+  * leaf drives the precise interleaving deterministically: cancel, then park, then teardown, then a non-blocking [[Promise.Unsafe.done]] check,
+  * so there is no sleep, no timer, and no load dependency.
   *
   * Runs on every poller host (epoll on Linux, kqueue on macOS/BSD). The poll loop is started because the change and engine FIFOs drain only on its
   * carrier (it bounded-waits on the idle poller fd, no fds registered); the park, cancel, and teardown are sequenced through the FIFO, and the engine
@@ -64,7 +63,7 @@ class PollerIoDriverBackpressureCloseTest extends Test:
                 val waiter = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                 driver.awaitWritable(handle, waiter)
                 assert(
-                    handle.backpressurePromise.isDefined,
+                    handle.life.writable.current.isDefined,
                     "the waiter must be parked (the tail is at the high-water mark)"
                 )
                 // Drain the engine FIFO so the park's double-check (releaseBackpressureWaiter) has run (it no-ops: the tail is still high), leaving
@@ -84,6 +83,88 @@ class PollerIoDriverBackpressureCloseTest extends Test:
                         case Present(Result.Failure(_: Closed)) => succeed
                         case other                              => fail(s"the parked waiter must be failed Closed on teardown, got $other")
                     end match
+                }
+            }
+    }
+
+    // A tail at the high-water mark that nothing drains holds the waiter parked on the connected handle; loopback room cannot release it.
+    "cancel and the release each fail a write-backpressure waiter parked on a connected handle with Closed at once" in {
+        if kyo.internal.Platform.isJS then Sync.defer(succeed)
+        else
+            assumePoller()
+            val real     = PollerBackend.default()
+            val pollerFd = real.create()
+            val driver   = TestDrivers.forBackend(real, pollerFd)
+            discard(driver.start())
+            def parked(writeFd: Int): (PosixHandle, Promise.Unsafe[Unit, Abort[Closed | NetException]]) =
+                val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val tail   = new GrowableByteBuffer()
+                tail.writeBytes(Array.fill[Byte](PosixHandle.WriteTailHighWater)(0.toByte), 0, PosixHandle.WriteTailHighWater)
+                handle.pendingCipher = Present(tail)
+                handle.pendingCipherSent = 0
+                val waiter = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
+                driver.awaitWritable(handle, waiter)
+                (handle, waiter)
+            end parked
+            def failedClosed(what: String, p: Promise.Unsafe[Unit, Abort[Closed | NetException]]) =
+                p.poll() match
+                    case Present(Result.Failure(_: Closed)) => ()
+                    case other                              => fail(s"$what: expected a Closed failure at once, got $other")
+            PosixTestSockets.loopbackPair().map { case (cancelFd, cancelPeer) =>
+                PosixTestSockets.loopbackPair().map { case (releaseFd, releasePeer) =>
+                    val (cancelled, byCancel) = parked(cancelFd)
+                    val (released, byRelease) = parked(releaseFd)
+                    // The park's double-check has run and left both parked.
+                    fifoBarrier(driver).safe.get.map { _ =>
+                        assert(!byCancel.done() && !byRelease.done(), "both waiters must be parked on their high-water tails")
+                        driver.cancel(cancelled)
+                        failedClosed("the waiter after cancel", byCancel)
+                        driver.closeHandle(released)
+                        failedClosed("the waiter after the release", byRelease)
+                        driver.closeHandle(cancelled)
+                        driver.close()
+                        discard(sock.close(cancelPeer))
+                        discard(sock.close(releasePeer))
+                        succeed
+                    }
+                }
+            }
+    }
+
+    // The re-park runs inside the first waiter's completion callback, which cancel itself triggers, so it lands between cancel taking the
+    // first waiter and cancel finishing, on one thread with no timing. In production the pump re-parks on the FIFO worker while the close
+    // runs on another carrier.
+    "a write-backpressure waiter re-parked while cancel fails the previous one is failed Closed by the teardown" in {
+        if kyo.internal.Platform.isJS then Sync.defer(succeed)
+        else
+            assumePoller()
+            val real     = PollerBackend.default()
+            val pollerFd = real.create()
+            val driver   = TestDrivers.forBackend(real, pollerFd)
+            discard(driver.start())
+            PosixTestSockets.loopbackPair().map { case (writeFd, peerFd) =>
+                val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val tail   = new GrowableByteBuffer()
+                tail.writeBytes(Array.fill[Byte](PosixHandle.WriteTailHighWater)(0.toByte), 0, PosixHandle.WriteTailHighWater)
+                handle.pendingCipher = Present(tail)
+                handle.pendingCipherSent = 0
+                val first  = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
+                val second = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
+                first.onComplete(_ => driver.awaitWritable(handle, second))
+                driver.awaitWritable(handle, first)
+                fifoBarrier(driver).safe.get.map { _ =>
+                    driver.cancel(handle)
+                    assert(first.done(), "cancel must fail the waiter it found")
+                    fifoBarrier(driver).safe.get.map { _ =>
+                        PosixHandle.close(handle)
+                        driver.close()
+                        discard(sock.close(writeFd))
+                        discard(sock.close(peerFd))
+                        second.poll() match
+                            case Present(Result.Failure(_: Closed)) => succeed
+                            case other => fail(s"the re-parked waiter must be failed Closed by the teardown, got $other")
+                        end match
+                    }
                 }
             }
     }

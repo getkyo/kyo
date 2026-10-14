@@ -10,7 +10,7 @@ import kyo.net.internal.transport.WriteState
   *
   * The four write handoffs are: (1) the take handoff (channel delivers a span, onTake CASes Idle -> Flushing), (2) the writable
   * handoff (socket becomes writable, onWritable CASes AwaitingWritable -> Flushing), (3) the backpressure-release handoff (the drain
-  * completed, backpressurePromise on the handle is completed, onWritable CASes Backpressured -> Flushing), and (4) teardown wins
+  * completed, the writable wait parked on the handle is completed, onWritable CASes Backpressured -> Flushing), and (4) teardown wins
   * the CAS race (TornDown terminal). Each is a single-CAS transition; the loser observes the winner's state and no-ops. No
   * check-A-act-B: the folded state cell is the only read+write, not two separate fields.
   *

@@ -39,47 +39,22 @@ object PosixTestSockets:
       * Anti-flakiness: connect and accept use @Ffi.blocking fibers awaited with .safe.get; no sleep.
       */
     def loopbackPair()(using Frame, AllowUnsafe): (Int, Int) < Async =
-        val sockets = sock
-        val server  = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-        val (a, l)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(???)
-        Sync.ensure(Sync.defer(a.close())) {
-            assert(sockets.bind(server, a, l).value == 0)
-            assert(sockets.listen(server, 4).value == 0)
-            val out = Buffer.alloc[Byte](SockAddr.inet4Size)
-            val ol  = Buffer.alloc[Int](1)
-            ol.set(0, SockAddr.inet4Size)
-            val port =
-                try
-                    assert(sockets.getsockname(server, out, ol).value == 0)
-                    ((out.get(2) & 0xff) << 8) | (out.get(3) & 0xff)
-                finally
-                    out.close()
-                    ol.close()
-            val client    = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-            val (ca, cl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
-            val connected =
-                Sync.ensure(Sync.defer(ca.close()))(sockets.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
-            connected.andThen {
-                val noAddr = Buffer.alloc[Byte](SockAddr.inet4Size)
-                val noLen  = Buffer.alloc[Int](1)
-                noLen.set(0, SockAddr.inet4Size)
-                Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sockets.accept(server, noAddr, noLen).safe.get.map(_.value)
-                }.map { accepted =>
-                    val shim = Ffi.load[PosixShimBindings]
-                    assert(shim.kyo_posix_set_nonblocking(client) == 0, "set_nonblocking(client) failed")
-                    assert(shim.kyo_posix_set_nonblocking(accepted) == 0, "set_nonblocking(accepted) failed")
-                    sockets.close(server).safe.get.map(_ => (client, accepted))
-                }
-            }
-        }
-    end loopbackPair
+        loopbackPair(sock)
 
     /** Overload taking injected bindings; the variant that wraps supplied bindings, used with [[RecordingSocketBindings]].
       *
       * Same as [[loopbackPair()]] but uses the supplied bindings so callers can attach a recording decorator.
       */
     def loopbackPair(sockets: SocketBindings)(using Frame, AllowUnsafe): (Int, Int) < Async =
+        connectedPair(sockets, nonBlocking = true)
+
+    /** A connected TCP loopback pair on 127.0.0.1 left in blocking mode; returns (clientFd, acceptedFd). A blocking `read(2)` on either end
+      * stays in flight until the other end sends or closes, so a test controls exactly when it returns.
+      */
+    def blockingLoopbackPair()(using Frame, AllowUnsafe): (Int, Int) < Async =
+        connectedPair(sock, nonBlocking = false)
+
+    private def connectedPair(sockets: SocketBindings, nonBlocking: Boolean)(using Frame, AllowUnsafe): (Int, Int) < Async =
         val server = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(???)
         Sync.ensure(Sync.defer(a.close())) {
@@ -106,14 +81,16 @@ object PosixTestSockets:
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
                     sockets.accept(server, noAddr, noLen).safe.get.map(_.value)
                 }.map { accepted =>
-                    val shim = Ffi.load[PosixShimBindings]
-                    assert(shim.kyo_posix_set_nonblocking(client) == 0, "set_nonblocking(client) failed")
-                    assert(shim.kyo_posix_set_nonblocking(accepted) == 0, "set_nonblocking(accepted) failed")
+                    if nonBlocking then
+                        val shim = Ffi.load[PosixShimBindings]
+                        assert(shim.kyo_posix_set_nonblocking(client) == 0, "set_nonblocking(client) failed")
+                        assert(shim.kyo_posix_set_nonblocking(accepted) == 0, "set_nonblocking(accepted) failed")
+                    end if
                     sockets.close(server).safe.get.map(_ => (client, accepted))
                 }
             }
         }
-    end loopbackPair
+    end connectedPair
 
     /** A non-blocking TCP listener on 127.0.0.1 at an ephemeral port; returns (serverFd, port). */
     def listening()(using AllowUnsafe): (Int, Int) =
@@ -368,6 +345,21 @@ object PosixTestSockets:
                 )
         }
     end connectInFlight
+
+    /** A fresh non-blocking client socket that has not connected, with the encoded black-hole target, for a completion driver that issues
+      * the connect itself. A probe connect first confirms the host keeps a black-hole connect in flight, cancelling the leaf as
+      * [[connectInFlight]] does where it does not. The caller closes the fd and the target buffer.
+      */
+    def unconnectedToBlackHole()(using Frame, AllowUnsafe): (Int, Buffer[Byte], Int) < Async =
+        connectInFlight().map { probe =>
+            val sockets = sock
+            discard(sockets.close(probe.targetFd))
+            val client = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            assert(Ffi.load[PosixShimBindings].kyo_posix_set_nonblocking(client) == 0, "set_nonblocking(client) failed")
+            val (addr, len) = SockAddr.encodeInet4(PosixConstants.AF_INET, BlackHoleHost, BlackHolePort).getOrElse(???)
+            (client, addr, len)
+        }
+    end unconnectedToBlackHole
 
     /** Close the fd owned by an [[InFlightConnect]]. */
     def closeInFlight(sockets: SocketBindings, c: InFlightConnect)(using AllowUnsafe): Unit =

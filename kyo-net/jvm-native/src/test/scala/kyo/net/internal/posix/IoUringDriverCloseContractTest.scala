@@ -205,6 +205,23 @@ class IoUringDriverCloseContractTest extends Test:
         p
     end fifoBarrier
 
+    /** Runs `enqueue` while the reap carrier is held inside an engine op, so every op it queues drains in one pass before the carrier next
+      * submits to the kernel. Without the hold the carrier may submit between two of the ops, which frees the submission queue a leaf needs
+      * full, and whether it does depends on the host's scheduling.
+      */
+    private def inOnePass(driver: IoUringDriver)(enqueue: => Unit)(using Frame): Unit < Async =
+        val gate   = new java.util.concurrent.CountDownLatch(1)
+        val pinned = Promise.Unsafe.init[Unit, Any]()
+        driver.submitEngineOp { () =>
+            pinned.completeDiscard(Result.succeed(()))
+            gate.await()
+        }
+        pinned.safe.get.map { _ =>
+            try enqueue
+            finally gate.countDown()
+        }
+    end inOnePass
+
     private def readVia(driver: IoUringDriver, handle: PosixHandle)(using Frame): ReadOutcome < (Abort[Closed] & Async) =
         val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
         driver.awaitRead(handle, promise)
@@ -281,10 +298,7 @@ class IoUringDriverCloseContractTest extends Test:
             }.map(_ => succeed)
         }
 
-        "C6: a writable wait parked after the close's cancel fails Closed without waiting for the peer"
-            .pendingWhereUringRuns(
-                "U9: a backpressure promise parked after cancel is failed only in freeResources, which a parked send postpones indefinitely"
-            ) in {
+        "C6: a writable wait parked after the close's cancel fails Closed without waiting for the peer" in {
             PosixTestSockets.assumeUring()
             withDriver(productionDepth) { (driver, _, _, resources) =>
                 PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (fd, peerFd) =>
@@ -299,16 +313,15 @@ class IoUringDriverCloseContractTest extends Test:
                             s"the tail must still hold the unsent payload for the wait to park, got ${handle.unsentTailBytes}"
                         )
                         val writable = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
+                        // The close took the release claim before this park, so the park fails it before returning.
                         driver.awaitWritable(handle, writable)
-                        within(hangBound)(writable.safe.getResult).map { outcome =>
-                            resources.resetPeer(peerFd)
-                            outcome match
-                                case Present(Result.Failure(_: Closed)) => ()
-                                case Absent                             =>
-                                    fail(s"the writable wait parked after close was still pending after ${hangBound.show}")
-                                case Present(other) => fail(s"the writable wait parked after close must fail Closed, got $other")
-                            end match
-                        }
+                        val outcome = writable.poll()
+                        resources.resetPeer(peerFd)
+                        outcome match
+                            case Present(Result.Failure(_: Closed)) => ()
+                            case Absent                             => fail("the writable wait parked after close was left pending")
+                            case Present(other) => fail(s"the writable wait parked after close must fail Closed, got $other")
+                        end match
                     }
                 }
             }.map(_ => succeed)
@@ -325,14 +338,15 @@ class IoUringDriverCloseContractTest extends Test:
                     val handle  = resources.handle(PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal))
                     val payload = bytesOf(64, 3)
                     val written = Promise.Unsafe.init[WriteResult, Any]()
-                    // One engine op enqueues the recv arm, the write and the close, so they drain in this order in one pass: the recv takes
-                    // the only SQE and the write's flush finds the submission queue full.
-                    driver.submitEngineOp { () =>
+                    // The recv arm is enqueued ahead of one engine op that writes and closes, and both drain in one pass: the recv takes the
+                    // only SQE before the close claims the handle, and the write's flush finds the submission queue full.
+                    inOnePass(driver) {
                         driver.awaitRead(handle, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
-                        written.completeDiscard(Result.succeed(driver.write(handle, Span.fromUnsafe(payload), 0)))
-                        resources.closeHandle(handle)
-                    }
-                    written.safe.get.map { w =>
+                        driver.submitEngineOp { () =>
+                            written.completeDiscard(Result.succeed(driver.write(handle, Span.fromUnsafe(payload), 0)))
+                            resources.closeHandle(handle)
+                        }
+                    }.andThen(written.safe.get).map { w =>
                         assert(w == WriteResult.Done, s"write result=$w")
                         within(hangBound)(drainToEnd(driver, resources, peerFd)).map { received =>
                             received match
@@ -363,11 +377,11 @@ class IoUringDriverCloseContractTest extends Test:
                         val handle = resources.handle(PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal))
                         handle.tls = Present(serverEngine)
                         val released = sockets.closed(fd)
-                        driver.submitEngineOp { () =>
+                        // The recv arm drains ahead of the close, in the same pass, and takes the only SQE before the close claims the handle.
+                        inOnePass(driver) {
                             driver.awaitRead(handle, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
-                            resources.closeHandle(handle)
-                        }
-                        within(hangBound)(drainToEnd(driver, resources, peerFd)).map { received =>
+                            driver.submitEngineOp(() => resources.closeHandle(handle))
+                        }.andThen(within(hangBound)(drainToEnd(driver, resources, peerFd))).map { received =>
                             within(hangBound)(released.safe.get).map { _ =>
                                 received match
                                     case Present(cipher) =>
@@ -385,10 +399,7 @@ class IoUringDriverCloseContractTest extends Test:
             }.map(_ => succeed)
         }
 
-        "C5: no send SQE reaches the kernel against a descriptor that was closed after the send was prepared"
-            .pendingWhereUringRuns(
-                "U3: a write op queued behind a close preps a send on writeFd, its endWrite closes the fd, then flushSubmits hands the SQE over"
-            ) in {
+        "C5: no send SQE reaches the kernel against a descriptor that was closed after the send was prepared" in {
             PosixTestSockets.assumeUring()
             withDriver(productionDepth) { (driver, sockets, uring, resources) =>
                 PosixTestSockets.loopbackPair().map { case (fd, peerFd) =>
@@ -403,11 +414,9 @@ class IoUringDriverCloseContractTest extends Test:
                         written.completeDiscard(Result.succeed(driver.write(handle, Span.fromUnsafe(bytesOf(64, 4)), 0)))
                     }
                     written.safe.get.map { _ =>
-                        within(hangBound)(sockets.closed(fd).safe.get).map { closed =>
-                            assert(closed.nonEmpty, s"fd $fd was never closed")
-                            within(hangBound)(submitted.safe.get).map { checked =>
+                        sockets.closed(fd).safe.get.map { _ =>
+                            submitted.safe.get.map { _ =>
                                 resources.closePeer(peerFd)
-                                assert(checked.nonEmpty, "the reap loop never reached a submission point after the close")
                                 import scala.jdk.CollectionConverters.*
                                 val late = uring.submittedAfterClose.iterator().asScala.filter(_ == fd).size
                                 assert(
@@ -619,6 +628,50 @@ class IoUringDriverCloseContractTest extends Test:
                                 }
                             }
                         }
+                    }
+                }
+            }.map(_ => succeed)
+        }
+
+        "fd release > a fatal TLS record releases the descriptor exactly once, through the connection's release" in {
+            PosixTestSockets.assumeUring()
+            TlsRealEngines.assumeBoringSslReady()
+            TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
+                assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "the TLS handshake must complete first")
+                withDriver(productionDepth) { (driver, sockets, _, resources) =>
+                    PosixTestSockets.loopbackPair().map { case (peerFd, fd) =>
+                        discard(resources.peer(peerFd))
+                        val handle = resources.handle(PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal))
+                        handle.tls = Present(serverEngine)
+                        val good = TlsEngineLoopback.encrypt(clientEngine, "good".getBytes("UTF-8"))
+                        val bad  = TlsEngineLoopback.encrypt(clientEngine, "tampered".getBytes("UTF-8"))
+                        bad(bad.length - 1) = (bad(bad.length - 1) ^ 0xff).toByte
+                        val wire = good ++ bad
+                        val buf  = Buffer.fromArray[Byte](wire)
+                        val sent =
+                            try sock.sendNow(peerFd, buf, wire.length.toLong, PosixConstants.MSG_NOSIGNAL)
+                            finally buf.close()
+                        assert(sent.value.toInt == wire.length, s"peer send failed: errno=${sent.errorCode}")
+                        val released = sockets.closed(fd)
+                        for
+                            outcome <- Abort.run[Closed](readVia(driver, handle))
+                            _       <- fifoBarrier(driver).safe.get
+                            closesBeforeRelease = sockets.closeCounts.getOrDefault(fd, 0)
+                            _ <- Sync.defer(resources.closeHandle(handle))
+                            _ <- released.safe.get
+                            _ <- fifoBarrier(driver).safe.get
+                        yield
+                            resources.closePeer(peerFd)
+                            assert(outcome.isSuccess, s"the fatal record did not complete the read: $outcome")
+                            assert(
+                                closesBeforeRelease == 0,
+                                s"the fatal record closed fd $fd itself, before the connection released it ($closesBeforeRelease closes)"
+                            )
+                            assert(
+                                sockets.closeCounts.getOrDefault(fd, 0) == 1,
+                                s"fd $fd must be closed exactly once, got ${sockets.closeCounts.getOrDefault(fd, 0)}"
+                            )
+                        end for
                     }
                 }
             }.map(_ => succeed)

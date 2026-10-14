@@ -2394,7 +2394,7 @@ final private[net] class PosixTransport private[posix] (
                 // the next peer flight and fulfils this waiter. The handshake never reads the socket itself, so it cannot race the poll carrier's recv.
                 // A CAS-loss means the producer staged a Carryover between the get above and this CAS (a missed-edge re-dispatch ran ahead of the park);
                 // a single re-read consumes it, never spun on.
-                if handle.upgradeHandoff.compareAndSet(UpgradeHandoff.Idle, waiter) then
+                if handle.parkUpgradeWaiter(waiter) then
                     handle.driver.armUpgradeProducerRead(handle)
                 else
                     handle.upgradeHandoff.get() match
@@ -2408,7 +2408,7 @@ final private[net] class PosixTransport private[posix] (
                 // source). upgradeActive stays SET, so the reap routes that recv's CQE to the upgradeHandoff slot and fulfils this parked waiter, exactly
                 // as a stale recv would; the handshake never feeds a recv promise directly, so there is no second read source to orphan a staged Carryover
                 // (a second, direct read source would create a dual-source upgrade strand). Same shape as the poller branch above.
-                if handle.upgradeHandoff.compareAndSet(UpgradeHandoff.Idle, waiter) then
+                if handle.parkUpgradeWaiter(waiter) then
                     handle.driver.armUpgradeProducerRead(handle)
                 else
                     handle.upgradeHandoff.get() match
@@ -2421,7 +2421,7 @@ final private[net] class PosixTransport private[posix] (
                 // A stale recv is in flight (no carryover yet): park the waiter for its CQE to fulfil. Both the stale recv's reap and this run on the
                 // reap carrier, so the staging cannot interleave mid-park; the CAS-loss re-read stays as a defensive belt for any future cross-carrier
                 // staging path (a Carryover that appeared between the get above and this CAS is consumed by a single re-read, never spun on).
-                if !handle.upgradeHandoff.compareAndSet(UpgradeHandoff.Idle, waiter) then
+                if !handle.parkUpgradeWaiter(waiter) then
                     handle.upgradeHandoff.get() match
                         case staged: UpgradeHandoff.Carryover =>
                             discard(handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Idle))

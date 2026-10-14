@@ -8,15 +8,13 @@ import scala.scalajs.js
 
 /** Connection handle for `JsIoDriver`, wrapping a paused Node.js socket.
   *
-  * Mutable state (`pendingRead`, leftover fields) is safe because JavaScript is single-threaded and the driver never accesses a handle from
-  * concurrent callbacks. `pendingRead` holds at most one outstanding read promise; once satisfied it is cleared to avoid double-delivery.
+  * Mutable state (the leftover fields) is safe because JavaScript is single-threaded and the driver never accesses a handle from concurrent
+  * callbacks. The read and writable waits are parked in `life`, whose `cancel` and release claim every driver shares.
   *
   * Leftover bytes are stored when a `"data"` chunk arrives before `awaitRead` has been called (or when a chunk contains more data than the
   * pending read can consume). They are delivered on the next `awaitRead` call without resuming the socket.
   */
-final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: HandleId, val createdAt: Frame):
-    // Pending read promise (at most one). Absent when no read is pending.
-    var pendingRead: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]] = Absent
+final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: HandleId, val createdAt: Frame, val life: HandleLife):
 
     // Peer-close grace window the ReadPump applies when backpressured (see kyo.net.NetConfig.peerCloseGrace); on the handle so an in-place STARTTLS
     // upgrade (same socket) inherits it without re-threading. Duration.Infinity (no reclaim) for handles created without a config (stdio).
@@ -40,6 +38,11 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
     // tick, flowing the unshifted handshake flight to no listener and discarding it before the TLSSocket can read it.
     var dataListener: js.Function1[js.Dynamic, Unit] = null
 
+    // The permanent "end"/"close" and "error" listeners registered in JsHandle.init, kept so a STARTTLS upgrade removes exactly the listeners
+    // this handle added and leaves every other listener on the socket in place.
+    var eofListener: js.Function0[Unit]               = null
+    var errorListener: js.Function1[js.Dynamic, Unit] = null
+
     // FIFO of undelivered chunks, delivered one per awaitRead. Two producers: an oversized "data" chunk's tail, and the peer-close grace probe's
     // resume() draining kernel bytes into the "data" listener while the pump is parked (JsIoDriver.isPeerClosed). A single slot would let the probe's
     // chunk clobber the tail (byte loss), so a queue; the single-threaded event loop makes a plain mutable queue safe. stagedBytesTotal bounds it (JsIoDriver.PeerProbeBufferCap).
@@ -62,8 +65,13 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
             stagedBytesTotal -= head.len
             Present(head)
 
-    def clearPendingRead(): Unit =
-        pendingRead = Absent
+    /** Removes the listeners [[JsHandle.init]] attached, leaving every other listener on the socket. */
+    def removeOwnListeners(): Unit =
+        discard(socket.removeListener("data", dataListener))
+        discard(socket.removeListener("end", eofListener))
+        discard(socket.removeListener("close", eofListener))
+        discard(socket.removeListener("error", errorListener))
+    end removeOwnListeners
 
 end JsHandle
 
@@ -76,7 +84,7 @@ private[kyo] object JsHandle:
     /** Create a `JsHandle` from a connected, paused Node.js socket and attach permanent `data`, `end`, `close`, and `error` listeners. */
     def init(socket: js.Dynamic, driver: IoDriver[JsHandle], createdAt: Frame)(using AllowUnsafe): JsHandle =
         // JS has no file-descriptor concept; use 0 as the fd placeholder so HandleId.next produces a process-unique id.
-        val handle = new JsHandle(socket, HandleId.next(0), createdAt)
+        val handle = new JsHandle(socket, HandleId.next(0), createdAt, HandleLife.init())
 
         val dataFn: js.Function1[js.Dynamic, Unit] = (chunk: js.Dynamic) =>
             discard(socket.pause())
@@ -84,45 +92,33 @@ private[kyo] object JsHandle:
             val nodeBuffer = chunk.asInstanceOf[js.typedarray.Uint8Array]
             val arr        = copyFromNodeBuffer(nodeBuffer, nodeBuffer.length)
 
-            handle.pendingRead match
-                case Present(pending) =>
-                    handle.clearPendingRead()
-                    pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
-                case Absent =>
-                    handle.enqueueLeftover(arr, 0, arr.length)
-            end match
+            handle.life.read.take() match
+                case Present(pending) => pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
+                case Absent           => handle.enqueueLeftover(arr, 0, arr.length)
         handle.dataListener = dataFn
         discard(socket.on("data", dataFn))
 
         // EOF/close/error listeners
         val signalEof: js.Function0[Unit] = () =>
-            handle.pendingRead match
-                case Present(pending) =>
-                    handle.clearPendingRead()
-                    pending.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
-                case Absent => ()
-
+            handle.life.read.take().foreach(_.completeDiscard(Result.succeed(ReadOutcome.PeerFin)))
+        val signalError: js.Function1[js.Dynamic, Unit] = (err: js.Dynamic) =>
+            handle.life.read.take().foreach { pending =>
+                // A Node "error" is a hard receive error on a live read: surface it as a typed receive failure on the read outcome (not a
+                // closure), carrying the socket's own creation frame and the error's message as the cause.
+                val cause = if js.typeOf(err.message) == "string" then err.message.toString else ""
+                pending.completeDiscard(Result.succeed(ReadOutcome.Failed(
+                    NetConnectionIoException(
+                        s"connection socket#${handle.id}",
+                        NetConnectionIoException.Operation.Receive,
+                        cause
+                    )(using handle.createdAt)
+                )))
+            }
+        handle.eofListener = signalEof
+        handle.errorListener = signalError
         discard(socket.on("end", signalEof))
         discard(socket.on("close", signalEof))
-        discard(socket.on(
-            "error",
-            { (err: js.Dynamic) =>
-                handle.pendingRead match
-                    case Present(pending) =>
-                        handle.clearPendingRead()
-                        // A Node "error" is a hard receive error on a live read: surface it as a typed receive failure on the read outcome (not a
-                        // closure), carrying the socket's own creation frame and the error's message as the cause.
-                        val cause = if js.typeOf(err.message) == "string" then err.message.toString else ""
-                        pending.completeDiscard(Result.succeed(ReadOutcome.Failed(
-                            NetConnectionIoException(
-                                s"connection socket#${handle.id}",
-                                NetConnectionIoException.Operation.Receive,
-                                cause
-                            )(using handle.createdAt)
-                        )))
-                    case Absent => ()
-            }: js.Function1[js.Dynamic, Unit]
-        ))
+        discard(socket.on("error", signalError))
 
         handle
     end init

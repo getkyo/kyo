@@ -32,7 +32,7 @@ import scala.annotation.tailrec
   *
   * Memory ordering: a producer's slot store is a release (`lazySet`) that the consumer's `get` acquires, so a value stored before [[offer]]
   * is visible to the consumer that dequeues it (the same publication guarantee a `ConcurrentLinkedQueue.offer` provides the poller's
-  * `pendingReadPromise` store).
+  * read park).
   *
   * Single-consumer contract: [[poll]] must be called from one thread/fiber at a time (the driver's single change worker). [[offer]] is safe
   * from any number of producers, and [[peekNonEmpty]] from any thread.

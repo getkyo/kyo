@@ -43,11 +43,26 @@ object TestTransports:
         channelCapacity: Int,
         blockingReader: Boolean
     )(using AllowUnsafe, Frame): kyo.net.Connection =
+        splitConnectionOver(
+            transport,
+            if blockingReader then BlockingReaderDriver.init(ioDriver) else ioDriver,
+            readFd,
+            writeFd,
+            channelCapacity
+        )
+
+    /** As [[splitConnection]], over a driver the caller built (a blocking reader over recording bindings, say). */
+    def splitConnectionOver(
+        transport: PosixTransport,
+        driver: IoDriver[PosixHandle],
+        readFd: Int,
+        writeFd: Int,
+        channelCapacity: Int
+    )(using AllowUnsafe, Frame): kyo.net.Connection =
         val handle = PosixHandle.split(readFd, writeFd, PosixHandle.DefaultReadBufferSize, summon[Frame])
-        val driver = if blockingReader then BlockingReaderDriver.init(ioDriver) else ioDriver
         val conn   = transport.openWith(handle, driver, channelCapacity)
         discard(conn.start())
         conn
-    end splitConnection
+    end splitConnectionOver
 
 end TestTransports

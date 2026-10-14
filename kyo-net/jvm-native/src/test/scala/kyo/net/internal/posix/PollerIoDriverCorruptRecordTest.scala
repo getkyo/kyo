@@ -14,13 +14,12 @@ import kyo.net.internal.transport.ReadOutcome
   * A fatal record-layer error (RFC 5246 §7.2.2) must terminate the connection surfaced as the typed decrypt failure
   * `ReadOutcome.Failed(NetConnectionIoException(Decrypt))`, identical to the io_uring driver, never a bare `Closed` and never the good
   * prefix delivered behind the corruption. On BoringSSL a fatal record is signalled by `feedAndDecrypt`'s `onFatal` (a `readPlain == -2`
-  * return, not a thrown exception), so `dispatchReadTls` must complete the typed decrypt failure on that path directly: `onFatal`'s
-  * `requestClose` marks the handle closing, and the read completion is what distinguishes a corrupt record (a typed decrypt failure) from an
-  * ordinary local close (`Closed`).
+  * return, not a thrown exception), so `dispatchReadTls` must complete the typed decrypt failure on that path directly. `onFatal` only records
+  * the fact: the driver releases nothing itself, and the connection turns the failed read into its own release.
   *
   * The leaf feeds `[good record][corrupted record]` (the corruption flips the last body byte of the second record so its AEAD tag fails)
   * coalesced in one wire write, so both records arrive in a single recv, and reads once via the driver. It asserts the read fails with the
-  * typed decrypt failure, the handle is closing, and neither the good prefix nor a bare `Closed` is delivered.
+  * typed decrypt failure, the handle is left for the connection to release, and neither the good prefix nor a bare `Closed` is delivered.
   *
   * Gate: [[PosixTestSockets.assumePoller]] (Linux epoll or macOS kqueue) and [[TlsRealEngines.assumeTlsReady]] (a staged BoringSSL/OpenSSL
   * provider); cancels cleanly on JS, off a poller platform, or where no provider is staged, so this is CI-validated on native Linux with
@@ -49,7 +48,7 @@ class PollerIoDriverCorruptRecordTest extends Test:
 
     "PollerIoDriver corrupt-record (real epoll/kqueue, real engine)" - {
 
-        "a fatal TLS record on a read fails the read with a typed decrypt error and tears the connection down, never delivering the good prefix" in {
+        "a fatal TLS record on a read fails the read with a typed decrypt error and leaves the release to the connection, never delivering the good prefix" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
                 TlsRealEngines.assumeTlsReady()
@@ -90,9 +89,8 @@ class PollerIoDriverCorruptRecordTest extends Test:
                             val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             driver.awaitRead(acceptedH, promise)
                             Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
-                                // requestClose fired inside the fatal completion (poll carrier), which happens-before this outcome, so isClosing is
-                                // already settled here. Capture it before our own closeHandle below.
-                                val closing = acceptedH.isClosing()
+                                // Captured before the closeHandle below, which stands in for the connection's release.
+                                val releasedByDriver = !acceptedH.life.armable || acceptedH.isClosing()
                                 driver.closeHandle(acceptedH)
                                 discard(sock.close(client))
                                 // Let the driver's queued TLS teardown run its own engine free before withEngines frees the same engine out of band.
@@ -104,14 +102,14 @@ class PollerIoDriverCorruptRecordTest extends Test:
                                     outcome match
                                         case Result.Success(ReadOutcome.Failed(e: NetConnectionIoException)) =>
                                             // RFC 5246 §7.2.2: the fatal record tears the connection down, surfaced as the typed decrypt failure
-                                            // (never a misleading Closed, and never the good prefix). The handle must be closing, not re-armed.
+                                            // (never a misleading Closed, and never the good prefix).
                                             assert(
                                                 e.operation == NetConnectionIoException.Operation.Decrypt,
                                                 s"the fatal record must surface as a TLS decrypt failure; got operation ${e.operation}"
                                             )
                                             assert(
-                                                closing,
-                                                "the fatal record must mark the handle closing (requestClose), tearing it down rather than re-arming a freed handle"
+                                                !releasedByDriver,
+                                                "the fatal record must leave the release to the connection, not release the handle in the driver"
                                             )
                                         case Result.Success(ReadOutcome.Bytes(got)) =>
                                             fail(

@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.net.NetConnectionClosedException.Operation
 import kyo.net.NetException
 import kyo.net.internal.TlsEngine
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
@@ -40,9 +41,8 @@ final private[net] class PosixHandle private (
     deferredFdClose: AtomicBoolean.Unsafe,
     // Orders close(fd) after the poller's withdrawal of the fd (see FdWithdrawal).
     fdWithdrawal: AtomicRef.Unsafe[PosixHandle.FdWithdrawal],
-    // The cross-direction ownership guard (independent read/write holder bits plus a close bit, the Go fdMutex model): the last holder while
-    // closing runs the deferred release exactly once. A read and a write proceed full-duplex; two reads or two writes serialize.
-    guard: HandleGuard,
+    // The release claim, every parked promise, and the cross-direction resource guard (see HandleLife).
+    val life: HandleLife,
     // The single atomic handoff slot for the STARTTLS-on-io_uring stale-recv bytes (see UpgradeHandoff). The reap carrier
     // (IoUringDriver.complete) and the handshake carrier (PosixTransport.driveUpgradeRead) run without shared locking; both CAS this one slot,
     // so exactly one side wins each transition and the loser's single re-read sees the winner's value and completes the other half (no spin, no
@@ -50,14 +50,6 @@ final private[net] class PosixHandle private (
     // while the handshake (having read Absent) parks its waiter, stranding the bytes against a waiter that nothing fulfils and hanging the
     // upgrade. The close path (freeResources) swings it to Idle and fails any parked waiter Closed.
     val upgradeHandoff: AtomicRef.Unsafe[PosixHandle.UpgradeHandoff],
-    // The pending read promise for this fd, stored directly on the handle rather than as a `(promise, handle)` pair in the `pendingReads`
-    // map. Deposited by `awaitRead`/`rearmOwned` (and, during a STARTTLS upgrade window, by io_uring's rejected stray arm and the pollers'
-    // `armUpgradeProducerRead`); TAKEN atomically wherever ownership transfers: `dispatchRead`'s consume, every close/cancel/detach sweep,
-    // and the upgrade-window occupant sweeps all `getAndSet` so a fail-then-clear can never clobber a deposit that lands between the two
-    // (the stranded-read fix's covering-sweep argument depends on every sweep being an atomic take). The visibility barrier toward the
-    // change worker's `rc < 0` failure path is unchanged: the deposit happens-before the `changeQueue.offer` that follows it. Multiple
-    // carriers write during the upgrade window, which is exactly why this is an atomic reference and not a plain volatile field.
-    val pendingReadPromise: AtomicRef.Unsafe[Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]]],
     // The most recent plaintext chunk the driver read off this fd, kept only so a STARTTLS upgrade can recover the peer's first handshake
     // flight when it arrived coalesced with the upgrade signal in a single `recv` and the application consumed (and discarded) the whole
     // chunk. A one-shot claim, not a plain snapshot: feedCoalescedHandshake and the upgrade-handoff salvage hooks (PollerIoDriver /
@@ -194,24 +186,12 @@ final private[net] class PosixHandle private (
     /** Claim the socket-fd close: returns `true` for the single caller that should issue `close(fd)`, `false` for every later caller. */
     private[posix] def claimFdClose()(using AllowUnsafe): Boolean = fdCloseClaimed.compareAndSet(false, true)
 
-    /** Whether some path has already taken responsibility for closing this handle's fd, without consuming the claim the way
-      * [[claimFdClose]] does.
-      *
-      * This is the state that moves at the same instant the fd number does, which is what makes it the right thing to test before arming a
-      * new operation against [[writeFd]]. [[isClosing]] is not: a connection handle's guard bit is set by the driver's deferred discharge,
-      * on a different carrier and strictly after the close-phase paths have already issued `close(fd)` on the caller's, so a check against it
-      * reads `false` for exactly the window in which the number may already name somebody else's socket.
+    /** Whether this handle may still arm an fd-keyed operation (a registration, an accept, a connect): the one gate every driver arm checks,
+      * on the carrier that applies the arm. It reads the release claim alone: every path that closes a handle's fd goes through a driver
+      * release that takes the claim before it begins the fd's withdrawal or its close, so an arm applied after the claim is rejected and none
+      * can run against a number the kernel has handed to another socket.
       */
-    private[posix] def fdCloseIsClaimed(using AllowUnsafe): Boolean = fdCloseClaimed.get()
-
-    /** Whether this handle may still arm an fd-keyed operation (a registration, an accept, a connect): the one gate every driver arm checks.
-      * False once the close was requested, the fd close claimed, or a poller's closing withdrawal of the fd begun. Every path that closes a
-      * handle's fd claims it first, the claim lands before `close(fd)`, and an arm applied after the claim is rejected, so no arm can run
-      * against a number the kernel has handed to another socket. Each condition is needed: a close is requested before any closer wins the
-      * claim, a listener's fd is closed by a claim with no request, and a poller withdrawal begins before either, in the submit that its
-      * close waits on (see [[PosixHandle.FdWithdrawal]]).
-      */
-    private[posix] def ownsFd()(using AllowUnsafe): Boolean = !guard.isClosing() && !fdCloseClaimed.get() && !fdWithdrawalBegun
+    private[posix] def ownsFd()(using AllowUnsafe): Boolean = life.armable
 
     /** Record that a [[claimFdClose]] win was spent guarding [[IoUringDriver.registerDeferredClose]]'s deferred `shutdown(SHUT_RD)`, not the
       * real `close(fd)` syscall: that call still owes the actual close once the in-flight recv drains, but its own `claimFdClose()` attempt
@@ -230,8 +210,6 @@ final private[net] class PosixHandle private (
       */
     private[posix] def beginFdWithdrawal()(using AllowUnsafe): Unit =
         discard(fdWithdrawal.compareAndSet(PosixHandle.FdWithdrawal.Open, PosixHandle.FdWithdrawal.Withdrawing(Absent)))
-
-    private[posix] def fdWithdrawalBegun(using AllowUnsafe): Boolean = fdWithdrawal.get() != PosixHandle.FdWithdrawal.Open
 
     /** Run `close` now, or once the withdrawal begun by [[beginFdWithdrawal]] completes. */
     @scala.annotation.tailrec
@@ -439,19 +417,11 @@ final private[net] class PosixHandle private (
       */
     @volatile var sendInFlight: Boolean = false
 
-    /** The WritePump's writable promise parked because the write-backpressure tail reached [[PosixHandle.WriteTailHighWater]]: the driver returned
-      * `WriteResult.TailPartial` and the pump entered [[WriteState.Backpressured]], suspended on `awaitWritable`. The kernel send buffer alone is
-      * not the readiness signal here (the tail bound, not the socket, stopped the write), so the promise is held on the handle and completed by the
-      * drain path when the tail drops below [[PosixHandle.WriteTailLowWater]]. Written by `awaitWritable` (the WritePump's carrier) and read/cleared
-      * by the drain path (the engine FIFO worker), causally serialized through the tail-size check: the waiter is registered only when the tail is
-      * over the low-water mark, and the drain completes-and-clears it only after advancing the sent pointer below the mark, so a registration that
-      * races a drain either sees the tail still high (and the next drain completes it) or is itself completed immediately by `awaitWritable`'s own
-      * below-mark fast path. The `@volatile` carries the cross-carrier visibility. The close path fails any parked waiter via `cancel` / the driver
-      * teardown, so a slow peer never strands the pump. The slot is retained here (rather than carrying the promise inside
-      * [[WriteState.Backpressured]]) because the drain path runs on the engine FIFO worker and cannot reach the WritePump's WriteState atomic cell
-      * directly; the handle is the shared bridge between the two carriers.
+    /** io_uring: set by the release's engine op on the reap carrier. A write op the engine FIFO runs after it drops its bytes, since that op
+      * has queued the close_notify and the fd close and nothing may be sent behind them, while one queued ahead of it was accepted before
+      * the release and is sent. The release claim cannot mark that cut: it is taken on the closing carrier, before ops already queued run.
       */
-    @volatile var backpressurePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
+    @volatile var sendsSealed: Boolean = false
 
     /** Whether the last recv on this fd filled the read buffer exactly (n == readBufferSize). When true, the kernel may still hold residual
       * bytes that an edge-triggered backend will never re-signal (epoll fires once per empty->ready transition; a filled buffer leaves data in
@@ -502,22 +472,6 @@ final private[net] class PosixHandle private (
             false
     end growReadBufferForFullRead
 
-    /** The pending accept promise for this fd, stored directly on the handle. Mirrors [[pendingReadPromise]] for the listen-fd accept path
-      * (`awaitAccept` / `dispatchAccept`). Written before the corresponding change command is enqueued (the `changeQueue.offer` is the
-      * happens-before barrier for the change worker's `rc < 0` failure path). Single owner for the write side: only `awaitAccept` writes
-      * this field, and at most one accept is in flight per handle.
-      */
-    @volatile var pendingAcceptPromise: Maybe[Promise.Unsafe[Int, Abort[Closed | NetException]]] = Absent
-
-    /** The pending writable promise for this fd, stored directly on the handle alongside the poll-fiber-confined `pendingWritables` map entry.
-      * The map entry routes the readiness event to the right waiter on the poll fiber; this field lets the cancel/close paths fail the promise
-      * SYNCHRONOUSLY on their own carrier (the map removal itself is deferred to the poll fiber, so the close path must not touch the non-thread-safe
-      * map). Written by `armSocketWritable` (the WritePump / connect / flush re-arm carrier) before its change command; read and cleared by the poll
-      * fiber on `dispatchWritable` and by the cancel/close paths. At most one writable is armed per handle at a time. The arming handle's id is
-      * `id` itself, so the stale-fd guard reads `handle.id` rather than a separately-stored copy.
-      */
-    @volatile var pendingWritablePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
-
     /** Latch: the peer has closed its write side (a FIN) or the connection hit a hard error (RST). Written only by the poll carrier at the FIN/error
       * edges its standing registration delivers, even while the ReadPump is backpressured with no read armed. `@volatile` because the grace timer
       * reads it from an arbitrary carrier; write-once (never cleared: a peer close is terminal).
@@ -546,14 +500,14 @@ final private[net] class PosixHandle private (
       * [[tls]] engine and MUST pair this with [[endDispatch]] on every exit). Returns `false` when a close has been requested: the resources are
       * being or have been freed, so the dispatch must bail without touching them.
       */
-    private[posix] def beginDispatch()(using AllowUnsafe): Boolean = guard.acquireRead()
+    private[posix] def beginDispatch()(using AllowUnsafe): Boolean = life.guard.acquireRead()
 
     /** Release the shared resources at the end of a read dispatch. Returns `true` when a close raced this dispatch and this op is the last holder
       * (so the dispatch must complete its promise with `Closed` rather than deliver a result): in that case the deferred free is performed HERE,
       * exactly once. Returns `false` otherwise (no close raced, or another op still holds the resources), leaving the resources live.
       */
     private[posix] def endDispatch()(using AllowUnsafe): Boolean =
-        val freedHere = guard.release(read = true)
+        val freedHere = life.guard.release(read = true)
         if freedHere then PosixHandle.freeResources(this, deferredHolder = Present("read"))
         freedHere
     end endDispatch
@@ -562,14 +516,14 @@ final private[net] class PosixHandle private (
       * [[readBufferSize]], and MUST pair this with [[endWrite]] on every exit). Returns `false` when a close has been requested: the resources
       * are being or have been freed, so the write must bail without touching them.
       */
-    private[posix] def beginWrite()(using AllowUnsafe): Boolean = guard.acquireWrite()
+    private[posix] def beginWrite()(using AllowUnsafe): Boolean = life.guard.acquireWrite()
 
     /** Release the shared resources at the end of a write. Returns `true` when a close raced this write and this op is the last holder (so the
       * deferred free is performed HERE, exactly once); `false` otherwise. The write caller does not act on the return (it already produced its
       * `WriteResult`); the return exists for symmetry with [[endDispatch]] and so the free handoff is uniform across both paths.
       */
     private[posix] def endWrite()(using AllowUnsafe): Boolean =
-        val freedHere = guard.release(read = false)
+        val freedHere = life.guard.release(read = false)
         if freedHere then PosixHandle.freeResources(this, deferredHolder = Present("write"))
         freedHere
     end endWrite
@@ -585,13 +539,13 @@ final private[net] class PosixHandle private (
       * [[endDeferredClose]]); `false` when a close was already requested by someone else, in which case the caller has nothing left to
       * protect (that other closer's own release already ran, or will run, without ever waiting on the driver's deferred bookkeeping).
       */
-    private[posix] def beginDeferredClose()(using AllowUnsafe): Boolean = guard.acquireRead()
+    private[posix] def beginDeferredClose()(using AllowUnsafe): Boolean = life.guard.acquireRead()
 
     /** Release the hold [[beginDeferredClose]] took, once the driver has installed the real close credit and is ready to discharge it.
       * Mirrors [[endDispatch]]: returns `true` when this is the last holder, so the just-installed credit is consumed here, exactly once.
       */
     private[posix] def endDeferredClose()(using AllowUnsafe): Boolean =
-        val freedHere = guard.release(read = true)
+        val freedHere = life.guard.release(read = true)
         if freedHere then PosixHandle.freeResources(this, deferredHolder = Present("deferred-close"))
         freedHere
     end endDeferredClose
@@ -600,7 +554,7 @@ final private[net] class PosixHandle private (
       * [[feedAndDecrypt]] triggered [[requestClose]] (fatal TLS record): the io_uring path holds no dispatch guard, so the guard state
       * is the only observable signal after [[requestClose]] returns. Returns `true` if the close bit is set or the resources are already freed.
       */
-    private[posix] def isClosing()(using AllowUnsafe): Boolean = guard.isClosing()
+    private[posix] def isClosing()(using AllowUnsafe): Boolean = life.guard.isClosing()
 
     /** The number of bytes currently buffered but not yet sent across this handle's write-backpressure tail (the unsent region of whichever tail is
       * active: [[pendingCipher]] for the TLS write path, [[rawPending]] for the io_uring raw write path). A handle is either TLS or raw, so at most
@@ -633,26 +587,42 @@ final private[net] class PosixHandle private (
     /** Uncount the bytes of a queued write once its FIFO op has appended them to the tail (or dropped them on a closed handle). */
     private[posix] def landQueuedWrite(bytes: Int)(using AllowUnsafe): Unit = discard(queuedWriteBytes.addAndGet(-bytes))
 
-    /** Complete the parked backpressure promise ([[backpressurePromise]]) if the write tail has drained below [[PosixHandle.WriteTailLowWater]], so the
-      * WritePump retries the write that the high-water bound previously deferred. A no-op when no promise is parked or the tail is still over the mark.
-      * Called by the drain paths (poller `flushPending`, io_uring `onTlsSendComplete` / `onRawSendComplete`) on the engine FIFO worker AFTER they
-      * advance the sent pointer, so the tail size read here reflects the just-completed send. Completing the promise with `Success` signals writability;
-      * the pump's `onWritable` re-issues the deferred write, which now passes the high-water check (the tail is below low-water) and appends.
+    /** Complete the pump's parked writable wait if the write tail has drained below [[PosixHandle.WriteTailLowWater]], so the WritePump retries
+      * the write the high-water bound deferred. Called by the drain paths (poller `flushPending`, io_uring `onTlsSendComplete` /
+      * `onRawSendComplete`) on the engine FIFO worker after they advance the sent pointer, so the tail size read here reflects the completed
+      * send. A wait parked for socket writability is completed too: with the tail below the mark the pump's retry either writes or parks again.
       */
     private[posix] def releaseBackpressureWaiter()(using AllowUnsafe): Unit =
         if unsentTailBytes < PosixHandle.WriteTailLowWater then
-            backpressurePromise.foreach { p =>
-                backpressurePromise = Absent
-                p.completeDiscard(Result.succeed(()))
-            }
+            life.writable.take().foreach(_.completeDiscard(Result.succeed(())))
     end releaseBackpressureWaiter
+
+    /** Parks the STARTTLS handshake's wait for the peer's next flight in [[upgradeHandoff]]. `false` when the slot is not Idle (the I/O
+      * carrier staged a Carryover first).
+      *
+      * The waiter is registered with the handle's life, so a cancel fails it like any parked promise and a park after the release claim fails
+      * at once. The failure is a closed connection rather than `Closed`, the waiter's own error channel.
+      */
+    private[posix] def parkUpgradeWaiter(waiter: PosixHandle.UpgradeHandoff)(using AllowUnsafe, Frame): Boolean =
+        if !upgradeHandoff.compareAndSet(PosixHandle.UpgradeHandoff.Idle, waiter) then false
+        else
+            life.onCancel { _ =>
+                if upgradeHandoff.compareAndSet(waiter, PosixHandle.UpgradeHandoff.Idle) then
+                    waiter match
+                        case PosixHandle.UpgradeHandoff.Waiter(p, fr) =>
+                            p.completeDiscard(Result.fail(kyo.net.NetConnectionClosedException(Operation.Upgrade)(using fr)))
+                        case _ => ()
+            }
+            true
+        end if
+    end parkUpgradeWaiter
 
     /** Request close of the shared resources. If no op holds them (holder count 0), they are freed immediately. If a read or write is in flight,
       * the free is deferred to that op's [[endDispatch]] / [[endWrite]] so it never races an in-flight `recv` / engine feed / encrypt. Idempotent
       * once the close bit is set (or the resources are already freed).
       */
     private[posix] def requestClose()(using AllowUnsafe): Unit =
-        val freedHere = guard.requestClose()
+        val freedHere = life.guard.requestClose()
         if freedHere then PosixHandle.freeResources(this)
     end requestClose
 end PosixHandle
@@ -750,9 +720,8 @@ private[net] object PosixHandle:
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
             deferredFdClose = AtomicBoolean.Unsafe.init(false),
             fdWithdrawal = AtomicRef.Unsafe.init(PosixHandle.FdWithdrawal.Open),
-            guard = HandleGuard.init(),
+            life = HandleLife.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
-            pendingReadPromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
             queuedWriteBytes = AtomicInt.Unsafe.init(0),
             createdAt = createdAt
@@ -778,9 +747,8 @@ private[net] object PosixHandle:
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
             deferredFdClose = AtomicBoolean.Unsafe.init(false),
             fdWithdrawal = AtomicRef.Unsafe.init(PosixHandle.FdWithdrawal.Open),
-            guard = HandleGuard.init(),
+            life = HandleLife.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
-            pendingReadPromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
             queuedWriteBytes = AtomicInt.Unsafe.init(0),
             createdAt = createdAt
@@ -844,22 +812,12 @@ private[net] object PosixHandle:
         h.rawPending = Absent
         h.rawPendingSent = 0
         h.rawSendInFlight = false
-        // Fail (not merely clear) any parked write-backpressure promise. The driver's `cancel` fails a promise present at cancel time, but a
-        // promise parked in the window AFTER cancel and before this teardown (the close-vs-writable race) would otherwise be left incomplete: its
-        // promise never resolves and the WritePump fiber that parked on it hangs forever. Completing it with Closed here releases that fiber. The
-        // free runs exactly once (guard CAS to its terminal value), and completeDiscard is idempotent, so a double-fail (here and in cancel or
-        // awaitWritable's close-race check) is harmless.
-        h.backpressurePromise.foreach { bp =>
+        // Fails whatever is still parked. A path that frees the resources without a driver release (a failed upgrade's teardown) would
+        // otherwise leave a parked op waiting on a handle nothing will complete.
+        locally {
             given Frame = Frame.internal
-            bp.completeDiscard(
-                Result.fail(kyo.Closed(
-                    s"connection fd=${h.readFd}/${h.writeFd}",
-                    h.createdAt,
-                    "closed while a write was parked on backpressure"
-                ))
-            )
+            h.life.cancel(kyo.Closed(s"connection fd=${h.readFd}/${h.writeFd}", h.createdAt, "closed"))
         }
-        h.backpressurePromise = Absent
         // Fail (not merely clear) a STARTTLS handshake parked on the stale-recv handoff: if the handle closes mid-upgrade (a deadline reap or a
         // peer reset) the stale recv may never deliver, so completing the parked waiter Closed lets the handshake tear down instead of hanging on
         // it. Swing the one handoff slot to Idle and, if it held a parked Waiter, fail that promise with the frame captured when it parked. A
@@ -889,10 +847,6 @@ private[net] object PosixHandle:
             case _ => ()
         end match
         h.queuedRecv = PosixHandle.QueuedRecv.None
-        // Clear promise fields: these are on-heap references with no native close needed; setting to Absent drops the reference.
-        h.pendingReadPromise.set(Absent)
-        h.pendingAcceptPromise = Absent
-        h.pendingWritablePromise = Absent
         // Run the deferred real close(fd) LAST: this method is the exactly-once, zero-holders point that just freed the engine and buffers
         // above, so the fd number inherits the same guarantee (see fdCloseSink). A non-Absent deferredHolder names which holder was still
         // active when the close was requested: "read"/"write" is a genuine concurrent I/O op that raced the close; "deferred-close" is
@@ -909,7 +863,7 @@ private[net] object PosixHandle:
     end freeResources
 
     /** Release the resources the handle owns (the TLS engine and the reused read buffer), coordinated against any in-flight read dispatch OR
-      * write via the handle's `guard` (see [[PosixHandle.guard]]): if a read or write holds the resources the free is deferred to that op's
+      * write via the handle's guard (see [[HandleLife.guard]]): if a read or write holds the resources the free is deferred to that op's
       * `endDispatch` / `endWrite`, so it never races the in-flight `recv` / engine feed / encrypt. Idempotent: a repeat close is a no-op once the
       * resources are freed.
       */

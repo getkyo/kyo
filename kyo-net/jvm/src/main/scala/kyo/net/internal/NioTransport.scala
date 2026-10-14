@@ -1580,13 +1580,12 @@ final private[kyo] class NioTransport private (
                         // Failure / interrupt: close the handoff window so a torn-down handle never lingers mid-upgrade, then release the fd.
                         handle.upgrading = false
                         handle.handshakeReading = false
-                        // Abort-path sweep (the posix releaseFailedUpgrade dual): a stray pump arm that landed in the sweep-to-marker gap
+                        // Abort-path release (the posix releaseFailedUpgrade dual): a stray pump arm that landed in the sweep-to-marker gap
                         // installed a cell only the handshake's first producer arm would have failed, and an upgrade that aborts before that
-                        // arm never runs it. cancel's slot-first cleanupPending takes whatever cell is armed, so no read promise (or its
-                        // pendingReads entry and buffer) outlives the aborted upgrade. Idempotent on the pre-detach abort orderings, where
-                        // the close path that won the state CAS runs the same sweep.
-                        driver.cancel(handle)
-                        closeQuietly(handle.channel)
+                        // arm never runs it. The release's slot-first sweep takes whatever cell is armed, so no read promise (or its
+                        // pendingReads entry and buffer) outlives the aborted upgrade, and its claim refuses any arm that lands after it.
+                        // Idempotent on the pre-detach abort orderings, where the close path that won the state CAS released already.
+                        driver.closeHandle(handle)
                 }
                 // `promise` owns the detached channel for the whole upgrade (the onComplete failure arm above is what releases it), so route a
                 // close() of the plaintext connection to it: settling `promise` runs the same release a handshake failure takes, and once the
@@ -1622,7 +1621,7 @@ final private[kyo] class NioTransport private (
                         if preRead.isEmpty then
                             // The claim was won but the connection reached a terminal state before the detach (a close raced or preceded this
                             // call): nothing was detached and the close path owns the channel, so fail typed. The failure settlement runs the
-                            // owner arm above, whose closeQuietly is idempotent against the close that won.
+                            // owner arm above, whose release is a no-op after the close that won.
                             promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
                         // Step 2: re-register the same channel (still open) with the driver for TLS handshake I/O.
                         else if !driver.registerChannel(handle) then

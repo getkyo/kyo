@@ -24,6 +24,9 @@ import kyo.net.internal.transport.ReadOutcome
   * and parks in `stalledSubmits`; the probe then reads `hasInFlightRead(targetH)` on the same reap carrier, after the park and before any re-arm.
   * It must be true. If `hasInFlightRead` scanned only `pending` it would be false: the regression this guards.
   *
+  * The same answer obliges the re-arm: once the handshake has parked on that stalled recv, the re-arm must submit it even though the
+  * upgrade's detach already failed its promise, or the handshake waits for a flight no recv will read.
+  *
   * Gated by [[PosixTestSockets.assumeUring]] (cancel off Linux / where the depth-1 ring cannot init). Anti-flakiness: the SQ-full condition is
   * structural (depth-1 ring, the reap carrier pinned while the ops enqueue), not timing-driven; the only wait is on the probe promise the reap
   * carrier completes. No sleep, no poll-retry, no unbounded spin.
@@ -88,6 +91,71 @@ class IoUringUpgradeStaleRecvSqFullTest extends Test:
                                 inFlight,
                                 "a recv parked on a full SQ must count as in flight (else the STARTTLS upgrade misjudges 'no stale recv')"
                             )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a stale recv parked on a full submission queue is still armed after the upgrade detach fails its promise (real ring)" in {
+        PosixTestSockets.assumeUring()
+        // The detach fails the plaintext read's promise while its recv sits in stalledSubmits. The handshake, seeing that recv in flight,
+        // parks a waiter for its bytes instead of arming its own producer, so the re-arm must still submit it.
+        withDriver(1) { drv =>
+            PosixTestSockets.loopbackPair().map { case (fillerClient, fillerAccepted) =>
+                PosixTestSockets.loopbackPair().map { case (targetClient, targetAccepted) =>
+                    val fillerH = PosixHandle.socket(fillerAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val targetH = PosixHandle.socket(targetAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val gate    = new java.util.concurrent.CountDownLatch(1)
+                    val pinIn   = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    drv.submitEngineOp { () =>
+                        pinIn.completeDiscard(Result.succeed(()))
+                        gate.await()
+                    }
+                    val waiter = Promise.Unsafe.init[Span[Byte], Abort[kyo.net.NetException]]()
+                    pinIn.safe.get.map { _ =>
+                        val fillerP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                        drv.awaitRead(fillerH, fillerP)
+                        val targetP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                        drv.awaitRead(targetH, targetP)
+                        val parked = Promise.Unsafe.init[Boolean, Abort[Closed]]()
+                        // On the reap carrier, after the target read parked in stalledSubmits and before any re-arm: the upgrade's detach
+                        // and the handshake's first read, as PosixTransport runs them.
+                        drv.submitEngineOp { () =>
+                            targetH.upgradeActive = true
+                            targetH.upgrading = true
+                            drv.detachForUpgrade(targetH)
+                            val inFlight = drv.hasInFlightRead(targetH)
+                            if inFlight then targetH.upgradeHandoff.set(PosixHandle.UpgradeHandoff.Waiter(waiter, Frame.internal))
+                            parked.completeDiscard(Result.succeed(inFlight))
+                        }
+                        gate.countDown()
+                        parked.safe.get.map { inFlight =>
+                            assert(inFlight, "the stalled recv must count as in flight for the handshake to wait on it")
+                            assert(targetP.done(), "the detach must fail the plaintext read's promise")
+                            val payload = Array[Byte](1, 2, 3, 4, 5)
+                            assert(sock.sendNow(targetClient, Buffer.fromArray[Byte](payload), payload.length.toLong, 0).value ==
+                                payload.length.toLong)
+                            // A CQE for the filler drives a reap turn, which re-arms the stalled recv.
+                            assert(sock.sendNow(fillerClient, Buffer.fromArray[Byte](Array[Byte](0)), 1L, 0).value == 1L)
+                            // A re-arm that drops the stalled recv leaves this wait pending until the leaf times out.
+                            Sync.ensure(Sync.defer {
+                                drv.closeHandle(fillerH)
+                                drv.closeHandle(targetH)
+                                discard(sock.close(fillerClient))
+                                discard(sock.close(targetClient))
+                            })(Abort.run[kyo.net.NetException](waiter.safe.get)).map { got =>
+                                got match
+                                    case Result.Success(bytes) =>
+                                        assert(
+                                            bytes.toArray.toSeq == payload.toSeq,
+                                            s"the handshake waiter got the wrong bytes: ${bytes.toArray.toSeq}"
+                                        )
+                                    case other =>
+                                        fail(s"the handshake waiter never received the stalled recv's bytes: $other")
+                                end match
+                            }
                         }
                     }
                 }

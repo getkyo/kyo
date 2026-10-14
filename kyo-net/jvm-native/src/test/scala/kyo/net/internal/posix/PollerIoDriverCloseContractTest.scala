@@ -410,9 +410,7 @@ class PollerIoDriverCloseContractTest extends Test:
 
     "fd release" - {
 
-        "a fatal TLS record closes the descriptor only after the poller has withdrawn it".pendingWhereTlsRuns(
-            "P9: on a fatal record endDispatch runs freeResources while the withdrawal is still Open, so close(fd) precedes the deregister"
-        ) in {
+        "a fatal TLS record closes the descriptor only after the poller has withdrawn it" in {
             PosixTestSockets.assumePoller()
             TlsRealEngines.assumeBoringSslReady()
             val realBackend = PollerBackend.default()
@@ -431,10 +429,11 @@ class PollerIoDriverCloseContractTest extends Test:
                 sendAll(client, good ++ bad)
                 val read = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(h, read)
+                // The fatal record ends the read; the connection's release then closes the descriptor.
                 for
-                    outcome <- Abort.run[Timeout | Closed](Async.timeout(10.seconds)(read.safe.get))
-                    closed  <- Abort.run[Timeout](Async.timeout(10.seconds)(sockets.closed(accepted).safe.get))
+                    outcome <- Abort.run[Closed](read.safe.get)
                     _       <- Sync.defer(driver.closeHandle(h))
+                    _       <- sockets.closed(accepted).safe.get
                     _       <- fifoSettled(driver)
                 yield
                     driver.close()
@@ -442,10 +441,50 @@ class PollerIoDriverCloseContractTest extends Test:
                     clientEngine.free()
                     serverEngine.free()
                     assert(outcome.isSuccess, s"the fatal record did not complete the read: $outcome")
-                    assert(closed.isSuccess, "the fatal record never closed the descriptor")
                     assert(
                         withdrawnAtClose.get() == Present(true),
                         s"close($accepted) ran before the poller withdrew the fd (interest changes applied: ${backend.callLog})"
+                    )
+                end for
+            }
+        }
+
+        "a fatal TLS record releases the descriptor exactly once, through the connection's release" in {
+            PosixTestSockets.assumePoller()
+            TlsRealEngines.assumeBoringSslReady()
+            val realBackend = PollerBackend.default()
+            val sockets     = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val driver      = TestDrivers.forBackend(realBackend, realBackend.create(), sockets)
+            discard(driver.start())
+            ensuringClosed(driver, PosixTestSockets.loopbackPair(sockets)) { case (client, accepted) =>
+                val (clientEngine, serverEngine) = engines()
+                val good                         = TlsEngineLoopback.encrypt(clientEngine, "good".getBytes("UTF-8"))
+                val bad                          = TlsEngineLoopback.encrypt(clientEngine, "tampered".getBytes("UTF-8"))
+                bad(bad.length - 1) = (bad(bad.length - 1) ^ 0xff).toByte
+                val h = tlsHandle(accepted, serverEngine)
+                sendAll(client, good ++ bad)
+                val read = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                driver.awaitRead(h, read)
+                for
+                    outcome <- Abort.run[Closed](read.safe.get)
+                    _       <- fifoSettled(driver)
+                    closesBeforeRelease = sockets.closeCounts.getOrDefault(accepted, 0)
+                    _ <- Sync.defer(driver.closeHandle(h))
+                    _ <- sockets.closed(accepted).safe.get
+                    _ <- fifoSettled(driver)
+                yield
+                    driver.close()
+                    discard(sock.close(client))
+                    clientEngine.free()
+                    serverEngine.free()
+                    assert(outcome.isSuccess, s"the fatal record did not complete the read: $outcome")
+                    assert(
+                        closesBeforeRelease == 0,
+                        s"the fatal record closed fd $accepted itself, before the connection released it ($closesBeforeRelease closes)"
+                    )
+                    assert(
+                        sockets.closeCounts.getOrDefault(accepted, 0) == 1,
+                        s"fd $accepted must be closed exactly once, got ${sockets.closeCounts.getOrDefault(accepted, 0)}"
                     )
                 end for
             }

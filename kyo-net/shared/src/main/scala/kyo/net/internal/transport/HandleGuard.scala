@@ -1,4 +1,4 @@
-package kyo.net.internal.posix
+package kyo.net.internal.transport
 
 import kyo.*
 

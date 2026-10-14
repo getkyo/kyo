@@ -88,16 +88,17 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def write(handle: Handle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult
 
-    /** Cancel pending read/write requests for handle. Completes pending promises with Closed. */
+    /** Fail, with `Closed`, every promise parked on `handle` through any entry path: a read, a writable wait (socket or tail backpressure), the
+      * driver's own tail-flush re-arm, a connect, an accept. It is the handle's [[HandleLife.cancel]], so no driver can fail only a subset. It
+      * takes no release claim: an op parked after it is live, which is what lets the STARTTLS handshake park on the handle after
+      * [[detachForUpgrade]]. Only [[closeHandle]] and [[closeListener]] take the claim, after which a park fails at once.
+      */
     def cancel(handle: Handle)(using AllowUnsafe, Frame): Unit
 
     /** Detach `handle` for a STARTTLS upgrade: fail its pending plaintext read/write promises so the plaintext pumps tear down, while the SAME
-      * connection is about to be re-driven as a TLS handshake over the same fd. The default is [[cancel]]: drivers whose handshake re-establishes
-      * its own I/O registration need no special handling (io_uring re-arms via SQEs; the readiness pollers re-register synchronously). The NIO
-      * driver overrides this to KEEP the channel's `SelectionKey` (resetting interest to 0) instead of cancelling it. Cancelling marks the key for
-      * removal at the next `select()`, and `channel.register` before that async flush throws `CancelledKeyException` and defers, opening a window
-      * where a concurrent handshake read-arm finds the channel with no live key and spuriously fails the handshake (the STARTTLS-under-concurrency
-      * failure). Keeping the key removes that window entirely.
+      * connection is about to be re-driven as a TLS handshake over the same fd. The default is [[cancel]], which takes no claim, so the handshake
+      * parks on the same handle afterwards. A driver overrides it only to move bytes the plaintext side already consumed to the handshake (the NIO
+      * staging salvage).
       */
     def detachForUpgrade(handle: Handle)(using AllowUnsafe, Frame): Unit =
         cancel(handle)
@@ -183,7 +184,10 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def inlineRecvSafe: Boolean = true
 
-    /** Close the handle (fd, socket, channel). Idempotent. Cleans up any pending operations. */
+    /** The handle's one release (fd, socket, channel). It takes the handle's release claim first, so a repeat call is a no-op and no op parked
+      * after it stays parked, then fails every op parked before it and releases the OS resource once, ordered after the driver's own
+      * withdrawal of it.
+      */
     def closeHandle(handle: Handle)(using AllowUnsafe, Frame): Unit
 
     /** Shutdown the driver. Closes the poll mechanism and completes the event loop fiber. Idempotent. */

@@ -1197,8 +1197,8 @@ class NioIoDriverTest extends Test:
                 case Present(Result.Failure(_)) => true
                 case _                          => false)
 
-            // cancel only deregisters the selector key; it does not close the channel (closeHandle does). Close the client channel here so the test
-            // does not leak its fd.
+            // cancel only withdraws the channel's interest; it does not close the channel (closeHandle does). Close the client channel here so the
+            // test does not leak its fd.
             client.close()
             sv.close()
             driver.close()
@@ -1214,8 +1214,8 @@ class NioIoDriverTest extends Test:
             driver.registerChannel(handle)
             driver.cancel(handle)
             driver.cancel(handle) // must not throw
-            // cancel only deregisters the selector key; it does not close the channel (closeHandle does). Close the client channel here so the test
-            // does not leak its fd.
+            // cancel only withdraws the channel's interest; it does not close the channel (closeHandle does). Close the client channel here so the
+            // test does not leak its fd.
             client.close()
             sv.close()
             driver.close()
@@ -1799,13 +1799,12 @@ class NioIoDriverTest extends Test:
     // -----------------------------------------------------------------------
 
     "registerChannelDeferredOnCancelledKey" in {
-        // Reproduce-first for the STARTTLS upgrade re-registration race. detachForUpgrade cancels the channel's SelectionKey; the
-        // cancelled key lingers in the selector's cancelled-key set until the poll carrier flushes it during select(). An immediate
-        // registerChannel on the same channel therefore throws CancelledKeyException. registerChannel routes that re-registration through the poll
-        // carrier (enqueue + wakeup + return success) instead of parking the calling carrier in a parkNanos retry loop.
+        // A cancelled SelectionKey lingers in the selector's cancelled-key set until the poll carrier flushes it during select(), so an
+        // immediate registerChannel on the same channel throws CancelledKeyException. registerChannel routes that re-registration through the
+        // poll carrier (enqueue + wakeup + return success) instead of parking the calling carrier in a parkNanos retry loop.
         //
-        // Deterministic trigger: register a channel, cancel its key (mirrors detachForUpgrade's driver.cancel), then re-register before any
-        // select() has flushed the cancelled key. registerChannel must take the deferred path: return true and enqueue the handle (no park).
+        // Deterministic trigger: register a channel, cancel its key, then re-register before any select() has flushed the cancelled key.
+        // registerChannel must take the deferred path: return true and enqueue the handle (no park).
         given Frame = Frame.internal
         NioLoopbackPair.open().map { (client, sv) =>
             val driver = NioIoDriver.init()
@@ -1815,8 +1814,8 @@ class NioIoDriverTest extends Test:
                 assert(driver.registerChannel(handle))
                 assert(driver.pendingRegistrationCount == 0)
 
-                // Cancel the key (as detachForUpgrade does). The cancelled key now lingers in the cancelled-key set: no select() has flushed it.
-                driver.cancel(handle)
+                // Cancel the key. It now lingers in the cancelled-key set: no select() has flushed it.
+                client.keyFor(driver.selector).cancel()
 
                 // Re-register the same channel: the lingering cancelled key makes channel.register throw CancelledKeyException, so the driver must
                 // take the deferred path. It returns success (the registration is guaranteed, just deferred) and enqueues the handle for the poll
@@ -1966,7 +1965,7 @@ class NioIoDriverTest extends Test:
                 var i = 0
                 while i < n do
                     assert(driver.registerChannel(handles(i)))
-                    driver.cancel(handles(i))
+                    pairs(i)._1.keyFor(driver.selector).cancel()
                     // Deferred path: the cancelled key lingers (no select() has run), so re-register enqueues for the poll carrier.
                     assert(driver.registerChannel(handles(i)))
                     driver.awaitRead(handles(i), promises(i).asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
