@@ -709,7 +709,7 @@ class NioIoDriverTest extends Test:
         }
     }
 
-    "staged grace-probe ciphertext racing a fresh TLS read arm is never stranded" in {
+    "staged grace-probe ciphertext racing a fresh TLS read arm is never stranded".times(50) in {
         val (clientEngine, serverEngine) = handshakedEnginePair()
         NioLoopbackPair.open().map { (client, sv) =>
             val driver = NioIoDriver.init()

@@ -31,7 +31,7 @@ class LineConnectionTest extends kyo.test.Test[Any]:
         }
 
     "lines" - {
-        "a line split across writes is read whole, and what follows its line end stays for the next read" in scripted {
+        "a line split across writes is read whole, and what follows its line end stays for the next read".times(200) in scripted {
             Scope.run {
                 for
                     port   <- serveInPieces("* OK he", "llo\r\n* NEXT", "\r\n")
@@ -44,7 +44,7 @@ class LineConnectionTest extends kyo.test.Test[Any]:
                 yield assert(text(first) == "* OK hello" && text(second) == "* NEXT")
             }
         }
-        "a bare LF ends a line too, and a CR elsewhere stays in it" in scripted {
+        "a bare LF ends a line too, and a CR elsewhere stays in it".times(200) in scripted {
             Scope.run {
                 for
                     port   <- serveInPieces("a\rb\nc\r\n")
@@ -55,23 +55,24 @@ class LineConnectionTest extends kyo.test.Test[Any]:
                 yield assert(text(first) == "a\rb" && text(second) == "c")
             }
         }
-        "a line longer than the limit is Protocol, keeping its first limit octets escaped for the session to redact" in scripted {
-            Scope.run {
-                for
-                    port   <- serveInPieces("x" * 245 + "\u0001" * 65)
-                    client <- open(port)
-                    _      <- client.write("t", octets("go\r\n"))
-                    ex     <- failure(client.readLine("fetch", 250))
-                yield ex.kind match
-                    case Kind.Protocol(received) =>
-                        assert(ex.method == "fetch" && ex.host == "127.0.0.1" && ex.port == port)
-                        assert(received == "x" * 245 + "\\x01" * 5)
-                    case other => fail(other.toString)
+        "a line longer than the limit is Protocol, keeping its first limit octets escaped for the session to redact".times(200) in
+            scripted {
+                Scope.run {
+                    for
+                        port   <- serveInPieces("x" * 245 + "\u0001" * 65)
+                        client <- open(port)
+                        _      <- client.write("t", octets("go\r\n"))
+                        ex     <- failure(client.readLine("fetch", 250))
+                    yield ex.kind match
+                        case Kind.Protocol(received) =>
+                            assert(ex.method == "fetch" && ex.host == "127.0.0.1" && ex.port == port)
+                            assert(received == "x" * 245 + "\\x01" * 5)
+                        case other => fail(other.toString)
+                }
             }
-        }
     }
 
-    "a line longer than the limit is Protocol even when its line end is already buffered with it" in scripted {
+    "a line longer than the limit is Protocol even when its line end is already buffered with it".times(200) in scripted {
         // Unsafe: the in-memory connection pair is unsafe-tier; the whole line, its line end and the next line go in as one span before the
         // first read, so the line end is buffered when the limit is checked, whatever chunking a socket would do.
         Sync.Unsafe.defer {
@@ -86,7 +87,7 @@ class LineConnectionTest extends kyo.test.Test[Any]:
     }
 
     "counted octets" - {
-        "a literal across writes is read exactly, and the line after it follows" in scripted {
+        "a literal across writes is read exactly, and the line after it follows".times(200) in scripted {
             Scope.run {
                 for
                     port    <- serveInPieces("ab", "cdef\r\n* AFTER\r\n")
@@ -102,7 +103,7 @@ class LineConnectionTest extends kyo.test.Test[Any]:
     }
 
     "failures" - {
-        "the peer closing is ConnectionClosed, naming the operation, host and port" in scripted {
+        "the peer closing is ConnectionClosed, naming the operation, host and port".times(200) in scripted {
             Scope.run {
                 for
                     port   <- listen()(server => server.close)
@@ -113,14 +114,14 @@ class LineConnectionTest extends kyo.test.Test[Any]:
                     assert(ex.method == "status" && ex.port == port)
             }
         }
-        "a refused connect is Connect, keeping kyo-net's cause" in scripted {
+        "a refused connect is Connect, keeping kyo-net's cause".times(200) in scripted {
             Scope.run(listen()(_ => ())).map(closedPort => refused(open(closedPort))).map { ex =>
                 assert(ex.kind == ConnectKind.Connect)
                 assert(ex.cause.exists(_.isInstanceOf[kyo.net.NetConnectException]))
                 assert(ex.getCause != null)
             }
         }
-        "a server that never completes the TLS handshake is ConnectTimeout after the deadline, on kyo's clock" in scripted {
+        "a server that never completes the TLS handshake is ConnectTimeout after the deadline, on kyo's clock".times(200) in scripted {
             // The server accepting proves the client's connect is past TCP and waiting on the handshake, but not that its deadline is
             // armed: the accept runs on kyo-net's thread, the deadline on the client's fiber. Virtual time moves only once the deadline's
             // sleep is pending, so the deadline and not the connect's own progress decides the outcome.
@@ -143,7 +144,7 @@ class LineConnectionTest extends kyo.test.Test[Any]:
     }
 
     "TLS" - {
-        "implicit TLS to a certificate the configured CA file trusts" in scripted {
+        "implicit TLS to a certificate the configured CA file trusts".times(200) in scripted {
             Scope.run {
                 for
                     server <- serverTls(Certificate.Localhost)
@@ -154,7 +155,7 @@ class LineConnectionTest extends kyo.test.Test[Any]:
                 yield assert(text(line) == "* OK tls")
             }
         }
-        "a certificate for another host is Tls, even when its chain is trusted" in scripted {
+        "a certificate for another host is Tls, even when its chain is trusted".times(200) in scripted {
             Scope.run {
                 for
                     server <- serverTls(Certificate.WrongHost)
@@ -166,7 +167,7 @@ class LineConnectionTest extends kyo.test.Test[Any]:
                     assert(ex.cause.exists(_.isInstanceOf[kyo.net.NetTlsHandshakeException]))
             }
         }
-        "STARTTLS upgrades in place, and a line the server sent before the upgrade is never read" in scripted {
+        "STARTTLS upgrades in place, and a line the server sent before the upgrade is never read".times(200) in scripted {
             Scope.run {
                 for
                     server <- serverTls(Certificate.Localhost)
