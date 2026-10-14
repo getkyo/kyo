@@ -97,7 +97,7 @@ class NioIoDriverTest extends Test:
             given Frame = Frame.internal
             discard(driver.start())
             val ssc = openServer()
-            assert(driver.registerServerChannel(ssc))
+            assert(driver.registerServerChannel(ssc).isEmpty)
             // No registration check here: the loop is running, so its next pass can deregister the cancelled key at any point after the
             // close.
             ssc.close()
@@ -113,7 +113,7 @@ class NioIoDriverTest extends Test:
             val driver  = NioIoDriver.init()
             given Frame = Frame.internal
             val ssc     = openServer()
-            assert(driver.registerServerChannel(ssc))
+            assert(driver.registerServerChannel(ssc).isEmpty)
             ssc.close()
             val released = Promise.Unsafe.init[Unit, Any]()
             driver.releaseListener(ssc, released)
@@ -129,7 +129,7 @@ class NioIoDriverTest extends Test:
             val driver  = NioIoDriver.init()
             given Frame = Frame.internal
             val ssc     = openServer()
-            assert(driver.registerServerChannel(ssc))
+            assert(driver.registerServerChannel(ssc).isEmpty)
             ssc.close()
             val released = Promise.Unsafe.init[Unit, Any]()
             driver.releaseListener(ssc, released)
@@ -143,7 +143,7 @@ class NioIoDriverTest extends Test:
             val driver  = NioIoDriver.init()
             given Frame = Frame.internal
             val ssc     = openServer()
-            assert(driver.registerServerChannel(ssc))
+            assert(driver.registerServerChannel(ssc).isEmpty)
             ssc.close()
             driver.close()
             val released = Promise.Unsafe.init[Unit, Any]()
@@ -1331,7 +1331,7 @@ class NioIoDriverTest extends Test:
     // registerServerChannel
     // -----------------------------------------------------------------------
 
-    "registerServerChannel returns true for open server channel" in {
+    "registerServerChannel registers an open server channel" in {
         given Frame       = Frame.internal
         val driver        = NioIoDriver.init()
         val serverChannel = ServerSocketChannel.open()
@@ -1339,7 +1339,7 @@ class NioIoDriverTest extends Test:
         serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
         try
             val result = driver.registerServerChannel(serverChannel)
-            assert(result)
+            assert(result.isEmpty, s"an open channel on a live driver must register, got $result")
             succeed
         finally
             serverChannel.close()
@@ -1347,7 +1347,7 @@ class NioIoDriverTest extends Test:
         end try
     }
 
-    "registerServerChannel returns false after driver is closed" in {
+    "registerServerChannel reports the selector's failure after the driver is closed" in {
         given Frame       = Frame.internal
         val driver        = NioIoDriver.init()
         val serverChannel = ServerSocketChannel.open()
@@ -1355,7 +1355,10 @@ class NioIoDriverTest extends Test:
         driver.close()
         try
             val result = driver.registerServerChannel(serverChannel)
-            assert(!result)
+            assert(
+                result.exists(_.isInstanceOf[java.nio.channels.ClosedSelectorException]),
+                s"a closed driver's registration must report ClosedSelectorException, got $result"
+            )
             succeed
         finally
             serverChannel.close()
@@ -1373,7 +1376,7 @@ class NioIoDriverTest extends Test:
         serverChannel.configureBlocking(false)
         serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
         val port = serverChannel.socket().getLocalPort
-        driver.registerServerChannel(serverChannel)
+        assert(driver.registerServerChannel(serverChannel).isEmpty)
         discard(driver.start())
 
         val p = new IOPromise[Closed, Unit]
@@ -1401,7 +1404,7 @@ class NioIoDriverTest extends Test:
         val serverChannel = ServerSocketChannel.open()
         serverChannel.configureBlocking(false)
         serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
-        driver.registerServerChannel(serverChannel)
+        assert(driver.registerServerChannel(serverChannel).isEmpty)
 
         val p = new IOPromise[Closed, Unit]
         driver.awaitAccept(serverChannel, p.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
@@ -1577,7 +1580,7 @@ class NioIoDriverTest extends Test:
             serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
             try
                 driver.registerChannel(handle)
-                driver.registerServerChannel(serverChannel)
+                assert(driver.registerServerChannel(serverChannel).isEmpty)
 
                 val pw = new IOPromise[Closed, Unit]
                 val pr = new IOPromise[Closed, ReadOutcome]

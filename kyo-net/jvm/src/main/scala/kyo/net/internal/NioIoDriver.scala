@@ -1334,17 +1334,17 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             case _: java.nio.channels.ClosedChannelException       => false
             case _: java.nio.channels.IllegalBlockingModeException => false
 
-    /** Register a server channel for accept operations. */
-    def registerServerChannel(serverChannel: ServerSocketChannel)(using AllowUnsafe): Boolean =
+    /** Register a server channel for accept operations. Returns the registration's failure, `Absent` when the channel is registered. */
+    def registerServerChannel(serverChannel: ServerSocketChannel)(using AllowUnsafe): Maybe[Exception] =
         try
             if wakeupPending.compareAndSet(false, true) then
                 discard(selector.wakeup())
             discard(serverChannel.register(selector, 0))
-            true
+            Absent
         catch
-            case _: java.nio.channels.ClosedChannelException       => false
-            case _: java.nio.channels.ClosedSelectorException      => false
-            case _: java.nio.channels.IllegalBlockingModeException => false
+            case e: java.nio.channels.ClosedChannelException       => Present(e)
+            case e: java.nio.channels.ClosedSelectorException      => Present(e)
+            case e: java.nio.channels.IllegalBlockingModeException => Present(e)
 
     /** Wait for server channel to have pending connections. Promise completes when accept() will not block. */
     def awaitAccept(serverChannel: ServerSocketChannel, promise: Promise.Unsafe[Unit, Abort[Closed]], createdAt: Frame)(using

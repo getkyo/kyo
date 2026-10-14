@@ -435,9 +435,10 @@ final private[kyo] class NioTransport private (
                 applySocketBuffers(serverChannel, config, sendSupported = false)
                 serverChannel.bind(address, backlog)
 
-                if !driver.registerServerChannel(serverChannel) then
+                val registration = driver.registerServerChannel(serverChannel)
+                if registration.nonEmpty then
                     serverChannel.close()
-                    promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
+                    promise.completeDiscard(Result.fail(NetBindException(host, port, registration.getOrElse(""))))
                 else
                     val actualPort = serverChannel.socket().getLocalPort
                     val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
@@ -1202,9 +1203,10 @@ final private[kyo] class NioTransport private (
                 applySocketBuffers(serverChannel, config, sendSupported = false)
                 serverChannel.bind(address, backlog)
 
-                if !driver.registerServerChannel(serverChannel) then
+                val registration = driver.registerServerChannel(serverChannel)
+                if registration.nonEmpty then
                     serverChannel.close()
-                    promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
+                    promise.completeDiscard(Result.fail(NetBindException(host, port, registration.getOrElse(""))))
                 else
                     val actualPort = serverChannel.socket().getLocalPort
                     val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
@@ -1489,9 +1491,10 @@ final private[kyo] class NioTransport private (
             applySocketBuffers(serverChannel, config, sendSupported = false)
             serverChannel.bind(addr, backlog)
 
-            if !driver.registerServerChannel(serverChannel) then
+            val registration = driver.registerServerChannel(serverChannel)
+            if registration.nonEmpty then
                 serverChannel.close()
-                promise.completeDiscard(Result.fail(NetBindException(path, -1, "")))
+                promise.completeDiscard(Result.fail(NetBindException(path, -1, registration.getOrElse(""))))
             else
                 Log.live.unsafe.debug(s"NioTransport listenUnix $path")
 
