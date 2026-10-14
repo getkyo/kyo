@@ -625,7 +625,9 @@ class NioIoDriverTest extends Test:
                                     case Absent         =>
                                         assert(
                                             false,
-                                            s"iteration $iter: read never completed with stagedBytes=${driver.stagedBytes(handle)}; " +
+                                            s"iteration $iter: read never completed with stagedBytes=${driver.stagedBytes(handle)}, " +
+                                                s"carried=${handle.carriedPlaintext.get().size}, pendingRead=${driver.hasPendingRead(handle)}, " +
+                                                s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}; " +
                                                 "staged grace-probe bytes stranded against an armed read"
                                         )
                                         Loop.done(())
