@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.HtmlRenderer
 import kyo.internal.ReactiveRegion
 import kyo.internal.ReactiveUI
+import kyo.internal.Reducible
 import kyo.internal.UICommands
 import kyo.internal.UIExchange
 import kyo.internal.UIServer
@@ -246,6 +247,142 @@ object UI:
     /** Conditional rendering: shows `body` while `condition` is true and an empty node otherwise, re-evaluating when the signal emits. */
     def when[C <: UI](condition: Signal[Boolean])(body: => C)(using Frame): Reactive[C] =
         Reactive[C](condition.map(v => if v then body else UI.empty))
+
+    /** What a mounted node shows between losing its instance (a key change, or a re-render of a keyless node) and the new instance
+      * publishing.
+      *
+      *   - `KeepLatest` (the default) keeps what the node last showed as an inert snapshot: rendered once from the signals' values at the
+      *     moment of the switch, with no live regions and no handlers.
+      *   - `Placeholder` shows the placeholder again, the honest choice for interactive content where a frozen form would swallow input.
+      *
+      * A node's first mount always shows the placeholder, since there is nothing to keep yet.
+      */
+    enum PendingPolicy derives CanEqual:
+        case KeepLatest, Placeholder
+
+    /** Which path a mounted node's failure came from.
+      *
+      *   - `Effect` and `Panic`: the mount effect aborted or panicked, so the node never produced content. Offering a retry (a key swap)
+      *     makes sense.
+      *   - `Fork`: the node had published content, and a fiber the effect started with [[kyo.UI.fork]] died afterwards. What was on
+      *     screen came from a feed that no longer runs.
+      */
+    enum MountErrorSource derives CanEqual:
+        case Effect, Panic, Fork
+
+    /** A mounted node's failure, with the context the `Throwable` alone does not carry.
+      *
+      * @param error
+      *   the failure. An `Abort` failure that is not a `Throwable` arrives wrapped.
+      * @param source
+      *   which of the node's failure paths produced it, see [[kyo.UI.MountErrorSource]]
+      * @param message
+      *   a rendering-ready one-liner: the `Throwable`'s message, else its `toString`
+      * @param frame
+      *   the frame of the [[kyo.UI.mounted]] call, which points at the node that failed, not at the failure
+      * @param path
+      *   the node's render path, the identity the wire protocol addresses it by
+      * @param key
+      *   the node's [[kyo.UI.MountedOps.keyed]] key, if it has one
+      */
+    final case class MountError(
+        error: Throwable,
+        source: MountErrorSource,
+        message: String,
+        frame: Frame,
+        path: Seq[String],
+        key: Maybe[Any]
+    )
+
+    /** Embeds a component that runs an effect to produce its UI: loading data, opening a subscription, starting a feed.
+      *
+      * The effect runs when the node attaches, inside a `Scope` that lives as long as the node's instance, so whatever the effect
+      * acquires or forks is released when the instance goes away. Until it publishes, the node shows its placeholder. An `Abort` or
+      * panic renders through [[kyo.UI.MountedOps.onError]] (by default an inline error node) while the enclosing region stays alive.
+      *
+      * Identity decides when the effect runs again. A node without a key gets a fresh instance whenever its enclosing reactive region
+      * re-renders. A node with [[kyo.UI.MountedOps.keyed]] keeps its instance across re-renders of every region around it, as long as
+      * each re-render shows it from the same `.keyed` call with an equal key in the same list row.
+      *
+      * The effect must return promptly: allocate and fork, never park. Anything long-lived belongs on a forked fiber, which the
+      * instance's `Scope` owns; fork it with [[kyo.UI.fork]] so its failure reaches the node.
+      */
+    def mounted(effect: UI < (Abort[Throwable] & Async & Scope))(using Frame): Mounted =
+        Mounted(effect, key = Absent, placeholderUI = Absent, errorRender = Absent, pendingPolicy = PendingPolicy.KeepLatest)
+
+    /** Where a [[kyo.UI.MountedOps.keyed]] call is written, which is part of a keyed instance's identity.
+      *
+      * It is fixed at compile time from the source position of the `.keyed` call, so a `Frame` passed down through the methods that
+      * build the tree does not merge two calls. A helper that applies `.keyed` itself to effects its callers supply can take a
+      * `(using UI.MountSite)`, which makes each of its callers a place of its own.
+      */
+    type MountSite = kyo.internal.MountSites.MountSite
+
+    /** Forks a fiber whose failure the enclosing [[kyo.UI.mounted]] node reports: the `Fiber.init` to use inside a mount effect.
+      *
+      * A mount effect returns once it has set things up, so a feed it forked keeps running after the node shows its content. Forked with
+      * `Fiber.init`, a feed that dies leaves that content on screen with nothing behind it. Forked with `UI.fork`, its first terminal
+      * failure that is not an interrupt switches the node to its error rendering, with [[kyo.UI.MountError.source]] set to `Fork`.
+      *
+      * This reaches `UI.fork` calls made from fibers the effect already forked with `UI.fork`. A plain `Fiber.init` does not take part,
+      * which is the way to fork a fiber whose failure the effect handles itself, and outside a mount effect `UI.fork` is `Fiber.init`.
+      * The switch replaces the node's content. To keep the content and report the failure elsewhere, handle it in the fiber (a toast,
+      * say) instead of letting it fail.
+      */
+    def fork[E, A, S, S2](
+        using isolate: Isolate[S, Sync, S2]
+    )(
+        v: => A < (Abort[E] & Async & S)
+    )(
+        using
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
+        ReactiveUI.MountSupervision.local.use {
+            case Absent               => Fiber.init[E, A, S, S2](v)
+            case Present(supervision) =>
+                Fiber.init[E, A, S, S2](v).map(fiber => fiber.onComplete(supervision.report(_)).andThen(fiber))
+        }
+
+    /** Builder modifiers for [[kyo.UI.Ast.Mounted]]. */
+    object MountedOps:
+        extension (m: Mounted)
+            /** Keeps the node's instance (its `Scope`, resources and content) across re-renders of the reactive regions around it.
+              *
+              * The instance lives as long as each re-render shows this node from the same `.keyed` call, in the same row of any
+              * enclosing keyed list, with an equal key; otherwise it is torn down before the new instance starts. Siblings that appear
+              * or disappear around the node, or around the regions it sits in, do not affect it. When one render shows several nodes
+              * with the same call, key and rows, each gets an instance of its own, and their positions tell them apart from one render
+              * to the next.
+              *
+              * Inputs that should update a live instance belong in `Signal` parameters. A plain value the effect captures belongs in the
+              * key, or the instance keeps the value it was created with.
+              */
+            def keyed[K](key: K)(using CanEqual[K, K], MountSite): Mounted =
+                given Frame = m.frame
+                m.copy(key = Present(key), site = summon[MountSite])
+
+            /** Shown while the effect is pending on the first mount, and on every later re-mount under `PendingPolicy.Placeholder`.
+              * Defaults to an empty node.
+              */
+            def placeholder(ui: UI): Mounted =
+                given Frame = m.frame
+                m.copy(placeholderUI = Present(ui))
+
+            /** Renders the node's failure: the effect aborting or panicking, or a [[kyo.UI.fork]] fiber dying after the node published.
+              * Defaults to a minimal inline error node. The failure is also logged.
+              */
+            def onError(f: MountError => UI): Mounted =
+                given Frame = m.frame
+                m.copy(errorRender = Present(f))
+
+            /** What the node shows while a new instance is pending, see [[kyo.UI.PendingPolicy]]. Defaults to `KeepLatest`. */
+            def whilePending(p: PendingPolicy): Mounted =
+                given Frame = m.frame
+                m.copy(pendingPolicy = p)
+        end extension
+    end MountedOps
+    export MountedOps.*
 
     /** Server-push: returns HTTP handlers (SSR page GET and a WebSocket route) for this UI at the given path. Compose with other handlers
       * via HttpServer.init.
@@ -1231,6 +1368,19 @@ object UI:
         case class Fragment[C <: UI](children: Chunk[UI])(using val frame: Frame) extends UI
 
         private[kyo] case class KeyedChild[C <: UI](key: String, child: UI)(using val frame: Frame) extends UI
+
+        /** A component that runs an effect to produce its content, built by [[kyo.UI.mounted]]. Its static rendering is its
+          * placeholder; the live content belongs to the instance the renderer runs. `site` is where [[kyo.UI.MountedOps.keyed]] was
+          * called, and means nothing without a key.
+          */
+        case class Mounted(
+            effect: UI < (Abort[Throwable] & Async & Scope),
+            key: Maybe[Any],
+            placeholderUI: Maybe[UI],
+            errorRender: Maybe[UI.MountError => UI],
+            pendingPolicy: UI.PendingPolicy,
+            site: UI.MountSite = kyo.internal.MountSites.MountSite.none
+        )(using val frame: Frame) extends UI with HtmlContent
 
         // ====== Block containers ======
 
