@@ -60,7 +60,13 @@ class ConnectionInitTest extends Test:
             else channel.safe.take.map(span => Loop.continue(acc ++ span.toArray))
         }
 
-    // Anti-flakiness: AtomicBoolean CAS in Connection.init is synchronous; spy counts readable immediately after close.
+    /** Completes once the handle's owner has run every op submitted to it before this call: the release a close decides runs there. */
+    private def ownerPass(driver: IoDriver[PosixHandle], handle: PosixHandle)(using Frame): Unit < Async =
+        val pass = Promise.Unsafe.init[Unit, Any]()
+        driver.runOwned(handle)(() => pass.completeUnitDiscard())
+        pass.safe.get
+    end ownerPass
+
     "close is idempotent: second close is a no-op" in {
         assumePoller()
         val real = PollerIoDriver.init()
@@ -72,17 +78,18 @@ class ConnectionInitTest extends Test:
             conn.start()
             conn.close()
             conn.close()
-            // The AtomicBoolean CAS in Connection.init ensures cancel and closeHandle run exactly once.
-            assert(spy.cancelCalls.get() == 1, s"cancel must be called exactly once, got ${spy.cancelCalls.get()}")
-            assert(spy.closeHandleCalls.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCalls.get()}")
-            spy.close()
-            discard(sock.close(peerFd))
-            succeed
+            ownerPass(spy, handle).andThen {
+                // The Released CAS in Connection.release ensures cancel and closeHandle run exactly once.
+                assert(spy.cancelCalls.get() == 1, s"cancel must be called exactly once, got ${spy.cancelCalls.get()}")
+                assert(spy.closeHandleCalls.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCalls.get()}")
+                spy.close()
+                discard(sock.close(peerFd))
+                succeed
+            }
         }
     }
 
-    // Anti-flakiness: cancel and closeHandle run in the same synchronous closeFn lambda; the onCancel/onCloseHandle hooks
-    // record the order into a ListBuffer with no async involved.
+    // The onCancel/onCloseHandle hooks record the order into a ListBuffer from the one owner op that releases the handle.
     "close closes channels and calls driver cancel before closeHandle" in {
         assumePoller()
         val real       = PollerIoDriver.init()
@@ -100,12 +107,14 @@ class ConnectionInitTest extends Test:
 
             assert(conn.inbound.closed(), "inbound channel must be closed")
             assert(conn.outbound.closed(), "outbound channel must be closed")
-            assert(spy.cancelCalls.get() == 1, "cancel must be called exactly once")
-            assert(spy.closeHandleCalls.get() == 1, "closeHandle must be called exactly once")
-            assert(closeOrder.toList == List("cancel", "closeHandle"), s"cancel must precede closeHandle, got $closeOrder")
-            spy.close()
-            discard(sock.close(peerFd))
-            succeed
+            ownerPass(spy, handle).andThen {
+                assert(spy.cancelCalls.get() == 1, "cancel must be called exactly once")
+                assert(spy.closeHandleCalls.get() == 1, "closeHandle must be called exactly once")
+                assert(closeOrder.toList == List("cancel", "closeHandle"), s"cancel must precede closeHandle, got $closeOrder")
+                spy.close()
+                discard(sock.close(peerFd))
+                succeed
+            }
         }
     }
 

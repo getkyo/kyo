@@ -671,6 +671,9 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     /** Poll-carrier drain of the handles with gate work. It polls until empty: a handle comes back while this runs only through a gate
       * release, one per release, never through a retry, so a writer holding a gate cannot make the drain spin.
       */
+    /** Test-observability seam: the handles queued for the poll carrier's gate work. Read-only, no mutation. */
+    private[net] def pendingGateWorkCount(using AllowUnsafe): Int = pendingGateWork.size()
+
     private[net] def drainGateWork()(using AllowUnsafe): Unit =
         var handle = pendingGateWork.poll()
         while handle ne null do

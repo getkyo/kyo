@@ -549,94 +549,58 @@ class NioIoDriverTest extends Test:
         }
     }
 
-    /** Shared body for the staging-vs-arm race leaves (plain and TLS).
+    /** How a grace probe's staging, a read's arm and a writer holding the gate interleave. */
+    private enum StagingOrder derives CanEqual:
+        case ReadThenStage, StageThenRead, ReadWhileWriting, StageWhileWriting
+
+    /** Every [[StagingOrder]], several rounds each, through one handle, with the test playing every carrier: the driver's loop never starts,
+      * so each step runs whole, in the order named, and the poll carrier's drain of what was handed to it ends each round. A round's read
+      * must complete with that round's payload and leave nothing staged, carried or queued.
       *
-      * The strand this reproduces: a standing grace probe holds OP_READ, fresh bytes arrive, and the probe's dispatch stages them in the
-      * window between awaitRead's staging pre-check (which saw Absent) and armRead installing the pump cell. The staged bytes then sit
-      * against an armed read that nothing completes: the socket is empty so the selector never fires again, and no path re-checks staging
-      * after the arm. Each iteration re-runs the race; the randomized sub-selector-latency spin scans the alignment between the probe's
-      * dispatch and the arm so the overlap lands within the iteration budget. A bounded read that never completes while stagedBytes is
-      * non-empty is the strand.
-      *
-      * `encode` turns the plaintext the peer sends into its wire bytes: identity for plain TCP, one wrapped TLS record for TLS. On the TLS
-      * leaf the probe therefore stages CIPHERTEXT and delivery must route it through the engine (feed + unwrap); reads always assert the
-      * decoded plaintext.
+      * The probe's dispatch is its stash followed by its hand-over to a read already armed, the shape `dispatchGraceProbe` has. `encode`
+      * turns the plaintext the peer sends into the bytes the probe stages: identity for plain TCP, one TLS record for TLS, whose delivery
+      * goes through the engine.
       */
-    private def stagingRaceLoop(driver: NioIoDriver, handle: NioHandle, sv: SocketChannel, encode: Array[Byte] => Array[Byte])(using
+    private def stagingOrders(driver: NioIoDriver, handle: NioHandle, encode: Array[Byte] => Array[Byte])(using
         Frame,
         kyo.test.AssertScope
-    ): Unit < Async =
+    ): Unit =
         driver.registerChannel(handle)
-        discard(driver.start())
-
-        val sentinel   = Array[Byte](9)
-        val payload    = Array[Byte](4, 5, 6)
-        val iterations = 600
-        val rng        = new java.util.Random(0x57a11)
-
-        def readBytes(iter: Int, bound: Duration): Maybe[Array[Byte]] < Async =
-            val p = new IOPromise[Closed, ReadOutcome]
-            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
-            Abort.run[Closed | Timeout](Async.timeout(bound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
-                case Result.Success(ReadOutcome.Bytes(span)) => Present(span.toArray)
-                case Result.Failure(_: Timeout)              => Absent
-                case other                                   =>
-                    assert(false, s"iteration $iter: unexpected read outcome $other")
-                    Absent
-            }
-        end readBytes
-
-        Sync.ensure(Sync.defer {
-            sv.close()
-            driver.closeHandle(handle)
-            driver.close()
-        }) {
-            Loop(0) { iter =>
-                if iter == iterations then Loop.done(succeed)
-                else
-                    // Arm (or re-arm) the grace probe and prove it is staging: the sentinel must land in graceStaging, which also leaves the
-                    // probe re-armed as a standing FIN watch holding OP_READ (the n == 0 re-install after the staging read drains the socket).
-                    discard(driver.isPeerClosed(handle))
-                    discard(sv.write(ByteBuffer.wrap(encode(sentinel))))
-                    awaitCondition(4.seconds)(driver.stagedBytes(handle) >= 1).map { staged =>
-                        assert(
-                            staged,
-                            s"iteration $iter: the probe never staged the sentinel " +
-                                s"(pendingRead=${driver.hasPendingRead(handle)}, staged=${driver.stagedBytes(handle)}, " +
-                                s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}, " +
-                                s"peerClosed=${handle.peerClosed})"
-                        )
-                    }.andThen {
-                        readBytes(iter, 4.seconds).map { got =>
-                            assert(got.exists(_.toList == sentinel.toList), s"iteration $iter: sentinel drain got $got")
-                        }
-                    }.andThen {
-                        // The race: fresh bytes toward a socket whose standing probe holds OP_READ, then a pump arm on this carrier.
-                        discard(sv.write(ByteBuffer.wrap(encode(payload))))
-                        val spinUntil = java.lang.System.nanoTime() + rng.nextInt(60000).toLong
-                        while java.lang.System.nanoTime() < spinUntil do ()
-                        Loop(Array.emptyByteArray) { received =>
-                            if received.length >= payload.length then
-                                assert(received.toList == payload.toList, s"iteration $iter: payload round-trip got ${received.toList}")
-                                Loop.done(())
-                            else
-                                readBytes(iter, 2.seconds).map {
-                                    case Present(bytes) => Loop.continue(received ++ bytes)
-                                    case Absent         =>
-                                        assert(
-                                            false,
-                                            s"iteration $iter: read never completed with stagedBytes=${driver.stagedBytes(handle)}, " +
-                                                s"carried=${handle.tls.fold(0)(_.carriedSize)}, pendingRead=${driver.hasPendingRead(handle)}, " +
-                                                s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}; " +
-                                                "staged grace-probe bytes stranded against an armed read"
-                                        )
-                                        Loop.done(())
-                                }
-                        }
-                    }.andThen(Loop.continue(iter + 1))
-            }
+        driver.drainPendingRegistrations()
+        val rounds = Chunk.from(0 until 3).flatMap(_ => Chunk.from(StagingOrder.values))
+        rounds.zipWithIndex.foreach { (order, round) =>
+            val payload     = Array[Byte](round.toByte, 4, 5, 6)
+            val read        = new IOPromise[Closed, ReadOutcome]
+            def arm(): Unit =
+                driver.awaitRead(handle, read.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            def stage(): Unit =
+                handle.graceStaging.set(handle.graceStaging.get().append(encode(payload)))
+                if driver.stagedDeliveryDue(handle) then driver.deliverStaged(handle)
+            order match
+                case StagingOrder.ReadThenStage =>
+                    arm()
+                    stage()
+                case StagingOrder.StageThenRead =>
+                    stage()
+                    arm()
+                case StagingOrder.ReadWhileWriting =>
+                    stage()
+                    handle.gate.locked(arm())
+                case StagingOrder.StageWhileWriting =>
+                    arm()
+                    handle.gate.locked(stage())
+            end match
+            driver.drainGateWork()
+            val got = read.poll() match
+                case Present(Result.Success(ReadOutcome.Bytes(span))) => Present(span.toArray.toList)
+                case other                                            => fail(s"round $round ($order): the read got $other")
+            assert(
+                (got, driver.stagedBytes(handle), handle.tls.fold(0)(_.carriedSize), driver.pendingGateWorkCount) ==
+                    (Present(payload.toList), 0, 0, 0),
+                s"round $round ($order)"
+            )
         }
-    end stagingRaceLoop
+    end stagingOrders
 
     /** A handshaked client/server JDK SSLEngine pair, driven engine-to-engine in memory so the socket never carries handshake bytes.
       * TLSv1.2 keeps the exchange free of post-handshake records (a TLS 1.3 NewSessionTicket would ride ahead of the first application
@@ -701,22 +665,114 @@ class NioIoDriverTest extends Test:
         arr
     end wrapRecord
 
-    "staged grace-probe bytes racing a fresh read arm are never stranded" in {
+    "staged bytes a grace probe read reach the next read arm, whatever the interleaving" in {
         NioLoopbackPair.open().map { (client, sv) =>
             val driver = NioIoDriver.init()
             val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
-            stagingRaceLoop(driver, handle, sv, identity)
+            try stagingOrders(driver, handle, identity)
+            finally
+                sv.close()
+                driver.closeHandle(handle)
+                driver.close()
+            end try
+            succeed
         }
     }
 
-    "staged grace-probe ciphertext racing a fresh TLS read arm is never stranded" in {
+    "staged ciphertext a grace probe read is delivered to the next read arm, whatever the interleaving" in {
         val (clientEngine, serverEngine) = handshakedEnginePair()
         NioLoopbackPair.open().map { (client, sv) =>
             val driver = NioIoDriver.init()
             // The handle unwraps with the server engine; the raw test peer encrypts with the client engine, so the probe stages ciphertext and
-            // delivery must route it through the engine gate, the TLS arm of the staged handoff.
+            // delivery must route it through the engine, the TLS arm of the staged handoff.
             val handle = NioHandle.initTls(client, 4096, serverEngine, Duration.Infinity, Duration.Infinity, Frame.internal)
-            stagingRaceLoop(driver, handle, sv, wrapRecord(clientEngine, _))
+            try stagingOrders(driver, handle, wrapRecord(clientEngine, _))
+            finally
+                sv.close()
+                driver.closeHandle(handle)
+                driver.close()
+            end try
+            succeed
+        }
+    }
+
+    "every engine call runs while the gate is held" in {
+        val (clientEngine, serverEngine) = handshakedEnginePair()
+        NioLoopbackPair.open().map { (client, sv) =>
+            val driver = NioIoDriver.init()
+            val engine = new UnwrapCallbackEngine(serverEngine)
+            val handle = NioHandle.initTls(client, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
+            val calls  = AtomicInt.Unsafe.init(0)
+            val bare   = AtomicInt.Unsafe.init(0)
+            engine.onEveryCall { () =>
+                discard(calls.incrementAndGet())
+                if !handle.gate.heldByCurrentThread then discard(bare.incrementAndGet())
+            }
+            driver.registerChannel(handle)
+            driver.drainPendingRegistrations()
+            def read(): IOPromise[Closed, ReadOutcome] =
+                val p = new IOPromise[Closed, ReadOutcome]
+                driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                p
+            end read
+            def plaintext(p: IOPromise[Closed, ReadOutcome]): Maybe[List[Byte]] =
+                p.poll() match
+                    case Present(Result.Success(ReadOutcome.Bytes(span))) => Present(span.toArray.toList)
+                    case _                                                => Absent
+            // a read's pre-check unwraps what a grace probe staged
+            handle.graceStaging.set(Chunk(wrapRecord(clientEngine, Array[Byte](1))))
+            val preChecked = plaintext(read())
+            // the poll carrier's delivery unwraps for an armed read
+            val delivered = read()
+            handle.graceStaging.set(Chunk(wrapRecord(clientEngine, Array[Byte](2))))
+            driver.deliverStaged(handle)
+            // a write wraps
+            val written = driver.write(handle, Span.fromUnsafe(Array[Byte](3)), 0)
+            // the selector's dispatch reads the socket and unwraps
+            val dispatched = read()
+            discard(sv.write(ByteBuffer.wrap(wrapRecord(clientEngine, Array[Byte](4)))))
+            discard(driver.start())
+            dispatched.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get.map { _ =>
+                // the release wraps the close_notify
+                driver.closeHandle(handle)
+                sv.close()
+                driver.close()
+                assert(
+                    (preChecked, plaintext(delivered), written, plaintext(dispatched), calls.get() > 0, bare.get()) ==
+                        (Present(List[Byte](1)), Present(List[Byte](2)), WriteResult.Done, Present(List[Byte](4)), true, 0),
+                    s"${bare.get()} of ${calls.get()} engine calls ran without the gate"
+                )
+            }
+        }
+    }
+
+    "a staged delivery deferred while a writer holds the gate runs once at the release, with no retry while it is held" in {
+        val (clientEngine, serverEngine) = handshakedEnginePair()
+        NioLoopbackPair.open().map { (client, sv) =>
+            // The test plays the selector carrier and the writer: the driver's loop never starts.
+            val driver = NioIoDriver.init()
+            val handle = NioHandle.initTls(client, 4096, serverEngine, Duration.Infinity, Duration.Infinity, Frame.internal)
+            driver.registerChannel(handle)
+            driver.drainPendingRegistrations()
+            val read = new IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handle, read.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            handle.graceStaging.set(Chunk(wrapRecord(clientEngine, Array[Byte](4, 5, 6))))
+            val whileHeld = handle.gate.locked {
+                // The selector's delivery finds the gate held, and its next cycles find nothing to retry: a retry per cycle is a wakeup per
+                // cycle, and every one of them counts toward the selector-rebuild threshold.
+                driver.deliverStaged(handle)
+                driver.drainGateWork()
+                driver.pendingGateWorkCount
+            }
+            val atRelease = driver.pendingGateWorkCount
+            driver.drainGateWork()
+            val got = read.poll() match
+                case Present(Result.Success(ReadOutcome.Bytes(span))) => Present(span.toArray.toList)
+                case other                                            => Absent
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+            assert((whileHeld, atRelease, got, driver.pendingGateWorkCount) == (0, 1, Present(List[Byte](4, 5, 6)), 0))
         }
     }
 
@@ -2037,15 +2093,19 @@ class NioIoDriverTest extends Test:
 
 end NioIoDriverTest
 
-/** `inner`, running a one-shot callback right after its next `unwrap`: the point where the driver holds freshly decrypted plaintext
-  * and has not yet handed it to a read.
+/** `inner`, running a one-shot callback right after its next `unwrap`, the point where the driver holds freshly decrypted plaintext and
+  * has not yet handed it to a read, and a hook before every call that reads or changes the session's state.
   */
 final private class UnwrapCallbackEngine(inner: SSLEngine) extends SSLEngine:
-    private var pending: Maybe[() => Unit] = Absent
+    private var pending: Maybe[() => Unit]      = Absent
+    @volatile private var everyCall: () => Unit = () => ()
 
     def onNextUnwrap(f: () => Unit): Unit = pending = Present(f)
 
+    def onEveryCall(f: () => Unit): Unit = everyCall = f
+
     override def unwrap(src: ByteBuffer, dsts: Array[ByteBuffer], offset: Int, length: Int): SSLEngineResult =
+        everyCall()
         val result = inner.unwrap(src, dsts, offset, length)
         val run    = pending
         pending = Absent
@@ -2054,27 +2114,41 @@ final private class UnwrapCallbackEngine(inner: SSLEngine) extends SSLEngine:
     end unwrap
 
     override def wrap(srcs: Array[ByteBuffer], offset: Int, length: Int, dst: ByteBuffer): SSLEngineResult =
+        everyCall()
         inner.wrap(srcs, offset, length, dst)
-    override def getDelegatedTask(): Runnable                          = inner.getDelegatedTask()
-    override def closeInbound(): Unit                                  = inner.closeInbound()
-    override def isInboundDone(): Boolean                              = inner.isInboundDone()
-    override def closeOutbound(): Unit                                 = inner.closeOutbound()
-    override def isOutboundDone(): Boolean                             = inner.isOutboundDone()
-    override def getSupportedCipherSuites(): Array[String]             = inner.getSupportedCipherSuites()
-    override def getEnabledCipherSuites(): Array[String]               = inner.getEnabledCipherSuites()
-    override def setEnabledCipherSuites(suites: Array[String]): Unit   = inner.setEnabledCipherSuites(suites)
-    override def getSupportedProtocols(): Array[String]                = inner.getSupportedProtocols()
-    override def getEnabledProtocols(): Array[String]                  = inner.getEnabledProtocols()
-    override def setEnabledProtocols(protocols: Array[String]): Unit   = inner.setEnabledProtocols(protocols)
-    override def getSession(): javax.net.ssl.SSLSession                = inner.getSession()
+    end wrap
+    override def getDelegatedTask(): Runnable =
+        everyCall()
+        inner.getDelegatedTask()
+    override def closeInbound(): Unit     = inner.closeInbound()
+    override def isInboundDone(): Boolean =
+        everyCall()
+        inner.isInboundDone()
+    override def closeOutbound(): Unit =
+        everyCall()
+        inner.closeOutbound()
+    override def isOutboundDone(): Boolean                           = inner.isOutboundDone()
+    override def getSupportedCipherSuites(): Array[String]           = inner.getSupportedCipherSuites()
+    override def getEnabledCipherSuites(): Array[String]             = inner.getEnabledCipherSuites()
+    override def setEnabledCipherSuites(suites: Array[String]): Unit = inner.setEnabledCipherSuites(suites)
+    override def getSupportedProtocols(): Array[String]              = inner.getSupportedProtocols()
+    override def getEnabledProtocols(): Array[String]                = inner.getEnabledProtocols()
+    override def setEnabledProtocols(protocols: Array[String]): Unit = inner.setEnabledProtocols(protocols)
+    override def getSession(): javax.net.ssl.SSLSession              =
+        everyCall()
+        inner.getSession()
     override def beginHandshake(): Unit                                = inner.beginHandshake()
-    override def getHandshakeStatus(): SSLEngineResult.HandshakeStatus = inner.getHandshakeStatus()
-    override def setUseClientMode(mode: Boolean): Unit                 = inner.setUseClientMode(mode)
-    override def getUseClientMode(): Boolean                           = inner.getUseClientMode()
-    override def setNeedClientAuth(need: Boolean): Unit                = inner.setNeedClientAuth(need)
-    override def getNeedClientAuth(): Boolean                          = inner.getNeedClientAuth()
-    override def setWantClientAuth(want: Boolean): Unit                = inner.setWantClientAuth(want)
-    override def getWantClientAuth(): Boolean                          = inner.getWantClientAuth()
-    override def setEnableSessionCreation(flag: Boolean): Unit         = inner.setEnableSessionCreation(flag)
-    override def getEnableSessionCreation(): Boolean                   = inner.getEnableSessionCreation()
+    override def getHandshakeStatus(): SSLEngineResult.HandshakeStatus =
+        everyCall()
+        inner.getHandshakeStatus()
+    override def setUseClientMode(mode: Boolean): Unit         = inner.setUseClientMode(mode)
+    override def getUseClientMode(): Boolean                   = inner.getUseClientMode()
+    override def setNeedClientAuth(need: Boolean): Unit        = inner.setNeedClientAuth(need)
+    override def getNeedClientAuth(): Boolean                  = inner.getNeedClientAuth()
+    override def setWantClientAuth(want: Boolean): Unit        = inner.setWantClientAuth(want)
+    override def getWantClientAuth(): Boolean                  = inner.getWantClientAuth()
+    override def setEnableSessionCreation(flag: Boolean): Unit =
+        everyCall()
+        inner.setEnableSessionCreation(flag)
+    override def getEnableSessionCreation(): Boolean = inner.getEnableSessionCreation()
 end UnwrapCallbackEngine
