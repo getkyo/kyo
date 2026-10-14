@@ -579,8 +579,23 @@ class NioIoDriverTest extends Test:
             driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
             Abort.run[Closed | Timeout](Async.timeout(bound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
                 case Result.Success(ReadOutcome.Bytes(span)) => Present(span.toArray)
-                case Result.Failure(_: Timeout)              => Absent
-                case other                                   =>
+                case Result.Failure(_: Timeout)              =>
+                    val atBound = s"stagedBytes=${driver.stagedBytes(handle)}, pendingRead=${driver.hasPendingRead(handle)}, " +
+                        s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}"
+                    val start = java.lang.System.nanoTime()
+                    Abort.run[Closed | Timeout](Async.timeout(120.seconds)(p.asInstanceOf[Fiber.Unsafe[
+                        ReadOutcome,
+                        Abort[Closed]
+                    ]].safe.get)).map {
+                        late =>
+                            val ms = (java.lang.System.nanoTime() - start) / 1000000
+                            assert(
+                                false,
+                                s"PROBE iteration $iter: missed the ${bound.show} bound at [$atBound]; then $late after $ms ms more"
+                            )
+                            Absent
+                    }
+                case other =>
                     assert(false, s"iteration $iter: unexpected read outcome $other")
                     Absent
             }
@@ -701,7 +716,7 @@ class NioIoDriverTest extends Test:
         arr
     end wrapRecord
 
-    "staged grace-probe bytes racing a fresh read arm are never stranded" in {
+    "staged grace-probe bytes racing a fresh read arm are never stranded".times(10) in {
         NioLoopbackPair.open().map { (client, sv) =>
             val driver = NioIoDriver.init()
             val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
