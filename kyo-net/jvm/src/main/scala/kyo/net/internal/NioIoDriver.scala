@@ -327,14 +327,14 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     end putPendingRead
 
     private def awaitReadAdmitted(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        // A TLS read first takes plaintext already decrypted, then unwraps what the handshake or a grace probe left buffered: neither has a
-        // socket event left to wake the selector for it.
         // The probe stages every byte it read before it latches the peer's close, so a latch read before the staging is drained means the
         // drain took everything the peer sent. Read after it, a latch can cover bytes staged behind the drain, and ending the read there
         // would lose them.
         val peerClosed = handle.peerClosed
         handle.tls match
             case Present(tls) =>
+                // A TLS read first takes plaintext already decrypted, then unwraps what the handshake or a grace probe left buffered: neither
+                // has a socket event left to wake the selector for it.
                 tls.takePlaintext() match
                     case Present(plaintext) => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(plaintext))))
                     case Absent             =>
@@ -678,12 +678,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         if selectorClosed.get() then drainGateWork()
     end offerGateWork
 
-    /** Poll-carrier drain of the handles with gate work. It polls until empty: a handle comes back while this runs only through a gate
-      * release, one per release, never through a retry, so a writer holding a gate cannot make the drain spin.
-      */
     /** Test-observability seam: the handles queued for the poll carrier's gate work. Read-only, no mutation. */
     private[net] def pendingGateWorkCount(using AllowUnsafe): Int = pendingGateWork.size()
 
+    /** Poll-carrier drain of the handles with gate work. It polls until empty: a handle comes back while this runs only through a gate
+      * release, one per release, never through a retry, so a writer holding a gate cannot make the drain spin.
+      */
     private[net] def drainGateWork()(using AllowUnsafe): Unit =
         var handle = pendingGateWork.poll()
         while handle ne null do
