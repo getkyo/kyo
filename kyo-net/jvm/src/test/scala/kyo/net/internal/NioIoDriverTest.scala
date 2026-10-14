@@ -675,6 +675,88 @@ class NioIoDriverTest extends Test:
         arr
     end wrapRecord
 
+    private def stagingRaceLoop(driver: NioIoDriver, handle: NioHandle, sv: java.nio.channels.SocketChannel)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < Async =
+        driver.registerChannel(handle)
+        discard(driver.start())
+
+        val sentinel   = Array[Byte](9)
+        val payload    = Array[Byte](4, 5, 6)
+        val iterations = 600
+        val rng        = new java.util.Random(0x57a11)
+
+        def readBytes(iter: Int, bound: Duration): Maybe[Array[Byte]] < Async =
+            val p = new IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            Abort.run[Closed | Timeout](Async.timeout(bound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
+                case Result.Success(ReadOutcome.Bytes(span)) => Present(span.toArray)
+                case Result.Failure(_: Timeout)              =>
+                    val atBound = s"stagedBytes=${driver.stagedBytes(handle)}, pendingRead=${driver.hasPendingRead(handle)}, " +
+                        s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}"
+                    val start = java.lang.System.nanoTime()
+                    Abort.run[Closed | Timeout](Async.timeout(120.seconds)(p.asInstanceOf[Fiber.Unsafe[
+                        ReadOutcome,
+                        Abort[Closed]
+                    ]].safe.get)).map {
+                        late =>
+                            val ms = (java.lang.System.nanoTime() - start) / 1000000
+                            assert(
+                                false,
+                                s"PROBE iteration $iter: missed the ${bound.show} bound at [$atBound]; then $late after $ms ms more"
+                            )
+                            Absent
+                    }
+                case other =>
+                    assert(false, s"iteration $iter: unexpected read outcome $other")
+                    Absent
+            }
+        end readBytes
+
+        Sync.ensure(Sync.defer {
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+        }) {
+            Loop(0) { iter =>
+                if iter == iterations then Loop.done(succeed)
+                else
+                    discard(driver.isPeerClosed(handle))
+                    discard(sv.write(ByteBuffer.wrap(sentinel)))
+                    awaitCondition(4.seconds)(driver.stagedBytes(handle) >= 1).map { staged =>
+                        assert(staged, s"iteration $iter: the probe never staged the sentinel")
+                    }.andThen {
+                        readBytes(iter, 4.seconds).map { got =>
+                            assert(got.exists(_.toList == sentinel.toList), s"iteration $iter: sentinel drain got $got")
+                        }
+                    }.andThen {
+                        discard(sv.write(ByteBuffer.wrap(payload)))
+                        val spinUntil = java.lang.System.nanoTime() + rng.nextInt(60000).toLong
+                        while java.lang.System.nanoTime() < spinUntil do ()
+                        Loop(Array.emptyByteArray) { received =>
+                            if received.length >= payload.length then
+                                assert(received.toList == payload.toList, s"iteration $iter: payload round-trip got ${received.toList}")
+                                Loop.done(())
+                            else
+                                readBytes(iter, 2.seconds).map {
+                                    case Present(bytes) => Loop.continue(received ++ bytes)
+                                    case Absent         => Loop.done(())
+                                }
+                        }
+                    }.andThen(Loop.continue(iter + 1))
+            }
+        }
+    end stagingRaceLoop
+
+    "PROBE staged grace-probe bytes racing a fresh read arm are never stranded".times(10) in {
+        NioLoopbackPair.open().map { (client, sv) =>
+            val driver = NioIoDriver.init()
+            val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+            stagingRaceLoop(driver, handle, sv)
+        }
+    }
+
     "staged bytes a grace probe read reach the next read arm, whatever the interleaving" in {
         NioLoopbackPair.open().map { (client, sv) =>
             val driver = NioIoDriver.init()
