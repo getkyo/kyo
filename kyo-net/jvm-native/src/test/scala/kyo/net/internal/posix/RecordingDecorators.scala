@@ -1133,6 +1133,9 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
     def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         real.closeListener(handle, closeFd)
 
+    def runOwned(handle: PosixHandle)(op: () => Unit)(using AllowUnsafe, Frame): Unit =
+        real.runOwned(handle)(op)
+
     def close()(using AllowUnsafe, Frame): Unit =
         discard(closeCalls.getAndIncrement())
         val hook = onClose

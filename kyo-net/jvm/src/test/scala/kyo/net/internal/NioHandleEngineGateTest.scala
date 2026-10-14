@@ -9,11 +9,11 @@ import kyo.net.internal.TlsTestCert
 
 /** NIO engine-gate exclusion: concurrent read and write on the same TLS connection never corrupt data.
   *
-  * For one NIO TLS connection, the selector-carrier read path (dispatchReadTls) and the caller-carrier write path (writeTls) must
-  * never hold the per-connection engineGate simultaneously. The NioHandle.close path acquires and releases the gate.
+  * For one NIO TLS connection, the selector-carrier read path (dispatchReadTls) and the caller-carrier write path must never hold the
+  * connection's gate simultaneously. The NioHandle.close path acquires and releases the gate.
   *
-  * The NIO gate (engineGate: AtomicBoolean on NioHandle) serializes all SSLEngine calls for one connection. SSLEngine is stateful and not
-  * thread-safe: concurrent calls from the selector thread (dispatchReadTls) and the caller thread (writeTls) corrupt the TLS state, producing
+  * The gate on NioHandle serializes all SSLEngine calls for one connection. SSLEngine is stateful and not thread-safe: concurrent calls
+  * from the selector thread (dispatchReadTls) and the caller thread (a write) corrupt the TLS state, producing
   * garbled records or a fatal SSL alert. A missing or broken gate makes this observable as byte-level corruption or a connection error.
   *
   * The concurrent-I/O leaves set up real NioTransport TLS connections and run a writer fiber and a reader fiber simultaneously on the same
@@ -41,8 +41,7 @@ class NioHandleEngineGateTest extends Test:
         }
 
     /** Server echo fiber for TLS connections. Suspends on each inbound take via the Async effect, so the scheduler (not the NIO selector
-      * carrier) resumes the fiber when data arrives. This breaks the synchronous callback chain that would otherwise run writeTls directly on
-      * the selector thread while dispatchReadTls still holds the engineGate, causing the write's spinAcquire to deadlock.
+      * carrier) resumes the fiber when data arrives, so the echo's write never runs inline on the selector thread.
       */
     private def startEchoFiber(conn: Connection)(using Frame): Unit =
         discard(Fiber.Unsafe.init {
@@ -129,7 +128,7 @@ class NioHandleEngineGateTest extends Test:
         }
 
         // Two NIO TLS connections carry concurrent traffic simultaneously. The gate is per-connection
-        // (engineGate is a field on NioHandle, one instance per handle), so the two connections are
+        // (the gate is a field on NioHandle, one instance per handle), so the two connections are
         // independent: each can hold its own gate while the other holds its own. If the gate were
         // shared across connections, holding it on one connection would block the other's engine calls.
         // Both connections echo concurrently; each frame from both is verified byte for byte.
@@ -170,7 +169,7 @@ class NioHandleEngineGateTest extends Test:
         }
 
         // Many NIO TLS connections simultaneously, each with a concurrent writer and reader. This
-        // stresses the selector thread (dispatching many handles) against many concurrent writeTls
+        // stresses the selector thread (dispatching many handles) against many concurrent TLS write
         // calls. A broken gate (missing CAS, wrong acquire scope) corrupts records and fails the
         // per-frame assertion. The test exercises the alternating read/write pattern from many
         // callers, which is the same load the selector loop sees in production.
@@ -202,7 +201,7 @@ class NioHandleEngineGateTest extends Test:
             }
         }
 
-        // Real close path: NioHandle.close acquires the engineGate before calling
+        // Real close path: NioHandle.close acquires the gate before calling
         // engine.closeOutbound + wrap (best-effort close_notify), then releases it in a finally block
         // so the gate is never permanently locked even when closeOutbound or wrap throws.
         //
@@ -219,11 +218,11 @@ class NioHandleEngineGateTest extends Test:
                 engine.setUseClientMode(true)
                 val handle = NioHandle.initTls(c, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
 
-                assert(!handle.engineGate.get(), "gate must start false (unowned) before close")
+                assert(!handle.gate.isHeld, "gate must start false (unowned) before close")
 
                 NioHandle.close(handle)
 
-                assert(!handle.engineGate.get(), "gate must be false after close (released by finally)")
+                assert(!handle.gate.isHeld, "gate must be false after close (released by finally)")
                 assert(!handle.channel.isOpen, "channel must be closed after NioHandle.close")
             finally c.close()
             end try

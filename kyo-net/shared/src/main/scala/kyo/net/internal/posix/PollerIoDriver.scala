@@ -1330,6 +1330,10 @@ final private[net] class PollerIoDriver private[posix] (
     def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         if handle.claimFdClose() then handle.runAfterFdWithdrawal(closeFd)
 
+    /** On the poll carrier, behind the engine FIFO: every TLS write op, flush and engine free for the handle runs from that FIFO. */
+    def runOwned(handle: PosixHandle)(op: () => Unit)(using AllowUnsafe, Frame): Unit =
+        submitEngineOp(op)
+
     /** The listen fd closes once the poll carrier has applied its closing deregister, and the close removes its kqueue/epoll interest.
       * Withdrawing it as live instead would have the poll carrier issue an EV_DELETE for the same fd at any point relative to that close,
       * and closing it before the apply would let a queued accept arm's EV_ADD run during the close (see [[PosixHandle.FdWithdrawal]]). The

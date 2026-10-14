@@ -1076,6 +1076,10 @@ final private[net] class IoUringDriver private[posix] (
     override def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         submitEngineOp(() => if handle.claimFdClose() then closeFd())
 
+    /** On the reap carrier, behind the engine FIFO that preps every SQE. */
+    def runOwned(handle: PosixHandle)(op: () => Unit)(using AllowUnsafe, Frame): Unit =
+        submitEngineOp(op)
+
     /** True when a recv for `handle` is in flight: a recv SQE kernel-owned (registered in `pending`) OR a recv parked on a full submission queue
       * (held in `stalledSubmits`, re-armed next reap turn by `reArmStalledSubmits`). The STARTTLS upgrade read path consults this ON THE REAP CARRIER
       * (inside the handshake's `driveUpgradeRead`, which runs as an engine op) to learn whether the plaintext ReadPump left a stale recv that will

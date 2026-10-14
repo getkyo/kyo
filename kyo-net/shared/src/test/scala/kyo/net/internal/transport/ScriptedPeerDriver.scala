@@ -67,6 +67,8 @@ final class ScriptedPeerDriver extends IoDriver[Unit]:
 
     def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
 
+    def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit = op()
+
     def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         try cancel(handle)
         finally releaseFd(handle, closeFd)

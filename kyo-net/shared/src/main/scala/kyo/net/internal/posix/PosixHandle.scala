@@ -894,6 +894,7 @@ private[posix] object NoDriver extends IoDriver[PosixHandle]:
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                          = unbound
     def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = unbound
     def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   = unbound
+    def runOwned(handle: PosixHandle)(op: () => Unit)(using AllowUnsafe, Frame): Unit             = unbound
     def close()(using AllowUnsafe, Frame): Unit                                                   = unbound
     def label: String                                                                             = "NoDriver"
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}(unbound)"

@@ -286,7 +286,7 @@ class NioIoDriverTest extends Test:
                     case WriteResult.Done if written < 10000 => fill(written + 1)
                     case other                               => (written, other)
             val (written, first) = fill(0)
-            def pending: Boolean = handle.tls.exists(_.pendingCiphertext)
+            def pending: Boolean = handle.tls.exists(_.holdsCiphertext)
             try
                 if first != WriteResult.Partial(record, record.size) then fail(s"after $written whole records, got $first")
                 // The pump's retry once the socket is writable.
@@ -626,7 +626,7 @@ class NioIoDriverTest extends Test:
                                         assert(
                                             false,
                                             s"iteration $iter: read never completed with stagedBytes=${driver.stagedBytes(handle)}, " +
-                                                s"carried=${handle.carriedPlaintext.get().size}, pendingRead=${driver.hasPendingRead(handle)}, " +
+                                                s"carried=${handle.tls.fold(0)(_.carriedSize)}, pendingRead=${driver.hasPendingRead(handle)}, " +
                                                 s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}; " +
                                                 "staged grace-probe bytes stranded against an armed read"
                                         )
