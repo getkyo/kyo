@@ -38,6 +38,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     // under the caller's AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
+    // Raised by rebuildSelector from before its snapshot of the registered channels until after it re-registered them (see registerChannel).
+    // Unsafe: construction-time bridge, as closedFlag.
+    private val rebuilding = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
     // Unsafe: mirrors closedFlag pattern. Guards selector.wakeup() so it fires only on the false->true transition; the
     // post-select re-check in pollOnce closes the race window where a wakeup request arrives while select() is returning.
     // private[net] so tests in kyo.net.internal can observe the flag state directly.
@@ -124,6 +128,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     // no-equivalent exception as its siblings; offer is the happens-before barrier.
     private val pendingListenerReleases =
         new java.util.concurrent.ConcurrentLinkedQueue[(ServerSocketChannel, Promise.Unsafe[Unit, Any])]()
+
+    // Concurrent-collection audit: server-channel registrations for the poll carrier to apply (registerServerChannel). Same raw
+    // ConcurrentLinkedQueue no-equivalent exception as its siblings; producers are listen callers, the consumer is the poll carrier, or the
+    // closing carrier once the selector is closed, so entries are dequeued with poll().
+    private val pendingServerRegistrations =
+        new java.util.concurrent.ConcurrentLinkedQueue[(ServerSocketChannel, Maybe[Exception] => Unit)]()
 
     // Set right after selector.close() in close(): from then on implCloseSelector has killed every channel, so a queued release is true
     // regardless of isRegistered(). Read after an offer by releaseListener and by the poll carrier's re-offer, paired with close()'s write
@@ -1195,6 +1205,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 catch case _: IOException => ()
                 selectorClosed.set(true)
                 drainListenerReleases()
+                drainServerRegistrations()
                 // owned ops a gate release handed back run once more here, since no selector cycle follows (see offerGateWork)
                 drainGateWork()
                 diagRegistration.close()
@@ -1247,9 +1258,19 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         try
             if wakeupPending.compareAndSet(false, true) then
                 discard(selector.wakeup())
-            discard(handle.channel.register(selector, 0))
+            val target = selector
+            discard(handle.channel.register(target, 0))
             given Frame = Frame.internal
-            Log.live.unsafe.debug(s"$label registerChannel ${handleLabel(handle)}")
+            // A rebuild that took its snapshot of the selector's channels before this registration landed moves every channel but this one,
+            // then closes the selector this one is on. It raises `rebuilding` before the snapshot and swaps `selector` before lowering it, so a
+            // registration that raced it observes one or the other here and hands itself to the poll carrier, which registers it on the live
+            // selector with its interest rebuilt from the pending-op maps.
+            if rebuilding.get() || (selector ne target) then
+                discard(pendingRegistrations.offer(handle))
+                discard(selector.wakeup())
+                Log.live.unsafe.debug(s"$label registerChannel raced a selector rebuild, deferred ${handleLabel(handle)}")
+            else Log.live.unsafe.debug(s"$label registerChannel ${handleLabel(handle)}")
+            end if
             true
         catch
             case _: java.nio.channels.CancelledKeyException =>
@@ -1290,17 +1311,38 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         end try
     end registerChannel
 
-    /** Register a server channel for accept operations. Returns the registration's failure, `Absent` when the channel is registered. */
-    def registerServerChannel(serverChannel: ServerSocketChannel)(using AllowUnsafe): Maybe[Exception] =
-        try
-            if wakeupPending.compareAndSet(false, true) then
-                discard(selector.wakeup())
-            discard(serverChannel.register(selector, 0))
-            Absent
-        catch
-            case e: java.nio.channels.ClosedChannelException       => Present(e)
-            case e: java.nio.channels.ClosedSelectorException      => Present(e)
-            case e: java.nio.channels.IllegalBlockingModeException => Present(e)
+    /** Register a server channel for accept operations, on the poll carrier, the carrier that rebuilds the selector. A registration applied on
+      * any other carrier can land on the selector a rebuild just closed, or on the old selector after the rebuild took its snapshot of the
+      * channels it moves, and the listener is then never registered. `onRegistered` receives the registration's failure, `Absent` once the
+      * channel is registered, on the carrier that applied it.
+      */
+    def registerServerChannel(serverChannel: ServerSocketChannel)(onRegistered: Maybe[Exception] => Unit)(using AllowUnsafe): Unit =
+        discard(pendingServerRegistrations.offer((serverChannel, onRegistered)))
+        discard(selector.wakeup())
+        // A closed selector runs no further pass; close() drains once after it sets the flag, and an offer after that drain drains here.
+        if selectorClosed.get() then drainServerRegistrations()
+    end registerServerChannel
+
+    /** Apply every queued server-channel registration. Poll-carrier only while the loop runs, and on the closing carrier once the selector is
+      * closed, where each fails with the selector's `ClosedSelectorException`. Dequeued with poll(), so an entry is applied once whichever
+      * carrier takes it.
+      */
+    private[net] def drainServerRegistrations()(using AllowUnsafe): Unit =
+        var entry = pendingServerRegistrations.poll()
+        while entry ne null do
+            val (serverChannel, onRegistered) = entry
+            val failure: Maybe[Exception]     =
+                try
+                    discard(serverChannel.register(selector, 0))
+                    Absent
+                catch
+                    case e: java.nio.channels.ClosedChannelException       => Present(e)
+                    case e: java.nio.channels.ClosedSelectorException      => Present(e)
+                    case e: java.nio.channels.IllegalBlockingModeException => Present(e)
+            onRegistered(failure)
+            entry = pendingServerRegistrations.poll()
+        end while
+    end drainServerRegistrations
 
     /** Wait for server channel to have pending connections. Promise completes when accept() will not block. */
     def awaitAccept(serverChannel: ServerSocketChannel, promise: Promise.Unsafe[Unit, Abort[Closed]], createdAt: Frame)(using
@@ -1443,6 +1485,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             // now be registered cleanly. Done before key dispatch so a freshly registered channel can have its
             // interest armed (awaitX) and reported on the next cycle.
             drainPendingRegistrations()
+            // Listener registrations apply here, on the carrier that rebuilds the selector, so none can land on a selector being replaced.
+            drainServerRegistrations()
             // Complete the releases of listeners closed since the previous pass: the select() that just returned ran the deregistration that
             // kills a cancelled listener channel. Before dispatch, so a continuation awaiting a release runs among this cycle's completions.
             drainListenerReleases()
@@ -1657,13 +1701,21 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       *
       * `private[net]` so the rebuild path is directly exercisable by tests in `kyo.net.internal`. Concurrency contract: rebuildSelector itself runs
       * ONLY on the select-loop carrier (or before that loop starts), so its own snapshot/close/swap/re-register sequence is single-carrier. It is NOT,
-      * however, isolated from caller carriers: `selector` is `@volatile` and is READ by caller-carrier paths (registerChannel, registerInterest,
-      * registerServerChannel) that call `channel.register(selector, ...)` / `selector.wakeup()` concurrently with this swap. A caller that read the old
-      * selector just before this `selector.close()` runs gets a `ClosedSelectorException`; those paths handle it by deferring the registration to
-      * `pendingRegistrations` (re-registered on the live selector with interest reconstructed from the pending-op maps) rather than failing the op, so
-      * the swap is correct under that race. The `@volatile` makes the new selector visible to subsequent caller-carrier reads.
+      * however, isolated from caller carriers: `selector` is `@volatile` and is READ by caller-carrier paths (registerChannel, registerInterest)
+      * that call `channel.register(selector, ...)` / `selector.wakeup()` concurrently with this swap. A caller that read the old selector just
+      * before this `selector.close()` runs gets a `ClosedSelectorException`, and one whose registration landed on the old selector after the
+      * snapshot below sees `rebuilding` raised or the selector swapped; both paths defer the registration to `pendingRegistrations` (re-registered
+      * on the live selector with interest reconstructed from the pending-op maps) rather than failing the op, so the swap is correct under that
+      * race. Server channels register only on this carrier (registerServerChannel). The `@volatile` makes the new selector visible to subsequent
+      * caller-carrier reads.
       */
     private[net] def rebuildSelector()(using AllowUnsafe, Frame): Unit =
+        rebuilding.set(true)
+        try swapSelector()
+        finally rebuilding.set(false)
+    end rebuildSelector
+
+    private def swapSelector()(using AllowUnsafe, Frame): Unit =
         // Snapshot channel references BEFORE closing the old selector (closing cancels all keys,
         // after which key.channel() may still work but the key set is no longer reliable).
         val channels = selector.keys().iterator().asScala
@@ -1736,7 +1788,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     end try
                 end while
         end match
-    end rebuildSelector
+    end swapSelector
 
     /** Install `flatSet` into the `SelectorImpl.selectedKeys` and `SelectorImpl.publicSelectedKeys` fields of `sel`.
       * Used both at initial construction and when rebuilding the selector.

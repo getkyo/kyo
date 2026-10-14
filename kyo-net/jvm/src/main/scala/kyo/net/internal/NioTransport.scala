@@ -434,21 +434,23 @@ final private[kyo] class NioTransport private (
                 applySocketBuffers(serverChannel, config, sendSupported = false)
                 serverChannel.bind(address, backlog)
 
-                val registration = driver.registerServerChannel(serverChannel)
-                if registration.nonEmpty then
-                    serverChannel.close()
-                    promise.completeDiscard(Result.fail(NetBindException(host, port, registration.getOrElse(""))))
-                else
-                    val actualPort = serverChannel.socket().getLocalPort
-                    val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
-                    Log.live.unsafe.debug(s"NioTransport listen $host:$actualPort")
+                val channel = serverChannel
+                driver.registerServerChannel(channel) { registration =>
+                    if registration.nonEmpty then
+                        closeQuietly(channel)
+                        promise.completeDiscard(Result.fail(NetBindException(host, port, registration.getOrElse(""))))
+                    else
+                        val actualPort = channel.socket().getLocalPort
+                        val actualHost = Maybe(channel.socket().getInetAddress.getHostAddress).getOrElse(host)
+                        Log.live.unsafe.debug(s"NioTransport listen $host:$actualPort")
 
-                    val listener =
-                        new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
-                    startAcceptLoop(serverChannel, handler, listener, config)
-                    if !promise.complete(Result.succeed(listener)) then
-                        listener.close()
-                end if
+                        val listener =
+                            new NioListener(channel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
+                        startAcceptLoop(channel, handler, listener, config)
+                        if !promise.complete(Result.succeed(listener)) then
+                            listener.close()
+                    end if
+                }
             catch
                 case e: IOException =>
                     if serverChannel != null then closeQuietly(serverChannel)
@@ -1147,23 +1149,25 @@ final private[kyo] class NioTransport private (
                 applySocketBuffers(serverChannel, config, sendSupported = false)
                 serverChannel.bind(address, backlog)
 
-                val registration = driver.registerServerChannel(serverChannel)
-                if registration.nonEmpty then
-                    serverChannel.close()
-                    promise.completeDiscard(Result.fail(NetBindException(host, port, registration.getOrElse(""))))
-                else
-                    val actualPort = serverChannel.socket().getLocalPort
-                    val actualHost = Maybe(serverChannel.socket().getInetAddress.getHostAddress).getOrElse(host)
-                    Log.live.unsafe.debug(s"NioTransport TLS listen $host:$actualPort")
+                val channel = serverChannel
+                driver.registerServerChannel(channel) { registration =>
+                    if registration.nonEmpty then
+                        closeQuietly(channel)
+                        promise.completeDiscard(Result.fail(NetBindException(host, port, registration.getOrElse(""))))
+                    else
+                        val actualPort = channel.socket().getLocalPort
+                        val actualHost = Maybe(channel.socket().getInetAddress.getHostAddress).getOrElse(host)
+                        Log.live.unsafe.debug(s"NioTransport TLS listen $host:$actualPort")
 
-                    val listener =
-                        new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
-                    // Only the TLS listen path can have in-flight handshakes; a plaintext accept becomes a tracked Connection immediately.
-                    listener.onClose(() => dischargeListenerHandshakes(listener))
-                    startTlsAcceptLoop(serverChannel, handler, listener, tls, config)
-                    if !promise.complete(Result.succeed(listener)) then
-                        listener.close()
-                end if
+                        val listener =
+                            new NioListener(channel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
+                        // Only the TLS listen path can have in-flight handshakes; a plaintext accept becomes a tracked Connection immediately.
+                        listener.onClose(() => dischargeListenerHandshakes(listener))
+                        startTlsAcceptLoop(channel, handler, listener, tls, config)
+                        if !promise.complete(Result.succeed(listener)) then
+                            listener.close()
+                    end if
+                }
             catch
                 case e: IOException =>
                     if serverChannel != null then closeQuietly(serverChannel)
@@ -1435,18 +1439,19 @@ final private[kyo] class NioTransport private (
             applySocketBuffers(serverChannel, config, sendSupported = false)
             serverChannel.bind(addr, backlog)
 
-            val registration = driver.registerServerChannel(serverChannel)
-            if registration.nonEmpty then
-                serverChannel.close()
-                promise.completeDiscard(Result.fail(NetBindException(path, -1, registration.getOrElse(""))))
-            else
-                Log.live.unsafe.debug(s"NioTransport listenUnix $path")
+            driver.registerServerChannel(serverChannel) { registration =>
+                if registration.nonEmpty then
+                    closeQuietly(serverChannel)
+                    promise.completeDiscard(Result.fail(NetBindException(path, -1, registration.getOrElse(""))))
+                else
+                    Log.live.unsafe.debug(s"NioTransport listenUnix $path")
 
-                val listener = new NioListener(serverChannel, -1, path, driver, NetAddress.Unix(path), frame)
-                startAcceptLoop(serverChannel, handler, listener, config)
-                if !promise.complete(Result.succeed(listener)) then
-                    listener.close()
-            end if
+                    val listener = new NioListener(serverChannel, -1, path, driver, NetAddress.Unix(path), frame)
+                    startAcceptLoop(serverChannel, handler, listener, config)
+                    if !promise.complete(Result.succeed(listener)) then
+                        listener.close()
+                end if
+            }
         catch
             case e: IOException =>
                 promise.completeDiscard(Result.fail(NetBindException(path, -1, e)))

@@ -88,6 +88,16 @@ class NioIoDriverTest extends Test:
         ssc
     end openServer
 
+    /** Register `channel` with the test playing the poll carrier: queue the registration, then run the carrier's registration pass. The
+      * driver's loop must not be running.
+      */
+    private def registerServer(driver: NioIoDriver, channel: ServerSocketChannel): Maybe[Exception] =
+        var result: Maybe[Maybe[Exception]] = Absent
+        driver.registerServerChannel(channel)(registration => result = Present(registration))
+        driver.drainServerRegistrations()
+        result.getOrElse(Present(new IllegalStateException("the registration pass did not apply the registration")))
+    end registerServer
+
     // `releaseListener` is armed for a channel that has been closed while registered: its SelectionKey is cancelled and its fd close deferred
     // to the selector's next deregistration pass. `isRegistered` afterwards is
     // the same observation the driver completes on.
@@ -95,9 +105,9 @@ class NioIoDriverTest extends Test:
         "completes after the running loop's deregistration pass" in {
             val driver  = NioIoDriver.init()
             given Frame = Frame.internal
+            val ssc     = openServer()
+            assert(registerServer(driver, ssc).isEmpty)
             discard(driver.start())
-            val ssc = openServer()
-            assert(driver.registerServerChannel(ssc).isEmpty)
             // No registration check here: the loop is running, so its next pass can deregister the cancelled key at any point after the
             // close.
             ssc.close()
@@ -113,7 +123,7 @@ class NioIoDriverTest extends Test:
             val driver  = NioIoDriver.init()
             given Frame = Frame.internal
             val ssc     = openServer()
-            assert(driver.registerServerChannel(ssc).isEmpty)
+            assert(registerServer(driver, ssc).isEmpty)
             ssc.close()
             val released = Promise.Unsafe.init[Unit, Any]()
             driver.releaseListener(ssc, released)
@@ -129,7 +139,7 @@ class NioIoDriverTest extends Test:
             val driver  = NioIoDriver.init()
             given Frame = Frame.internal
             val ssc     = openServer()
-            assert(driver.registerServerChannel(ssc).isEmpty)
+            assert(registerServer(driver, ssc).isEmpty)
             ssc.close()
             val released = Promise.Unsafe.init[Unit, Any]()
             driver.releaseListener(ssc, released)
@@ -143,7 +153,7 @@ class NioIoDriverTest extends Test:
             val driver  = NioIoDriver.init()
             given Frame = Frame.internal
             val ssc     = openServer()
-            assert(driver.registerServerChannel(ssc).isEmpty)
+            assert(registerServer(driver, ssc).isEmpty)
             ssc.close()
             driver.close()
             val released = Promise.Unsafe.init[Unit, Any]()
@@ -1396,13 +1406,94 @@ class NioIoDriverTest extends Test:
         serverChannel.configureBlocking(false)
         serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
         try
-            val result = driver.registerServerChannel(serverChannel)
+            val result = registerServer(driver, serverChannel)
             assert(result.isEmpty, s"an open channel on a live driver must register, got $result")
             succeed
         finally
             serverChannel.close()
             driver.close()
         end try
+    }
+
+    "a listener registered while the selector is rebuilt binds and accepts" in {
+        // The test plays the poll carrier: the listen queues its registration, the carrier rebuilds the selector before its next
+        // registration pass, and that pass registers the listener on the selector the rebuild installed.
+        given Frame                             = Frame.internal
+        val driver                              = NioIoDriver.init()
+        val serverChannel                       = openServer()
+        val port                                = serverChannel.socket().getLocalPort
+        var registered: Maybe[Maybe[Exception]] = Absent
+        driver.registerServerChannel(serverChannel)(registration => registered = Present(registration))
+        val beforeRebuild = registered
+        driver.rebuildSelector()
+        driver.drainServerRegistrations()
+        val accept = new IOPromise[Closed, Unit]
+        driver.awaitAccept(serverChannel, accept.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
+        discard(driver.start())
+        val client = SocketChannel.open()
+        client.connect(new InetSocketAddress("127.0.0.1", port))
+        accept.asInstanceOf[Fiber.Unsafe[Unit, Abort[Closed]]].safe.get.map { _ =>
+            client.close()
+            serverChannel.close()
+            driver.close()
+            assert((beforeRebuild, registered) == (Absent, Present(Absent)))
+        }
+    }
+
+    "registrations racing a selector rebuild are never lost" in {
+        // One fiber plays the poll carrier, rebuilding the selector and running its registration passes back to back; this one registers
+        // listeners and connections meanwhile. Every registration must end up on the selector the last rebuild installed.
+        given Frame           = Frame.internal
+        val driver            = NioIoDriver.init()
+        val stop              = AtomicBoolean.Unsafe.init(false)
+        val rebuilds          = AtomicInt.Unsafe.init(0)
+        val listeners         = new java.util.concurrent.ConcurrentLinkedQueue[ServerSocketChannel]()
+        val channels          = new java.util.concurrent.ConcurrentLinkedQueue[SocketChannel]()
+        val failures          = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+        val running           = Promise.Unsafe.init[Unit, Any]()
+        val pass: Unit < Sync = Sync.defer {
+            driver.rebuildSelector()
+            driver.drainServerRegistrations()
+            driver.drainPendingRegistrations()
+            discard(rebuilds.incrementAndGet())
+            running.completeUnitDiscard()
+        }
+        def register(i: Int): Unit =
+            val listener = ServerSocketChannel.open()
+            listener.configureBlocking(false)
+            discard(listeners.add(listener))
+            driver.registerServerChannel(listener)(_.foreach(e => discard(failures.add(s"listener $i: $e"))))
+            val channel = SocketChannel.open()
+            channel.configureBlocking(false)
+            discard(channels.add(channel))
+            if !driver.registerChannel(NioHandle.init(channel, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)) then
+                discard(failures.add(s"channel $i refused"))
+        end register
+        Fiber.initUnscoped(Loop.foreach(pass.andThen(Sync.defer(if stop.get() then Loop.done(()) else Loop.continue)))).map { carrier =>
+            // registrations start once the carrier is rebuilding, and it keeps rebuilding until the last one is queued
+            running.safe.get.andThen(Sync.defer((0 until 2000).foreach(register))).andThen {
+                stop.set(true)
+                carrier.get
+            }.andThen {
+                // the carrier has stopped, so this fiber runs its last registration pass
+                driver.drainServerRegistrations()
+                driver.drainPendingRegistrations()
+                import scala.jdk.CollectionConverters.*
+                val live                                                              = driver.selector
+                def registered(channel: java.nio.channels.SelectableChannel): Boolean =
+                    val key = channel.keyFor(live)
+                    (key ne null) && key.isValid
+                val lostListeners = listeners.asScala.count(!registered(_))
+                val lostChannels  = channels.asScala.count(!registered(_))
+                listeners.forEach(_.close())
+                channels.forEach(_.close())
+                driver.close()
+                assert(
+                    (failures.asScala.toList, lostListeners, lostChannels) == (Nil, 0, 0),
+                    s"after ${rebuilds.get()} rebuilds"
+                )
+            }
+        }
     }
 
     "registerServerChannel reports the selector's failure after the driver is closed" in {
@@ -1412,9 +1503,11 @@ class NioIoDriverTest extends Test:
         serverChannel.configureBlocking(false)
         driver.close()
         try
-            val result = driver.registerServerChannel(serverChannel)
+            // A closed selector runs no registration pass, so the registration applies, and fails, on the registering carrier.
+            var result: Maybe[Maybe[Exception]] = Absent
+            driver.registerServerChannel(serverChannel)(registration => result = Present(registration))
             assert(
-                result.exists(_.isInstanceOf[java.nio.channels.ClosedSelectorException]),
+                result.flatten.exists(_.isInstanceOf[java.nio.channels.ClosedSelectorException]),
                 s"a closed driver's registration must report ClosedSelectorException, got $result"
             )
             succeed
@@ -1434,7 +1527,7 @@ class NioIoDriverTest extends Test:
         serverChannel.configureBlocking(false)
         serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
         val port = serverChannel.socket().getLocalPort
-        assert(driver.registerServerChannel(serverChannel).isEmpty)
+        assert(registerServer(driver, serverChannel).isEmpty)
         discard(driver.start())
 
         val p = new IOPromise[Closed, Unit]
@@ -1462,7 +1555,7 @@ class NioIoDriverTest extends Test:
         val serverChannel = ServerSocketChannel.open()
         serverChannel.configureBlocking(false)
         serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
-        assert(driver.registerServerChannel(serverChannel).isEmpty)
+        assert(registerServer(driver, serverChannel).isEmpty)
 
         val p = new IOPromise[Closed, Unit]
         driver.awaitAccept(serverChannel, p.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], Frame.internal)
@@ -1638,7 +1731,7 @@ class NioIoDriverTest extends Test:
             serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
             try
                 driver.registerChannel(handle)
-                assert(driver.registerServerChannel(serverChannel).isEmpty)
+                assert(registerServer(driver, serverChannel).isEmpty)
 
                 val pw = new IOPromise[Closed, Unit]
                 val pr = new IOPromise[Closed, ReadOutcome]
