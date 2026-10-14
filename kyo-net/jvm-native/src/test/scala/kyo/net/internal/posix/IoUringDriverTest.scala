@@ -691,16 +691,18 @@ class IoUringDriverTest extends Test:
                         handle.tls = Present(clientEngine)
                         val payload = 64 * 1024
                         assert(driver.write(handle, Span.fromUnsafe(Array.fill[Byte](payload)(0x42.toByte)), 0) == WriteResult.Done)
-                        // The write's FIFO op moves its bytes from the queued count to the ciphertext tail; the decision reads what the handle
-                        // owes on the owner, so it reads either side of that move whole.
-                        val owed = Promise.Unsafe.init[Int, Any]()
-                        driver.runOwned(handle)(() => owed.completeDiscard(Result.succeed(handle.unsentTailBytes)))
-                        owed.safe.get.map { atDecision =>
+                        // The write's FIFO op moves its bytes from the queued count to the ciphertext tail. The decision runs on the owner, after
+                        // that op, so none of the write is still counted as queued and the count it reads is not split across the move.
+                        val owed = Promise.Unsafe.init[(Int, Int), Any]()
+                        driver.runOwned(handle) { () =>
+                            val inTail = handle.pendingCipher.fold(0)(_.size - handle.pendingCipherSent)
+                            owed.completeDiscard(Result.succeed((handle.unsentTailBytes, inTail)))
+                        }
+                        owed.safe.get.map { (atDecision, inTail) =>
                             handle.tls = Absent
                             driver.closeHandle(handle)
                             discard(sock.close(peerFd))
-                            // The peer reads nothing and the shrunk socket buffers hold a few KiB, so most of the ciphertext is still owed.
-                            assert(atDecision >= payload / 2, s"owed at the decision: $atDecision of a $payload-byte write")
+                            assert(atDecision == inTail, s"owed at the decision: $atDecision, of which ${atDecision - inTail} still queued")
                         }
                     }
                 }
