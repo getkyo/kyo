@@ -399,6 +399,32 @@ class PollerIoDriverTest extends Test:
             driver.close()
             succeed
         }
+
+        "C1: a close decided while the engine FIFO moves bytes from the queue to the tail never under-counts what is owed" in {
+            assumePoller()
+            TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
+                assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the write")
+                withDriver { driver =>
+                    PosixTestSockets.smallBufferedPair(sndBuf = 128, rcvBuf = 128).map { case (writeFd, peerFd) =>
+                        val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        handle.tls = Present(clientEngine)
+                        val payload = 64 * 1024
+                        assert(driver.write(handle, Span.fromUnsafe(Array.fill[Byte](payload)(0x42.toByte)), 0) == WriteResult.Done)
+                        // The write's FIFO op moves its bytes from the queued count to the ciphertext tail; the decision reads what the handle
+                        // owes on the owner, so it reads either side of that move whole.
+                        val owed = Promise.Unsafe.init[Int, Any]()
+                        driver.runOwned(handle)(() => owed.completeDiscard(Result.succeed(handle.unsentTailBytes)))
+                        owed.safe.get.map { atDecision =>
+                            handle.tls = Absent
+                            driver.closeHandle(handle)
+                            discard(sock.close(peerFd))
+                            // The peer reads nothing and the shrunk socket buffers hold a few KiB, so most of the ciphertext is still owed.
+                            assert(atDecision >= payload / 2, s"owed at the decision: $atDecision of a $payload-byte write")
+                        }
+                    }
+                }
+            }.map(_ => succeed)
+        }
     }
 
     "PollerIoDriver allocation seams" - {

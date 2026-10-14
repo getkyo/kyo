@@ -1490,7 +1490,7 @@ class NioIoDriverTest extends Test:
                 driver.close()
                 assert(
                     (failures.asScala.toList, lostListeners, lostChannels) == (Nil, 0, 0),
-                    s"after ${rebuilds.get()} rebuilds"
+                    s"after ${rebuilds.get()} rebuilds: ${failures.size()} failed, $lostListeners listeners and $lostChannels channels lost"
                 )
             }
         }
