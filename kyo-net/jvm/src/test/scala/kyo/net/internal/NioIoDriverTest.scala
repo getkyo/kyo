@@ -2035,7 +2035,137 @@ class NioIoDriverTest extends Test:
         }
     }
 
+    "every engine call runs while the gate is held" in {
+        val (clientEngine, serverEngine) = handshakedEnginePair()
+        NioLoopbackPair.open().map { (client, sv) =>
+            val driver               = NioIoDriver.init()
+            var handleRef: NioHandle = null
+            val calls                = AtomicInt.Unsafe.init(0)
+            val bare                 = AtomicInt.Unsafe.init(0)
+            @volatile var checking   = false
+            val engine               = new GateCheckingEngine(
+                serverEngine,
+                () =>
+                    if checking then
+                        discard(calls.incrementAndGet())
+                        if !handleRef.engineGate.get() then discard(bare.incrementAndGet())
+            )
+            val handle = NioHandle.initTls(client, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
+            handleRef = handle
+            checking = true
+            driver.registerChannel(handle)
+            driver.drainPendingRegistrations()
+            // a read's pre-check unwraps what a grace probe staged
+            val p = new IOPromise[Closed, ReadOutcome]
+            handle.graceStaging.set(Chunk(wrapRecord(clientEngine, Array[Byte](1))))
+            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+            assert(bare.get() == 0, s"${bare.get()} of ${calls.get()} engine calls ran without the gate")
+        }
+    }
+
+    "a staged delivery deferred while a writer holds the gate runs once at the release, with no retry while it is held" in {
+        val (clientEngine, serverEngine) = handshakedEnginePair()
+        NioLoopbackPair.open().map { (client, sv) =>
+            val driver = NioIoDriver.init()
+            val handle = NioHandle.initTls(client, 4096, serverEngine, Duration.Infinity, Duration.Infinity, Frame.internal)
+            driver.registerChannel(handle)
+            driver.drainPendingRegistrations()
+            val read = new IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handle, read.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            handle.graceStaging.set(Chunk(wrapRecord(clientEngine, Array[Byte](4, 5, 6))))
+            // the writer holds the gate while the selector's delivery runs
+            handle.engineGate.set(true)
+            driver.deliverStaged(handle)
+            val queue = classOf[NioIoDriver].getDeclaredField("pendingStagedDeliveries")
+            queue.setAccessible(true)
+            val whileHeld = queue.get(driver).asInstanceOf[java.util.concurrent.ConcurrentLinkedQueue[?]].size()
+            handle.engineGate.set(false)
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+            assert(whileHeld == 0, s"the delivery was queued for a retry $whileHeld time(s) while the writer held the gate")
+        }
+    }
+
+    "registrations racing a selector rebuild are never lost" in {
+        given Frame   = Frame.internal
+        val driver    = NioIoDriver.init()
+        val stop      = new java.util.concurrent.atomic.AtomicBoolean(false)
+        val rebuilds  = new java.util.concurrent.atomic.AtomicInteger(0)
+        val rebuilder = new Thread(() =>
+            while !stop.get() do
+                driver.rebuildSelector()
+                discard(rebuilds.incrementAndGet())
+        )
+        rebuilder.setDaemon(true)
+        rebuilder.start()
+        val servers  = scala.collection.mutable.ArrayBuffer.empty[ServerSocketChannel]
+        val channels = scala.collection.mutable.ArrayBuffer.empty[SocketChannel]
+        var failures = 0
+        (0 until 2000).foreach { _ =>
+            val ssc = ServerSocketChannel.open()
+            ssc.configureBlocking(false)
+            if driver.registerServerChannel(ssc).nonEmpty then failures += 1
+            servers += ssc
+            val sc = SocketChannel.open()
+            sc.configureBlocking(false)
+            if !driver.registerChannel(NioHandle.init(sc, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)) then failures += 1
+            channels += sc
+        }
+        stop.set(true)
+        rebuilder.join()
+        driver.drainPendingRegistrations()
+        val live                                                              = driver.selector
+        def registered(channel: java.nio.channels.SelectableChannel): Boolean =
+            val key = channel.keyFor(live)
+            (key ne null) && key.isValid
+        val lostListeners = servers.count(!registered(_))
+        val lostChannels  = channels.count(!registered(_))
+        servers.foreach(_.close())
+        channels.foreach(_.close())
+        driver.close()
+        assert(
+            (failures, lostListeners, lostChannels) == (0, 0, 0),
+            s"after ${rebuilds.get()} rebuilds: $failures failed, $lostListeners listeners and $lostChannels channels lost"
+        )
+    }
+
 end NioIoDriverTest
+
+/** `inner`, calling `check` before every wrap and unwrap. */
+final private class GateCheckingEngine(inner: SSLEngine, check: () => Unit) extends SSLEngine:
+    override def unwrap(src: ByteBuffer, dsts: Array[ByteBuffer], offset: Int, length: Int): SSLEngineResult =
+        check()
+        inner.unwrap(src, dsts, offset, length)
+    override def wrap(srcs: Array[ByteBuffer], offset: Int, length: Int, dst: ByteBuffer): SSLEngineResult =
+        check()
+        inner.wrap(srcs, offset, length, dst)
+    override def getDelegatedTask(): Runnable                          = inner.getDelegatedTask()
+    override def closeInbound(): Unit                                  = inner.closeInbound()
+    override def isInboundDone(): Boolean                              = inner.isInboundDone()
+    override def closeOutbound(): Unit                                 = inner.closeOutbound()
+    override def isOutboundDone(): Boolean                             = inner.isOutboundDone()
+    override def getSupportedCipherSuites(): Array[String]             = inner.getSupportedCipherSuites()
+    override def getEnabledCipherSuites(): Array[String]               = inner.getEnabledCipherSuites()
+    override def setEnabledCipherSuites(suites: Array[String]): Unit   = inner.setEnabledCipherSuites(suites)
+    override def getSupportedProtocols(): Array[String]                = inner.getSupportedProtocols()
+    override def getEnabledProtocols(): Array[String]                  = inner.getEnabledProtocols()
+    override def setEnabledProtocols(protocols: Array[String]): Unit   = inner.setEnabledProtocols(protocols)
+    override def getSession(): javax.net.ssl.SSLSession                = inner.getSession()
+    override def beginHandshake(): Unit                                = inner.beginHandshake()
+    override def getHandshakeStatus(): SSLEngineResult.HandshakeStatus = inner.getHandshakeStatus()
+    override def setUseClientMode(mode: Boolean): Unit                 = inner.setUseClientMode(mode)
+    override def getUseClientMode(): Boolean                           = inner.getUseClientMode()
+    override def setNeedClientAuth(need: Boolean): Unit                = inner.setNeedClientAuth(need)
+    override def getNeedClientAuth(): Boolean                          = inner.getNeedClientAuth()
+    override def setWantClientAuth(want: Boolean): Unit                = inner.setWantClientAuth(want)
+    override def getWantClientAuth(): Boolean                          = inner.getWantClientAuth()
+    override def setEnableSessionCreation(flag: Boolean): Unit         = inner.setEnableSessionCreation(flag)
+    override def getEnableSessionCreation(): Boolean                   = inner.getEnableSessionCreation()
+end GateCheckingEngine
 
 /** `inner`, running a one-shot callback right after its next `unwrap`: the point where the driver holds freshly decrypted plaintext
   * and has not yet handed it to a read.
