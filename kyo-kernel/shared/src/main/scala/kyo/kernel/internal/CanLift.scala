@@ -76,7 +76,12 @@ object CanLift:
     // expansion at every lift site, and a file that summons a same-module macro is suspended to a retry run, a
     // cascade this module sits close to.
 
-    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
+    inline given derived[A](
+        using
+        inline ng: NotGiven[A <:< (Any < Nothing)],
+        inline nb: NotGiven[(Nothing < Any) <:< A],
+        inline ns: NotGiven[A <:< Singleton]
+    ): CanLift[A] = null
 
     /** A case object is a singleton but never a kyo module, so it is admitted without asking the macro. */
     inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
@@ -84,4 +89,6 @@ object CanLift:
     inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
 
     inline given CanLift[Nothing] = null
+
+    inline given CanLift[Any] = null
 end CanLift

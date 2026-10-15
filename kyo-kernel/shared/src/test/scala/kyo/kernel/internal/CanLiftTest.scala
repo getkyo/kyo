@@ -71,8 +71,7 @@ class CanLiftTest extends Test:
     "work with union types" in {
         type Union = Int | String
         implicitly[CanLift[Union]]
-        implicitly[CanLift[Int | (String < Any)]]
-        succeed
+        typeCheckFailure("implicitly[CanLift[Int | (String < Any)]]")("may contain a nested effect computation")
     }
 
     "work with intersection types" in {
