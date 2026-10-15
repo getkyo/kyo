@@ -294,7 +294,11 @@ class SchemaFrameTest extends kyo.test.Test[Any]:
         }
 
         "a class that keeps its frame in two members is rejected" in {
-            typeCheckFailure("kyo.Schema.derived[kyo.SFWTwoFrames]")("several members of type Frame")
+            typeCheckFailure("kyo.Schema.derived[kyo.SFWTwoFrames]")(
+                "Cannot derive Schema for kyo.SFWTwoFrames: its constructor takes a Frame and it has several members of type Frame " +
+                    "(frame, other), so the frame it keeps is ambiguous. Keep the constructor's frame in one public member, or provide a " +
+                    "given Schema explicitly."
+            )
         }
     }
 

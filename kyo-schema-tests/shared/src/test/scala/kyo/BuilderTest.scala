@@ -53,6 +53,12 @@ class BuilderTest extends kyo.test.Test[Any]:
         assert(result == MTThreeField(1, "two", true))
     }
 
+    "build a class whose constructor takes a Frame, with the frame of the builder's site" in {
+        val (result, site) = (Builder[BTFramed].name("p").retries(3).result, summon[Frame])
+        assert(result == BTFramed("p", 3))
+        assert(result.frame.position.lineNumber == site.position.lineNumber)
+    }
+
     "build override all defaults" in {
         // Set every defaulted field explicitly, all overrides applied
         val result = Builder[MTAllDefaults].a(42).b("world").c(true).result
@@ -179,3 +185,5 @@ class BuilderTest extends kyo.test.Test[Any]:
     }
 
 end BuilderTest
+
+final case class BTFramed(name: String, retries: Int)(using val frame: Frame) derives CanEqual

@@ -88,7 +88,7 @@ object BuilderMacro:
             end match
         end args
 
-        MacroUtils.constructCaseClass(sym, tpe, args).asExprOf[Root]
+        MacroUtils.constructCaseClass(sym, tpe, args, MacroUtils.siteFrame(tpe)).asExprOf[Root]
     end buildFromValues
 
     /** Navigates to a field, returning BuilderAt. The field must exist in Root's expanded type. */

@@ -175,7 +175,15 @@ import scala.util.control.NonFatal
                             else
                                 Select.unique(typedParent.asTerm, field.name)
 
-                        val setExpr = rebuild(using outer)(nominalType, sym, args, typedParent.asTerm).asExprOf[Any]
+                        // A frame-taking constructor gets the frame the parent keeps, so a set leaves the value's frame as it was.
+                        val setExpr = MacroUtils
+                            .constructCaseClass(using outer)(
+                                sym,
+                                nominalType,
+                                args,
+                                MacroUtils.sourceFrame(using outer)(nominalType, sym, typedParent.asTerm)
+                            )
+                            .asExprOf[Any]
                         '{ $focus.setter.asInstanceOf[(A, Any) => A](root, $setExpr) }
                     }
                 case _ => root
@@ -219,7 +227,15 @@ import scala.util.control.NonFatal
                             else
                                 Select.unique(typedParent.asTerm, field.name)
 
-                        val setExpr = rebuild(using outer)(nominalType, sym, args, typedParent.asTerm).asExprOf[Any]
+                        // A frame-taking constructor gets the frame the parent keeps, so a set leaves the value's frame as it was.
+                        val setExpr = MacroUtils
+                            .constructCaseClass(using outer)(
+                                sym,
+                                nominalType,
+                                args,
+                                MacroUtils.sourceFrame(using outer)(nominalType, sym, typedParent.asTerm)
+                            )
+                            .asExprOf[Any]
                         '{ $focus.setter.asInstanceOf[(A, Any) => A](root, $setExpr) }
                     }
                 case _ => root
@@ -227,26 +243,6 @@ import scala.util.control.NonFatal
 
         '{ Focus.Select.create[A, V]($getterExpr, $setterExpr, $focus.segments :+ $nameExpr, $focus.isPartial, $focus.schema) }
     end generateRenamedFocus
-
-    /** `parent` with its case fields replaced by `args`, through the companion's `apply`. A constructor that takes a `Frame` gets the
-      * frame `parent` keeps, so setting a field leaves the value's frame as it was.
-      */
-    private def rebuild(using
-        Quotes
-    )(
-        nominalType: quotes.reflect.TypeRepr,
-        sym: quotes.reflect.Symbol,
-        args: List[quotes.reflect.Term],
-        parent: quotes.reflect.Term
-    ): quotes.reflect.Term =
-        import quotes.reflect.*
-        val typeArgs = nominalType match
-            case AppliedType(_, targs) => targs
-            case _                     => List.empty
-        val applied = Select.overloaded(Ref(sym.companionModule), "apply", typeArgs, args)
-        if !takesFrame(nominalType, sym) then applied
-        else frameClauses(nominalType, sym, rebuiltFrame(nominalType, sym, parent)).foldLeft(applied)(_.appliedToArgs(_))
-    end rebuild
 
     private def generateComputedFocus[A: Type, F: Type, V: Type](using
         Quotes
@@ -2061,28 +2057,6 @@ import scala.util.control.NonFatal
         end if
     end rejectPrivateCaseFields
 
-    /** The primary constructor's term clauses, at `tpe`'s type arguments. */
-    private def constructorClauses(using
-        Quotes
-    )(
-        tpe: quotes.reflect.TypeRepr,
-        sym: quotes.reflect.Symbol
-    ): List[quotes.reflect.MethodType] =
-        import quotes.reflect.*
-        def clauses(t: TypeRepr): List[MethodType] =
-            t match
-                case clause: MethodType => clause :: clauses(clause.resType)
-                case _                  => Nil
-        tpe.memberType(sym.primaryConstructor) match
-            case poly: PolyType => clauses(poly.appliedTo(tpe.typeArgs))
-            case other          => clauses(other)
-    end constructorClauses
-
-    private def takesFrame(using Quotes)(tpe: quotes.reflect.TypeRepr, sym: quotes.reflect.Symbol): Boolean =
-        import quotes.reflect.*
-        constructorClauses(tpe, sym).exists(clause => clause.isImplicit && clause.paramTypes.exists(_ =:= TypeRepr.of[Frame]))
-    end takesFrame
-
     /** Rejects a case field named as the key the frame a value keeps is written under: the field and the frame would share one key. */
     private def rejectFrameKeyField(using Quotes)(tpe: quotes.reflect.TypeRepr, sym: quotes.reflect.Symbol): Unit =
         import quotes.reflect.*
@@ -2093,36 +2067,6 @@ import scala.util.control.NonFatal
             )
         end if
     end rejectFrameKeyField
-
-    /** The member a value of a type whose constructor takes a `Frame` keeps that frame in: its one public, parameterless member of type
-      * `Frame` that is not a case field, such as `KyoException.frame` or a `(using val frame: Frame)` clause. Absent when the type keeps
-      * none; more than one is ambiguous and rejected, since the wire would carry a frame the decoded value might not hold.
-      */
-    private def frameMember(using
-        Quotes
-    )(
-        tpe: quotes.reflect.TypeRepr,
-        sym: quotes.reflect.Symbol
-    ): Option[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        val caseFields = sym.caseFields.toSet
-        val candidates = (sym.fieldMembers ++ sym.methodMembers).distinct.filter { m =>
-            m.isTerm && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(Flags.Synthetic) &&
-            m.privateWithin.isEmpty && !caseFields.contains(m) &&
-            m.paramSymss.isEmpty &&
-            (tpe.memberType(m) match
-                case ByNameType(result) => result =:= TypeRepr.of[Frame]
-                case other              => other =:= TypeRepr.of[Frame])
-        }
-        if candidates.size > 1 then
-            report.errorAndAbort(
-                s"Cannot derive Schema for ${tpe.show}: its constructor takes a Frame and it has several members of type Frame " +
-                    s"(${candidates.map(_.name).mkString(", ")}), so the frame to write is ambiguous. " +
-                    "Keep the constructor's frame in one public member, or provide a given Schema explicitly."
-            )
-        end if
-        candidates.headOption
-    end frameMember
 
     /** The primary constructor applied to `args`. When it takes a `Frame` in a using clause, `frame` is passed for it and every other
       * parameter of its using clauses is resolved here, so the frame is never filled from the derivation site.
@@ -2143,58 +2087,8 @@ import scala.util.control.NonFatal
         val applied =
             if typeArgs.isEmpty then Apply(ctor, args)
             else TypeApply(ctor, typeArgs.map(Inferred(_))).appliedToArgs(args)
-        frameClauses(tpe, sym, frame).foldLeft(applied)(_.appliedToArgs(_))
+        MacroUtils.frameClauses(tpe, sym, frame).foldLeft(applied)(_.appliedToArgs(_))
     end constructProduct
-
-    /** The using clauses after the fields of a constructor that takes a `Frame`, with `frame` for it and every other parameter resolved
-      * here; empty for any other constructor, whose using clauses the compiler fills.
-      */
-    private def frameClauses(using
-        Quotes
-    )(
-        tpe: quotes.reflect.TypeRepr,
-        sym: quotes.reflect.Symbol,
-        frame: quotes.reflect.Term
-    ): List[List[quotes.reflect.Term]] =
-        import quotes.reflect.*
-        if !takesFrame(tpe, sym) then Nil
-        else
-            constructorClauses(tpe, sym).drop(1).takeWhile(_.isImplicit).map { clause =>
-                clause.paramTypes.map { paramType =>
-                    if paramType =:= TypeRepr.of[Frame] then frame
-                    else
-                        Implicits.search(paramType) match
-                            case success: ImplicitSearchSuccess => success.tree
-                            case failure: ImplicitSearchFailure =>
-                                report.errorAndAbort(
-                                    s"Cannot construct ${tpe.show}: no given ${paramType.show} for its constructor. ${failure.explanation}"
-                                )
-                    end if
-                }
-            }
-        end if
-    end frameClauses
-
-    /** The frame a value rebuilt from `parent` is constructed with: the one `parent` keeps, or, for a class that keeps none, the frame of
-      * the expansion site.
-      */
-    private def rebuiltFrame(using
-        Quotes
-    )(
-        tpe: quotes.reflect.TypeRepr,
-        sym: quotes.reflect.Symbol,
-        parent: quotes.reflect.Term
-    ): quotes.reflect.Term =
-        import quotes.reflect.*
-        frameMember(tpe, sym) match
-            case Some(member) => Select(parent, member)
-            case None         =>
-                Implicits.search(TypeRepr.of[Frame]) match
-                    case success: ImplicitSearchSuccess => success.tree
-                    case failure: ImplicitSearchFailure =>
-                        report.errorAndAbort(s"Cannot construct ${tpe.show}: no Frame for its constructor. ${failure.explanation}")
-        end match
-    end rebuiltFrame
 
     // ==========================================================================
     // Product (case class, record) emission
@@ -2237,7 +2131,15 @@ import scala.util.control.NonFatal
         val types: List[TypeRepr] = record.fold(caseFields.map(tpe.memberType))(_.map(_._2))
         val n                     = names.length
         // A record is built from its fields alone and keeps no frame.
-        val framed = if record.isEmpty && takesFrame(tpe, sym) then frameMember(tpe, sym) else None
+        val framed =
+            if record.isDefined || !MacroUtils.takesFrame(tpe, sym) then None
+            else
+                MacroUtils.frameMember(
+                    tpe,
+                    sym,
+                    s"Cannot derive Schema for ${tpe.show}",
+                    "Keep the constructor's frame in one public member, or provide a given Schema explicitly."
+                )
         if framed.nonEmpty then rejectFrameKeyField(tpe, sym)
 
         if n > 64 then

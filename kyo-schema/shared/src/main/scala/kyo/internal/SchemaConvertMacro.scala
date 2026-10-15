@@ -79,8 +79,13 @@ import scala.quoted.*
                 end match
         end generateArgs
 
-        def generateApply(targetType: TypeRepr, args: List[Term]): Term =
-            MacroUtils.constructCaseClass(targetType.typeSymbol, targetType, args)
+        def generateApply(targetType: TypeRepr, args: List[Term], sourceType: TypeRepr, source: Term): Term =
+            MacroUtils.constructCaseClass(
+                targetType.typeSymbol,
+                targetType,
+                args,
+                MacroUtils.sourceFrame(sourceType, sourceType.typeSymbol, source)
+            )
         end generateApply
 
         val tpeA = TypeRepr.of[A].dealias
@@ -93,7 +98,7 @@ import scala.quoted.*
             new Convert[A, B]((a: A) =>
                 ${
                     val args = generateArgs(fieldsA, targetFieldsB, tpeB, '{ a }.asTerm)
-                    generateApply(tpeB, args).asExprOf[B]
+                    generateApply(tpeB, args, tpeA, '{ a }.asTerm).asExprOf[B]
                 }
             )
         }
@@ -109,6 +114,7 @@ import scala.quoted.*
         meta: Expr[Schema[A]]
     )(using Quotes): Expr[Convert[A, B]] =
         import quotes.reflect.*
+        val outer: quotes.type = quotes
 
         val tpeF = TypeRepr.of[F]
         val tpeB = TypeRepr.of[B].dealias
@@ -160,10 +166,8 @@ import scala.quoted.*
             new Convert[A, B]((a: A) =>
                 val rec = m.resultOf(a).asInstanceOf[Record[Any]]
                 ${
-                    // Cannot use MacroUtils.constructCaseClass or MacroUtils.getDefault here:
-                    // symB/tpeB/fieldsB are bound to the outer Quotes instance, but this splice
-                    // introduces a new Quotes context, causing path-dependent type mismatch.
-                    val companion        = Ref(symB.companionModule)
+                    // symB/tpeB/fieldsB are bound to the outer Quotes instance, but this splice introduces a new Quotes
+                    // context, so a MacroUtils call here is made with the outer one.
                     val args: List[Term] = fieldsB.zipWithIndex.map: (field, idx) =>
                         val fieldName  = field.name
                         val fieldTypeB = tpeB.memberType(field)
@@ -181,10 +185,15 @@ import scala.quoted.*
                                         Ref(symB.companionModule).select(defaultMethods.head).asExprOf[ft].asTerm
                         end match
 
-                    val typeArgs = tpeB match
-                        case AppliedType(_, args) => args
-                        case _                    => List.empty
-                    Select.overloaded(companion, "apply", typeArgs, args).asExprOf[B]
+                    val tpeA = TypeRepr.of[A].dealias
+                    MacroUtils
+                        .constructCaseClass(using outer)(
+                            symB,
+                            tpeB,
+                            args,
+                            MacroUtils.sourceFrame(using outer)(tpeA, tpeA.typeSymbol, '{ a }.asTerm)
+                        )
+                        .asExprOf[B]
                 }
             )
         }

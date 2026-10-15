@@ -8,8 +8,32 @@ case class BMUserDTO(name: String, email: String) derives CanEqual
 case class BMPoint2D(x: Int, y: Int) derives CanEqual
 case class BMCoords(x: Int, y: Int) derives CanEqual
 case class BMPoint3D(x: Int, y: Int, z: Int) derives CanEqual
+case class BMFramedPoint(x: Int, y: Int)(using val frame: Frame) derives CanEqual
+case class BMFramedCoords(x: Int, y: Int)(using val frame: Frame) derives CanEqual
 
 class ConvertTest extends kyo.test.Test[Any]:
+
+    "auto derives a target whose constructor takes a Frame, with the frame the source keeps" in {
+        val source  = BMFramedPoint(3, 4)
+        val convert = Convert[BMFramedPoint, BMFramedCoords]
+        val result  = convert(source)
+        assert(result == BMFramedCoords(3, 4))
+        assert(result.frame == source.frame)
+    }
+
+    "auto derives a target whose constructor takes a Frame from a source that keeps none, with the frame of the convert's site" in {
+        val (convert, site) = (Convert[BMPoint2D, BMFramedCoords], summon[Frame])
+        val result          = convert(BMPoint2D(3, 4))
+        assert(result == BMFramedCoords(3, 4))
+        assert(result.frame.position.lineNumber == site.position.lineNumber)
+    }
+
+    "convert after a transform builds a target whose constructor takes a Frame, with the frame the source keeps" in {
+        val source = BMFramedPoint(3, 4)
+        val result = Schema[BMFramedPoint].convert[BMFramedCoords](source)
+        assert(result == BMFramedCoords(3, 4))
+        assert(result.frame == source.frame)
+    }
 
     // 1. Manual Convert with explicit function
     "manual convert with explicit function" in {

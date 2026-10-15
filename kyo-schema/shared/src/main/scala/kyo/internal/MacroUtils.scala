@@ -324,21 +324,135 @@ private[internal] object MacroUtils:
 
     /** Constructs a case class instance using its companion object's apply method.
       *
-      * Handles both simple and generic (type-parameterized) case classes.
+      * Handles both simple and generic (type-parameterized) case classes. A constructor that takes a `Frame` in a using clause gets
+      * `frame`, so the compiler never fills it from the site of the macro that built the call.
       */
     private[internal] def constructCaseClass(using
         Quotes
     )(
         sym: quotes.reflect.Symbol,
         tpe: quotes.reflect.TypeRepr,
-        args: List[quotes.reflect.Term]
+        args: List[quotes.reflect.Term],
+        frame: => quotes.reflect.Term
     ): quotes.reflect.Term =
         import quotes.reflect.*
         val companion = Ref(sym.companionModule)
         val typeArgs  = tpe match
             case AppliedType(_, targs) => targs
             case _                     => List.empty
-        Select.overloaded(companion, "apply", typeArgs, args)
+        val applied = Select.overloaded(companion, "apply", typeArgs, args)
+        if !takesFrame(tpe, sym) then applied
+        else frameClauses(tpe, sym, frame).foldLeft(applied)(_.appliedToArgs(_))
     end constructCaseClass
+
+    /** The primary constructor's term clauses, at `tpe`'s type arguments. */
+    private[internal] def constructorClauses(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol
+    ): List[quotes.reflect.MethodType] =
+        import quotes.reflect.*
+        def clauses(t: TypeRepr): List[MethodType] =
+            t match
+                case clause: MethodType => clause :: clauses(clause.resType)
+                case _                  => Nil
+        tpe.memberType(sym.primaryConstructor) match
+            case poly: PolyType => clauses(poly.appliedTo(tpe.typeArgs))
+            case other          => clauses(other)
+    end constructorClauses
+
+    private[internal] def takesFrame(using Quotes)(tpe: quotes.reflect.TypeRepr, sym: quotes.reflect.Symbol): Boolean =
+        import quotes.reflect.*
+        constructorClauses(tpe, sym).exists(clause => clause.isImplicit && clause.paramTypes.exists(_ =:= TypeRepr.of[Frame]))
+    end takesFrame
+
+    /** The using clauses after the fields of a constructor that takes a `Frame`, with `frame` for it and every other parameter resolved
+      * here; empty for any other constructor, whose using clauses the compiler fills.
+      */
+    private[internal] def frameClauses(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        frame: quotes.reflect.Term
+    ): List[List[quotes.reflect.Term]] =
+        import quotes.reflect.*
+        if !takesFrame(tpe, sym) then Nil
+        else
+            constructorClauses(tpe, sym).drop(1).takeWhile(_.isImplicit).map { clause =>
+                clause.paramTypes.map { paramType =>
+                    if paramType =:= TypeRepr.of[Frame] then frame
+                    else
+                        Implicits.search(paramType) match
+                            case success: ImplicitSearchSuccess => success.tree
+                            case failure: ImplicitSearchFailure =>
+                                report.errorAndAbort(
+                                    s"Cannot construct ${tpe.show}: no given ${paramType.show} for its constructor. ${failure.explanation}"
+                                )
+                    end if
+                }
+            }
+        end if
+    end frameClauses
+
+    /** The member a value of a type whose constructor takes a `Frame` keeps that frame in: its one public, parameterless member of type
+      * `Frame` that is not a case field, such as `KyoException.frame` or a `(using val frame: Frame)` clause. Absent when the type keeps
+      * none; more than one is ambiguous and rejected with `failure`, what the caller cannot do, and `remedy`, since a value built from
+      * it might not carry the frame it holds.
+      */
+    private[internal] def frameMember(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        failure: String,
+        remedy: String
+    ): Option[quotes.reflect.Symbol] =
+        import quotes.reflect.*
+        val caseFields = sym.caseFields.toSet
+        val candidates = (sym.fieldMembers ++ sym.methodMembers).distinct.filter { m =>
+            m.isTerm && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(Flags.Synthetic) &&
+            m.privateWithin.isEmpty && !caseFields.contains(m) &&
+            m.paramSymss.isEmpty &&
+            (tpe.memberType(m) match
+                case ByNameType(result) => result =:= TypeRepr.of[Frame]
+                case other              => other =:= TypeRepr.of[Frame])
+        }
+        if candidates.size > 1 then
+            report.errorAndAbort(
+                s"$failure: its constructor takes a Frame and it has several members of type Frame " +
+                    s"(${candidates.map(_.name).sorted.mkString(", ")}), so the frame it keeps is ambiguous. $remedy"
+            )
+        end if
+        candidates.headOption
+    end frameMember
+
+    /** The frame for a value built from `source`: the one `source` keeps, or, when its type keeps none, the frame of the expansion site. */
+    private[internal] def sourceFrame(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        source: quotes.reflect.Term
+    ): quotes.reflect.Term =
+        import quotes.reflect.*
+        val kept =
+            if !takesFrame(tpe, sym) then None
+            else frameMember(tpe, sym, s"Cannot build a value from ${tpe.show}", "Keep the constructor's frame in one public member.")
+        kept match
+            case Some(member) => Select(source, member)
+            case None         => siteFrame(tpe)
+    end sourceFrame
+
+    /** The `Frame` of the code the macro expands into, for a value of `tpe` built there with no frame of its own to carry. */
+    private[internal] def siteFrame(using Quotes)(tpe: quotes.reflect.TypeRepr): quotes.reflect.Term =
+        import quotes.reflect.*
+        Implicits.search(TypeRepr.of[Frame]) match
+            case success: ImplicitSearchSuccess => success.tree
+            case failure: ImplicitSearchFailure =>
+                report.errorAndAbort(s"Cannot construct ${tpe.show}: no Frame for its constructor. ${failure.explanation}")
+        end match
+    end siteFrame
 
 end MacroUtils
