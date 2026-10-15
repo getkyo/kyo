@@ -42,6 +42,16 @@ opaque type CanLift[A] = Null
 object CanLiftMacro:
     inline def checkSingleton[A]: CanLift[A] = ${ liftImpl[A] }
 
+    inline def probeBound[A]: CanLift[A] = ${ probeBoundImpl[A] }
+
+    private[internal] def probeBoundImpl[A: Type](using Quotes): Expr[CanLift[A]] =
+        import quotes.reflect.*
+        val tpe = TypeRepr.of[A]
+        if TypeRepr.of[Nothing < Any] <:< tpe then
+            report.info(s"LIFTBOUND derived '${tpe.show}'", Position.ofMacroExpansion)
+        '{ null.asInstanceOf[CanLift[A]] }
+    end probeBoundImpl
+
     private[internal] def liftImpl[A: Type](using Quotes): Expr[CanLift[A]] =
         import quotes.reflect.*
         val tpe = TypeRepr.of[A]
@@ -52,6 +62,9 @@ object CanLiftMacro:
 
         if tpe <:< TypeRepr.of[Any < Nothing] then
             report.errorAndAbort(s"Type '${tpe.show}' may contain a nested effect computation.", Position.ofMacroExpansion)
+
+        if TypeRepr.of[Nothing < Any] <:< tpe.widen then
+            report.info(s"LIFTBOUND singleton '${tpe.show}' widened '${tpe.widen.show}'", Position.ofMacroExpansion)
 
         '{ null.asInstanceOf[CanLift[A]] }
     end liftImpl
@@ -79,9 +92,8 @@ object CanLift:
     inline given derived[A](
         using
         inline ng: NotGiven[A <:< (Any < Nothing)],
-        inline nb: NotGiven[(Nothing < Any) <:< A],
         inline ns: NotGiven[A <:< Singleton]
-    ): CanLift[A] = null
+    ): CanLift[A] = CanLiftMacro.probeBound[A]
 
     /** A case object is a singleton but never a kyo module, so it is admitted without asking the macro. */
     inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
@@ -89,6 +101,4 @@ object CanLift:
     inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
 
     inline given CanLift[Nothing] = null
-
-    inline given CanLift[Any] = null
 end CanLift
