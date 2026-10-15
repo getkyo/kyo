@@ -93,7 +93,8 @@ private[kyo] object SchemaFactory:
             fieldMaterializedDefaults = source.fieldMaterializedDefaults,
             flattenedFields0 = source.flattenedFields ++ flattenedFields,
             catchAll0 = source.catchAll,
-            builderProblem0 = source.configurationProblem
+            builderProblem0 = source.configurationProblem,
+            writesFrame0 = source.writesFrame
         )
     end createFrom
 

@@ -240,8 +240,9 @@ private[kyo] object WireLayout:
             val sumKeys = sums.flatMap { (parent, child, _) =>
                 sumFixedKeys(child).map(key => cased(key) -> s"$parent.$key")
             }
-            val labels =
-                slots.filterNot(_.flattened).map(s => s.wire -> s.source) ++ sumKeys
+            val frameLabel = if schema.writesFrame then Chunk(frameKey -> "the constructor's Frame") else Chunk.empty
+            val labels     =
+                slots.filterNot(_.flattened).map(s => s.wire -> s.source) ++ sumKeys ++ frameLabel
             val byWire = labels.groupBy(_._1)
             labels.map(_._1).distinct.foreach { wire =>
                 val group = Chunk.from(byWire(wire).map(_._2)).distinct
@@ -250,8 +251,9 @@ private[kyo] object WireLayout:
         end if
         // An alias reaches the schema from an @alias annotation or the alias builder alike, and the schema keeps no record of which.
         if schema.variantNaming.fieldAliases.nonEmpty then
-            val call = s"@alias or alias(${schema.variantNaming.fieldAliases.map((a, p) => s"$a -> $p").mkString(", ")})"
-            Schema.fieldAliasClash(schema.variantNaming.fieldAliases, sourceNames.map(ownWire).toSet)
+            val call      = s"@alias or alias(${schema.variantNaming.fieldAliases.map((a, p) => s"$a -> $p").mkString(", ")})"
+            val frameKeys = if schema.writesFrame then Set(frameKey) else Set.empty[String]
+            Schema.fieldAliasClash(schema.variantNaming.fieldAliases, sourceNames.map(ownWire).toSet ++ frameKeys)
                 .foreach(failure => break(Result.fail(BuilderProblem(call, failure))))
         end if
 

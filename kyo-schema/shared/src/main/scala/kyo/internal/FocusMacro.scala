@@ -152,6 +152,7 @@ import scala.util.control.NonFatal
         nameExpr: Expr[String]
     ): Expr[Any] =
         import quotes.reflect.*
+        val outer: quotes.type = quotes
 
         val getterExpr = '{ (root: A) =>
             $focus.getter.asInstanceOf[A => Maybe[Any]](root).map { (parent: Any) =>
@@ -174,12 +175,7 @@ import scala.util.control.NonFatal
                             else
                                 Select.unique(typedParent.asTerm, field.name)
 
-                        val companion = Ref(sym.companionModule)
-                        val typeArgs  = nominalType match
-                            case AppliedType(_, targs) => targs
-                            case _                     => List.empty
-                        val constructorCall = Select.overloaded(companion, "apply", typeArgs, args)
-                        val setExpr         = constructorCall.asExprOf[Any]
+                        val setExpr = rebuild(using outer)(nominalType, sym, args, typedParent.asTerm).asExprOf[Any]
                         '{ $focus.setter.asInstanceOf[(A, Any) => A](root, $setExpr) }
                     }
                 case _ => root
@@ -200,6 +196,7 @@ import scala.util.control.NonFatal
         nameExpr: Expr[String]
     ): Expr[Any] =
         import quotes.reflect.*
+        val outer: quotes.type = quotes
 
         val getterExpr = '{ (root: A) =>
             $focus.getter.asInstanceOf[A => Maybe[Any]](root).map { (parent: Any) =>
@@ -222,12 +219,7 @@ import scala.util.control.NonFatal
                             else
                                 Select.unique(typedParent.asTerm, field.name)
 
-                        val companion = Ref(sym.companionModule)
-                        val typeArgs  = nominalType match
-                            case AppliedType(_, targs) => targs
-                            case _                     => List.empty
-                        val constructorCall = Select.overloaded(companion, "apply", typeArgs, args)
-                        val setExpr         = constructorCall.asExprOf[Any]
+                        val setExpr = rebuild(using outer)(nominalType, sym, args, typedParent.asTerm).asExprOf[Any]
                         '{ $focus.setter.asInstanceOf[(A, Any) => A](root, $setExpr) }
                     }
                 case _ => root
@@ -235,6 +227,26 @@ import scala.util.control.NonFatal
 
         '{ Focus.Select.create[A, V]($getterExpr, $setterExpr, $focus.segments :+ $nameExpr, $focus.isPartial, $focus.schema) }
     end generateRenamedFocus
+
+    /** `parent` with its case fields replaced by `args`, through the companion's `apply`. A constructor that takes a `Frame` gets the
+      * frame `parent` keeps, so setting a field leaves the value's frame as it was.
+      */
+    private def rebuild(using
+        Quotes
+    )(
+        nominalType: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        args: List[quotes.reflect.Term],
+        parent: quotes.reflect.Term
+    ): quotes.reflect.Term =
+        import quotes.reflect.*
+        val typeArgs = nominalType match
+            case AppliedType(_, targs) => targs
+            case _                     => List.empty
+        val applied = Select.overloaded(Ref(sym.companionModule), "apply", typeArgs, args)
+        if !takesFrame(nominalType, sym) then applied
+        else frameClauses(nominalType, sym, rebuiltFrame(nominalType, sym, parent)).foldLeft(applied)(_.appliedToArgs(_))
+    end rebuild
 
     private def generateComputedFocus[A: Type, F: Type, V: Type](using
         Quotes
@@ -1239,11 +1251,7 @@ import scala.util.control.NonFatal
                             kyo.internal.readCaptured(scala.compiletime.summonInline[Schema[ft]], $values(${ Expr(idx) }))(using $frame)
                         }.asTerm
             }
-            val ctor    = Select(New(Inferred(childType)), child.primaryConstructor)
-            val applied = childType match
-                case AppliedType(_, targs) => TypeApply(ctor, targs.map(Inferred(_))).appliedToArgs(args)
-                case _                     => Apply(ctor, args)
-            applied.asExpr
+            constructProduct(childType, child, args, frame.asTerm).asExpr
         end build
         // Built with reflection rather than a nested splice: `build` holds this macro's Quotes, which a splice's own scope rejects.
         val construct = Lambda(
@@ -1758,8 +1766,8 @@ import scala.util.control.NonFatal
                     sym,
                     sourceFields = sourceFieldsExpr,
                     focusedType = tpe,
-                    constructVia = Some { (args, reader) =>
-                        val fn      = '{ ctor($reader.frame) }.asTerm
+                    constructVia = Some { (args, reader, frame) =>
+                        val fn      = '{ ctor($frame) }.asTerm
                         val applied = Apply(Select.unique(fn, "apply"), args).asExprOf[R]
                         '{
                             kyo.internal.constructedOrThrow[A]($constructed.asResult($applied), $typeNameExpr)(using $reader.frame)
@@ -2053,6 +2061,141 @@ import scala.util.control.NonFatal
         end if
     end rejectPrivateCaseFields
 
+    /** The primary constructor's term clauses, at `tpe`'s type arguments. */
+    private def constructorClauses(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol
+    ): List[quotes.reflect.MethodType] =
+        import quotes.reflect.*
+        def clauses(t: TypeRepr): List[MethodType] =
+            t match
+                case clause: MethodType => clause :: clauses(clause.resType)
+                case _                  => Nil
+        tpe.memberType(sym.primaryConstructor) match
+            case poly: PolyType => clauses(poly.appliedTo(tpe.typeArgs))
+            case other          => clauses(other)
+    end constructorClauses
+
+    private def takesFrame(using Quotes)(tpe: quotes.reflect.TypeRepr, sym: quotes.reflect.Symbol): Boolean =
+        import quotes.reflect.*
+        constructorClauses(tpe, sym).exists(clause => clause.isImplicit && clause.paramTypes.exists(_ =:= TypeRepr.of[Frame]))
+    end takesFrame
+
+    /** Rejects a case field named as the key the frame a value keeps is written under: the field and the frame would share one key. */
+    private def rejectFrameKeyField(using Quotes)(tpe: quotes.reflect.TypeRepr, sym: quotes.reflect.Symbol): Unit =
+        import quotes.reflect.*
+        if sym.caseFields.exists(_.name == frameKey) then
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${tpe.show}: it keeps the Frame its constructor takes, which a derived Schema writes under the " +
+                    s"key '$frameKey', and it has a case field named '$frameKey'. Rename the field, or provide a given Schema explicitly."
+            )
+        end if
+    end rejectFrameKeyField
+
+    /** The member a value of a type whose constructor takes a `Frame` keeps that frame in: its one public, parameterless member of type
+      * `Frame` that is not a case field, such as `KyoException.frame` or a `(using val frame: Frame)` clause. Absent when the type keeps
+      * none; more than one is ambiguous and rejected, since the wire would carry a frame the decoded value might not hold.
+      */
+    private def frameMember(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol
+    ): Option[quotes.reflect.Symbol] =
+        import quotes.reflect.*
+        val caseFields = sym.caseFields.toSet
+        val candidates = (sym.fieldMembers ++ sym.methodMembers).distinct.filter { m =>
+            m.isTerm && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(Flags.Synthetic) &&
+            m.privateWithin.isEmpty && !caseFields.contains(m) &&
+            m.paramSymss.isEmpty &&
+            (tpe.memberType(m) match
+                case ByNameType(result) => result =:= TypeRepr.of[Frame]
+                case other              => other =:= TypeRepr.of[Frame])
+        }
+        if candidates.size > 1 then
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${tpe.show}: its constructor takes a Frame and it has several members of type Frame " +
+                    s"(${candidates.map(_.name).mkString(", ")}), so the frame to write is ambiguous. " +
+                    "Keep the constructor's frame in one public member, or provide a given Schema explicitly."
+            )
+        end if
+        candidates.headOption
+    end frameMember
+
+    /** The primary constructor applied to `args`. When it takes a `Frame` in a using clause, `frame` is passed for it and every other
+      * parameter of its using clauses is resolved here, so the frame is never filled from the derivation site.
+      */
+    private def constructProduct(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        args: List[quotes.reflect.Term],
+        frame: quotes.reflect.Term
+    ): quotes.reflect.Term =
+        import quotes.reflect.*
+        val ctor     = Select(New(Inferred(tpe)), sym.primaryConstructor)
+        val typeArgs = tpe match
+            case AppliedType(_, targs) => targs
+            case _                     => List.empty
+        val applied =
+            if typeArgs.isEmpty then Apply(ctor, args)
+            else TypeApply(ctor, typeArgs.map(Inferred(_))).appliedToArgs(args)
+        frameClauses(tpe, sym, frame).foldLeft(applied)(_.appliedToArgs(_))
+    end constructProduct
+
+    /** The using clauses after the fields of a constructor that takes a `Frame`, with `frame` for it and every other parameter resolved
+      * here; empty for any other constructor, whose using clauses the compiler fills.
+      */
+    private def frameClauses(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        frame: quotes.reflect.Term
+    ): List[List[quotes.reflect.Term]] =
+        import quotes.reflect.*
+        if !takesFrame(tpe, sym) then Nil
+        else
+            constructorClauses(tpe, sym).drop(1).takeWhile(_.isImplicit).map { clause =>
+                clause.paramTypes.map { paramType =>
+                    if paramType =:= TypeRepr.of[Frame] then frame
+                    else
+                        Implicits.search(paramType) match
+                            case success: ImplicitSearchSuccess => success.tree
+                            case failure: ImplicitSearchFailure =>
+                                report.errorAndAbort(
+                                    s"Cannot construct ${tpe.show}: no given ${paramType.show} for its constructor. ${failure.explanation}"
+                                )
+                    end if
+                }
+            }
+        end if
+    end frameClauses
+
+    /** The frame a value rebuilt from `parent` is constructed with: the one `parent` keeps, or, for a class that keeps none, the frame of
+      * the expansion site.
+      */
+    private def rebuiltFrame(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        parent: quotes.reflect.Term
+    ): quotes.reflect.Term =
+        import quotes.reflect.*
+        frameMember(tpe, sym) match
+            case Some(member) => Select(parent, member)
+            case None         =>
+                Implicits.search(TypeRepr.of[Frame]) match
+                    case success: ImplicitSearchSuccess => success.tree
+                    case failure: ImplicitSearchFailure =>
+                        report.errorAndAbort(s"Cannot construct ${tpe.show}: no Frame for its constructor. ${failure.explanation}")
+        end match
+    end rebuiltFrame
+
     // ==========================================================================
     // Product (case class, record) emission
     // ==========================================================================
@@ -2083,7 +2226,7 @@ import scala.util.control.NonFatal
         sourceFields: Expr[Seq[kyo.Field[?, ?]]],
         focusedType: quotes.reflect.TypeRepr,
         parentSelf: Option[(quotes.reflect.TypeRepr, quotes.reflect.Term)] = None,
-        constructVia: Option[(List[quotes.reflect.Term], Expr[Reader]) => quotes.reflect.Term] = None
+        constructVia: Option[(List[quotes.reflect.Term], Expr[Reader], Expr[Frame]) => quotes.reflect.Term] = None
     ): Expr[Schema[A]] =
         import quotes.reflect.*
 
@@ -2093,6 +2236,9 @@ import scala.util.control.NonFatal
         val names: List[String]   = record.fold(caseFields.map(_.name))(_.map(_._1))
         val types: List[TypeRepr] = record.fold(caseFields.map(tpe.memberType))(_.map(_._2))
         val n                     = names.length
+        // A record is built from its fields alone and keeps no frame.
+        val framed = if record.isEmpty && takesFrame(tpe, sym) then frameMember(tpe, sym) else None
+        if framed.nonEmpty then rejectFrameKeyField(tpe, sym)
 
         if n > 64 then
             report.errorAndAbort(
@@ -2229,7 +2375,7 @@ import scala.util.control.NonFatal
             // key method: the JSON writer's ASCII fast path, the Protobuf field tag, and the MsgPack
             // key-encoding switch). Dynamic `Map` keys and the hand-written sum discriminator keys stay
             // on `field`, which carries the raw String for escaping.
-            val header: Term         = '{ $w.objectStart(${ Expr(typeName) }, ${ Expr(n) }) }.asTerm
+            val header: Term         = '{ $w.objectStart(${ Expr(typeName) }, ${ Expr(n + framed.size) }) }.asTerm
             val perField: List[Term] = names.zipWithIndex.map { (name, idx) =>
                 // Field header tag MUST be the hash-based field ID (CodecMacro.fieldId), NOT the
                 // positional index. Computed at macro time as a literal; identical to the runtime's
@@ -2282,8 +2428,11 @@ import scala.util.control.NonFatal
                             }.asTerm
                 end if
             }
+            val frameField: List[Term] = framed.toList.map { member =>
+                '{ kyo.internal.writeFrame(${ Select(v.asTerm, member).asExprOf[Frame] }, $w) }.asTerm
+            }
             val trailer: Term = '{ $w.objectEnd() }.asTerm
-            Block(header :: perField, trailer).asExprOf[Unit]
+            Block(header :: perField ++ frameField, trailer).asExprOf[Unit]
         end writeBody
 
         // READ: static per-field name-matched loop.
@@ -2365,6 +2514,11 @@ import scala.util.control.NonFatal
 
             val seenRef = Ref(seenSym).asExprOf[Long]
 
+            // A frame the input lacks, as in a record a model wrote, is the decode call's: the Structure does not declare it, so it is never
+            // a required field.
+            val frameSym = Symbol.newVal(owner, "_frame", TypeRepr.of[Frame], Flags.Mutable, Symbol.noSymbol)
+            val frameDef = ValDef(frameSym, Some('{ $r.frame }.asTerm))
+
             // The index of the field whose value is being read, -1 between fields. One handler around the whole loop reads it to
             // name the field a decode failure came from, instead of a handler per field.
             val currentSym = Symbol.newVal(owner, "_current", TypeRepr.of[Int], Flags.Mutable, Symbol.noSymbol)
@@ -2386,8 +2540,16 @@ import scala.util.control.NonFatal
             end fieldArm
 
             // Build the if/else-if chain: if r.matchField(_nb0) then arm0 else if ... else r.skip().
+            val unmatched: Term =
+                if framed.isEmpty then '{ $r.skip() }.asTerm
+                else
+                    If(
+                        '{ kyo.internal.matchFrame($r) }.asTerm,
+                        Assign(Ref(frameSym), '{ kyo.internal.readFrame($r) }.asTerm),
+                        '{ $r.skip() }.asTerm
+                    )
             val dispatchChain: Term =
-                names.indices.foldRight('{ $r.skip() }.asTerm) { (idx, elseTerm) =>
+                names.indices.foldRight(unmatched) { (idx, elseTerm) =>
                     val cond = '{ $r.matchField(${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }) }.asTerm
                     If(cond, fieldArm(idx), elseTerm)
                 }
@@ -2422,48 +2584,40 @@ import scala.util.control.NonFatal
                     }.asTerm)
                 else None
 
-            tpe.asType match
-                case '[a] =>
-                    val ctorArgs: List[Term] = localSyms.map(Ref(_))
-                    // `constructVia` replaces the primary-constructor call with a caller-supplied
-                    // build step over the same decoded field locals, which is what Schema.derivedVia
-                    // routes decoding through a smart constructor with. Everything before this point
-                    // (field decoding, defaults, the required-field bitmap) is shared verbatim.
-                    val construct: Term = constructVia match
-                        case Some(build)              => build(ctorArgs, r)
-                        case None if record.isDefined =>
-                            tpe.typeArgs.head.asType match
-                                case '[f] =>
-                                    val entries = names.zip(ctorArgs).map((name, arg) => '{ (${ Expr(name) }, ${ arg.asExpr }) })
-                                    '{ new Record[f](kyo.Dict[String, Any](${ Varargs(entries) }*)) }.asTerm
-                        case None =>
-                            val ctor: Term   = Select(New(TypeTree.of[a]), sym.primaryConstructor)
-                            val typeArgsList = tpe match
-                                case AppliedType(_, targs) => targs
-                                case _                     => List.empty
-                            if typeArgsList.isEmpty then Apply(ctor, ctorArgs)
-                            else TypeApply(ctor, typeArgsList.map(t => Inferred(t))).appliedToArgs(ctorArgs)
+            val ctorArgs: List[Term] = localSyms.map(Ref(_))
+            val frame: Expr[Frame]   = if framed.isEmpty then '{ $r.frame } else Ref(frameSym).asExprOf[Frame]
+            // `constructVia` replaces the primary-constructor call with a caller-supplied
+            // build step over the same decoded field locals, which is what Schema.derivedVia
+            // routes decoding through a smart constructor with. Everything before this point
+            // (field decoding, defaults, the required-field bitmap) is shared verbatim.
+            val construct: Term = constructVia match
+                case Some(build)              => build(ctorArgs, r, frame)
+                case None if record.isDefined =>
+                    tpe.typeArgs.head.asType match
+                        case '[f] =>
+                            val entries = names.zip(ctorArgs).map((name, arg) => '{ (${ Expr(name) }, ${ arg.asExpr }) })
+                            '{ new Record[f](kyo.Dict[String, Any](${ Varargs(entries) }*)) }.asTerm
+                case None => constructProduct(tpe, sym, ctorArgs, frame.asTerm)
 
-                    val resultSym = Symbol.newVal(owner, "_result", tpe, Flags.EmptyFlags, Symbol.noSymbol)
-                    val resultDef = ValDef(resultSym, Some(construct))
+            val resultSym = Symbol.newVal(owner, "_result", tpe, Flags.EmptyFlags, Symbol.noSymbol)
+            val resultDef = ValDef(resultSym, Some(construct))
 
-                    val nExpr                     = Expr(n)
-                    val allStmts: List[Statement] =
-                        List(
-                            '{ kyo.discard($r.objectStart()) }.asTerm,
-                            '{ kyo.discard($r.initFields($nExpr)) }.asTerm,
-                            seenDef,
-                            currentDef
-                        ) ++ localDefs ++
-                            List(guardedLoop) ++
-                            requiredCheckOpt.toList ++
-                            List(
-                                '{ $r.objectEnd() }.asTerm,
-                                resultDef,
-                                '{ $r.clearFields($nExpr) }.asTerm
-                            )
-                    Block(allStmts, Ref(resultSym)).asExprOf[A]
-            end match
+            val nExpr                     = Expr(n)
+            val allStmts: List[Statement] =
+                List(
+                    '{ kyo.discard($r.objectStart()) }.asTerm,
+                    '{ kyo.discard($r.initFields($nExpr)) }.asTerm,
+                    seenDef,
+                    currentDef
+                ) ++ framed.map(_ => frameDef) ++ localDefs ++
+                    List(guardedLoop) ++
+                    requiredCheckOpt.toList ++
+                    List(
+                        '{ $r.objectEnd() }.asTerm,
+                        resultDef,
+                        '{ $r.clearFields($nExpr) }.asTerm
+                    )
+            Block(allStmts, Ref(resultSym)).asExprOf[A]
         end readBody
 
         // STRUCTURE: inline Chunk of Structure.Field via by-name fieldType thunks.
@@ -2574,6 +2728,7 @@ import scala.util.control.NonFatal
                     omitEmptyCollectionsAll = $omitEmptyRef,
                     fieldMaterializedDefaults = $materializedRef,
                     fieldTransforms = $fieldTransformsRef,
+                    writesFrame = ${ Expr(framed.nonEmpty) },
                     structure = $structureArg
                 )
             }.asTerm

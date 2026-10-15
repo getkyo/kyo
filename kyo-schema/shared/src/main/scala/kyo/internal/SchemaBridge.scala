@@ -55,6 +55,22 @@ inline def readField[A](inline s: Schema[A], r: Reader): A =
         case _: Char    => r.char().asInstanceOf[A]
         case _          => s.serializeRead(r)
 
+// The frame of a product whose constructor takes one travels beside its fields, under a key the record's Structure does not list:
+// a Structure is what a model is asked to produce, and a frame is never a model's to produce.
+private[kyo] val frameKey = "frame"
+private val frameKeyBytes = frameKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+private val frameKeyId    = CodecMacro.fieldId(frameKey)
+
+// A record read back by position (a tupleFlat payload) holds exactly its Structure's fields, so it has no place for the frame.
+def writeFrame(frame: Frame, w: Writer): Unit =
+    if !w.writesEveryField then
+        w.fieldBytes(frameKeyBytes, frameKeyId)
+        Schema.frameSchema.serializeWrite(frame, w)
+
+def matchFrame(r: Reader): Boolean = r.matchField(frameKeyBytes)
+
+def readFrame(r: Reader): Frame = Schema.frameSchema.serializeRead(r)
+
 // A value a schema declares itself (a field's default, an example), written through the schema while the schema is built or described:
 // no encode call exists, so there is no caller Frame to give the writer, and the site may sit in package kyo, where none can be derived.
 def declaredValue[A](s: Schema[A], a: A): kyo.Structure.Value =

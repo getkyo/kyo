@@ -82,7 +82,8 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     @publicInBinary private[kyo] val flattenedFields: Chunk[internal.FlattenedField] = Chunk.empty,
     @publicInBinary private[kyo] val catchAll: Maybe[internal.CatchAll] = Maybe.empty,
     @publicInBinary private[kyo] val variantNames: Chunk[String] = Chunk.empty,
-    @publicInBinary private[kyo] val builderProblem: Maybe[internal.BuilderProblem] = Maybe.empty
+    @publicInBinary private[kyo] val builderProblem: Maybe[internal.BuilderProblem] = Maybe.empty,
+    @publicInBinary private[kyo] val writesFrame: Boolean = false
 ):
 
     /** The structural representation type. Set by factory/transforms. */
@@ -1996,6 +1997,7 @@ object Schema:
         fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
         variantNames: Chunk[String] = Chunk.empty,
         catchAll: Maybe[internal.CatchAll] = Maybe.empty,
+        writesFrame: Boolean = false,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] =
         // Lazy capture defers inner.structure access until structure is first queried.
@@ -2030,7 +2032,8 @@ object Schema:
             fieldTransforms,
             fieldMaterializedDefaults,
             catchAll = catchAll,
-            variantNames = variantNames
+            variantNames = variantNames,
+            writesFrame = writesFrame
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 val writeWriter           = writerForAnnotations(writer)
@@ -2157,6 +2160,7 @@ object Schema:
         fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
         absentDefaultValue: => Maybe[A] = Maybe.empty,
+        writesFrame: Boolean = false,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] { type Focused = F } =
         // Erase the F-typed Function signatures to (A, Any) via asInstanceOf on the Function
@@ -2193,6 +2197,7 @@ object Schema:
             fieldDefaults = fieldDefaults,
             fieldTransforms = fieldTransforms,
             absentDefaultValue = absentDefaultValue,
+            writesFrame = writesFrame,
             structure = structure
         ).asInstanceOf[Schema[A] { type Focused = F }]
     end initFocused
@@ -2212,6 +2217,11 @@ object Schema:
       * Automatically generates a full Schema[A] for case classes and sealed traits/enums, including serialization, structural type, source
       * field descriptors, and default values. Summoned implicitly wherever `using Schema[A]` appears, or explicitly via `Schema.derived[A]`
       * to define a given in a companion object.
+      *
+      * A case class whose constructor takes a `Frame` in a using clause, and keeps it in one public member such as a `KyoException`'s
+      * `frame`, writes that frame under the key `frame` beside its fields and decodes with it, so the decoded value's frame is the
+      * original's. The key is not a field of its `structure`, and a case field of that name fails derivation. Input without the key, and
+      * a class that keeps no frame, decode with the decode call's `Frame`.
       *
       * @tparam A
       *   the type to derive a Schema for; must be a case class, sealed trait, enum, or primitive
@@ -2246,8 +2256,9 @@ object Schema:
       * `Either`, or `Try`.
       *
       * `construct` is typed with the `Frame` of the decode call in scope, so a constructor that takes one, such as an
-      * `init(...)(using Frame)`, builds its rejection with the reader's site rather than the site that defined the given. The given is
-      * then built once, as a plain `given Schema[A]`.
+      * `init(...)(using Frame)`, builds its rejection with the reader's site rather than the site that defined the given. For a type that
+      * carries its frame on the wire (see [[derived]]), that `Frame` is the decoded one. The given is then built once, as a plain
+      * `given Schema[A]`.
       *
       * One method takes every arity, the constructor's shape read by [[Schema.Constructor]]: overloads by arity would type an explicit
       * lambda before the `Frame` is in scope, resolving it at the given's own site.
@@ -4003,6 +4014,7 @@ object Schema:
         catchAll0: Maybe[internal.CatchAll] = Maybe.empty,
         variantNames0: Chunk[String] = Chunk.empty,
         builderProblem0: Maybe[internal.BuilderProblem] = Maybe.empty,
+        writesFrame0: Boolean = false,
         absentDefaultValue: => Maybe[A] = Maybe.empty,
         structure: => Structure.Type
     ): Schema[A] { type Focused = E } =
@@ -4037,7 +4049,8 @@ object Schema:
             flattenedFields0,
             catchAll0,
             variantNames0,
-            builderProblem0
+            builderProblem0,
+            writesFrame0
         ):
             type Focused = E
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
@@ -4103,6 +4116,7 @@ object Schema:
         catchAll: Maybe[internal.CatchAll] = self.catchAll,
         variantNames: Chunk[String] = self.variantNames,
         builderProblem: Maybe[internal.BuilderProblem] = self.configurationProblem,
+        writesFrame: Boolean = self.writesFrame,
         absentDefaultValue: => Maybe[A] = self.absentDefaultValue,
         structure: => Structure.Type = self.structure
     ): Schema[A] { type Focused = self.Focused } =
@@ -4140,6 +4154,7 @@ object Schema:
             catchAll0 = catchAll,
             variantNames0 = variantNames,
             builderProblem0 = builderProblem,
+            writesFrame0 = writesFrame,
             absentDefaultValue = absentDefaultValue,
             structure = structure
         )
