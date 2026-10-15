@@ -8,7 +8,9 @@ import scala.util.NotGiven
 /** The constraint the implicit lift carries, rejecting what should not be lifted into a computation.
   *
   * Two things are refused: a computation (lifting one into another nests it; fix with `.flatten` or by splitting the expression) and a kyo
-  * module object (`Abort` where `Abort(...)` was meant would otherwise become `Abort.type < S`, hiding the missing argument list).
+  * module object (`Abort` where `Abort(...)` was meant would otherwise become `Abort.type < S`, hiding the missing argument list). A type
+  * a computation is a subtype of counts as a computation, since its values may be one: a union holding a computation, or an opaque type
+  * whose lower bound is one. `Any` is the exception, admitted by its own given, since every lift of an untyped value would fail otherwise.
   *
   * It is a soft constraint: it tests whether the type being lifted is a computation. At a concrete type it can answer; inside a generic
   * function the type parameter is abstract and cannot be tested, so the lift fires and a nested computation results.
@@ -76,7 +78,12 @@ object CanLift:
     // expansion at every lift site, and a file that summons a same-module macro is suspended to a retry run, a
     // cascade this module sits close to.
 
-    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
+    inline given derived[A](
+        using
+        inline ng: NotGiven[A <:< (Any < Nothing)],
+        inline nb: NotGiven[(Nothing < Any) <:< A],
+        inline ns: NotGiven[A <:< Singleton]
+    ): CanLift[A] = null
 
     /** A case object is a singleton but never a kyo module, so it is admitted without asking the macro. */
     inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
@@ -84,4 +91,6 @@ object CanLift:
     inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
 
     inline given CanLift[Nothing] = null
+
+    inline given CanLift[Any] = null
 end CanLift

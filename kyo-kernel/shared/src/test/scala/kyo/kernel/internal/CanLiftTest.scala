@@ -71,8 +71,7 @@ class CanLiftTest extends Test:
     "work with union types" in {
         type Union = Int | String
         implicitly[CanLift[Union]]
-        implicitly[CanLift[Int | (String < Any)]]
-        succeed
+        typeCheckFailure("implicitly[CanLift[Int | (String < Any)]]")("may contain a nested effect computation")
     }
 
     "work with intersection types" in {
@@ -94,4 +93,19 @@ class CanLiftTest extends Test:
             "Cannot lift 'kyo.kernel.ArrowEffect$' to a 'ArrowEffect$ < S"
         )
     }
+
+    "an opaque type whose lower bound is a computation does not lift, since its values may be computations" in {
+        implicitly[CanLift[CanLiftTest.Plain[Int]]]
+        typeCheckFailure("implicitly[CanLift[CanLiftTest.Steps[Int, Any]]]")("may contain a nested effect computation")
+    }
+
+    "Any lifts" in {
+        implicitly[CanLift[Any]]
+        succeed
+    }
+end CanLiftTest
+
+object CanLiftTest:
+    opaque type Steps[+A, -S] >: (A < S) = A < S
+    opaque type Plain[A]                 = A
 end CanLiftTest
