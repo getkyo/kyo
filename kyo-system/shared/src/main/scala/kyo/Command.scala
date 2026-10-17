@@ -233,7 +233,8 @@ object Command:
           * The program, once exited, stays unreaped until `destroyTree` kills its group, so its pid, which is the group's id, cannot be
           * reused before that kill; with [[spawnUnscoped]] it stays so until the caller runs `destroyTree`, for as long as this program
           * runs if it never does. On the JVM the spawn calls the C library through `java.lang.foreign`, so without
-          * `--enable-native-access=ALL-UNNAMED` the JDK prints a restricted-method warning. Supported on POSIX hosts.
+          * `--enable-native-access=ALL-UNNAMED` the JDK prints a restricted-method warning. Windows has no process groups: there the spawn
+          * fails with [[ProcessGroupUnsupportedException]].
           */
         def processGroup: Command = self.unsafe.withProcessGroup.safe
 

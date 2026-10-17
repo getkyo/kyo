@@ -37,7 +37,8 @@ import scala.scalanative.unsigned.*
   * carry `FD_CLOEXEC` as well, and they are read and written through their own descriptors, since a file stream Scala Native opens on
   * `/dev/fd/<n>` would drop it.
   *
-  * Windows has no process groups: [[spawn]] panics there, so nothing reaches the others. Each one still tests `LinktimeInfo.isWindows` as
+  * Windows has no process groups: a group spawn fails there with [[ProcessGroupUnsupportedException]] before it reaches this object, so
+  * nothing reaches these functions. Each one still tests `LinktimeInfo.isWindows` as
   * its own `if`'s condition, which the linker resolves and so keeps the POSIX calls out of a Windows link; the same test behind a method,
   * even an `inline` one, is a runtime branch and leaves them in.
   */
@@ -71,8 +72,7 @@ private[kyo] object ProcessGroupPlatform:
         redirectError: Boolean
     )(using Frame): Result[CommandException, Spawned] =
         val program = args.headMaybe.getOrElse("")
-        if LinktimeInfo.isWindows then
-            Result.panic(new UnsupportedOperationException(s"processGroup needs a POSIX host: ${args.mkString(" ")}"))
+        if LinktimeInfo.isWindows then Result.fail(ProcessGroupUnsupportedException(program))
         else
             ProcessSpawnPlatform.exclusive {
                 // Every descriptor opened here; each is closed or handed to a stream before the spawn returns.

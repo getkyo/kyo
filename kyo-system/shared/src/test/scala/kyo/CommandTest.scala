@@ -161,9 +161,10 @@ class CommandTest extends kyo.test.Test[Any]:
             result match
                 case Result.Failure(err) =>
                     val msg = err match
-                        case ProgramNotFoundException(cmd)        => s"not found: $cmd"
-                        case PermissionDeniedException(cmd)       => s"denied: $cmd"
-                        case WorkingDirectoryNotFoundException(p) => s"missing cwd: $p"
+                        case ProgramNotFoundException(cmd)         => s"not found: $cmd"
+                        case PermissionDeniedException(cmd)        => s"denied: $cmd"
+                        case WorkingDirectoryNotFoundException(p)  => s"missing cwd: $p"
+                        case ProcessGroupUnsupportedException(cmd) => s"no process groups: $cmd"
                     assert(msg.startsWith("not found:"))
                 case Result.Success(_) =>
                     fail("Expected failure, got success")
@@ -473,13 +474,15 @@ class CommandTest extends kyo.test.Test[Any]:
         val errors: List[CommandException] = List(
             ProgramNotFoundException("test"),
             PermissionDeniedException("test"),
-            WorkingDirectoryNotFoundException(Path / "nonexistent")
+            WorkingDirectoryNotFoundException(Path / "nonexistent"),
+            ProcessGroupUnsupportedException("test")
         )
         errors.foreach { err =>
             err match
                 case ProgramNotFoundException(cmd)           => assert(cmd == "test")
                 case PermissionDeniedException(cmd)          => assert(cmd == "test")
                 case WorkingDirectoryNotFoundException(path) => ()
+                case ProcessGroupUnsupportedException(cmd)   => assert(cmd == "test")
         }
         ()
     }
@@ -986,6 +989,14 @@ class CommandTest extends kyo.test.Test[Any]:
                     case Result.Failure(WorkingDirectoryNotFoundException(path)) => assert(path == dir / "gone")
                     case other => fail(s"Expected WorkingDirectoryNotFoundException, got: $other")
             end for
+        }
+    }
+
+    "processGroup: on Windows the spawn fails with ProcessGroupUnsupportedException" in {
+        assume(isWindows, "Every other host has process groups")
+        Abort.run[CommandException](Command("cmd", "/c", "echo", "x").processGroup.waitFor).map {
+            case Result.Failure(ProcessGroupUnsupportedException(cmd)) => assert(cmd == "cmd")
+            case other                                                 => fail(s"Expected ProcessGroupUnsupportedException, got: $other")
         }
     }
 

@@ -35,7 +35,7 @@ import kyo.*
   * The pipe ends kept here are opened as JDK file streams on `/dev/fd/<n>` and the descriptors `pipe` returned are closed, so a read, a write
   * and a close behave as on the JDK's own process pipes.
   *
-  * Windows has no process groups: [[spawn]] panics there, so nothing reaches the others.
+  * Windows has no process groups: a group spawn fails there with [[ProcessGroupUnsupportedException]] before it reaches this object.
   */
 private[kyo] object ProcessGroupPlatform:
 
@@ -87,43 +87,39 @@ private[kyo] object ProcessGroupPlatform:
         stderr: StdioSink,
         redirectError: Boolean
     )(using Frame): Result[CommandException, Spawned] =
-        if Platform.isWindows then
-            Result.panic(new UnsupportedOperationException(s"processGroup needs a POSIX host: ${args.mkString(" ")}"))
-        else
-            val program = args.headMaybe.getOrElse("")
-            val arena   = Arena.ofConfined()
-            // Every descriptor opened here; each is closed or handed to a stream before the spawn returns.
-            val opened = scala.collection.mutable.ArrayBuffer.empty[Int]
-            try
-                val input  = Maybe.when(stdin != Process.Input.Inherit)(pipe(arena, opened))
-                val output = Maybe.when(stdout == StdioSink.Pipe)(pipe(arena, opened))
-                val error  = Maybe.when(!redirectError && stderr == StdioSink.Pipe)(pipe(arena, opened))
-                val status = start(arena, program, args, workDir, environment, input, output, error, stdout, stderr, redirectError)
-                // The child holds its ends now, or nobody does if the spawn failed.
-                input.foreach((read, _) => close(read, opened))
-                output.foreach((_, write) => close(write, opened))
-                error.foreach((_, write) => close(write, opened))
-                status match
-                    case Result.Success(pid) =>
-                        Result.succeed(Spawned(
-                            pid,
-                            input.map((_, write) => writer(write, opened)).getOrElse(closedWriter()),
-                            output.map((read, _) => reader(read, opened)).getOrElse(InputStream.nullInputStream()),
-                            error.map((read, _) => reader(read, opened)).getOrElse(InputStream.nullInputStream())
-                        ))
-                    case Result.Failure(ErrnoNoEntry) => Result.fail(ProgramNotFoundException(program))
-                    case Result.Failure(ErrnoAccess | ErrnoPermission | ErrnoNoExec | ErrnoIsFolder) =>
-                        Result.fail(PermissionDeniedException(program))
-                    case Result.Failure(errno) => Result.panic(new IOException(s"posix_spawnp of $program failed with errno $errno"))
-                    case Result.Panic(cause)   => Result.panic(cause)
-                end match
-            catch
-                case e: IOException => Result.panic(e)
-            finally
-                opened.toList.foreach(fd => close(fd, opened))
-                arena.close()
-            end try
-        end if
+        val program = args.headMaybe.getOrElse("")
+        val arena   = Arena.ofConfined()
+        // Every descriptor opened here; each is closed or handed to a stream before the spawn returns.
+        val opened = scala.collection.mutable.ArrayBuffer.empty[Int]
+        try
+            val input  = Maybe.when(stdin != Process.Input.Inherit)(pipe(arena, opened))
+            val output = Maybe.when(stdout == StdioSink.Pipe)(pipe(arena, opened))
+            val error  = Maybe.when(!redirectError && stderr == StdioSink.Pipe)(pipe(arena, opened))
+            val status = start(arena, program, args, workDir, environment, input, output, error, stdout, stderr, redirectError)
+            // The child holds its ends now, or nobody does if the spawn failed.
+            input.foreach((read, _) => close(read, opened))
+            output.foreach((_, write) => close(write, opened))
+            error.foreach((_, write) => close(write, opened))
+            status match
+                case Result.Success(pid) =>
+                    Result.succeed(Spawned(
+                        pid,
+                        input.map((_, write) => writer(write, opened)).getOrElse(closedWriter()),
+                        output.map((read, _) => reader(read, opened)).getOrElse(InputStream.nullInputStream()),
+                        error.map((read, _) => reader(read, opened)).getOrElse(InputStream.nullInputStream())
+                    ))
+                case Result.Failure(ErrnoNoEntry) => Result.fail(ProgramNotFoundException(program))
+                case Result.Failure(ErrnoAccess | ErrnoPermission | ErrnoNoExec | ErrnoIsFolder) =>
+                    Result.fail(PermissionDeniedException(program))
+                case Result.Failure(errno) => Result.panic(new IOException(s"posix_spawnp of $program failed with errno $errno"))
+                case Result.Panic(cause)   => Result.panic(cause)
+            end match
+        catch
+            case e: IOException => Result.panic(e)
+        finally
+            opened.toList.foreach(fd => close(fd, opened))
+            arena.close()
+        end try
     end spawn
 
     /** Completes with the program's exit code at its exit, leaving it unreaped.
@@ -154,11 +150,11 @@ private[kyo] object ProcessGroupPlatform:
     def reap(pid: Long): Boolean =
         val arena = Arena.ofConfined()
         try
-            val state  = arena.allocate(C.stateLayout)
+            val state  = arena.allocate(LibGroup.stateLayout)
             val status = arena.allocate(JAVA_INT)
             @scala.annotation.tailrec
             def loop(): Boolean =
-                val reaped: Int = C.waitpid.invokeExact(state, pid.toInt, status, WaitNoHang)
+                val reaped: Int = LibGroup.waitpid.invokeExact(state, pid.toInt, status, WaitNoHang)
                 if reaped == -1 && errnoOf(state) == ErrnoInterrupted then loop() else reaped == pid.toInt
             end loop
             loop()
@@ -183,36 +179,36 @@ private[kyo] object ProcessGroupPlatform:
         val attr    = arena.allocate(OpaqueSize, 16)
         val actions = arena.allocate(OpaqueSize, 16)
         val mask    = arena.allocate(OpaqueSize, 16)
-        check("posix_spawnattr_init", C.attrInit.invokeExact(attr))
+        check("posix_spawnattr_init", LibGroup.attrInit.invokeExact(attr))
         try
-            check("posix_spawn_file_actions_init", C.actionsInit.invokeExact(actions))
+            check("posix_spawn_file_actions_init", LibGroup.actionsInit.invokeExact(actions))
             try
                 val flags = SetPgroup | SetSigmask | (if Mac then CloexecDefault else 0)
-                check("posix_spawnattr_setflags", C.attrSetflags.invokeExact(attr, flags.toShort))
-                check("posix_spawnattr_setpgroup", C.attrSetpgroup.invokeExact(attr, 0))
-                check("sigemptyset", C.sigemptyset.invokeExact(mask))
-                check("posix_spawnattr_setsigmask", C.attrSetsigmask.invokeExact(attr, mask))
+                check("posix_spawnattr_setflags", LibGroup.attrSetflags.invokeExact(attr, flags.toShort))
+                check("posix_spawnattr_setpgroup", LibGroup.attrSetpgroup.invokeExact(attr, 0))
+                check("sigemptyset", LibGroup.sigemptyset.invokeExact(mask))
+                check("posix_spawnattr_setsigmask", LibGroup.attrSetsigmask.invokeExact(attr, mask))
                 input match
-                    case Present((read, _)) => check("adddup2", C.addDup2.invokeExact(actions, read, 0))
+                    case Present((read, _)) => check("adddup2", LibGroup.addDup2.invokeExact(actions, read, 0))
                     case Absent             => inherit(actions, 0)
                 route(arena, actions, 1, stdout, output)
-                if redirectError then check("adddup2", C.addDup2.invokeExact(actions, 1, 2))
+                if redirectError then check("adddup2", LibGroup.addDup2.invokeExact(actions, 1, 2))
                 else route(arena, actions, 2, stderr, error)
-                workDir.foreach(path => check("addchdir_np", C.addChdir.invokeExact(actions, arena.allocateFrom(path.toString))))
+                workDir.foreach(path => check("addchdir_np", LibGroup.addChdir.invokeExact(actions, arena.allocateFrom(path.toString))))
                 // Last: before the dup2s above, these closes would take the pipe ends they read.
-                C.addClosefrom match
+                LibGroup.addClosefrom match
                     case Present(handle) => check("addclosefrom_np", handle.invokeExact(actions, 3))
                     case Absent          => if !Mac then closeEach(actions)
                 val pid         = arena.allocate(JAVA_INT)
                 val argv        = strings(arena, args)
                 val envp        = strings(arena, Chunk.from(environment.map((name, value) => s"$name=$value")))
-                val status: Int = C.spawnp.invokeExact(pid, arena.allocateFrom(program), actions, attr, argv, envp)
+                val status: Int = LibGroup.spawnp.invokeExact(pid, arena.allocateFrom(program), actions, attr, argv, envp)
                 if status == 0 then Result.succeed(pid.get(JAVA_INT, 0).toLong) else Result.fail(status)
             finally
-                val _: Int = C.actionsDestroy.invokeExact(actions)
+                val _: Int = LibGroup.actionsDestroy.invokeExact(actions)
             end try
         finally
-            val _: Int = C.attrDestroy.invokeExact(attr)
+            val _: Int = LibGroup.attrDestroy.invokeExact(attr)
         end try
     end start
 
@@ -220,7 +216,7 @@ private[kyo] object ProcessGroupPlatform:
         val arena = Arena.ofConfined()
         try
             val info   = arena.allocate(OpaqueSize, 16).fill(0.toByte)
-            val _: Int = C.waitid.invokeExact(IdPid, pid.toInt, info, WaitExited | WaitNoHang | WaitNoWait)
+            val _: Int = LibGroup.waitid.invokeExact(IdPid, pid.toInt, info, WaitExited | WaitNoHang | WaitNoWait)
             val status = info.get(JAVA_INT, StatusOffset)
             if info.get(JAVA_INT, CodeOffset) == CodeExited then ExitCode(status) else ExitCode.Signaled(status)
         finally arena.close()
@@ -230,54 +226,56 @@ private[kyo] object ProcessGroupPlatform:
     private def kill(pid: Long, number: Int): (Int, Int) =
         val arena = Arena.ofConfined()
         try
-            val state       = arena.allocate(C.stateLayout)
-            val status: Int = C.kill.invokeExact(state, pid.toInt, number)
+            val state       = arena.allocate(LibGroup.stateLayout)
+            val status: Int = LibGroup.kill.invokeExact(state, pid.toInt, number)
             (status, errnoOf(state))
         finally arena.close()
         end try
     end kill
 
     private def pipe(arena: Arena, opened: scala.collection.mutable.ArrayBuffer[Int]): (Int, Int) =
-        val state       = arena.allocate(C.stateLayout)
+        val state       = arena.allocate(LibGroup.stateLayout)
         val ends        = arena.allocate(JAVA_INT, 2)
-        val status: Int = C.pipe2 match
+        val status: Int = LibGroup.pipe2 match
             case Present(pipe2) => pipe2.invokeExact(state, ends, OpenCloexec)
-            case Absent         => C.pipe.invokeExact(state, ends)
+            case Absent         => LibGroup.pipe.invokeExact(state, ends)
         if status != 0 then throw new IOException(s"pipe failed with errno ${errnoOf(state)}")
         val read  = ends.getAtIndex(JAVA_INT, 0)
         val write = ends.getAtIndex(JAVA_INT, 1)
         opened += read
         opened += write
-        if C.pipe2.isEmpty then
-            check("fcntl", C.fcntl.invokeExact(read, SetDescriptor, DescriptorCloexec))
-            check("fcntl", C.fcntl.invokeExact(write, SetDescriptor, DescriptorCloexec))
+        if LibGroup.pipe2.isEmpty then
+            check("fcntl", LibGroup.fcntl.invokeExact(read, SetDescriptor, DescriptorCloexec))
+            check("fcntl", LibGroup.fcntl.invokeExact(write, SetDescriptor, DescriptorCloexec))
         (read, write)
     end pipe
 
     private def route(arena: Arena, actions: MemorySegment, fd: Int, sink: StdioSink, pipe: Maybe[(Int, Int)]): Unit =
         sink match
-            case StdioSink.Pipe                 => pipe.foreach((_, write) => check("adddup2", C.addDup2.invokeExact(actions, write, fd)))
-            case StdioSink.Inherit              => inherit(actions, fd)
+            case StdioSink.Pipe    => pipe.foreach((_, write) => check("adddup2", LibGroup.addDup2.invokeExact(actions, write, fd)))
+            case StdioSink.Inherit => inherit(actions, fd)
             case StdioSink.ToFile(path, append) =>
                 val flags = OpenWrite | OpenCreate | (if append then OpenAppend else OpenTruncate)
                 val name  = arena.allocateFrom(path.toString)
                 // mode_t is 16 bits on macOS and 32 on Linux.
                 val status: Int =
-                    if Mac then C.addOpen.invokeExact(actions, fd, name, flags, FileMode.toShort)
-                    else C.addOpen.invokeExact(actions, fd, name, flags, FileMode)
+                    if Mac then LibGroup.addOpen.invokeExact(actions, fd, name, flags, FileMode.toShort)
+                    else LibGroup.addOpen.invokeExact(actions, fd, name, flags, FileMode)
                 check("addopen", status)
 
     // Under POSIX_SPAWN_CLOEXEC_DEFAULT a descriptor no file action names is closed in the child, the standard streams included.
     private def inherit(actions: MemorySegment, fd: Int): Unit =
-        C.addInherit.foreach(handle => check("addinherit_np", handle.invokeExact(actions, fd)))
+        LibGroup.addInherit.foreach(handle => check("addinherit_np", handle.invokeExact(actions, fd)))
 
     // A close in the child for each descriptor from 3 to the highest one open now plus CloseMargin. One another thread opens before the
     // spawn takes the lowest free number, so it is under that bound unless more than CloseMargin open in between. musl's child ignores
     // the close of a descriptor that is not open; glibc's refuses one at or above _SC_OPEN_MAX, which bounds the range.
     private def closeEach(actions: MemorySegment): Unit =
         val highest       = Maybe(new java.io.File("/proc/self/fd").list()).fold(2)(_.flatMap(_.toIntOption).maxOption.getOrElse(2))
-        val openMax: Long = C.sysconf.invokeExact(SysconfOpenMax)
-        (3 to math.min(highest + CloseMargin, openMax - 1).toInt).foreach(fd => check("addclose", C.addClose.invokeExact(actions, fd)))
+        val openMax: Long = LibGroup.sysconf.invokeExact(SysconfOpenMax)
+        (3 to math.min(highest + CloseMargin, openMax - 1).toInt).foreach(fd =>
+            check("addclose", LibGroup.addClose.invokeExact(actions, fd))
+        )
     end closeEach
 
     private def strings(arena: Arena, values: Chunk[String]): MemorySegment =
@@ -309,9 +307,9 @@ private[kyo] object ProcessGroupPlatform:
     private def close(fd: Int, opened: scala.collection.mutable.ArrayBuffer[Int]): Unit =
         if opened.contains(fd) then
             opened -= fd
-            val _: Int = C.close.invokeExact(fd)
+            val _: Int = LibGroup.close.invokeExact(fd)
 
-    private def errnoOf(state: MemorySegment): Int = C.errno.get(state, 0L)
+    private def errnoOf(state: MemorySegment): Int = LibGroup.errno.get(state, 0L)
 
     private def check(call: String, status: Int): Unit =
         if status != 0 then throw new IOException(s"$call failed with $status")
@@ -329,7 +327,7 @@ private[kyo] object ProcessGroupPlatform:
         private val ErrnoMissing = 3
         private val Batch        = 16
 
-        private val queue   = C.kqueue.invokeExact(): Int
+        private val queue   = LibGroup.kqueue.invokeExact(): Int
         private val waiting = new java.util.concurrent.ConcurrentHashMap[Long, CompletableFuture[ExitCode]]
 
         locally {
@@ -348,8 +346,8 @@ private[kyo] object ProcessGroupPlatform:
                 change.set(JAVA_SHORT, 8L, FilterProc)
                 change.set(JAVA_SHORT, 10L, AddOnce)
                 change.set(JAVA_INT, 12L, NoteExit)
-                val state       = arena.allocate(C.stateLayout)
-                val status: Int = C.kevent.invokeExact(state, queue, change, 1, MemorySegment.NULL, 0, MemorySegment.NULL)
+                val state       = arena.allocate(LibGroup.stateLayout)
+                val status: Int = LibGroup.kevent.invokeExact(state, queue, change, 1, MemorySegment.NULL, 0, MemorySegment.NULL)
                 // A process that exited before the watch is registered is already a zombie, which kqueue no longer watches.
                 if status == -1 && errnoOf(state) == ErrnoMissing then complete(pid)
                 else if status == -1 then
@@ -368,7 +366,7 @@ private[kyo] object ProcessGroupPlatform:
         private def loop(): Unit =
             val events = Arena.global().allocate(EventSize * Batch, 8)
             while true do
-                val ready: Int = C.keventWait.invokeExact(queue, MemorySegment.NULL, 0, events, Batch, MemorySegment.NULL)
+                val ready: Int = LibGroup.keventWait.invokeExact(queue, MemorySegment.NULL, 0, events, Batch, MemorySegment.NULL)
                 (0 until ready).foreach(index => complete(events.get(JAVA_LONG, index * EventSize)))
             end while
         end loop
@@ -377,7 +375,7 @@ private[kyo] object ProcessGroupPlatform:
 
     // Bound on first use, so a program that never starts a group never binds a native function, which the JDK reports as a
     // restricted-method warning without --enable-native-access.
-    private object C:
+    private object LibGroup:
         private val linker  = Linker.nativeLinker()
         private val lookup  = linker.defaultLookup()
         private val capture = Linker.Option.captureCallState("errno")
@@ -425,6 +423,6 @@ private[kyo] object ProcessGroupPlatform:
         lazy val kqueue              = bind("kqueue", FunctionDescriptor.of(JAVA_INT))
         lazy val kevent              = bind("kevent", keventDescriptor, capture)
         lazy val keventWait          = bind("kevent", keventDescriptor)
-    end C
+    end LibGroup
 
 end ProcessGroupPlatform

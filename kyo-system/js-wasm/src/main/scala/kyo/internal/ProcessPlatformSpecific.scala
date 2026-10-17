@@ -692,8 +692,7 @@ final private[kyo] class NodeCommandUnsafe(
     def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
         if args.isEmpty then Result.fail(ProgramNotFoundException(""))
         // On Windows `detached` opens a console rather than a group, and there is no group to signal.
-        else if processGroup && Platform.isWindows then
-            Result.panic(new UnsupportedOperationException(s"processGroup needs a POSIX host: ${args.mkString(" ")}"))
+        else if processGroup && Platform.isWindows then Result.fail(ProcessGroupUnsupportedException(args.head))
         else
             // Validate program exists synchronously so spawn() can return Result.Failure without
             // waiting for the async 'error' event (which would prevent synchronous error reporting).

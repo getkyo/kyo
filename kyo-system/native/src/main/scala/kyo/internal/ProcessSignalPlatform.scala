@@ -24,12 +24,12 @@ import scala.scalanative.unsafe.CInt
   */
 private[kyo] object ProcessSignalPlatform:
 
-    private val ignore: CFuncPtr1[CInt, Unit] = CFuncPtr1.fromScalaFunction((_: CInt) => ())
+    private val noop: CFuncPtr1[CInt, Unit] = CFuncPtr1.fromScalaFunction((_: CInt) => ())
 
     // Evaluated once, before the first child is spawned.
     private lazy val brokenPipesIgnored: Unit =
         if !isWindows then
-            val previous = csignal.signal(posixsignal.SIGPIPE, ignore)
+            val previous = csignal.signal(posixsignal.SIGPIPE, noop)
             if !isDefaultDisposition(previous) then
                 discard(csignal.signal(posixsignal.SIGPIPE, previous))
 

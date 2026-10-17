@@ -606,21 +606,23 @@ final private[kyo] class JvmCommandUnsafe(
       * ProcessBuilder path, so every stage is in the shell's group.
       */
     private def spawnGroup(chain: Seq[JvmCommandUnsafe])(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
-        missingWorkDir match
-            case Present(err) => Result.fail(err)
-            case Absent       =>
-                val piped    = chain.length > 1
-                val program  = if piped then Chunk("sh", "-c", shellCommand(chain)) else args
-                val stdin    = if stdinStream.isDefined then Process.Input.Pipe else stdinSource
-                val stdout   = if piped then StdioSink.Pipe else stdoutSink
-                val stderr   = if piped then StdioSink.Pipe else stderrSink
-                val mergeErr = if piped then chain.last.redirectError else redirectError
-                ProcessGroupPlatform.spawn(program, workDir, environment, stdin, stdout, stderr, mergeErr).map { spawned =>
-                    val proc = new GroupProcessUnsafe(spawned, ProcessGroupPlatform.awaitExit(spawned.pid))
-                    feedStdin(proc.feeds, spawned.stdin)
-                    proc
-                }
-        end match
+        if Platform.isWindows then Result.fail(ProcessGroupUnsupportedException(args.headMaybe.getOrElse("")))
+        else
+            missingWorkDir match
+                case Present(err) => Result.fail(err)
+                case Absent       =>
+                    val piped    = chain.length > 1
+                    val program  = if piped then Chunk("sh", "-c", shellCommand(chain)) else args
+                    val stdin    = if stdinStream.isDefined then Process.Input.Pipe else stdinSource
+                    val stdout   = if piped then StdioSink.Pipe else stdoutSink
+                    val stderr   = if piped then StdioSink.Pipe else stderrSink
+                    val mergeErr = if piped then chain.last.redirectError else redirectError
+                    ProcessGroupPlatform.spawn(program, workDir, environment, stdin, stdout, stderr, mergeErr).map { spawned =>
+                        val proc = new GroupProcessUnsafe(spawned, ProcessGroupPlatform.awaitExit(spawned.pid))
+                        feedStdin(proc.feeds, spawned.stdin)
+                        proc
+                    }
+            end match
     end spawnGroup
 
     def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]] =
