@@ -40,7 +40,7 @@ MediaType.parse("text").map(_.baseType)
 MediaType.init("application", "json").flatMap(_.render) // Result.succeed("application/json")
 ```
 
-`MediaType.init` builds a media type from its parts and returns the violation for a part that is not a token or a name given twice; `Disposition.init` does the same for a disposition. Both types have a `Schema`, decoding through the same checks, so a media type in a JSON configuration is validated where it is read.
+`MediaType.init` builds a media type from its parts and returns the violation for a part that is not a token or a name given twice; `Disposition.init` does the same for a disposition. `MediaType.ImagePng`, `ImageJpeg`, `ImageGif` and `ImageWebp` are the image types as values, with no violation to handle. Both types have a `Schema`, decoding through the same checks, so a media type in a JSON configuration is validated where it is read.
 
 ## Parameters and RFC 2231 encoded values
 

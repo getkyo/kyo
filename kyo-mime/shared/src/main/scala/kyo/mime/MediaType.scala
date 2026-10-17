@@ -47,6 +47,18 @@ object MediaType:
         given Schema[Parameter] =
             Schema.derivedVia((name: String, value: String) => checkedParameter(name, value))
 
+    /** `image/png`. */
+    val ImagePng: MediaType = new MediaType("image", "png", Chunk.empty)
+
+    /** `image/jpeg`. */
+    val ImageJpeg: MediaType = new MediaType("image", "jpeg", Chunk.empty)
+
+    /** `image/gif`. */
+    val ImageGif: MediaType = new MediaType("image", "gif", Chunk.empty)
+
+    /** `image/webp`. */
+    val ImageWebp: MediaType = new MediaType("image", "webp", Chunk.empty)
+
     /** A media type from its parts, or the violation: a part that is not a token, or a name given twice. */
     def init(mainType: String, subType: String, parameters: (String, String)*)(using
         Frame
