@@ -155,6 +155,36 @@ class MediaTypeTest extends kyo.test.Test[Any]:
             assert(Chunk("image/png", "image/jpeg", "image/gif", "image/webp").map(MediaType.parse(_)) == constants.map(Result.succeed(_)))
             assert(constants.map(_.render) == Chunk("image/png", "image/jpeg", "image/gif", "image/webp").map(Result.succeed(_)))
         }
+        "each text constant is the type its text reads as" in {
+            val constants = Chunk(
+                MediaType.TextPlain,
+                MediaType.TextMarkdown,
+                MediaType.TextCsv,
+                MediaType.TextHtml,
+                MediaType.TextXml,
+                MediaType.TextCss,
+                MediaType.TextJavascript,
+                MediaType.ApplicationJson,
+                MediaType.ApplicationXml,
+                MediaType.ApplicationYaml,
+                MediaType.ApplicationToml
+            )
+            val texts = Chunk(
+                "text/plain",
+                "text/markdown",
+                "text/csv",
+                "text/html",
+                "text/xml",
+                "text/css",
+                "text/javascript",
+                "application/json",
+                "application/xml",
+                "application/yaml",
+                "application/toml"
+            )
+            assert(texts.map(MediaType.parse(_)) == constants.map(Result.succeed(_)))
+            assert(constants.map(_.render) == texts.map(Result.succeed(_)))
+        }
         "checks tokens and duplicate names, and lowercases the type, subtype and names" in {
             assert(MediaType.init("Text", "Plain", "Charset" -> "UTF-8").map(_.render) ==
                 Result.succeed(Result.succeed("text/plain; charset=UTF-8")))

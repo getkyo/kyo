@@ -59,6 +59,39 @@ object MediaType:
     /** `image/webp`. */
     val ImageWebp: MediaType = new MediaType("image", "webp", Chunk.empty)
 
+    /** `text/plain`. */
+    val TextPlain: MediaType = new MediaType("text", "plain", Chunk.empty)
+
+    /** `text/markdown`. */
+    val TextMarkdown: MediaType = new MediaType("text", "markdown", Chunk.empty)
+
+    /** `text/csv`. */
+    val TextCsv: MediaType = new MediaType("text", "csv", Chunk.empty)
+
+    /** `text/html`. */
+    val TextHtml: MediaType = new MediaType("text", "html", Chunk.empty)
+
+    /** `text/xml`. */
+    val TextXml: MediaType = new MediaType("text", "xml", Chunk.empty)
+
+    /** `text/css`. */
+    val TextCss: MediaType = new MediaType("text", "css", Chunk.empty)
+
+    /** `text/javascript`. */
+    val TextJavascript: MediaType = new MediaType("text", "javascript", Chunk.empty)
+
+    /** `application/json`. */
+    val ApplicationJson: MediaType = new MediaType("application", "json", Chunk.empty)
+
+    /** `application/xml`. */
+    val ApplicationXml: MediaType = new MediaType("application", "xml", Chunk.empty)
+
+    /** `application/yaml`. */
+    val ApplicationYaml: MediaType = new MediaType("application", "yaml", Chunk.empty)
+
+    /** `application/toml`. */
+    val ApplicationToml: MediaType = new MediaType("application", "toml", Chunk.empty)
+
     /** A media type from its parts, or the violation: a part that is not a token, or a name given twice. */
     def init(mainType: String, subType: String, parameters: (String, String)*)(using
         Frame
