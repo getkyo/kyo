@@ -41,6 +41,17 @@ val viaUnix: Connection < (Async & Abort[NetException]) =
 
 For a connection that is encrypted from its first byte, use `connectTls`, which takes a `NetTlsConfig`; that and the STARTTLS-style in-place upgrade are covered under [TLS](#tls).
 
+A caller that must judge an address before connecting to it, such as a fetch that refuses private networks, resolves the host first. `NetAddress.resolve` answers the IP address a connect to the host reaches, as its 4 (IPv4) or 16 (IPv6) bytes in network order. It takes the connect's own path, a literal or a loopback name without a lookup and any other name through the transport's resolver and its cache, so a connect within `kyo.net.dnsTtl` of the answer reaches the same address. On JS a name fails with `NetDnsResolutionException`.
+
+```scala
+import AllowUnsafe.embrace.danger
+import kyo.*
+import kyo.net.*
+
+val address: Span[Byte] < (Async & Abort[NetDnsResolutionException]) =
+    NetAddress.resolve("example.com").safe.get
+```
+
 ## Reading and writing
 
 kyo-net has no `write` method: a `Connection` is a pair of byte channels, `inbound` and `outbound`. You send by putting a `Span[Byte]` on `outbound`, and you receive by taking from `inbound`. Both are `Channel.Unsafe[Span[Byte]]`, so compose them with `.safe`.
