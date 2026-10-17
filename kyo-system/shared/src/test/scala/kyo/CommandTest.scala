@@ -353,11 +353,13 @@ class CommandTest extends kyo.test.Test[Any]:
 
     // The pids still running; a zombie awaiting its reaper counts as gone.
     private def running(pids: Chunk[Long])(using Frame): Chunk[Long] < (Async & Abort[CommandException]) =
-        Kyo.filter(pids) { pid =>
-            Command("ps", "-o", "stat=", "-p", pid.toString).textWithExitCode.map { (out, code) =>
-                code.isSuccess && out.trim.nonEmpty && !out.trim.startsWith("Z")
-            }
-        }
+        Kyo.filter(pids)(pid => stateOf(pid).map(state => state.nonEmpty && !state.startsWith("Z")))
+
+    // The state `ps` reports for a process, Z for a zombie, empty once no process has the pid. Read from /proc where the host has it:
+    // BusyBox's ps (Alpine) takes no -p and prints nothing, which would read as every process gone.
+    private def stateOf(pid: Long)(using Frame): String < (Async & Abort[CommandException]) =
+        Command("sh", "-c", s"if [ -e /proc/self/stat ]; then sed 's/.*) //' /proc/$pid/stat 2>/dev/null; else ps -o stat= -p $pid; fi")
+            .text.map(_.trim)
 
     "closing the scope of a spawned command kills every process the command started" in {
         assumeUnix()
@@ -749,15 +751,13 @@ class CommandTest extends kyo.test.Test[Any]:
     private def pidIn(file: String)(using Frame): Long < (Async & Abort[CommandException]) =
         Command("cat", file).text.map(_.trim.toLong)
 
-    // The process state `ps` reports, empty once no process has the pid.
-    private def stateOf(pid: Long)(using Frame): String < (Async & Abort[CommandException]) =
-        Command("ps", "-o", "stat=", "-p", pid.toString).text.map(_.trim)
-
     private def utf8(bytes: Chunk[Byte]): String = new String(bytes.toArray, StandardCharsets.UTF_8)
 
     "processGroup: the program leads a group of its own, and without it runs in its caller's group" in {
         assumeUnix()
-        val group = Command("sh", "-c", "ps -o pgid= -p $$")
+        // The fifth field of /proc/<pid>/stat, the third after the command's closing parenthesis, is the group.
+        val group =
+            Command("sh", "-c", "if [ -e /proc/self/stat ]; then sed 's/.*) //' /proc/$$/stat | cut -d' ' -f3; else ps -o pgid= -p $$; fi")
         Scope.run {
             for
                 grouped    <- group.processGroup.spawn
@@ -1095,6 +1095,20 @@ class CommandTest extends kyo.test.Test[Any]:
                 reader <- Command("sh", "-c", "read x; echo done").pipeStdin.processGroup.spawn
                 _      <- Command("sleep", "100000").processGroup.spawn
                 _      <- Command("sleep", "100000").spawn
+                // Unsafe: a piped stdin is reachable only as the child's java.io.OutputStream.
+                _    <- Sync.Unsafe.defer(reader.unsafe.stdinJava.close())
+                code <- reader.waitFor
+                out  <- reader.stdout.run
+            yield assert(code == ExitCode.Success && utf8(out) == "done\n")
+        }
+    }
+
+    "processGroup: a program does not hold the pipes of one spawned before it without a group" in {
+        assumeUnix()
+        Scope.run {
+            for
+                reader <- Command("sh", "-c", "read x; echo done").pipeStdin.spawn
+                _      <- Command("sleep", "100000").processGroup.spawn
                 // Unsafe: a piped stdin is reachable only as the child's java.io.OutputStream.
                 _    <- Sync.Unsafe.defer(reader.unsafe.stdinJava.close())
                 code <- reader.waitFor

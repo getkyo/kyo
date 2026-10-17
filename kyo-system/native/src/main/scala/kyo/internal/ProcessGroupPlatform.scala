@@ -32,9 +32,10 @@ import scala.scalanative.unsigned.*
   * `NOTE_EXIT` on macOS, whose `waitid` reports a stopped child as exited, and through `waitid` with `WNOWAIT` on Linux.
   *
   * kyo-system ignores SIGPIPE on Native, and an ignored signal survives exec, so the child gets it back at its default. The child sees no
-  * descriptor it was not given: `POSIX_SPAWN_CLOEXEC_DEFAULT` on macOS, `addclosefrom_np` where the C library has it (glibc); on musl, a
-  * descriptor without `FD_CLOEXEC` reaches it, and Scala Native opens files without one. The pipes kept here carry it, and they are read
-  * and written through their own descriptors, since a file stream Scala Native opens on `/dev/fd/<n>` would drop it.
+  * descriptor it was not given, though Scala Native opens files without `FD_CLOEXEC`: `POSIX_SPAWN_CLOEXEC_DEFAULT` on macOS,
+  * `addclosefrom_np` where the C library has it (glibc), and on musl a close for each descriptor ([[closeEach]]). The pipes kept here
+  * carry `FD_CLOEXEC` as well, and they are read and written through their own descriptors, since a file stream Scala Native opens on
+  * `/dev/fd/<n>` would drop it.
   *
   * Windows has no process groups: [[spawn]] panics there, so nothing reaches the others. Each one still tests `LinktimeInfo.isWindows` as
   * its own `if`'s condition, which the linker resolves and so keeps the POSIX calls out of a Windows link; the same test behind a method,
@@ -57,6 +58,8 @@ private[kyo] object ProcessGroupPlatform:
     private val FileMode       = 420 // 0644
     private val SiginfoSize    = 256
     private val SigsetSize     = 128
+    // The descriptors other threads may open during a spawn on musl and still have closed in the child (closeEach).
+    private val CloseMargin = 1024
 
     def spawn(
         args: Chunk[String],
@@ -257,8 +260,21 @@ private[kyo] object ProcessGroupPlatform:
             if symbol != null then
                 val addClosefrom = CFuncPtr.fromPtr[CFuncPtr2[Ptr[posix_spawn_file_actions_t], CInt, CInt]](symbol)
                 check("addclosefrom_np", addClosefrom(actions, 3))
+            else closeEach(actions)
+            end if
         end if
     end closeFrom
+
+    // A close in the child for each descriptor from 3 to the highest one open now plus CloseMargin. One another thread opens before the
+    // spawn takes the lowest free number, so it is under that bound unless more than CloseMargin open in between. musl's child ignores
+    // the close of a descriptor that is not open; glibc's refuses one at or above _SC_OPEN_MAX, which bounds the range.
+    private def closeEach(actions: Ptr[posix_spawn_file_actions_t]): Unit =
+        val highest = Maybe(new java.io.File("/proc/self/fd").list()).fold(2)(_.flatMap(_.toIntOption).maxOption.getOrElse(2))
+        val openMax = unistd.sysconf(unistd._SC_OPEN_MAX).toLong
+        (3 to math.min(highest + CloseMargin, openMax - 1).toInt).foreach(fd =>
+            check("addclose", posix_spawn_file_actions_addclose(actions, fd))
+        )
+    end closeEach
 
     private def strings(values: Chunk[String])(using Zone): Ptr[CString] =
         val array = alloc[CString](values.size + 1)

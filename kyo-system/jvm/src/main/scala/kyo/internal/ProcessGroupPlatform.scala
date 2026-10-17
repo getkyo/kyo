@@ -27,9 +27,10 @@ import kyo.*
   * `ProcessHandle.onExit`, which waits with `WNOWAIT` for a process the JDK did not start (`ProcessHandleImpl.completion(pid, false)`): the
   * leader stays unreaped, holding its pid and so its group's id, until [[reap]], which runs after the group is killed.
   *
-  * The child sees no descriptor it was not given, as with the JDK's own spawn: `POSIX_SPAWN_CLOEXEC_DEFAULT` on macOS, where the standard
-  * streams it inherits are named with `addinherit_np`, and `addclosefrom_np` on glibc. musl has neither, so there the child also sees a
-  * descriptor this process holds without `FD_CLOEXEC`; the JDK opens every descriptor with it, and this spawn's pipes carry it.
+  * The child sees no descriptor it was not given, as with the JDK's own spawn, which closes them in the child: a stream the JDK opens has
+  * no `FD_CLOEXEC` (measured on glibc and musl), the ones kept here included. So the child closes them itself: `POSIX_SPAWN_CLOEXEC_DEFAULT`
+  * on macOS, where the standard streams it inherits are named with `addinherit_np`, `addclosefrom_np` on glibc, and on musl, which has
+  * neither, a close for each descriptor ([[closeEach]]).
   *
   * The pipe ends kept here are opened as JDK file streams on `/dev/fd/<n>` and the descriptors `pipe` returned are closed, so a read, a write
   * and a close behave as on the JDK's own process pipes.
@@ -70,9 +71,12 @@ private[kyo] object ProcessGroupPlatform:
     private val ErrnoAccess       = 13
     private val ErrnoIsFolder     = 21
     private val FileMode          = 420 // 0644
+    private val SysconfOpenMax    = if Mac then 5 else 4
     // posix_spawnattr_t and posix_spawn_file_actions_t are a pointer on macOS and at most 336 bytes on glibc and musl; sigset_t is 4 and
     // 128 bytes; siginfo_t is 104 and 128.
     private val OpaqueSize = 512L
+    // The descriptors other threads may open during a spawn on musl and still have closed in the child (closeEach).
+    private val CloseMargin = 1024
 
     def spawn(
         args: Chunk[String],
@@ -196,7 +200,9 @@ private[kyo] object ProcessGroupPlatform:
                 else route(arena, actions, 2, stderr, error)
                 workDir.foreach(path => check("addchdir_np", C.addChdir.invokeExact(actions, arena.allocateFrom(path.toString))))
                 // Last: before the dup2s above, these closes would take the pipe ends they read.
-                C.addClosefrom.foreach(handle => check("addclosefrom_np", handle.invokeExact(actions, 3)))
+                C.addClosefrom match
+                    case Present(handle) => check("addclosefrom_np", handle.invokeExact(actions, 3))
+                    case Absent          => if !Mac then closeEach(actions)
                 val pid         = arena.allocate(JAVA_INT)
                 val argv        = strings(arena, args)
                 val envp        = strings(arena, Chunk.from(environment.map((name, value) => s"$name=$value")))
@@ -264,6 +270,15 @@ private[kyo] object ProcessGroupPlatform:
     // Under POSIX_SPAWN_CLOEXEC_DEFAULT a descriptor no file action names is closed in the child, the standard streams included.
     private def inherit(actions: MemorySegment, fd: Int): Unit =
         C.addInherit.foreach(handle => check("addinherit_np", handle.invokeExact(actions, fd)))
+
+    // A close in the child for each descriptor from 3 to the highest one open now plus CloseMargin. One another thread opens before the
+    // spawn takes the lowest free number, so it is under that bound unless more than CloseMargin open in between. musl's child ignores
+    // the close of a descriptor that is not open; glibc's refuses one at or above _SC_OPEN_MAX, which bounds the range.
+    private def closeEach(actions: MemorySegment): Unit =
+        val highest       = Maybe(new java.io.File("/proc/self/fd").list()).fold(2)(_.flatMap(_.toIntOption).maxOption.getOrElse(2))
+        val openMax: Long = C.sysconf.invokeExact(SysconfOpenMax)
+        (3 to math.min(highest + CloseMargin, openMax - 1).toInt).foreach(fd => check("addclose", C.addClose.invokeExact(actions, fd)))
+    end closeEach
 
     private def strings(arena: Arena, values: Chunk[String]): MemorySegment =
         val array = arena.allocate(ADDRESS, values.size + 1L)
@@ -394,6 +409,8 @@ private[kyo] object ProcessGroupPlatform:
         val addInherit =
             if Mac then find("posix_spawn_file_actions_addinherit_np", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT)) else Absent
         val addClosefrom = find("posix_spawn_file_actions_addclosefrom_np", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT))
+        val addClose     = bind("posix_spawn_file_actions_addclose", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT))
+        val sysconf      = bind("sysconf", FunctionDescriptor.of(JAVA_LONG, JAVA_INT))
         val spawnp       = bind("posix_spawnp", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS))
         val pipe         = bind("pipe", FunctionDescriptor.of(JAVA_INT, ADDRESS), capture)
         val pipe2        = find("pipe2", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT), capture)
