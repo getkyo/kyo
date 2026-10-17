@@ -5,23 +5,31 @@ import scala.scalanative.libc.signal as csignal
 import scala.scalanative.meta.LinktimeInfo.isWindows
 import scala.scalanative.posix.signal as posixsignal
 import scala.scalanative.unsafe.CFuncPtr
+import scala.scalanative.unsafe.CFuncPtr1
+import scala.scalanative.unsafe.CInt
 
 /** Makes a write to a child process's pipe fail with an `IOException` instead of killing this process.
   *
   * A write to a pipe whose reader is gone (a child that exited, or closed its stdin) raises SIGPIPE, whose default action ends the writing
-  * process. The JVM ignores SIGPIPE from startup, so there the write fails with EPIPE, which `java.io` reports as an `IOException`; that is
+  * process. The JVM catches SIGPIPE from startup, so there the write fails with EPIPE, which `java.io` reports as an `IOException`; that is
   * the contract kyo-system's `Process` gives its stdin on every platform, and Node gives it too. Scala Native installs nothing, so a write
   * to a dead child's stdin ended the whole program. A pipe has no per-descriptor opt-out (sockets have `SO_NOSIGPIPE` and `MSG_NOSIGNAL`),
   * so the disposition is set for the process, as the JVM does.
   *
-  * A handler the application installed itself is left in place: SIGPIPE is ignored only when its disposition is still the default.
+  * The disposition is a handler that does nothing, not SIG_IGN: either makes the write fail with EPIPE here, but an ignored disposition
+  * survives exec and a caught one does not, so every child starts with SIGPIPE at its default, as a JVM child does, and a writer whose
+  * reader is gone dies of it rather than looping on EPIPE.
+  *
+  * A handler the application installed itself is left in place: SIGPIPE is caught only when its disposition is still the default.
   */
 private[kyo] object ProcessSignalPlatform:
+
+    private val ignore: CFuncPtr1[CInt, Unit] = CFuncPtr1.fromScalaFunction((_: CInt) => ())
 
     // Evaluated once, before the first child is spawned.
     private lazy val brokenPipesIgnored: Unit =
         if !isWindows then
-            val previous = csignal.signal(posixsignal.SIGPIPE, csignal.SIG_IGN)
+            val previous = csignal.signal(posixsignal.SIGPIPE, ignore)
             if !isDefaultDisposition(previous) then
                 discard(csignal.signal(posixsignal.SIGPIPE, previous))
 

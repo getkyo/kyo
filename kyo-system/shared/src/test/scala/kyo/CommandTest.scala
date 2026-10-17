@@ -723,6 +723,21 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    // A writer to a pipe whose reader is gone dies of SIGPIPE, status 141 in the shell, only while the signal is at its default; an
+    // ignored disposition survives exec, so a child of a process that ignores it gets EPIPE instead.
+    "a spawned program sees SIGPIPE at its default, with and without processGroup" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-sigpipe")).map { dir =>
+            val writer                   = Command("sh", "-c", s"(yes; echo $$? > '$dir/status') | head -1 > /dev/null")
+            def status(command: Command) = command.waitFor.andThen(Command("cat", s"$dir/status").text.map(_.trim))
+            for
+                plain   <- status(writer)
+                grouped <- status(writer.processGroup)
+            yield assert(plain == "141" && grouped == "141", s"yes exited $plain without processGroup and $grouped with it")
+            end for
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // processGroup
     // ---------------------------------------------------------------------------

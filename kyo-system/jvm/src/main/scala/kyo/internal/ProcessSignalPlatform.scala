@@ -2,8 +2,8 @@ package kyo.internal
 
 /** Makes a write to a child process's pipe fail with an `IOException` instead of killing this process.
   *
-  * Nothing to do on the JVM: it ignores SIGPIPE from startup, so a write to a pipe whose reader is gone fails with EPIPE, which `java.io`
-  * reports as an `IOException`. The Scala Native counterpart installs the same disposition.
+  * Nothing to do on the JVM: it catches SIGPIPE from startup, so a write to a pipe whose reader is gone fails with EPIPE, which `java.io`
+  * reports as an `IOException`, and a child starts with the signal at its default. The Scala Native counterpart installs the same.
   */
 private[kyo] object ProcessSignalPlatform:
 
