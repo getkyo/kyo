@@ -38,6 +38,9 @@ private[kyo] object ProcessTreePlatform:
             else posixsignal.kill(pid.toInt, 0) == 0 || errno == EPERM
         }
 
+    // kill(2) reads a whole group when given its id negated.
+    def groupExists(group: Long)(using Frame): Boolean < Sync = exists(-group)
+
     private def signal(pids: Chunk[Long], sig: CInt)(using Frame): Unit < Sync =
         Sync.defer {
             if !LinktimeInfo.isWindows then pids.foreach(pid => discard(posixsignal.kill(pid.toInt, sig)))

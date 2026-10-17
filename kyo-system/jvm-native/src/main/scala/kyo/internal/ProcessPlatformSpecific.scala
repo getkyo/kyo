@@ -5,30 +5,42 @@ import java.lang.Process as JProcess
 import java.lang.ProcessBuilder as JProcessBuilder
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path as JPath
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kyo.*
 import scala.jdk.CollectionConverters.*
+
+// --- InputFeeds — the stop actions of a process's stdin feeds ---
+
+/** The stop actions of the fibers feeding a process's stdin. Retained so a feed ends with the process rather than running on after it,
+  * which is what an unheld feed does.
+  */
+final private[kyo] class InputFeeds:
+
+    private val stops = new java.util.concurrent.ConcurrentLinkedQueue[() => Unit]()
+
+    def register(stop: () => Unit): Unit = discard(stops.add(stop))
+
+    /** Stops every feed. Idempotent, and safe to call after the process has already exited: a feed can still be parked reading its source
+      * even when the child is gone.
+      */
+    def stopAll(): Unit =
+        var stop = stops.poll()
+        while stop != null do
+            stop()
+            stop = stops.poll()
+        end while
+    end stopAll
+
+end InputFeeds
 
 // --- JvmProcessUnsafe — concrete Process.Unsafe backed by java.lang.Process ---
 
 final private[kyo] class JvmProcessUnsafe(private[internal] val jp: JProcess) extends Process.Unsafe:
 
-    // Stop actions for the fibers feeding this process's stdin. Retained so a feed ends with the
-    // process rather than running on after it, which is what an unheld feed does.
-    private val inputFeeds = new java.util.concurrent.ConcurrentLinkedQueue[() => Unit]()
+    private[internal] val feeds = new InputFeeds
 
-    private[internal] def registerInputFeed(stop: () => Unit): Unit = discard(inputFeeds.add(stop))
-
-    /** Stops every stdin feed. Idempotent, and safe to call after the process has already exited:
-      * a feed can still be parked reading its source even when the child is gone.
-      */
-    override def stopInputFeeds()(using AllowUnsafe): Unit =
-        var stop = inputFeeds.poll()
-        while stop != null do
-            stop()
-            stop = inputFeeds.poll()
-        end while
-    end stopInputFeeds
+    override def stopInputFeeds()(using AllowUnsafe): Unit = feeds.stopAll()
 
     def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Any] =
         val p = Promise.Unsafe.init[ExitCode, Any]()
@@ -70,6 +82,82 @@ final private[kyo] class JvmProcessUnsafe(private[internal] val jp: JProcess) ex
 
 end JvmProcessUnsafe
 
+// --- GroupProcessUnsafe — a program started as the leader of its own process group ---
+
+/** A program started as the leader of its own process group, through [[ProcessGroupPlatform]] (see [[Command.processGroup]]).
+  *
+  * Its exit is observed without reaping it, so its pid, which is its group's id, stays held from the exit until [[reap]], which
+  * [[Process.destroyTree]] runs once the group is killed. `isAlive` reads the exit rather than `ProcessHandle.isAlive`, which answers true
+  * for the unreaped leader. A signal goes to the pid only before the reap: after it, the pid may name another process.
+  */
+final private[kyo] class GroupProcessUnsafe(spawned: GroupProcessUnsafe.Spawned, exit: CompletableFuture[ExitCode])
+    extends Process.Unsafe:
+
+    private[internal] val feeds = new InputFeeds
+
+    // Read and written under this object's monitor, which a signal also holds, so no signal reaches a pid the reap released. The section
+    // is one non-blocking system call.
+    private var reaped = false
+
+    override def stopInputFeeds()(using AllowUnsafe): Unit = feeds.stopAll()
+
+    def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Any] =
+        val p = Promise.Unsafe.init[ExitCode, Any]()
+        discard(exit.whenComplete { (code, error) =>
+            if error == null then p.completeDiscard(Result.succeed(code))
+            else p.completeDiscard(Result.panic(error))
+        })
+        p
+    end waitFor
+
+    def waitFor(timeout: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[ExitCode], Any] =
+        val p = Promise.Unsafe.init[Maybe[ExitCode], Any]()
+        // A copy: orTimeout completes the future it is given, and the exit is shared by every wait.
+        discard(exit.copy()
+            .orTimeout(timeout.toMillis, TimeUnit.MILLISECONDS)
+            .whenComplete { (code, error) =>
+                error match
+                    case _: java.util.concurrent.TimeoutException => p.completeDiscard(Result.succeed(Absent))
+                    case null                                     => p.completeDiscard(Result.succeed(Present(code)))
+                    case other                                    => p.completeDiscard(Result.panic(other))
+            })
+        p
+    end waitFor
+
+    def exitCode()(using AllowUnsafe): Maybe[ExitCode] =
+        if exit.isDone && !exit.isCompletedExceptionally then Present(exit.join()) else Absent
+
+    def destroy()(using AllowUnsafe): Unit = signal(ProcessGroupPlatform.SigTerm)
+
+    def destroyForcibly()(using AllowUnsafe): Unit = signal(ProcessGroupPlatform.SigKill)
+
+    override private[kyo] def processGroups()(using AllowUnsafe): Chunk[Long] =
+        synchronized(if reaped then Chunk.empty else Chunk(spawned.pid))
+
+    override private[kyo] def killGroups()(using AllowUnsafe): Unit =
+        synchronized(if !reaped then ProcessGroupPlatform.signalGroup(spawned.pid, ProcessGroupPlatform.SigKill))
+
+    override private[kyo] def reap()(using AllowUnsafe): Unit =
+        synchronized(if !reaped then reaped = ProcessGroupPlatform.reap(spawned.pid))
+
+    def isAlive()(using AllowUnsafe): Boolean      = !exit.isDone
+    def pid()(using AllowUnsafe): Long             = spawned.pid
+    def stdoutJava(using AllowUnsafe): InputStream = spawned.stdout
+    def stderrJava(using AllowUnsafe): InputStream = spawned.stderr
+    def stdinJava(using AllowUnsafe): OutputStream = spawned.stdin
+
+    private def signal(number: Int): Unit =
+        synchronized(if !reaped then ProcessGroupPlatform.signal(spawned.pid, number))
+
+end GroupProcessUnsafe
+
+private[kyo] object GroupProcessUnsafe:
+
+    /** What [[ProcessGroupPlatform.spawn]] started: the leader's pid and the streams of its standard descriptors. */
+    final case class Spawned(pid: Long, stdin: OutputStream, stdout: InputStream, stderr: InputStream)
+
+end GroupProcessUnsafe
+
 import Command.EnvMode
 
 // --- StdioSink — destination for stdout / stderr ---
@@ -91,7 +179,8 @@ final private[kyo] class JvmCommandUnsafe(
     val stdoutSink: StdioSink = StdioSink.Pipe,
     val stderrSink: StdioSink = StdioSink.Pipe,
     val redirectError: Boolean = false,
-    val pipeTo: Maybe[Command.Unsafe] = Absent
+    val pipeTo: Maybe[Command.Unsafe] = Absent,
+    val processGroup: Boolean = false
 ) extends Command.Unsafe:
 
     // --- Builder methods — all return new instances ---
@@ -158,7 +247,51 @@ final private[kyo] class JvmCommandUnsafe(
     def withAndThen(that: Command.Unsafe): JvmCommandUnsafe =
         copy(pipeTo = Present(that))
 
+    def withProcessGroup: JvmCommandUnsafe =
+        copy(processGroup = true)
+
     // --- Internal helpers ---
+
+    /** The child's environment for a process-group spawn: `envMode` applied over this process's. The ProcessBuilder path applies `envMode`
+      * to `ProcessBuilder.environment()` instead, whose keys are case-insensitive on Windows, where a group spawn does not run.
+      */
+    private def environment: Map[String, String] =
+        val parent = java.lang.System.getenv().asScala.toMap
+        envMode match
+            case EnvMode.Inherit                       => parent
+            case EnvMode.Append(vars)                  => parent ++ vars
+            case EnvMode.Remove(names)                 => parent -- names
+            case EnvMode.AppendThenRemove(vars, names) => (parent ++ vars) -- names
+            case EnvMode.Replace(vars)                 => vars
+            case EnvMode.Clear                         => Map.empty
+            case EnvMode.ClearThenAppend(vars)         => vars
+        end match
+    end environment
+
+    /** The failure for a working directory that does not exist, checked before a spawn. */
+    private def missingWorkDir(using Frame): Maybe[CommandException] =
+        workDir.flatMap { path =>
+            val nio = path.unsafe match
+                case n: NioPathUnsafe => n.jpath
+                case other            => java.nio.file.Paths.get(other.show)
+            if java.nio.file.Files.exists(nio) then Absent else Present(WorkingDirectoryNotFoundException(path))
+        }
+
+    /** Starts the feed this command's stdin source needs into the spawned process's stdin, held by `feeds`. */
+    private def feedStdin(feeds: InputFeeds, processStdin: OutputStream)(using AllowUnsafe, Frame): Unit =
+        stdinStream match
+            case Present(s) => feeds.register(feedStream(s, processStdin))
+            case Absent     =>
+                stdinSource match
+                    case Process.Input.FromStream(is)               => feeds.register(feedInputStream(is, processStdin))
+                    case Process.Input.Inherit | Process.Input.Pipe => ()
+        end match
+    end feedStdin
+
+    /** The `sh -c` command line a pipeline runs as, each argument quoted. */
+    private def shellCommand(chain: Seq[JvmCommandUnsafe]): String =
+        def shellEscape(a: String): String = "'" + a.replace("'", "'\\''") + "'"
+        chain.map(_.args.map(shellEscape).mkString(" ")).mkString(" | ")
 
     /** Flattens the pipeline chain into a sequence of commands in order (head = leftmost). */
     private def pipelineChain: Seq[JvmCommandUnsafe] =
@@ -180,17 +313,7 @@ final private[kyo] class JvmCommandUnsafe(
         AllowUnsafe,
         Frame
     ): Result[CommandException, JProcessBuilder] =
-        // Validate working directory up-front
-        val wdError = workDir match
-            case Present(path) =>
-                val nio = path.unsafe match
-                    case n: NioPathUnsafe => n.jpath
-                    case other            => java.nio.file.Paths.get(other.show)
-                if !java.nio.file.Files.exists(nio) then Present(WorkingDirectoryNotFoundException(path))
-                else Absent
-            case Absent => Absent
-
-        wdError match
+        missingWorkDir match
             case Present(err) => Result.fail(err)
             case _            =>
                 val pb = new JProcessBuilder(args.toSeq.asJava)
@@ -423,7 +546,8 @@ final private[kyo] class JvmCommandUnsafe(
             case Present(err) => Result.fail(err)
             case Absent       =>
                 val chain = pipelineChain
-                if chain.length == 1 then
+                if processGroup then spawnGroup(chain)
+                else if chain.length == 1 then
                     // Simple (non-piped) spawn
                     toJProcessBuilder() match
                         case Result.Failure(err) => Result.fail(err)
@@ -432,16 +556,7 @@ final private[kyo] class JvmCommandUnsafe(
                             try
                                 val jp   = ProcessSpawnPlatform.start(pb)
                                 val proc = new JvmProcessUnsafe(jp)
-                                // Feed stdin if needed
-                                stdinStream match
-                                    case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
-                                    case Absent     =>
-                                        stdinSource match
-                                            case Process.Input.FromStream(is) =>
-                                                proc.registerInputFeed(feedInputStream(is, jp.getOutputStream))
-                                            case Process.Input.Inherit => ()
-                                            case Process.Input.Pipe    => ()
-                                end match
+                                feedStdin(proc.feeds, jp.getOutputStream)
                                 Result.succeed(proc)
                             catch
                                 case e: IOException => Result.fail(translateIOException(e, args.headMaybe.getOrElse("")))
@@ -450,11 +565,8 @@ final private[kyo] class JvmCommandUnsafe(
                     // kernel handles inter-process piping directly. This avoids the pump-per-stage
                     // deadlocks on Scala Native, where blocking I/O off the calling thread is
                     // unreliable.
-                    def shellEscape(a: String): String = "'" + a.replace("'", "'\\''") + "'"
-                    val shellCmd                       = chain.map(_.args.map(shellEscape).mkString(" ")).mkString(" | ")
-
                     val firstCmd = chain.head
-                    val pb       = new JProcessBuilder("sh", "-c", shellCmd)
+                    val pb       = new JProcessBuilder("sh", "-c", shellCommand(chain))
 
                     firstCmd.envMode match
                         case EnvMode.Inherit      => ()
@@ -480,16 +592,7 @@ final private[kyo] class JvmCommandUnsafe(
                     try
                         val jp   = ProcessSpawnPlatform.start(pb)
                         val proc = new JvmProcessUnsafe(jp)
-                        firstCmd.stdinStream match
-                            case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
-                            case Absent     =>
-                                firstCmd.stdinSource match
-                                    case Process.Input.FromStream(is) =>
-                                        proc.registerInputFeed(feedInputStream(is, jp.getOutputStream))
-                                    case Process.Input.Inherit => ()
-                                    case Process.Input.Pipe    => ()
-                                end match
-                        end match
+                        firstCmd.feedStdin(proc.feeds, jp.getOutputStream)
                         Result.succeed(proc)
                     catch
                         case e: IOException =>
@@ -499,6 +602,27 @@ final private[kyo] class JvmCommandUnsafe(
         end match
     end spawn
 
+    /** Spawns this command, or the pipeline it heads, as the leader of a new process group. A pipeline runs as one `sh -c`, as on the
+      * ProcessBuilder path, so every stage is in the shell's group.
+      */
+    private def spawnGroup(chain: Seq[JvmCommandUnsafe])(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
+        missingWorkDir match
+            case Present(err) => Result.fail(err)
+            case Absent       =>
+                val piped    = chain.length > 1
+                val program  = if piped then Chunk("sh", "-c", shellCommand(chain)) else args
+                val stdin    = if stdinStream.isDefined then Process.Input.Pipe else stdinSource
+                val stdout   = if piped then StdioSink.Pipe else stdoutSink
+                val stderr   = if piped then StdioSink.Pipe else stderrSink
+                val mergeErr = if piped then chain.last.redirectError else redirectError
+                ProcessGroupPlatform.spawn(program, workDir, environment, stdin, stdout, stderr, mergeErr).map { spawned =>
+                    val proc = new GroupProcessUnsafe(spawned, ProcessGroupPlatform.awaitExit(spawned.pid))
+                    feedStdin(proc.feeds, spawned.stdin)
+                    proc
+                }
+        end match
+    end spawnGroup
+
     def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]] =
         val p = Promise.Unsafe.init[String, Abort[CommandException]]()
         spawn() match
@@ -506,7 +630,7 @@ final private[kyo] class JvmCommandUnsafe(
                 p.completeDiscard(Result.fail(err))
             case Result.Panic(ex) =>
                 p.completeDiscard(Result.panic(ex))
-            case Result.Success(proc: JvmProcessUnsafe) =>
+            case Result.Success(proc) =>
                 // Drained while the process runs, and completed at end of stream rather than at exit.
                 //
                 // Reading only after onExit deadlocks any child that writes more than the pipe
@@ -519,7 +643,7 @@ final private[kyo] class JvmCommandUnsafe(
                 // output text and does not report exit status, and the child closes stdout when it
                 // exits. The onExit handler remains only to surface a spawn failure, and completing
                 // an already-completed promise is a no-op, so whichever arrives first wins.
-                val out = proc.jp.getInputStream
+                val out = proc.stdoutJava
                 // Unsafe: bridges a blocking pipe read from outside the effect system. The carrier
                 // parks in the read and the scheduler's `BlockingMonitor` drains that worker's
                 // queue to the others; the read ends at end of stream, which the child reaches by
@@ -530,9 +654,12 @@ final private[kyo] class JvmCommandUnsafe(
                         catch case e: IOException => p.completeDiscard(Result.panic(e))
                     }
                 })
-                discard(proc.jp.onExit().whenComplete { (_, error) =>
-                    if error != null then p.completeDiscard(Result.panic(error))
-                })
+                // No scope holds this process, so a group is killed at the program's exit: nothing else would reap its leader, and a
+                // process it left holding stdout would keep the read open.
+                proc.waitFor().onComplete {
+                    case Result.Panic(error) => p.completeDiscard(Result.panic(error))
+                    case _                   => if processGroup then discard(proc.destroyTree())
+                }
         end match
         p
     end text
@@ -540,40 +667,20 @@ final private[kyo] class JvmCommandUnsafe(
     def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Abort[CommandException]] =
         val p = Promise.Unsafe.init[ExitCode, Abort[CommandException]]()
         spawn() match
-            case Result.Failure(err) =>
-                p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex) =>
-                p.completeDiscard(Result.panic(ex))
-            case Result.Success(proc: JvmProcessUnsafe) =>
-                discard(proc.jp.onExit().whenComplete { (exitedProcess, error) =>
-                    if error != null then
-                        p.completeDiscard(Result.panic(error))
-                    else
-                        p.completeDiscard(Result.succeed(ExitCode(exitedProcess.exitValue())))
-                })
+            case Result.Failure(err) => p.completeDiscard(Result.fail(err))
+            case Result.Panic(ex)    => p.completeDiscard(Result.panic(ex))
+            // No scope holds this process, so a group is killed, and its leader reaped, at the program's exit.
+            case Result.Success(proc) if processGroup =>
+                // Unsafe: starts the wait from outside the effect system, where the unsafe tier runs.
+                p.becomeDiscard(Fiber.Unsafe.init(proc.safe.waitFor.map(code => proc.safe.destroyTree.andThen(code))).safe)
+            case Result.Success(proc) => p.becomeDiscard(proc.waitFor().safe)
         end match
         p
     end waitFor
 
     def waitForSuccess()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[CommandException | ExitCode]] =
-        val p = Promise.Unsafe.init[Unit, Abort[CommandException | ExitCode]]()
-        spawn() match
-            case Result.Failure(err) =>
-                p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex) =>
-                p.completeDiscard(Result.panic(ex))
-            case Result.Success(proc: JvmProcessUnsafe) =>
-                discard(proc.jp.onExit().whenComplete { (exitedProcess, error) =>
-                    if error != null then
-                        p.completeDiscard(Result.panic(error))
-                    else
-                        val code = ExitCode(exitedProcess.exitValue())
-                        if code.isSuccess then p.completeDiscard(Result.succeed(()))
-                        else p.completeDiscard(Result.fail(code))
-                })
-        end match
-        p
-    end waitForSuccess
+        // Unsafe: starts the wait from outside the effect system, where the unsafe tier runs.
+        Fiber.Unsafe.init(waitFor().safe.get.map(code => if code.isSuccess then () else Abort.fail(code)))
 
     private def copy(
         args: Chunk[String] = this.args,
@@ -584,7 +691,8 @@ final private[kyo] class JvmCommandUnsafe(
         stdoutSink: StdioSink = this.stdoutSink,
         stderrSink: StdioSink = this.stderrSink,
         redirectError: Boolean = this.redirectError,
-        pipeTo: Maybe[Command.Unsafe] = this.pipeTo
+        pipeTo: Maybe[Command.Unsafe] = this.pipeTo,
+        processGroup: Boolean = this.processGroup
     ): JvmCommandUnsafe =
         new JvmCommandUnsafe(
             args,
@@ -595,7 +703,8 @@ final private[kyo] class JvmCommandUnsafe(
             stdoutSink,
             stderrSink,
             redirectError,
-            pipeTo
+            pipeTo,
+            processGroup
         )
 
 end JvmCommandUnsafe

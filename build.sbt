@@ -1108,7 +1108,7 @@ lazy val `kyo-system` =
         .dependsOn(`kyo-core`)
         .withKyoTest
         .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(mimaCheck(false), Test / javaOptions += "--enable-native-access=ALL-UNNAMED")
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)

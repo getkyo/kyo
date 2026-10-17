@@ -43,6 +43,9 @@ private[kyo] object ProcessTreePlatform:
                     js.typeOf(code) == "string" && code.asInstanceOf[String] == "EPERM"
         }
 
+    // `process.kill` reads a whole group when given its id negated, as kill(2) does.
+    def groupExists(group: Long)(using Frame): Boolean < Sync = exists(-group)
+
     private def signal(pids: Chunk[Long], name: String)(using Frame): Unit < Sync =
         Sync.defer {
             pids.foreach { pid =>

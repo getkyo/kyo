@@ -131,6 +131,10 @@ object Process:
           * A program commonly forks helpers that inherit its pipes. Killing only the program leaves them running, and their open pipe
           * ends keep a read of its output from ever reaching end of stream. This is what the release registered by [[Command.spawn]]
           * runs, so a closed scope or an interrupted fiber leaves nothing the command started behind.
+          *
+          * The descendants are found by walking down from the program, so once the program has exited, a child it left running is no
+          * longer reached: it was reparented to init. A command started with [[Command.processGroup]] closes that gap: its whole process
+          * group is killed too, whether or not the program is still running.
           */
         def destroyTree(using Frame): Unit < Async =
             Sync.Unsafe.defer(self.unsafe.destroyTree().safe.get)
@@ -273,6 +277,21 @@ object Process:
           */
         private[kyo] def liveTreeRoots()(using AllowUnsafe): Chunk[Long] =
             if isAlive() then Chunk(pid()) else Chunk.empty
+
+        /** The ids of the process groups this process leads, which [[destroyTree]] kills whether or not the process is still running.
+          * Empty unless the command was started with [[Command.processGroup]], and empty again once [[reap]] has released them.
+          */
+        private[kyo] def processGroups()(using AllowUnsafe): Chunk[Long] = Chunk.empty
+
+        /** Sends SIGKILL to every group in [[processGroups]], unless [[reap]] has released them: a released id may already name another
+          * group. The check and the kill are one step, so a [[destroyTree]] running beside another cannot signal a group the other released.
+          */
+        private[kyo] def killGroups()(using AllowUnsafe): Unit = ()
+
+        /** Collects the exit of a group leader this process holds unreaped, once its group is killed, releasing its pid. Idempotent. A
+          * platform that reaps every child at its exit has nothing to collect.
+          */
+        private[kyo] def reap()(using AllowUnsafe): Unit = ()
 
         /** Returns `true` if the process is still running. */
         def isAlive()(using AllowUnsafe): Boolean

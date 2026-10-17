@@ -15,6 +15,9 @@ private[kyo] object ProcessSpawnPlatform:
 
     private val lock = new Object
 
-    def start(builder: JProcessBuilder): JProcess = lock.synchronized(builder.start())
+    def start(builder: JProcessBuilder): JProcess = exclusive(builder.start())
+
+    /** Runs a spawn kyo makes itself (see [[ProcessGroupPlatform]]) under the same exclusion, so neither kind takes the other's pipes. */
+    def exclusive[A](spawn: => A): A = lock.synchronized(spawn)
 
 end ProcessSpawnPlatform

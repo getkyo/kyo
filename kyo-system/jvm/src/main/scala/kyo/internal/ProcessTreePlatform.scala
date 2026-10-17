@@ -28,4 +28,8 @@ private[kyo] object ProcessTreePlatform:
     def exists(pid: Long)(using Frame): Boolean < Sync =
         Sync.defer(ProcessHandle.of(pid).filter(_.isAlive).isPresent)
 
+    // `ProcessHandle` has no notion of a group, so a group is read through the C library, as it was started.
+    def groupExists(group: Long)(using Frame): Boolean < Sync =
+        Sync.defer(ProcessGroupPlatform.groupExists(group))
+
 end ProcessTreePlatform

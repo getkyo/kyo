@@ -205,17 +205,36 @@ end NodeOutputStream
 final private[kyo] class NodeProcessUnsafe(
     val child: NodeChildProcessInstance,
     val stderrEnded: Boolean = false,
-    upstream: Seq[NodeChildProcessInstance] = Seq.empty
+    upstream: Seq[NodeChildProcessInstance] = Seq.empty,
+    groups: Chunk[Long] = Chunk.empty
 ) extends Process.Unsafe:
 
     // Stores a spawn error (e.g. ENOENT) so it can be surfaced via waitFor().
     private var spawnError: js.Any = null
+
+    // Node reaps a child before its 'exit' event, so a group's id is safe from reuse only while the group has a member. Once a destroyTree
+    // has killed the groups and seen them empty, they are not signalled again.
+    private var groupsReleased = false
 
     def markError(err: js.Any): Unit = spawnError = err
 
     // A pipeline's earlier stages are children of this runtime, not of the last stage, so no walk from the last stage reaches them.
     override private[kyo] def liveTreeRoots()(using AllowUnsafe): Chunk[Long] =
         Chunk.from((upstream :+ child).filter(NodeProcessUnsafe.running).map(_.pid.toLong))
+
+    override private[kyo] def processGroups()(using AllowUnsafe): Chunk[Long] =
+        if groupsReleased then Chunk.empty else groups
+
+    // `process.kill` signals a whole group when given its id negated, as kill(2) does. Node runs this to completion before any other
+    // callback, so no reap lands between the check and the kill.
+    override private[kyo] def killGroups()(using AllowUnsafe): Unit =
+        if !groupsReleased then
+            groups.foreach { group =>
+                try discard(js.Dynamic.global.process.kill(-group.toDouble, "SIGKILL"))
+                catch case _: js.JavaScriptException => ()
+            }
+
+    override private[kyo] def reap()(using AllowUnsafe): Unit = groupsReleased = true
 
     def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[Process.ExitCode, Any] =
         val p        = Promise.Unsafe.init[Process.ExitCode, Any]()
@@ -379,6 +398,14 @@ private[kyo] object NodeProcessUnsafe:
     def running(child: NodeChildProcessInstance): Boolean =
         (child.exitCode == null || js.isUndefined(child.exitCode)) && (child.signalCode == null || js.isUndefined(child.signalCode))
 
+    // The groups the children lead when started detached. Node leaves `pid` undefined when a spawn fails, and a group id of 0 would make
+    // the group kill signal this runtime's own group, so only a positive pid is a group.
+    def groupsOf(children: Seq[NodeChildProcessInstance]): Chunk[Long] =
+        Chunk.from(children.flatMap { child =>
+            val pid = child.asInstanceOf[js.Dynamic].pid
+            if js.typeOf(pid) == "number" && pid.asInstanceOf[Double] > 0 then Some(pid.asInstanceOf[Double].toLong) else None
+        })
+
 end NodeProcessUnsafe
 
 import Command.EnvMode
@@ -402,11 +429,13 @@ final private[kyo] class NodeCommandUnsafe(
     val stdoutSink: NodeStdioSink = NodeStdioSink.Pipe,
     val stderrSink: NodeStdioSink = NodeStdioSink.Pipe,
     val redirectError: Boolean = false,
-    val pipeTo: Maybe[Command.Unsafe] = Absent
+    val pipeTo: Maybe[Command.Unsafe] = Absent,
+    val processGroup: Boolean = false
 ) extends Command.Unsafe:
 
     // --- Builder methods — all return new instances ---
 
+    def withProcessGroup: NodeCommandUnsafe                         = copy(processGroup = true)
     def withCwd(path: kyo.Path): NodeCommandUnsafe                  = copy(workDir = Present(path))
     def withEnvAppend(vars: Map[String, String]): NodeCommandUnsafe =
         val newMode = envMode match
@@ -533,6 +562,7 @@ final private[kyo] class NodeCommandUnsafe(
             else "pipe"
 
         opts.stdio = js.Array(stdioIn, stdioOut, stdioErr)
+        if processGroup then opts.detached = true
         opts
     end buildOptions
 
@@ -661,6 +691,9 @@ final private[kyo] class NodeCommandUnsafe(
 
     def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
         if args.isEmpty then Result.fail(ProgramNotFoundException(""))
+        // On Windows `detached` opens a console rather than a group, and there is no group to signal.
+        else if processGroup && Platform.isWindows then
+            Result.panic(new UnsupportedOperationException(s"processGroup needs a POSIX host: ${args.mkString(" ")}"))
         else
             // Validate program exists synchronously so spawn() can return Result.Failure without
             // waiting for the async 'error' event (which would prevent synchronous error reporting).
@@ -686,7 +719,11 @@ final private[kyo] class NodeCommandUnsafe(
                                     val jsArgs = js.Array(args.drop(1).toSeq*)
                                     val child  = NodeChildProcess.spawn(args.head, jsArgs, opts)
                                     NodeWritableStream.guard(child.stdin)
-                                    val proc = new NodeProcessUnsafe(child, stderrEnded = redirectError)
+                                    val proc = new NodeProcessUnsafe(
+                                        child,
+                                        stderrEnded = redirectError,
+                                        groups = if processGroup then NodeProcessUnsafe.groupsOf(Seq(child)) else Chunk.empty
+                                    )
 
                                     // Register an error handler to prevent Node.js from crashing on unhandled
                                     // 'error' events (e.g. ENOENT when the program is not found). The error is
@@ -763,6 +800,8 @@ final private[kyo] class NodeCommandUnsafe(
                                                 opts.env = env
                                         end match
                                         opts.stdio = js.Array[js.Any]("pipe", "pipe", "pipe")
+                                        // Node cannot start a child in another child's group, so each stage leads one of its own.
+                                        if processGroup then opts.detached = true
                                         opts
                                     end pipeOpts
 
@@ -794,8 +833,12 @@ final private[kyo] class NodeCommandUnsafe(
                                     // Return the last process
                                     val lastChild = children.last
                                     val lastCmd   = chain.last
-                                    val proc      =
-                                        new NodeProcessUnsafe(lastChild, stderrEnded = lastCmd.redirectError, upstream = children.init)
+                                    val proc      = new NodeProcessUnsafe(
+                                        lastChild,
+                                        stderrEnded = lastCmd.redirectError,
+                                        upstream = children.init,
+                                        groups = if processGroup then NodeProcessUnsafe.groupsOf(children) else Chunk.empty
+                                    )
                                     discard(lastChild.on("error", { (err: js.Any) => proc.markError(err) }))
 
                                     // Handle stdout/stderr sinks on the last process
@@ -821,6 +864,11 @@ final private[kyo] class NodeCommandUnsafe(
         end if
     end spawn
 
+    // No scope holds a process that text, waitFor or waitForSuccess starts, so a group is killed at the program's exit, and the answer
+    // waits for that kill: nothing else would kill what the program left running.
+    private def afterGroupKill(proc: NodeProcessUnsafe)(answer: => Unit)(using AllowUnsafe, Frame): Unit =
+        if processGroup then discard(proc.destroyTree().map(_ => answer)) else answer
+
     def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]] =
         val p = Promise.Unsafe.init[String, Abort[CommandException]]()
         spawn() match
@@ -828,6 +876,8 @@ final private[kyo] class NodeCommandUnsafe(
             case Result.Panic(ex)                        => p.completeDiscard(Result.panic(ex))
             case Result.Success(proc: NodeProcessUnsafe) =>
                 val outIs = proc.stdoutJava
+                // A process the program left holding stdout keeps 'close' from firing until the group is killed.
+                discard(proc.child.on("exit", { (_: js.Any) => afterGroupKill(proc)(()) }))
                 // Register 'error' handler to propagate spawn failures (e.g. ENOENT) as CommandException.
                 discard(proc.child.on(
                     "error",
@@ -870,7 +920,7 @@ final private[kyo] class NodeCommandUnsafe(
             case Result.Success(proc: NodeProcessUnsafe) =>
                 val ec = proc.child.exitCode
                 if ec != null && !js.isUndefined(ec) then
-                    p.completeDiscard(Result.succeed(Process.ExitCode(ec.asInstanceOf[Int])))
+                    afterGroupKill(proc)(p.completeDiscard(Result.succeed(Process.ExitCode(ec.asInstanceOf[Int]))))
                 else
                     // Register 'error' handler to propagate spawn failures (e.g. ENOENT) as CommandException.
                     discard(proc.child.on(
@@ -885,7 +935,7 @@ final private[kyo] class NodeCommandUnsafe(
                         "exit",
                         { (codeOrNull: js.Any) =>
                             val code = if codeOrNull == null then 1 else codeOrNull.asInstanceOf[Int]
-                            p.completeDiscard(Result.succeed(Process.ExitCode(code)))
+                            afterGroupKill(proc)(p.completeDiscard(Result.succeed(Process.ExitCode(code))))
                         }
                     ))
                 end if
@@ -904,8 +954,10 @@ final private[kyo] class NodeCommandUnsafe(
                 val ec = proc.child.exitCode
                 if ec != null && !js.isUndefined(ec) then
                     val code = Process.ExitCode(ec.asInstanceOf[Int])
-                    if code.isSuccess then p.completeDiscard(Result.succeed(()))
-                    else p.completeDiscard(Result.fail(code))
+                    afterGroupKill(proc) {
+                        if code.isSuccess then p.completeDiscard(Result.succeed(()))
+                        else p.completeDiscard(Result.fail(code))
+                    }
                 else
                     discard(proc.child.on(
                         "error",
@@ -920,8 +972,10 @@ final private[kyo] class NodeCommandUnsafe(
                         { (codeOrNull: js.Any) =>
                             val rawCode = if codeOrNull == null then 1 else codeOrNull.asInstanceOf[Int]
                             val code    = Process.ExitCode(rawCode)
-                            if code.isSuccess then p.completeDiscard(Result.succeed(()))
-                            else p.completeDiscard(Result.fail(code))
+                            afterGroupKill(proc) {
+                                if code.isSuccess then p.completeDiscard(Result.succeed(()))
+                                else p.completeDiscard(Result.fail(code))
+                            }
                         }
                     ))
                 end if
@@ -940,7 +994,8 @@ final private[kyo] class NodeCommandUnsafe(
         stdoutSink: NodeStdioSink = this.stdoutSink,
         stderrSink: NodeStdioSink = this.stderrSink,
         redirectError: Boolean = this.redirectError,
-        pipeTo: Maybe[Command.Unsafe] = this.pipeTo
+        pipeTo: Maybe[Command.Unsafe] = this.pipeTo,
+        processGroup: Boolean = this.processGroup
     ): NodeCommandUnsafe =
         new NodeCommandUnsafe(
             args,
@@ -951,7 +1006,8 @@ final private[kyo] class NodeCommandUnsafe(
             stdoutSink,
             stderrSink,
             redirectError,
-            pipeTo
+            pipeTo,
+            processGroup
         )
 
 end NodeCommandUnsafe

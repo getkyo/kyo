@@ -126,8 +126,11 @@ object Command:
                     // Releases run last-registered first, and closing the scope waits for the readers. A read blocks until every holder of
                     // the pipe is gone, so the tree is killed before the readers are awaited, or a child holding stdout keeps the close
                     // waiting forever.
-                    _        <- Scope.ensure(proc.destroyTree)
-                    code     <- proc.waitFor
+                    _    <- Scope.ensure(proc.destroyTree)
+                    code <- proc.waitFor
+                    // After the exit the walk from the program finds nothing; this kills what is left: a processGroup command's group,
+                    // which may hold stdout, and on JS the earlier stages of a pipeline, whose output went to the stage that exited.
+                    _        <- proc.destroyTree
                     outBytes <- outFib.get
                     _        <- errFib.get
                 yield (new String(outBytes.toArray, StandardCharsets.UTF_8), code)
@@ -212,6 +215,28 @@ object Command:
         /** Pipes this command's stdout into `that` command's stdin (UNIX-style `|`). */
         def andThen(that: Command): Command = self.unsafe.withAndThen(that.unsafe).safe
 
+        /** Starts the program as the leader of a new process group, which [[Process.destroyTree]], and so the release of [[spawn]]'s
+          * scope, kills whole, after the program has exited as well. [[text]], [[waitFor]], [[waitForSuccess]] and [[textWithExitCode]]
+          * kill it at the program's exit.
+          *
+          * Without it, a child that the program leaves running when it exits is reparented to init, where no walk from the program finds
+          * it: the child outlives the scope, and when it holds the program's stdout, a read of that output waits for the child. Every
+          * process the program starts joins the group unless it moves itself out (`setsid`, `setpgid`), as a daemon does.
+          *
+          * A read of a spawned process's stdout or stderr ends when every process holding the pipe is gone, so after the program exits it
+          * still waits for what the program left running; [[Process.destroyTree]] ends it.
+          *
+          * A process in a group of its own is not in the terminal's foreground group: Ctrl-C at the terminal does not reach it, and on the
+          * JVM and Native a read of an inherited terminal stops it, so a command that reads the terminal should not use this. On JS the
+          * program starts a new session instead, outside the terminal's job control: its read of the terminal is not stopped.
+          *
+          * The program, once exited, stays unreaped until `destroyTree` kills its group, so its pid, which is the group's id, cannot be
+          * reused before that kill; with [[spawnUnscoped]] it stays so until the caller runs `destroyTree`, for as long as this program
+          * runs if it never does. On the JVM the spawn calls the C library through `java.lang.foreign`, so without
+          * `--enable-native-access=ALL-UNNAMED` the JDK prints a restricted-method warning. Supported on POSIX hosts.
+          */
+        def processGroup: Command = self.unsafe.withProcessGroup.safe
+
         /** Returns the underlying `Unsafe` implementation. */
         def unsafe: Command.Unsafe = self
 
@@ -285,6 +310,7 @@ object Command:
         def withStderrFile(path: kyo.Path, append: Boolean): Unsafe
         def withRedirectErrorStream(value: Boolean): Unsafe
         def withAndThen(that: Unsafe): Unsafe
+        def withProcessGroup: Unsafe
 
         /** Lifts this `Unsafe` value back into the safe `Command` opaque type. */
         def safe: Command = this
