@@ -47,12 +47,16 @@ private[kyo] object ProcessTreePlatform:
         }
 
     // Each /proc/<pid>/stat reads `pid (comm) state ppid ...`; comm may contain spaces and parentheses, so fields are read after the
-    // last `)`.
+    // last `)`. It is read to its end as a stream: Scala Native's Files.readAllBytes reads as many bytes as the file's size, and a /proc
+    // file's size is 0.
     private def linuxChildren(parents: Set[Long]): Chunk[Long] =
         val entries = Option(new java.io.File("/proc").list()).getOrElse(Array.empty[String])
         Chunk.from(entries.iterator.filter(name => name.nonEmpty && name.forall(_.isDigit)).flatMap { name =>
             val stat =
-                try Some(new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("/proc", name, "stat"))))
+                try
+                    val in = new java.io.FileInputStream(s"/proc/$name/stat")
+                    try Some(new String(in.readAllBytes()))
+                    finally in.close()
                 catch case _: java.io.IOException => None
             stat.flatMap { text =>
                 val fields = text.substring(text.lastIndexOf(')') + 1).trim.split(" ")
