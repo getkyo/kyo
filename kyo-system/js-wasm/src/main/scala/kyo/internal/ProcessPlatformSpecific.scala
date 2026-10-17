@@ -614,8 +614,11 @@ final private[kyo] class NodeCommandUnsafe(
                         "\\"
                     ) || (cmd.length > 1 && cmd(1) == ':')
                 then
-                    if isExec(cmd) then Absent
-                    else Present(ProgramNotFoundException(cmd))
+                    if !fs.existsSync(cmd).asInstanceOf[Boolean] then Present(ProgramNotFoundException(cmd))
+                    // A folder passes the execute check, which reads its search permission, so it is refused here as on the JVM.
+                    else if fs.statSync(cmd).isDirectory().asInstanceOf[Boolean] || !isExec(cmd) then
+                        Present(PermissionDeniedException(cmd))
+                    else Absent
                 else
                     // Bare command name: scan PATH
                     val pathEnv = js.Dynamic.global.process.env.PATH

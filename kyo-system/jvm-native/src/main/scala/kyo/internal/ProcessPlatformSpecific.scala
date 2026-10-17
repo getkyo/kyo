@@ -382,8 +382,14 @@ final private[kyo] class JvmCommandUnsafe(
         else
             val cmd = args.head
             if cmd.startsWith("/") || cmd.contains("/") then
-                if java.nio.file.Files.isExecutable(java.nio.file.Paths.get(cmd)) then Absent
-                else Present(ProgramNotFoundException(cmd))
+                val path = java.nio.file.Paths.get(cmd)
+                if !java.nio.file.Files.exists(path) then Present(ProgramNotFoundException(cmd))
+                // A folder passes the execute check, which reads its search permission, and Native's spawn reports its exec failure
+                // as an exit code rather than an exception, so a folder is refused here on both.
+                else if java.nio.file.Files.isDirectory(path) || !java.nio.file.Files.isExecutable(path) then
+                    Present(PermissionDeniedException(cmd))
+                else Absent
+                end if
             else
                 val pathEnv = java.lang.System.getenv("PATH")
                 val pathStr = if pathEnv != null then pathEnv else ""
@@ -397,10 +403,9 @@ final private[kyo] class JvmCommandUnsafe(
 
     /** Translates a java.io.IOException from ProcessBuilder.start() into a CommandException. */
     private def translateIOException(e: IOException, cmd: String)(using Frame): CommandException =
+        // Every message the JVM raises starts with "Cannot run program", so the permission check comes first.
         val msg = e.getMessage
-        if msg != null && (msg.contains("No such file") || msg.contains("Cannot run program") || msg.contains("error=2")) then
-            ProgramNotFoundException(cmd)
-        else if msg != null && (msg.contains("Permission denied") || msg.contains("error=13")) then
+        if msg != null && (msg.contains("Permission denied") || msg.contains("error=13")) then
             PermissionDeniedException(cmd)
         else
             ProgramNotFoundException(cmd)

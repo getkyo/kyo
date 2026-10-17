@@ -114,6 +114,34 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a program path to a file without execute permission raises PermissionDeniedException" in {
+        assumeUnix("No execute permission bit on Windows")
+        Path.run {
+            for
+                dir <- Path.tempDir("kyo-cmd-denied")
+                script = dir / "script.sh"
+                _      <- script.write("#!/bin/sh\necho no\n")
+                result <- Abort.run[CommandException](Command(script.toString).waitFor)
+                _      <- dir.removeAll
+            yield result match
+                case Result.Failure(PermissionDeniedException(cmd)) => assert(cmd == script.toString)
+                case other                                          => fail(s"Expected PermissionDeniedException, got: $other")
+        }
+    }
+
+    "a program path to a folder raises PermissionDeniedException" in {
+        assumeUnix("A folder path is resolved differently on Windows")
+        Path.run {
+            for
+                dir    <- Path.tempDir("kyo-cmd-folder")
+                result <- Abort.run[CommandException](Command(dir.toString).waitFor)
+                _      <- dir.removeAll
+            yield result match
+                case Result.Failure(PermissionDeniedException(cmd)) => assert(cmd == dir.toString)
+                case other                                          => fail(s"Expected PermissionDeniedException, got: $other")
+        }
+    }
+
     "missing cwd raises WorkingDirectoryNotFoundException" in {
         val missingDir = Path / "kyo-nonexistent-cwd-xyzzy-99" / "sub"
         Abort.run[CommandException] {
