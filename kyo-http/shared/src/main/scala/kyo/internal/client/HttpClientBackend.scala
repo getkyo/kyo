@@ -94,11 +94,7 @@ final private[kyo] class HttpClientBackend private (
                             transportConn.outbound,
                             readBufferCapacity(transportConfig.maxHeaderSize)
                         )
-                        val host            = url.host
-                        val port            = url.port
-                        val isDefaultPort   = if url.ssl then port == 443 else port == 80
-                        val hostHeaderValue = if isDefaultPort || host.isEmpty then host else s"$host:$port"
-                        val conn            = new HttpConnection(transportConn, http1, host, port, url.ssl, hostHeaderValue)
+                        val conn = new HttpConnection(transportConn, http1, url.host, url.port, url.ssl, url.authority)
                         // Tracked in the step that creates it, not by the caller after the handoff: a caller stopped
                         // after the handoff never tracks anything, and an untracked connection stays established.
                         trackConn(conn)
@@ -346,14 +342,8 @@ final private[kyo] class HttpClientBackend private (
         // If the request URL has an explicit host (e.g. after a redirect), recompute;
         // otherwise use the pre-cached value on the connection.
         val hostHeader =
-            if request.url.host.nonEmpty && request.url.host != conn.targetHost then
-                val host          = request.url.host
-                val port          = request.url.port
-                val ssl           = request.url.ssl
-                val isDefaultPort = if ssl then port == 443 else port == 80
-                if isDefaultPort || host.isEmpty then host else s"$host:$port"
-            else
-                conn.hostHeaderValue
+            if request.url.host.nonEmpty && request.url.host != conn.targetHost then request.url.authority
+            else conn.hostHeaderValue
         RouteUtil.encodeRequestWithBoundary(route, request, multipartBoundary)(
             onEmpty = (path, headers) =>
                 unsendableField(path, hostHeader, headers) match
@@ -902,13 +892,8 @@ final private[kyo] class HttpClientBackend private (
         headers: HttpHeaders,
         connectTimeout: Duration
     )(using Frame): HttpRawConnection < (Async & Abort[HttpException] & Scope) =
-        val host     = url.host
-        val port     = url.port
-        val ssl      = url.ssl
-        val (eh, ep) = hostPort(url)
-
-        val isDefaultPort   = if ssl then port == 443 else port == 80
-        val hostHeaderValue = if isDefaultPort || host.isEmpty then host else s"$host:$port"
+        val (eh, ep)        = hostPort(url)
+        val hostHeaderValue = url.authority
 
         // The raw path serializes the caller's request line and header block through sendDirect verbatim, so a control
         // character in the path, the derived Host or any header value would inject a request line or a header the caller

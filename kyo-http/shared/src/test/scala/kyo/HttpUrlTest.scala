@@ -126,6 +126,21 @@ class HttpUrlTest extends BaseHttpTest:
         }
     }
 
+    "an IPv6 host" - {
+
+        "is written in brackets, with a port that is not the scheme's default" in {
+            val urls = Chunk("http://[::1]:8080/p?q=1", "https://[2001:db8::1]/p", "wss://[::1]:443/ws").map(HttpUrl.parse(_).getOrThrow)
+            assert(urls.map(_.full) == Chunk("http://[::1]:8080/p?q=1", "https://[2001:db8::1]/p", "wss://[::1]/ws"))
+            assert(urls.map(_.baseUrl) == Chunk("http://[::1]:8080/p", "https://[2001:db8::1]/p", "wss://[::1]/ws"))
+            assert(urls.map(_.authority) == Chunk("[::1]:8080", "[2001:db8::1]", "[::1]"))
+        }
+
+        "round-trips through full and parse" in {
+            val url = HttpUrl.parse("http://[::1]:8080/p?q=1").getOrThrow
+            assert(HttpUrl.parse(url.full) == Result.succeed(url))
+        }
+    }
+
     "a Unix socket path" - {
 
         val socket = HttpUrl(Present("http"), "localhost", 80, "/p", Absent, Present("/tmp/a b+c.sock"))

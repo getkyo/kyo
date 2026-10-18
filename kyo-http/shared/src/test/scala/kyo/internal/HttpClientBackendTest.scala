@@ -481,6 +481,19 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     }
 
+    "an IPv6 host is sent in brackets in the Host header" in {
+        val route = HttpRoute.getRaw("host").response(_.bodyText)
+        val ep    = route.handler(req => HttpResponse.ok(req.headers.get("Host").getOrElse("")))
+        Scope.run {
+            HttpServer.init(0, "::1")(ep).map { server =>
+                val url = HttpUrl.parse(s"http://[::1]:${server.port}").getOrThrow
+                directSend(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/host"))).map { resp =>
+                    assert(resp.fields.body == s"[::1]:${server.port}")
+                }
+            }
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // 18. readLoopUnsafe accumulates bytes until contentLength
     // ---------------------------------------------------------------------------

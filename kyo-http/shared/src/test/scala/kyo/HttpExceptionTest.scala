@@ -80,4 +80,23 @@ class HttpExceptionTest extends BaseHttpTest:
         }
     }
 
+    // Built away from the leaves, as closedIn is.
+    private def onIpv6: Chunk[HttpException] = Chunk(
+        HttpConnectException("::1", 8080, new Exception("refused")),
+        HttpConnectTimeoutException("::1", 8080, 1.second),
+        HttpPoolExhaustedException("::1", 8080, 4, summon[Frame]),
+        HttpBindException("::", 8080, new Exception("in use"))
+    )
+
+    "a message naming an IPv6 host writes it in brackets before its port" in {
+        val sentences =
+            Chunk(
+                "Connection to [::1]:8080 failed.",
+                "Connection to [::1]:8080 timed out",
+                "connections to [::1]:8080 are in use.",
+                "bind to [::]:8080."
+            )
+        assert(onIpv6.map(_.getMessage).zip(sentences).forall((message, sentence) => message.contains(sentence)))
+    }
+
 end HttpExceptionTest

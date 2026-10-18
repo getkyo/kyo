@@ -58,7 +58,7 @@ sealed abstract class HttpConnectionException(message: String, cause: String | T
 /** Connection refused or unreachable host. */
 case class HttpConnectException(host: String, port: Int, cause: Throwable)(using Frame)
     extends HttpConnectionException(
-        s"""Connection to $host:$port failed.
+        s"""Connection to ${HttpUrl.uriHost(host)}:$port failed.
            |
            |  Verify the server is running and reachable.""".stripMargin,
         cause
@@ -85,13 +85,13 @@ case class HttpUnixConnectException(path: String, cause: Throwable)(using Frame)
 /** TCP connect exceeded the configured timeout. */
 case class HttpConnectTimeoutException(host: String, port: Int, timeout: Duration)(using Frame)
     extends HttpConnectionException(
-        s"""Connection to $host:$port timed out after $timeout."""
+        s"""Connection to ${HttpUrl.uriHost(host)}:$port timed out after $timeout."""
     )
 
 /** All connections to a host are in use. Includes the Frame where the client was created for debugging. */
 case class HttpPoolExhaustedException(host: String, port: Int, maxConnections: Int, clientFrame: Frame)(using Frame)
     extends HttpConnectionException(
-        s"""All $maxConnections connections to $host:$port are in use.
+        s"""All $maxConnections connections to ${HttpUrl.uriHost(host)}:$port are in use.
            |
            |  Each HttpClient instance maintains its own connection pool.
            |  This client was created at: ${clientFrame.position.show}
@@ -286,7 +286,7 @@ sealed abstract class HttpServerException(message: String, cause: String | Throw
 /** Server failed to bind to a port. */
 case class HttpBindException(host: String, port: Int, cause: Throwable)(using Frame)
     extends HttpServerException(
-        s"""Server failed to bind to $host:$port.
+        s"""Server failed to bind to ${HttpUrl.uriHost(host)}:$port.
            |
            |  Is another process already using port $port?""".stripMargin,
         cause

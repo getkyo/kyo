@@ -546,6 +546,24 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             }
         }
 
+        "writes the Host header as the URL's authority: an IPv6 host in brackets, a port that is not the default" in {
+            val urls = Chunk(
+                wsUrl(),
+                HttpUrl(Present("ws"), "localhost", 8080, "/ws", Absent),
+                HttpUrl(Present("ws"), "::1", 8080, "/ws", Absent),
+                HttpUrl(Present("wss"), "::1", 443, "/ws", Absent)
+            )
+            Kyo.foreach(urls) { url =>
+                val conn = new MockConn(Array.empty[Byte])
+                Abort.run[HttpException](WebSocketCodec.requestUpgradeWith(conn, url, HttpHeaders.empty, HttpWebSocket.Config()) { _ =>
+                    ()
+                })
+                    .map(_ => conn.writtenString.linesIterator.find(_.startsWith("Host: ")).getOrElse(""))
+            }.map { hosts =>
+                assert(hosts == Chunk("Host: localhost", "Host: localhost:8080", "Host: [::1]:8080", "Host: [::1]"))
+            }
+        }
+
         "a well-formed non-101 status line is the handshake leaf naming the url and the status" in {
             Kyo.foreach(Chunk("HTTP/1.1 400 Bad Request\r\n\r\n", "HTTP/1.0 403 \r\n\r\n", "HTTP/1.1 200\r\n\r\n")) { response =>
                 val conn = new MockConn(response.getBytes(Utf8)):

@@ -151,7 +151,7 @@ private[kyo] object WebSocketCodec:
     )(
         f: Stream[Span[Byte], Async] => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        unsendableField(url.pathWithQuery, url.host, headers) match
+        unsendableField(url.pathWithQuery, url.authority, headers) match
             case Present(ex) => Abort.fail(ex)
             case Absent      =>
                 unsendableSubprotocol(config, headers) match
@@ -193,13 +193,12 @@ private[kyo] object WebSocketCodec:
     )(
         f: Stream[Span[Byte], Async] => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        val host = url.host
         val path = url.pathWithQuery
         Sync.defer {
             val clientKey = Base64.getEncoder.encodeToString(randomBytes(16))
             val request   = new StringBuilder
             discard(request.append("GET ").append(path).append(" HTTP/1.1\r\n"))
-            discard(request.append("Host: ").append(host).append("\r\n"))
+            discard(request.append("Host: ").append(url.authority).append("\r\n"))
             discard(request.append("Upgrade: websocket\r\n"))
             discard(request.append("Connection: Upgrade\r\n"))
             discard(request.append("Sec-WebSocket-Version: 13\r\n"))
