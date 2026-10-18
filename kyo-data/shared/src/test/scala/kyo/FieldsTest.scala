@@ -65,6 +65,20 @@ class FieldsTest extends kyo.test.Test[Any]:
         typeCheckFailure("""summon[Fields.Have[Person, "missing"]]""")("Fields.Have")
     }
 
+    // --- Selection ---
+
+    "selection: a field selected as a member is its Field, with its name and value type" in {
+        val fields                      = summon[Fields["name" ~ String & "age" ~ Int]]
+        val name: Field["name", String] = fields.name
+        val age: Field["age", Int]      = fields.age
+        assert((name.name, age.name) == ("name", "age"))
+        assert((name.get("name" ~ "Alice" & "age" ~ 30), age.get("name" ~ "Alice" & "age" ~ 30)) == ("Alice", 30))
+    }
+
+    "selection: a name the fields do not have is refused" in {
+        typeCheckFailure("""summon[Fields["name" ~ String]].missing""")("Fields.Have")
+    }
+
     "case class: Fields.fields has correct tags" in {
         val fs        = Fields.fields[Person]
         val nameField = fs.find(_.name == "name").get

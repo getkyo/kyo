@@ -305,6 +305,20 @@ object Record:
     transparent inline def fromProduct[A <: Product](value: A): Any =
         ${ internal.FieldsMacros.fromProductImpl[A]('value) }
 
+    /** Creates a record from the methods of a value, typically an object. Each public method or `val` declared on the value's class becomes
+      * a field named after it, whose value calls it: a function of a record of the method's parameters under their names, answering what
+      * the method answers, so `def find(name: String, limit: Int): Chunk[Pet]` becomes the field
+      * `"find" ~ (Record["name" ~ String & "limit" ~ Int] => Chunk[Pet])`. A `val`, or a `def` without parameters, takes the empty record,
+      * `Record[Any]`. A parameter with a default is left out of the record and takes its default, and a `using` clause is resolved where
+      * `fromObject` is called.
+      *
+      * Left out: an overloaded name, whose fields would merge into a union of functions no call could choose from; a method with type
+      * parameters; a member whose `using` clause does not resolve at the call; a `var`; a nested object; and overrides of the members of
+      * `Any`, `AnyRef` and `Product`, such as `toString`. Selecting a member that was left out fails to compile as any missing field does.
+      */
+    transparent inline def fromObject[A](value: A): Any =
+        ${ internal.FieldsMacros.fromObjectImpl[A]('value) }
+
     private[kyo] inline def collectValues[T <: Tuple](dict: Dict[String, Any]): Tuple =
         inline erasedValue[T] match
             case _: EmptyTuple                                                 => EmptyTuple

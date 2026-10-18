@@ -264,6 +264,113 @@ object FieldsMacros:
         end match
     end fromProductImpl
 
+    def fromObjectImpl[A: Type](value: Expr[A])(using Quotes): Expr[Any] =
+        import quotes.reflect.*
+
+        val tildeType = TypeRepr.of[Record.~]
+        val inherited =
+            Set(defn.AnyClass, defn.ObjectClass, TypeRepr.of[Product].typeSymbol, TypeRepr.of[Equals].typeSymbol, defn.AnyRefClass)
+
+        val hidden =
+            List(
+                Flags.Private,
+                Flags.Protected,
+                Flags.Synthetic,
+                Flags.Artifact,
+                Flags.Given,
+                Flags.Implicit,
+                Flags.ExtensionMethod,
+                Flags.Mutable,
+                Flags.Module
+            )
+
+        def exposed(member: Symbol): Boolean =
+            !hidden.exists(member.flags.is) && member.privateWithin.isEmpty && !member.isClassConstructor && !member.name.contains('$') &&
+                !member.allOverriddenSymbols.exists(overridden => inherited.contains(overridden.owner))
+
+        def build(target: Term): Expr[Any] =
+            val owner = target.tpe.widen.dealias.typeSymbol
+
+            // The default of the parameter at `position` (1-based over every parameter clause), when its getter needs no arguments.
+            def default(member: Symbol, position: Int): Option[Term] =
+                owner.methodMember(s"${member.name}$$default$$$position").find(_.paramSymss.forall(_.isEmpty)).map(target.select)
+
+            // The member applied a clause at a time: a contextual clause from the implicit scope at the call, a defaulted parameter from
+            // its default, and any other parameter from `arg`. Absent when a contextual parameter does not resolve or the member takes
+            // type parameters. The parameters taken from `arg` come back in order.
+            def call(member: Symbol, arg: (String, TypeRepr) => Term): Option[(Term, List[(String, TypeRepr)])] =
+                def clauses(applied: Term, position: Int, taken: List[(String, TypeRepr)]): Option[(Term, List[(String, TypeRepr)])] =
+                    applied.tpe.widen match
+                        case method: MethodType if method.isImplicit =>
+                            val resolved = method.paramTypes.map(paramType =>
+                                Implicits.search(paramType) match
+                                    case found: ImplicitSearchSuccess => Some(found.tree)
+                                    case _                            => None
+                            )
+                            if resolved.forall(_.isDefined) then
+                                clauses(applied.appliedToArgs(resolved.flatten), position + method.paramNames.size, taken)
+                            else None
+                        case method: MethodType =>
+                            val params = method.paramNames.zip(method.paramTypes).zipWithIndex.map { case ((name, paramType), index) =>
+                                default(member, position + index + 1).toLeft((name, paramType))
+                            }
+                            val args = params.map {
+                                case Left(defaulted)          => defaulted
+                                case Right((name, paramType)) => arg(name, paramType)
+                            }
+                            clauses(applied.appliedToArgs(args), position + params.size, taken ++ params.collect { case Right(p) => p })
+                        case _: PolyType => None
+                        case _           => Some((applied, taken))
+                clauses(target.select(member), 0, Nil)
+            end call
+
+            val members = (owner.declaredMethods ++ owner.declaredFields).filter(exposed)
+            val fields  = members.groupBy(_.name).toList.sortBy(_._1).collect { case (name, List(member)) =>
+                // typed once with placeholders, to learn the parameters taken and the result
+                call(member, (_, paramType) => Typed('{ ??? }.asTerm, Inferred(paramType))).map { (typed, taken) =>
+                    val inputType =
+                        taken.map((name, paramType) => tildeType.appliedTo(List(ConstantType(StringConstant(name)), paramType)))
+                            .reduceOption(AndType(_, _)).getOrElse(TypeRepr.of[Any])
+                    inputType.asType match
+                        case '[p] =>
+                            typed.tpe.widenByName.widen.asType match
+                                case '[r] =>
+                                    val function = '{ (in: Record[p]) =>
+                                        ${
+                                            call(
+                                                member,
+                                                (name, paramType) =>
+                                                    paramType.asType match
+                                                        case '[t] => '{ in.dict(${ Expr(name) }).asInstanceOf[t] }.asTerm
+                                            ).map(_._1.asExprOf[r]).getOrElse(report.errorAndAbort(s"fromObject could not call $name"))
+                                        }
+                                    }
+                                    (
+                                        name,
+                                        tildeType.appliedTo(List(ConstantType(StringConstant(name)), TypeRepr.of[Record[p] => r])),
+                                        function
+                                    )
+                    end match
+                }
+            }.flatten
+
+            val recordType = fields.map(_._2).reduceOption(AndType(_, _)).getOrElse(TypeRepr.of[Any])
+            val entries    = fields.map((name, _, function) => '{ (${ Expr(name) }, $function) })
+            recordType.asType match
+                case '[f] => '{ new Record[f](Dict[String, Any](${ Varargs(entries) }*)) }
+        end build
+
+        // A stable path (an object, a stable identifier) is called as written; any other value is bound once, so each call reuses it.
+        value.asTerm.underlyingArgument match
+            case stable if stable.tpe.isSingleton => build(stable)
+            case _                                =>
+                '{
+                    val target = $value
+                    ${ build('target.asTerm) }
+                }
+        end match
+    end fromObjectImpl
+
     def toProductImpl[A <: Product: Type](record: Expr[Record[?]])(using Quotes): Expr[A] =
         import quotes.reflect.*
 

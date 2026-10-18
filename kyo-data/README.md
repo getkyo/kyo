@@ -634,6 +634,27 @@ val id: Int       = rec.id
 val email: String = rec.email
 ```
 
+### Records from objects
+
+`Record.fromObject` turns the methods of a value, typically an object, into fields. Each public method or `val` becomes a field named after it, a function from a record of the method's parameters to what the method answers. A parameter with a default is left out of the record and takes its default; a `using` clause is resolved where `fromObject` is called. An overloaded name and a method with type parameters are left out, since no single function type describes them, and so are a `var`, a nested object and a member whose `using` clause does not resolve.
+
+```scala
+import kyo.*
+
+object Pets:
+    def find(name: String, limit: Int): Chunk[String]        = Chunk.fill(limit)(name)
+    def greet(name: String, greeting: String = "hi"): String = s"$greeting $name"
+    val version: Int                                         = 3
+end Pets
+
+val pets = Record.fromObject(Pets)
+
+val find: Record["name" ~ String & "limit" ~ Int] => Chunk[String] = pets.find
+val found: Chunk[String]                                           = find("name" ~ "Rex" & "limit" ~ 2)
+val greeting: String                                               = pets.greet.apply("name" ~ "Rex")
+val version: Int                                                   = pets.version.apply(Record.empty)
+```
+
 ### Updating, mapping, and zipping
 
 To modify or transform a record, four operations cover the common cases. `update(name, value)` returns a new record with one field replaced. `map` applies a polymorphic function to every value type, lifting it through `G[_]`. `mapFields` is `map` plus access to the `Field` descriptor (name and `Tag`). `zip` pairs values between two records with the same field names.
@@ -659,7 +680,7 @@ val paired    = rec.zip(sameShape) // each field becomes (a, b)
 
 ### Reified field descriptors
 
-For code that operates on a record's schema as data (serializers, validators, debuggers), the per-field descriptor is `Field[Name, Value]`. It carries the field's singleton name, value `Tag`, optional nested fields (populated for nested records), and an optional default. Obtain them through `Fields.fields[F]` (a list) or `Field.apply[Name, Value]` (summons from implicit scope).
+For code that operates on a record's schema as data (serializers, validators, debuggers), the per-field descriptor is `Field[Name, Value]`. It carries the field's singleton name, value `Tag`, optional nested fields (populated for nested records), and an optional default. Obtain them through `Fields.fields[F]` (a list), `Field.apply[Name, Value]` (summons from implicit scope), or by selecting the field's name on a `Fields[F]`, which fails to compile for a name `F` does not have.
 
 ```scala
 import kyo.*
@@ -669,7 +690,8 @@ case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 val all: List[Field[?, ?]] = Fields.fields[User]
 val names: Set[String]     = Fields.names[User]
 
-val nameField = Field["name", String]
+val nameField                          = Field["name", String]
+val emailField: Field["email", String] = summon[Fields[User]].email
 ```
 
 ### Compile-time staging per field
