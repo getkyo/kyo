@@ -15,8 +15,8 @@ import scala.util.control.NonFatal
   * Focus navigation resolves field access by name using the structural type `F`, delegating to
   * [[NavigationMacro]] for field resolution.
   *
-  * Schema derivation walks the type symbol's case fields (for case classes) or children (for sealed
-  * traits). For each field/variant it emits a thunk wrapping
+  * Schema derivation walks the type symbol's case fields (for case classes), a record's fields (for
+  * records) or children (for sealed traits). For each field/variant it emits a thunk wrapping
   * `scala.compiletime.summonInline[Schema[ft]]` and emits a fully-static per-field codec body (no
   * runtime walk). The macro never pattern-matches on a specific container or primitive
   * type symbol: every nested type resolves via `summonInline` at the inline-expansion phase, which
@@ -312,8 +312,8 @@ import scala.util.control.NonFatal
       * whose expansion is itself (a primitive, an opaque type) gets `Focused = A`, which no builder can change; any other type
       * keeps `Focused` abstract, so navigating it is a compile error that points at the missing refinement.
       *
-      * Without a given, case classes and sealed traits take the same emission path as `Schema.derived`, and other types (records,
-      * primitives) get a Schema with identity getter/setter and an Open structural shape.
+      * Without a given, case classes, records and sealed traits take the same emission path as `Schema.derived`, and other types
+      * (primitives) get a Schema with identity getter/setter and an Open structural shape.
       */
     def metaApplyImpl[A: Type](using Quotes): Expr[Any] =
         import quotes.reflect.*
@@ -340,6 +340,14 @@ import scala.util.control.NonFatal
                         if isConstructibleCaseClass(sym) then
                             rejectPrivateCaseFields(tpe, sym)
                             val derived = emitProductSchemaStatic[A](tpe, sym, sourceFields = sourceFields, focusedType = TypeRepr.of[f])
+                            '{ ${ derived }.asInstanceOf[Schema[A] { type Focused = f }] }
+                        else if recordFields(tpe).isDefined then
+                            val derived = emitProductSchemaStatic[A](
+                                tpe,
+                                sym,
+                                sourceFields = recordSourceFields(tpe, "Schema.apply"),
+                                focusedType = TypeRepr.of[f]
+                            )
                             '{ ${ derived }.asInstanceOf[Schema[A] { type Focused = f }] }
                         else if sym.flags.is(Flags.Sealed) then
                             val derived = emitSealedSchemaStatic[A](tpe, sym, sourceFields = sourceFields, focusedType = TypeRepr.of[f])
@@ -1622,10 +1630,15 @@ import scala.util.control.NonFatal
         end match
     end productSourceFields
 
-    /** Derives `Schema[A]` for case classes and sealed traits.
+    /** The source fields of a record, which are its field intersection's: `Fields[Record[F]]` has none. */
+    private def recordSourceFields(using Quotes)(tpe: quotes.reflect.TypeRepr, entryPoint: String): Expr[Seq[kyo.Field[?, ?]]] =
+        tpe.dealias.typeArgs.head.asType match
+            case '[f] => productSourceFields[f](entryPoint)
+
+    /** Derives `Schema[A]` for case classes, records and sealed traits.
       *
-      * The emission walks `sym.caseFields` (for case classes) or `sym.children` (for sealed traits)
-      * and emits per-field / per-variant thunks that resolve their Schema via
+      * The emission walks `sym.caseFields` (for case classes), the fields of a record's field intersection (for records) or
+      * `sym.children` (for sealed traits) and emits per-field / per-variant thunks that resolve their Schema via
       * `scala.compiletime.summonInline[Schema[ft]]` at inline-expansion time. The macro never
       * pattern-matches on container or primitive type symbols; recursive cycles are handled by the
       * by-name `Structure.Field` thunk plus the `lazy val structure` cycle break on the generated
@@ -1649,6 +1662,8 @@ import scala.util.control.NonFatal
             rejectPrivateCaseFields(tpe, sym)
             rejectSumOnlyAnnotations(tpe, sym)
             emitProductSchemaStatic[A](tpe, sym, sourceFields = productSourceFields[A]("Schema.derived"), focusedType = tpe)
+        else if recordFields(tpe).isDefined then
+            emitProductSchemaStatic[A](tpe, sym, sourceFields = recordSourceFields(tpe, "Schema.derived"), focusedType = tpe)
         else if sym.isClassDef && sym.flags.is(Flags.Sealed) then
             emitSealedSchemaStatic[A](tpe, sym, sourceFields = '{ Seq.empty[kyo.Field[?, ?]] }, focusedType = tpe)
         else if isOrType(tpe) then
@@ -1657,7 +1672,7 @@ import scala.util.control.NonFatal
             emitUnionSchemaStatic[A](tpe)
         else
             report.errorAndAbort(
-                s"Cannot derive Schema for ${tpe.show}: not a case class or sealed trait. " +
+                s"Cannot derive Schema for ${tpe.show}: not a case class, record or sealed trait. " +
                     "Provide a given Schema instance for this type if derivation is not possible."
             )
         end if
@@ -1960,6 +1975,40 @@ import scala.util.control.NonFatal
         sym.isClassDef && sym.flags.is(Flags.Case) && !sym.flags.is(Flags.Abstract)
     end isConstructibleCaseClass
 
+    /** The fields of a `Record[F]`, each name with its value type in the order `F` declares them, or absent for any other type. A record
+      * derives as a product of these fields. `F` must be known where the schema is derived, and a name it declares twice is refused,
+      * since its value would have the union of both types.
+      */
+    private[internal] def recordFields(using Quotes)(tpe: quotes.reflect.TypeRepr): Option[List[(String, quotes.reflect.TypeRepr)]] =
+        import quotes.reflect.*
+        given CanEqual[Symbol, Symbol]                          = CanEqual.derived
+        val tilde                                               = TypeRepr.of[Record.~].typeSymbol
+        def members(fields: TypeRepr): List[(String, TypeRepr)] =
+            fields.dealias match
+                case AndType(left, right) => members(left) ++ members(right)
+                case AppliedType(tycon, List(ConstantType(StringConstant(name)), value)) if tycon.typeSymbol == tilde => List((name, value))
+                case other if other =:= TypeRepr.of[Any]                                                              => Nil
+                case other                                                                                            =>
+                    kyo.internal.DeclaredBounds.upper(other).map(members).getOrElse(
+                        report.errorAndAbort(
+                            s"Cannot derive Schema for ${tpe.show}: ${other.show} is not a field (\"name\" ~ Value) or an intersection of " +
+                                "fields. Derive the schema where the record's fields are known."
+                        )
+                    )
+        tpe.dealias match
+            case AppliedType(record, List(fields)) if record.typeSymbol == TypeRepr.of[Record[Any]].typeSymbol =>
+                val found = members(fields)
+                found.groupBy(_._1).collectFirst { case (name, declared) if declared.size > 1 => name }.foreach { name =>
+                    report.errorAndAbort(
+                        s"Cannot derive Schema for ${tpe.show}: the field '$name' is declared more than once, so its value has the union " +
+                            "of their types. Declare it once."
+                    )
+                }
+                Some(found)
+            case _ => None
+        end match
+    end recordFields
+
     /** Rejects an abstract case class, naming the missing constructor rather than the type's shape.
       *
       * `sealed abstract case class R private (v: Int)` is the validating-smart-constructor idiom:
@@ -2005,13 +2054,19 @@ import scala.util.control.NonFatal
     end rejectPrivateCaseFields
 
     // ==========================================================================
-    // Product (case class) emission
+    // Product (case class, record) emission
     // ==========================================================================
 
     /** Emits the `Schema[A]` for a case class: a fully-static `Schema.init[A]` whose `writeFn` /
       * `readFn` are per-field bodies that read `value.fieldN` directly and dispatch each field through
       * the inline `writeField` / `readField` bridge (primitive fields stay unboxed, everything else
       * routes through the field schema's own codec). No runtime field walk and no boxed per-field schema array.
+      *
+      * A record is the same product over its field intersection: a field is read from the record's dict
+      * under its name, the decoded fields build a new record, and no field has a default or annotations.
+      * A record is named by its type rather than `Record`, since the JSON Schema generator stops
+      * recursion at a product name it has already entered, so a record nested in a record would
+      * otherwise render as an empty object.
       *
       * Each per-field schema resolves via `summonInline[Schema[ft]]` at the generated-code typer phase;
       * the in-flight `derived$Schema` is visible by forward-reference, so recursive products close the
@@ -2032,13 +2087,16 @@ import scala.util.control.NonFatal
     ): Expr[Schema[A]] =
         import quotes.reflect.*
 
-        val typeName = sym.name
-        val fields   = sym.caseFields
-        val n        = fields.length
+        val record                = recordFields(tpe)
+        val caseFields            = sym.caseFields
+        val typeName              = record.fold(sym.name)(_ => tpe.show)
+        val names: List[String]   = record.fold(caseFields.map(_.name))(_.map(_._1))
+        val types: List[TypeRepr] = record.fold(caseFields.map(tpe.memberType))(_.map(_._2))
+        val n                     = names.length
 
         if n > 64 then
             report.errorAndAbort(
-                s"kyo-schema: case class ${tpe.show} has $n fields; the generated decoder uses a Long required-field bitmap and supports at most 64 fields."
+                s"kyo-schema: ${tpe.show} has $n fields; the generated decoder uses a Long required-field bitmap and supports at most 64 fields."
             )
         end if
 
@@ -2047,23 +2105,33 @@ import scala.util.control.NonFatal
 
         given CanEqual[Symbol, Symbol] = CanEqual.derived
 
-        val isMaybeFlags = fields.map(f =>
-            tpe.memberType(f).dealias match
+        val isMaybeFlags = types.map(t =>
+            t.dealias match
                 case AppliedType(tycon, _) => tycon.typeSymbol == maybeSym
                 case _                     => false
         )
-        val isOptionFlags = fields.map(f =>
-            tpe.memberType(f).dealias match
+        val isOptionFlags = types.map(t =>
+            t.dealias match
                 case AppliedType(tycon, _) => tycon.typeSymbol == optionSym
                 case _                     => false
         )
 
-        val hasDefaultFlags = fields.zipWithIndex.map((_, idx) => MacroUtils.hasDefault(sym, idx))
+        def default(idx: Int): Option[Expr[Any]] =
+            if record.isDefined then None else MacroUtils.getDefault(tpe, idx)
+
+        val hasDefaultFlags = names.indices.map(idx => record.isEmpty && MacroUtils.hasDefault(sym, idx)).toList
+
+        def access(value: Term, idx: Int): Term =
+            record match
+                // A Record[F] holds each field's value under its name, with the type F declares for it.
+                case Some(_) =>
+                    types(idx).asType match
+                        case '[t] => '{ ${ value.asExprOf[Record[?]] }.dict(${ Expr(names(idx)) }).asInstanceOf[t] }.asTerm
+                case None => Select(value, caseFields(idx))
 
         // Field-name -> effective-Schema-type list. For Maybe[T] the effective schema is Schema[T]
         // (inner type); the runtime adds the Maybe nil-handling on read/write.
-        val effectiveSchemaTypes: List[TypeRepr] = fields.zipWithIndex.map { (field, idx) =>
-            val rawType = tpe.memberType(field)
+        val effectiveSchemaTypes: List[TypeRepr] = types.zipWithIndex.map { (rawType, idx) =>
             if isMaybeFlags(idx) then
                 rawType.dealias match
                     case AppliedType(_, List(inner)) => inner
@@ -2091,7 +2159,7 @@ import scala.util.control.NonFatal
         // materialized once per Schema instance, instead of a `_wnb`/`_nb` pair recomputed on every
         // serialize call. Mirrors the hoisted field-schema mechanism above; referenced from both
         // bodies via Ref, the same cross-body sharing the hoisted schemas already use.
-        val nameByteSyms: List[Symbol] = fields.zipWithIndex.map { (_, idx) =>
+        val nameByteSyms: List[Symbol] = names.indices.toList.map { idx =>
             Symbol.newVal(hoistOwner, s"_nb${idx}", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol)
         }
         // The same names as one array, for the read body's failure paths: built once per Schema instance, not in every read body.
@@ -2117,9 +2185,8 @@ import scala.util.control.NonFatal
         // Per-field default Structure.Value thunks, consumed by structureExpr through one hoisted val. A default is written by the
         // field's own schema, so it is the value that schema writes (an `Absent` default is Null), not the value's `toString`.
         val defaultStructureValuesExpr: Expr[Array[() => kyo.Maybe[kyo.Structure.Value]]] =
-            val elems: List[Expr[() => kyo.Maybe[kyo.Structure.Value]]] = fields.zipWithIndex.map { (field, idx) =>
-                val rawType = tpe.memberType(field)
-                MacroUtils.getDefault(tpe, idx) match
+            val elems: List[Expr[() => kyo.Maybe[kyo.Structure.Value]]] = types.zipWithIndex.map { (rawType, idx) =>
+                default(idx) match
                     case Some(defVal) =>
                         rawType.asType match
                             case '[t] =>
@@ -2163,26 +2230,26 @@ import scala.util.control.NonFatal
             // key-encoding switch). Dynamic `Map` keys and the hand-written sum discriminator keys stay
             // on `field`, which carries the raw String for escaping.
             val header: Term         = '{ $w.objectStart(${ Expr(typeName) }, ${ Expr(n) }) }.asTerm
-            val perField: List[Term] = fields.zipWithIndex.map { (f, idx) =>
+            val perField: List[Term] = names.zipWithIndex.map { (name, idx) =>
                 // Field header tag MUST be the hash-based field ID (CodecMacro.fieldId), NOT the
                 // positional index. Computed at macro time as a literal; identical to the runtime's
                 // meta.fieldIds(i).
-                val idxExpr = Expr(CodecMacro.fieldId(f.name))
+                val idxExpr = Expr(CodecMacro.fieldId(name))
                 val nbRef   = Ref(nameByteSyms(idx)).asExprOf[Array[Byte]]
                 // An absent field reads back as its default, so one whose default is present is written, as null.
                 def writeAbsent: Expr[Unit] =
                     if !hasDefaultFlags(idx) then '{ kyo.internal.writeAbsentField($nbRef, $idxExpr, $w) }
                     else
-                        val default = MacroUtils.getDefault(tpe, idx).get
-                        val empty   =
-                            if isMaybeFlags(idx) then '{ $default.asInstanceOf[kyo.Maybe[Any]].isEmpty }
-                            else '{ $default.asInstanceOf[Option[Any]].isEmpty }
+                        val defaultValue = default(idx).get
+                        val empty        =
+                            if isMaybeFlags(idx) then '{ $defaultValue.asInstanceOf[kyo.Maybe[Any]].isEmpty }
+                            else '{ $defaultValue.asInstanceOf[Option[Any]].isEmpty }
                         '{ kyo.internal.writeAbsentDefaultedField($nbRef, $idxExpr, $w, $empty) }
                 if isMaybeFlags(idx) then
                     effectiveSchemaTypes(idx).asType match
                         case '[t] =>
                             val s   = fieldSchemaExprTyped[t](idx)
-                            val acc = Select(v.asTerm, f).asExprOf[kyo.Maybe[t]]
+                            val acc = access(v.asTerm, idx).asExprOf[kyo.Maybe[t]]
                             '{
                                 $acc match
                                     case kyo.Present(inner) =>
@@ -2195,7 +2262,7 @@ import scala.util.control.NonFatal
                     effectiveSchemaTypes(idx).asType match
                         case '[t] =>
                             val s   = fieldSchemaExprTyped[t](idx)
-                            val acc = Select(v.asTerm, f).asExprOf[t]
+                            val acc = access(v.asTerm, idx).asExprOf[t]
                             '{
                                 val _opt = $acc
                                 if _opt.asInstanceOf[Option[?]].isDefined then
@@ -2208,7 +2275,7 @@ import scala.util.control.NonFatal
                     effectiveSchemaTypes(idx).asType match
                         case '[t] =>
                             val s   = fieldSchemaExprTyped[t](idx)
-                            val acc = Select(v.asTerm, f).asExprOf[t]
+                            val acc = access(v.asTerm, idx).asExprOf[t]
                             '{
                                 $w.fieldBytes($nbRef, $idxExpr)
                                 kyo.internal.writeField($s, $acc, $w)
@@ -2221,14 +2288,14 @@ import scala.util.control.NonFatal
 
         // READ: static per-field name-matched loop.
         def readBody(r: Expr[Reader]): Expr[A] =
-            val requiredMask: Long = fields.zipWithIndex.foldLeft(0L) { case (m, (_, idx)) =>
+            val requiredMask: Long = names.indices.foldLeft(0L) { (m, idx) =>
                 if !hasDefaultFlags(idx) && !isMaybeFlags(idx) && !isOptionFlags(idx) then
                     m | (1L << idx)
                 else m
             }
 
             val absentDefaultableMaskExpr: Expr[Long] =
-                fields.indices.foldLeft('{ 0L }) { (mask, idx) =>
+                names.indices.foldLeft('{ 0L }) { (mask, idx) =>
                     if hasDefaultFlags(idx) || isMaybeFlags(idx) || isOptionFlags(idx) then mask
                     else
                         effectiveSchemaTypes(idx).asType match
@@ -2237,15 +2304,14 @@ import scala.util.control.NonFatal
                                 '{ $mask | kyo.internal.absentDefaultMask($s, ${ Expr(1L << idx) }) }
                 }
 
-            val seedExprs: List[Expr[Any]] = fields.zipWithIndex.map { (f, idx) =>
-                val ft = tpe.memberType(f)
+            val seedExprs: List[Expr[Any]] = types.zipWithIndex.map { (ft, idx) =>
                 if hasDefaultFlags(idx) && (isMaybeFlags(idx) || isOptionFlags(idx)) then
-                    val default = MacroUtils.getDefault(tpe, idx).get
-                    val empty   = if isMaybeFlags(idx) then '{ kyo.Maybe.empty[Any] } else '{ Option.empty[Any] }
+                    val defaultValue = default(idx).get
+                    val empty        = if isMaybeFlags(idx) then '{ kyo.Maybe.empty[Any] } else '{ Option.empty[Any] }
                     ft.asType match
-                        case '[t] => '{ kyo.internal.defaultedOptionalSeed[Any]($r, $default, $empty).asInstanceOf[t] }
+                        case '[t] => '{ kyo.internal.defaultedOptionalSeed[Any]($r, $defaultValue, $empty).asInstanceOf[t] }
                 else if hasDefaultFlags(idx) then
-                    MacroUtils.getDefault(tpe, idx).get
+                    default(idx).get
                 else if isMaybeFlags(idx) then
                     ft.dealias match
                         case AppliedType(_, List(inner)) =>
@@ -2263,7 +2329,7 @@ import scala.util.control.NonFatal
                 end if
             }
 
-            val perFieldReadExprs: List[Expr[Any]] = fields.zipWithIndex.map { (f, idx) =>
+            val perFieldReadExprs: List[Expr[Any]] = names.indices.toList.map { idx =>
                 val innerIsNullable = innerIsNullableFlags(idx)
                 if isMaybeFlags(idx) then
                     effectiveSchemaTypes(idx).asType match
@@ -2290,12 +2356,11 @@ import scala.util.control.NonFatal
             val seenSym = Symbol.newVal(owner, "_seen", TypeRepr.of[Long], Flags.Mutable, Symbol.noSymbol)
             val seenDef = ValDef(seenSym, Some(Literal(LongConstant(0L))))
 
-            val localSyms: List[Symbol] = fields.zipWithIndex.map { (f, idx) =>
-                val ft = tpe.memberType(f)
+            val localSyms: List[Symbol] = types.zipWithIndex.map { (ft, idx) =>
                 Symbol.newVal(owner, s"_f${idx}", ft, Flags.Mutable, Symbol.noSymbol)
             }
-            val localDefs: List[Statement] = fields.zipWithIndex.map { (f, idx) =>
-                ValDef(localSyms(idx), Some(seedExprs(idx).asTerm))
+            val localDefs: List[Statement] = localSyms.zip(seedExprs).map { (local, seed) =>
+                ValDef(local, Some(seed.asTerm))
             }
 
             val seenRef = Ref(seenSym).asExprOf[Long]
@@ -2322,7 +2387,7 @@ import scala.util.control.NonFatal
 
             // Build the if/else-if chain: if r.matchField(_nb0) then arm0 else if ... else r.skip().
             val dispatchChain: Term =
-                fields.indices.foldRight('{ $r.skip() }.asTerm) { (idx, elseTerm) =>
+                names.indices.foldRight('{ $r.skip() }.asTerm) { (idx, elseTerm) =>
                     val cond = '{ $r.matchField(${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }) }.asTerm
                     If(cond, fieldArm(idx), elseTerm)
                 }
@@ -2365,8 +2430,13 @@ import scala.util.control.NonFatal
                     // routes decoding through a smart constructor with. Everything before this point
                     // (field decoding, defaults, the required-field bitmap) is shared verbatim.
                     val construct: Term = constructVia match
-                        case Some(build) => build(ctorArgs, r)
-                        case None        =>
+                        case Some(build)              => build(ctorArgs, r)
+                        case None if record.isDefined =>
+                            tpe.typeArgs.head.asType match
+                                case '[f] =>
+                                    val entries = names.zip(ctorArgs).map((name, arg) => '{ (${ Expr(name) }, ${ arg.asExpr }) })
+                                    '{ new Record[f](kyo.Dict[String, Any](${ Varargs(entries) }*)) }.asTerm
+                        case None =>
                             val ctor: Term   = Select(New(TypeTree.of[a]), sym.primaryConstructor)
                             val typeArgsList = tpe match
                                 case AppliedType(_, targs) => targs
@@ -2403,21 +2473,22 @@ import scala.util.control.NonFatal
             // branch-free: one buildProductSchema per derivation, no per-field annotation read.
             val docSym                        = TypeRepr.of[kyo.schema.doc].typeSymbol
             val ctorDocs: Map[String, String] =
-                sym.primaryConstructor.paramSymss.flatten.flatMap(p => p.getAnnotation(docSym).map(a => p.name -> docText(a))).toMap
-            val fieldStructures: List[Expr[Structure.Field]] = fields.zipWithIndex.map { (f, idx) =>
-                val rawType  = tpe.memberType(f)
+                if record.isDefined then Map.empty
+                else sym.primaryConstructor.paramSymss.flatten.flatMap(p => p.getAnnotation(docSym).map(a => p.name -> docText(a))).toMap
+            val fieldStructures: List[Expr[Structure.Field]] = types.zipWithIndex.map { (rawType, idx) =>
                 val isOpt    = isMaybeFlags(idx) || isOptionFlags(idx)
-                val nameExpr = Expr(f.name)
+                val nameExpr = Expr(names(idx))
                 val optExpr  = Expr(isOpt)
                 val defVal   = Ref(defaultStructuresSym).asExprOf[Array[() => kyo.Maybe[kyo.Structure.Value]]]
                 val idxExpr  = Expr(idx)
-                val docExpr  = ctorDocs.get(f.name) match
+                val docExpr  = ctorDocs.get(names(idx)) match
                     case Some(s) => '{ kyo.Maybe(${ Expr(s) }) }
                     case None    => '{ kyo.Maybe.empty[String] }
                 rawType.asType match
                     case '[ft] =>
                         val fieldSchemaRef = Ref(hoistedSchemaSym(rawType)).asExprOf[Schema[ft]]
-                        val fieldAnnots    = captureFieldAnnotations(f, sym)
+                        val fieldAnnots    =
+                            if record.isDefined then '{ kyo.Chunk.empty[Any] } else captureFieldAnnotations(caseFields(idx), sym)
                         '{
                             kyo.Structure.Field(
                                 $nameExpr,
@@ -2430,8 +2501,9 @@ import scala.util.control.NonFatal
                         }
                 end match
             }
+            // A record's type argument is its field intersection, which its fields already describe.
             val tpStructures: Expr[kyo.Chunk[Structure.Type]] =
-                if tpe.typeArgs.isEmpty then '{ kyo.Chunk.empty[Structure.Type] }
+                if record.isDefined || tpe.typeArgs.isEmpty then '{ kyo.Chunk.empty[Structure.Type] }
                 else
                     val perParam: List[Expr[Structure.Type]] = tpe.typeArgs.map { tp =>
                         tp.asType match
@@ -2512,14 +2584,14 @@ import scala.util.control.NonFatal
                 case '[tt] => ValDef(sym, Some('{ summonInline[Schema[tt]] }.asTerm))
         }
         // One name-byte val per field, built once per Schema instance and shared by the write and read bodies.
-        val hoistedNameByteDefs: List[Statement] = fields.zipWithIndex.map { (f, idx) =>
-            val nameExpr = Expr(f.name)
+        val hoistedNameByteDefs: List[Statement] = names.zipWithIndex.map { (name, idx) =>
+            val nameExpr = Expr(name)
             ValDef(nameByteSyms(idx), Some('{ $nameExpr.getBytes(java.nio.charset.StandardCharsets.UTF_8) }.asTerm))
         }
         val sourceFieldsDef: Statement = ValDef(sourceFieldsSym, Some(sourceFields.asTerm.changeOwner(sourceFieldsSym)))
         // Filled element by element: `Array(...)` compiles to a ClassTag lookup and a varargs wrapper, about 500 bytes in every schema.
         val namesExpr: Expr[Array[Array[Byte]]] = '{
-            val names = new Array[Array[Byte]](${ Expr(fields.size) })
+            val names = new Array[Array[Byte]](${ Expr(n) })
             ${
                 Expr.block(
                     nameByteSyms.zipWithIndex.map((sym, idx) => '{ names(${ Expr(idx) }) = ${ Ref(sym).asExprOf[Array[Byte]] } }),

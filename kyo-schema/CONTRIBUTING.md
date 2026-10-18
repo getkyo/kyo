@@ -75,7 +75,7 @@ Every `Schema[A]` carries its `Structure.Type` lazily via `lazy val _structure` 
 
 ### Structural-emit + runtime-walk
 
-The derivation macro is a **structural emitter**, not a per-type specializer. It walks `sym.caseFields` (for case classes) or `sym.children` (for sealed traits) and, for each field/variant, emits a thunk wrapping `scala.compiletime.summonInline[Schema[ft]]`. It assembles a runtime field/variant table consumed by `SchemaCodecRuntime`. **The macro never pattern-matches on a specific container or primitive type symbol**: every nested type resolves via `summonInline` at the inline-expansion phase, which sees forward-references to the in-flight `derived$Schema` and so handles recursion without any special-case in the macro [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:11-22] [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:315-322].
+The derivation macro is a **structural emitter**, not a per-type specializer. It walks `sym.caseFields` (for case classes), the fields of a record's field intersection (for a `Record[F]`) or `sym.children` (for sealed traits) and, for each field/variant, emits a thunk wrapping `scala.compiletime.summonInline[Schema[ft]]`. It assembles a runtime field/variant table consumed by `SchemaCodecRuntime`. **The macro never pattern-matches on a specific container or primitive type symbol**: every nested type resolves via `summonInline` at the inline-expansion phase, which sees forward-references to the in-flight `derived$Schema` and so handles recursion without any special-case in the macro [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:11-22] [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:315-322].
 
 The emission has **constant per-method bytecode**: `serializeWrite` / `serializeRead` each call a single runtime helper passing the precomputed field-entry table. The table itself uses `summonInline[Schema[ft]]` thunks that resolve at the inline-expansion phase, with the in-flight `derived$Schema` visible by forward-reference [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:367-373].
 
@@ -700,7 +700,7 @@ When the wrapper has an invariant, use `.transformVia(construct)(from)` instead:
 
 ### Add `derives Schema` support for a user ADT
 
-There is no recipe. `case class Foo(...) derives Schema` or `sealed trait Bar derives Schema` is the entire surface; the macro walks `sym.caseFields` (case classes) or `sym.children` (sealed traits) and resolves each nested type via `summonInline[Schema[ft]]`, so any user `given Schema[X]` already in implicit scope plugs in without macro changes [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:315-340].
+There is no recipe. `case class Foo(...) derives Schema` or `sealed trait Bar derives Schema` is the entire surface; the macro walks `sym.caseFields` (case classes), a `Record[F]`'s fields (records) or `sym.children` (sealed traits) and resolves each nested type via `summonInline[Schema[ft]]`, so any user `given Schema[X]` already in implicit scope plugs in without macro changes [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:315-340].
 
 Two compile-time refusals to be aware of:
 

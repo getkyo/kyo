@@ -1010,6 +1010,15 @@ Prefer `kyo.UUID` in new schemas. `Schema.uuidSchema` now names `Schema[kyo.UUID
 
 Any case class or sealed trait composed of these types derives a `Schema` automatically. Nested case classes work without additional setup.
 
+A `Record` derives as the product of its fields, in the order its type declares them, as a case class with those fields would:
+
+```scala
+val pet: Record["name" ~ String & "age" ~ Int] = "name" ~ "Rex" & "age" ~ 3
+
+val wire = Json.encode(pet) // {"name":"Rex","age":3}
+val back = Json.decode[Record["name" ~ String & "age" ~ Int]](wire)
+```
+
 `OrderedDict[K, V]` serializes in the same shape as `Dict[K, V]` and additionally preserves insertion order across an encode/decode round-trip: encoding walks the map in insertion order, and decoding rebuilds it by inserting entries in wire order.
 
 `Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. So does a map whose key type's schema is a string on the wire, such as an opaque type over `String` or a `transformVia` of `Schema[String]`: each key is written through its schema, and a key the schema rejects fails the decode with that key in the path. Decode also accepts such a map in the array form below. `Map[K, V]` and `Dict[K, V]` with any other key type serialize as an array of two-field `{key, value}` records, which the Protobuf codec renders as a standard proto3 `MapEntry`. To write a string-keyed map as that array too, bind `Schema.mapAsPairs`, `Schema.dictAsPairs` or `Schema.orderedDictAsPairs`:

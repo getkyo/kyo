@@ -1,5 +1,6 @@
 package kyo
 
+import Json.JsonSchema
 import kyo.schema.rename
 
 class SchemaDerivedTest extends kyo.test.Test[Any]:
@@ -68,6 +69,53 @@ class SchemaDerivedTest extends kyo.test.Test[Any]:
         "a tuple keeps its positional field names" in {
             assert(Json.encode((1, "a")) == """{"_1":1,"_2":"a"}""")
             assert(Json.decode[(Int, String)]("""{"_1":1,"_2":"a"}""") == Result.succeed((1, "a")))
+        }
+    }
+
+    "a record derives as the product of its fields" - {
+
+        type Pet   = Record["name" ~ String & "age" ~ Int & "nick" ~ Maybe[String]]
+        type Owner = Record["name" ~ String & "pet" ~ Pet]
+
+        val rex: Pet = "name" ~ "Rex" & "age" ~ 3 & "nick" ~ Maybe("R")
+
+        "its fields are written in the order its type declares them, and read back in any order" in {
+            val wire = Json.encode(rex)
+            assert(wire == """{"name":"Rex","age":3,"nick":"R"}""", wire)
+            assert(Json.decode[Pet]("""{"nick":"R","age":3,"name":"Rex"}""") == Result.succeed(rex))
+        }
+
+        "a missing Maybe field reads as Absent, and a missing required field fails naming it" in {
+            val absent: Pet = "name" ~ "Rex" & "age" ~ 3 & "nick" ~ Maybe.empty[String]
+            assert(Json.decode[Pet]("""{"name":"Rex","age":3}""") == Result.succeed(absent))
+            Json.decode[Pet]("""{"name":"Rex"}""") match
+                case Result.Failure(e: MissingFieldException) => assert((e.path, e.fieldName) == (Seq.empty, "age"))
+                case other                                    => fail(other.toString)
+        }
+
+        "a record nested in a record round-trips, and its JSON schema keeps the nested record's properties" in {
+            val owner: Owner = "name" ~ "Ann" & "pet" ~ rex
+            val wire         = Json.encode(owner)
+            assert(wire == """{"name":"Ann","pet":{"name":"Rex","age":3,"nick":"R"}}""", wire)
+            assert(Json.decode[Owner](wire) == Result.succeed(owner))
+            val pet = JsonSchema.Obj(
+                List("name" -> JsonSchema.Str(), "age" -> JsonSchema.Integer(), "nick" -> JsonSchema.Nullable(JsonSchema.Str())),
+                List("name", "age")
+            )
+            assert(JsonSchema.from[Owner] == JsonSchema.Obj(List("name" -> JsonSchema.Str(), "pet" -> pet), List("name", "pet")))
+        }
+
+        "the empty record is the empty object" in {
+            assert(Json.encode(Record.empty) == "{}")
+            assert(Json.decode[Record[Any]]("{}") == Result.succeed(Record.empty))
+        }
+
+        "Schema.apply gives the same schema" in {
+            assert(Schema[Pet].encodeString[Json](rex) == Json.encode(rex))
+        }
+
+        "a field declared twice is refused" in {
+            typeCheckFailure("""kyo.Schema.derived[kyo.Record["a" ~ Int & "a" ~ String]]""")("declared more than once")
         }
     }
 
