@@ -21,12 +21,16 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
     var peerCloseGrace: Duration = Duration.Infinity
 
     // The close-flush bound (see kyo.net.NetConfig.closeFlushGrace), inherited across an upgrade the same way. It bounds both the connection's
-    // wait for queued writes and JsIoDriver.closeHandle's wait for Node to finish the socket's output.
+    // wait for queued writes and JsIoDriver.release's wait for Node to finish the socket's output.
     var closeFlushGrace: Duration = Duration.Infinity
 
-    // The clock that times both graces, in the connection and in JsIoDriver.closeHandle: the transport's, so a test under
+    // The clock that times both graces, in the connection and in JsIoDriver.release: the transport's, so a test under
     // Clock.withTimeControl drives every window with virtual time.
     var clock: Clock = Clock.live
+
+    // Whether Node emitted "close", which it does once the socket's handle is closed. `destroyed` and `closed` turn true at destroy(), before
+    // the handle closes, so neither tells a release whether its descriptor is gone.
+    var closeEmitted: Boolean = false
 
     // Never reset:
     // the upgraded connection wraps a fresh JsHandle over the TLSSocket, so this handle is discarded whether the upgrade succeeds or fails.
@@ -119,6 +123,9 @@ private[kyo] object JsHandle:
         discard(socket.on("end", signalEof))
         discard(socket.on("close", signalEof))
         discard(socket.on("error", signalError))
+        // Not one of the listeners an upgrade removes: it only records a fact of this socket.
+        val recordClose: js.Function0[Unit] = () => handle.closeEmitted = true
+        discard(socket.once("close", recordClose))
 
         handle
     end init

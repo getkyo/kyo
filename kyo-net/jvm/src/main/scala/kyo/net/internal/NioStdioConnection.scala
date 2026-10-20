@@ -5,6 +5,7 @@ import java.io.IOException
 import java.io.OutputStream
 import kyo.*
 import kyo.net.Connection as NetConnection
+import kyo.net.NetConnectionClosedException
 
 /** Driverless stdio connection for the NIO floor: bridges process stdin/stdout to a [[kyo.net.Connection]] with two pump fibers.
   *
@@ -66,7 +67,8 @@ private[kyo] object NioStdioConnection:
         })
 
         // Write pump: take from the outbound channel, write + flush to out. Closed from the take (local close, after the queued spans
-        // drained) exits; a write failure closes the connection (nothing more can be delivered) and exits.
+        // drained) exits with every accepted byte written, which completes released Flushed; a write failure closes the connection (nothing
+        // more can be delivered), reports the span it failed on and what the channel still held as dropped, and exits.
         discard(Fiber.Unsafe.init {
             Abort.run[Closed] {
                 Loop.foreach {
@@ -77,13 +79,23 @@ private[kyo] object NioStdioConnection:
                                 out.flush()
                                 Loop.continue
                             catch
-                                case _: IOException =>
+                                case e: IOException =>
                                     closeConnection()
+                                    val cause = NetConnectionClosedException(NetConnectionClosedException.Operation.Send, e)
+                                    outboundCh.close().onComplete { residue =>
+                                        val left = residue.map(_.eval).toMaybe.flatten.fold(0L)(_.foldLeft(0L)(_ + _.size))
+                                        releasedPromise.completeDiscard(
+                                            Result.succeed(NetConnection.CloseOutcome.Dropped(span.size + left, cause))
+                                        )
+                                    }
                                     Loop.done
                         }
                     }
                 }
-            }.unit
+            }.map {
+                case Result.Failure(_) => Sync.defer(releasedPromise.completeDiscard(Result.succeed(NetConnection.CloseOutcome.Flushed)))
+                case _                 => Kyo.unit
+            }
         })
 
         new NetConnection:

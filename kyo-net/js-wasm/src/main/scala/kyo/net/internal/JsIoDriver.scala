@@ -1,6 +1,7 @@
 package kyo.net.internal
 
 import kyo.*
+import kyo.net.NetConnectionClosedException
 import kyo.net.NetDriverUnsupportedException
 import kyo.net.NetException
 import kyo.net.internal.transport.*
@@ -176,21 +177,44 @@ final private[kyo] class JsIoDriver private (
         end if
     end awaitWritable
 
+    def life(handle: JsHandle): HandleLife = handle.life
+
     def write(handle: JsHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
+        given Frame = Frame.internal
         // Two Node narrowing casts below: net.Socket#destroyed (a documented boolean property) and net.Socket#write (a documented boolean
         // return, where false signals backpressure). js.Dynamic erases both to untyped JS values, so recovering the typed Boolean needs these
         // narrowing casts. Safe per Node's documented types; they cannot dissolve without a typed facade for Node's net.Socket.
-        if data.isEmpty || offset >= data.size then WriteResult.Done
-        else if handle.socket.destroyed.asInstanceOf[Boolean] then WriteResult.Error
-        else
-            // Node.js socket.write accepts the data slice starting at offset. On backpressure (flushed == false), the data was already
-            // handed to Node.js, so we must NOT re-send it on the next pump call. Returning Partial(data, data.size) causes the pump to
-            // retry with offset == data.size, which computes len == 0 and returns Done -- effectively "wait for drain, then proceed".
-            val nodeBuf = toNodeBuffer(data, offset)
-            val flushed = handle.socket.write(nodeBuf).asInstanceOf[Boolean]
-            if flushed then WriteResult.Done
-            else WriteResult.Partial(data, data.size) // accepted, not flushed: sentinel offset prevents double-send on retry
-        end if
+        val ledger = handle.life.ledger
+        ledger.failure match
+            case Present(cause) => WriteResult.Error(cause)
+            case Absent         =>
+                if data.isEmpty || offset >= data.size then WriteResult.Done
+                else if !handle.life.armable then
+                    WriteResult.Error(NetConnectionClosedException(
+                        NetConnectionClosedException.Operation.Send,
+                        "the connection was released"
+                    ))
+                else if handle.socket.destroyed.asInstanceOf[Boolean] then
+                    WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "socket destroyed"))
+                else
+                    // Node.js socket.write accepts the data slice starting at offset. On backpressure (flushed == false), the data was already
+                    // handed to Node.js, so we must NOT re-send it on the next pump call. Returning Partial(data, data.size) causes the pump to
+                    // retry with offset == data.size, which computes len == 0 and returns Done -- effectively "wait for drain, then proceed".
+                    // Node owns the bytes from here; the write's callback, which libuv runs once they are written out, is the only public
+                    // signal that the kernel took them.
+                    val n = data.size - offset
+                    ledger.accept(n)
+                    ledger.encode(n, n)
+                    val written: js.Function1[js.Dynamic, Unit] = (err: js.Dynamic) =>
+                        if js.isUndefined(err) || err == null then ledger.send(n)
+                        else
+                            val cause = if js.typeOf(err.message) == "string" then err.message.toString else "write failed"
+                            discard(ledger.fail(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, cause)))
+                    val flushed = handle.socket.write(toNodeBuffer(data, offset), written).asInstanceOf[Boolean]
+                    if flushed then WriteResult.Done
+                    else WriteResult.Partial(data, data.size) // accepted, not flushed: sentinel offset prevents double-send on retry
+                end if
+        end match
     end write
 
     // Node's sockets are objects, never fd numbers this driver keys anything by, so a recycled number cannot reach a closed handle's state.
@@ -211,49 +235,63 @@ final private[kyo] class JsIoDriver private (
         handle.life.cancel(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "canceled"))
     end cancel
 
-    /** A graceful close ends the writable side and destroys the socket once Node reports it finished, instead of destroying at once.
+    /** The handle's one release. `released` completes on Node's `close`, once the socket's handle is closed.
       *
-      * `destroy()` discards what the writable side still holds. A `net.Socket` write reaches the kernel on the calling turn when it can, so
-      * a destroy right after it rarely loses anything; a `tls.TLSSocket` write is encrypted at once but handed to the underlying socket only
-      * when no earlier write is in flight there, and a write's completion lands on a later event-loop turn even on loopback, so the second
-      * of two back-to-back writes still sits in Node's TLS output when a same-turn destroy discards it. The write pump cannot see the loss:
-      * `socket.write` accepted the bytes. `end()` flushes that output and then sends the FIN; `finish` is Node's signal that every accepted
-      * write reached the underlying socket, and the destroy follows it.
+      * A graceful release ends the writable side and destroys the socket once Node reports it finished, instead of destroying at once.
+      * `destroy()` discards what the writable side still holds, and `end()` also sends a TLS socket's close_notify before the FIN; `finish`
+      * is Node's signal that every accepted write reached the underlying socket, and the destroy follows it. The wait is bounded by the
+      * handle's `closeFlushGrace`: a peer that never drains never lets the output finish, and the socket is destroyed regardless when the
+      * window ends. `Duration.Infinity` (stdio, whose shim owns no socket) arms no timer.
       *
-      * The wait is bounded by the handle's `closeFlushGrace`, the window a closing connection grants a peer that has stopped reading: a
-      * peer that never drains never lets the output finish, and the socket is destroyed regardless when the window ends. `Duration.Infinity`
-      * (stdio, whose shim owns no socket) arms no timer. An abort keeps the immediate destroy: the upgrade abandon, the handshake deadline
-      * and a peer reset destroy the socket themselves before this runs, and a socket Node already destroyed is left alone.
+      * An abortive release resets the connection instead, so the peer cannot read the stream it lost the end of as complete. Node resets only
+      * a TCP handle (`resetAndDestroy` on a `tls.TLSSocket` throws `ERR_INVALID_HANDLE_TYPE`), so a TLS socket's raw socket is reset, which
+      * closes the TLS socket too. Every TLS socket kyo holds wraps one: the accepted and upgraded ones by construction, and `connectTls` opens
+      * its own. A socket Node already destroyed (the upgrade abandon, the handshake deadline, a peer reset) is left alone either way.
       */
-    def closeHandle(handle: JsHandle)(using allow: AllowUnsafe, frame: Frame): Unit =
-        if handle.life.claimRelease() then release(handle)
+    def release(handle: JsHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using allow: AllowUnsafe, frame: Frame): Unit =
+        if handle.life.claimRelease() then releaseClaimed(handle, mode, released)
 
-    private def release(handle: JsHandle)(using allow: AllowUnsafe, frame: Frame): Unit =
+    private def releaseClaimed(handle: JsHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using
+        allow: AllowUnsafe,
+        frame: Frame
+    ): Unit =
         // Node's net.Socket#destroyed and #writableFinished are documented boolean properties; js.Dynamic erases them to untyped JS values,
         // so recovering the typed Boolean needs these narrowing casts. Safe per Node's documented property types; they cannot dissolve
         // without a typed facade for Node's net.Socket.
         handle.life.cancel(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "closed"))
         readArmed -= handle
         val socket = handle.socket
-        if !socket.destroyed.asInstanceOf[Boolean] then
-            def destroyNow(): Unit =
-                if !socket.destroyed.asInstanceOf[Boolean] then discard(socket.destroy())
-            val settle: js.Function0[Unit] =
-                if handle.closeFlushGrace.isFinite then
-                    val timer = handle.clock.unsafe.sleep(handle.closeFlushGrace)
-                    timer.onComplete(_ => destroyNow())
-                    () =>
-                        destroyNow()
-                        // Interrupting completes the timer and runs the callback above, which finds the socket destroyed and does nothing.
-                        timer.interruptDiscard(Result.Panic(Interrupted(frame, "socket settled before the close grace")))
-                else () => destroyNow()
-            // `close` covers a socket that finished before this ran or that Node destroys on an error after the end.
-            discard(socket.once("finish", settle))
-            discard(socket.once("close", settle))
-            discard(socket.end())
-            if socket.writableFinished.asInstanceOf[Boolean] then settle()
+        if handle.closeEmitted then released.completeUnitDiscard()
+        else
+            val closed: js.Function0[Unit] = () => released.completeUnitDiscard()
+            discard(socket.once("close", closed))
         end if
-    end release
+        if !socket.destroyed.asInstanceOf[Boolean] then
+            mode match
+                case ReleaseMode.Abortive(_) =>
+                    // `_parent` is the raw net.Socket a tls.TLSSocket wraps (null on a plain socket), the one Node can reset.
+                    val raw = socket.selectDynamic("_parent")
+                    discard((if js.isUndefined(raw) || raw == null then socket else raw).resetAndDestroy())
+                case ReleaseMode.Graceful =>
+                    def destroyNow(): Unit =
+                        if !socket.destroyed.asInstanceOf[Boolean] then discard(socket.destroy())
+                    val settle: js.Function0[Unit] =
+                        if handle.closeFlushGrace.isFinite then
+                            val timer = handle.clock.unsafe.sleep(handle.closeFlushGrace)
+                            timer.onComplete(_ => destroyNow())
+                            () =>
+                                destroyNow()
+                                // Interrupting completes the timer and runs the callback above, which finds the socket destroyed and does nothing.
+                                timer.interruptDiscard(Result.Panic(Interrupted(frame, "socket settled before the close grace")))
+                        else () => destroyNow()
+                    // `close` covers a socket that finished before this ran or that Node destroys on an error after the end.
+                    discard(socket.once("finish", settle))
+                    discard(socket.once("close", settle))
+                    discard(socket.end())
+                    if socket.writableFinished.asInstanceOf[Boolean] then settle()
+            end match
+        end if
+    end releaseClaimed
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then

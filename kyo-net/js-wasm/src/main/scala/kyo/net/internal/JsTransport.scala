@@ -184,6 +184,10 @@ final private[kyo] class JsTransport private (
                     opts.key = key
                 case _ => ()
             end match
+            // The TLS socket wraps a raw socket opened here, so an abortive release can reset the connection: Node resets only a TCP handle,
+            // and `resetAndDestroy` on a tls.TLSSocket's own handle throws ERR_INVALID_HANDLE_TYPE (Node 24). Connect errors on the raw
+            // socket reach the TLS socket, and destroying the TLS socket destroys it.
+            opts.socket = NodeNet.asInstanceOf[js.Dynamic].connect(port, host)
             val socket = NodeTls.asInstanceOf[js.Dynamic].connect(opts)
             // TLS sockets emit "secureConnect" after handshake (not "connect" which fires on raw TCP). TLSSocket.setNoDelay reaches the TCP
             // handle under the TLS layer. Without TCP_NODELAY a message written as more than one TLS record waits on the peer's delayed ACK:
@@ -814,8 +818,9 @@ final private[kyo] class JsTransport private (
     end stdio
 
     /** Build the stdin/stdout duplex shim. The readable side (`on`, `pause`, `resume`) delegates to `process.stdin`; the writable side
-      * (`write`, `once`/`removeListener` for drain/close/error) delegates to `process.stdout`. `destroyed` and `writableFinished` are always
-      * false and `end` and `destroy` are no-ops so neither process fd is ever closed or ended.
+      * (`write` with its callback, `once`/`removeListener` for drain/error) delegates to `process.stdout`. Neither process fd is ever closed
+      * or ended: `end` only reports `finish` and `destroy` only reports `close`, both to the shim's own one-shot listeners, which is how a
+      * release learns that the connection let go of them.
       */
     private def stdioShim()(using AllowUnsafe): js.Dynamic =
         val process = js.Dynamic.global.process
@@ -829,7 +834,18 @@ final private[kyo] class JsTransport private (
         def isReadLifecycle(event: js.Any): Boolean =
             val name = event.toString
             isReadEvent(event) || name == "close" || name == "error"
-        val shim = js.Dynamic.literal()
+        // A one-shot listener on the shim's own end of the connection, which stdout never reports.
+        def isShimEvent(event: js.Any): Boolean =
+            val name = event.toString
+            name == "finish" || name == "close"
+        val shimListeners = scala.collection.mutable.Map("finish" -> Chunk.empty[js.Dynamic], "close" -> Chunk.empty[js.Dynamic])
+        def fire(event: String): Unit =
+            val listeners = shimListeners(event)
+            shimListeners(event) = Chunk.empty
+            listeners.foreach(fn => discard(fn()))
+        end fire
+        var destroyed = false
+        val shim      = js.Dynamic.literal()
         shim.destroyed = false
         shim.writableFinished = false
         shim.on = ({ (event: js.Any, fn: js.Any) =>
@@ -837,33 +853,43 @@ final private[kyo] class JsTransport private (
             else discard(stdout.on(event, fn))
             shim
         }: js.Function2[js.Any, js.Any, js.Any])
-        shim.once = ({ (event: js.Any, fn: js.Any) =>
+        shim.once = ({ (event: js.Any, fn: js.Dynamic) =>
             if isReadEvent(event) then discard(stdin.once(event, fn))
+            else if isShimEvent(event) then shimListeners(event.toString) = shimListeners(event.toString).append(fn)
             else discard(stdout.once(event, fn))
             shim
-        }: js.Function2[js.Any, js.Any, js.Any])
-        shim.removeListener = ({ (event: js.Any, fn: js.Any) =>
+        }: js.Function2[js.Any, js.Dynamic, js.Any])
+        shim.removeListener = ({ (event: js.Any, fn: js.Dynamic) =>
             if isReadEvent(event) then discard(stdin.removeListener(event, fn))
+            else if isShimEvent(event) then shimListeners(event.toString) = shimListeners(event.toString).filterNot(_ eq fn)
             else discard(stdout.removeListener(event, fn))
             shim
-        }: js.Function2[js.Any, js.Any, js.Any])
+        }: js.Function2[js.Any, js.Dynamic, js.Any])
         shim.pause = ({ () =>
             discard(stdin.pause()); shim
         }: js.Function0[js.Any])
         shim.resume = ({ () =>
             discard(stdin.resume()); shim
         }: js.Function0[js.Any])
-        shim.write = ({ (chunk: js.Any) =>
-            stdout.write(chunk)
-        }: js.Function1[js.Any, js.Any])
+        shim.write = ({ (chunk: js.Any, written: js.Any) =>
+            stdout.write(chunk, written)
+        }: js.Function2[js.Any, js.Any, js.Any])
         shim.end = ({ () =>
             // The process owns fds 0/1; never end stdout. A stdio close tears down only the channels and the registration.
+            shim.writableFinished = true
+            fire("finish")
             shim
         }: js.Function0[js.Any])
-        shim.destroy = ({ () =>
+        val destroy: js.Function0[js.Any] = () =>
             // The process owns fds 0/1; never close them. Tearing down stdio closes only the channels/registration.
+            if !destroyed then
+                destroyed = true
+                shim.destroyed = true
+                fire("close")
+            end if
             shim
-        }: js.Function0[js.Any])
+        shim.destroy = destroy
+        shim.resetAndDestroy = destroy
         shim
     end stdioShim
 
