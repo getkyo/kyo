@@ -589,6 +589,7 @@ private[kyo] object HtmlRenderer:
     private def renderCommonAttrs(sb: StringBuilder, elem: Element, cssRules: Maybe[CssCollector] = Absent)(using Frame): Unit =
         val attrs = elem.attrs
         attrs.identifier.foreach(id => w(sb, s""" id="${esc(id)}""""))
+        attrs.title.foreach(t => w(sb, s""" title="${esc(t)}""""))
         val pseudoClass = registerPseudoClass(cssRules, attrs.uiStyle)
         val classes     = pseudoClass match
             case Present(cls) => attrs.cssClasses :+ cls
@@ -825,7 +826,6 @@ private[kyo] object HtmlRenderer:
                 img.alt.foreach(a => w(sb, s""" alt="${esc(a)}""""))
             case f: Iframe =>
                 f.src.foreach(s => w(sb, s""" src="${esc(s)}""""))
-                f.frameTitle.foreach(t => w(sb, s""" title="${esc(t)}""""))
                 f.sandbox.foreach(s => w(sb, s""" sandbox="${esc(s)}""""))
                 f.srcdoc.foreach(s => w(sb, s""" srcdoc="${esc(s)}""""))
             case td: Td =>

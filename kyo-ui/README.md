@@ -59,6 +59,7 @@ Every `Element` carries an `Attrs` record. The chainable setters are:
 
 - `.id(v: String)`: DOM id (also used by `Browser`-style test helpers).
 - `.hidden(v: Boolean)`: hide the element. The `Signal[Boolean]` overload exists but lives under "Reactivity" below because it changes the return type.
+- `.title(v: String)`: the `title` attribute, the advisory text a browser shows as a tooltip on hover, such as the whole of a value cut with an ellipsis; on a frame it names the frame's content. An SVG element shows no tooltip for it; an `Svg.title` child is its tooltip.
 - `.style(v: Style)` / `.style(f: Style.type => Style)`: attach styling, see [Styles](#styles).
 - `.tabIndex(v)`, `.focusTrap(v)`, `.focusGroup(id)`: focus order and grouping for keyboard navigation.
 - `.focusAuto(v: Boolean)`, `.focusRestore(v: Boolean)`: declarative focus management. `focusAuto` calls `.focus()` once when a re-render newly inserts the element (like native `autofocus`, but re-render-aware: an echo re-render of an already-visible element never re-steals focus); `focusRestore` returns focus to the element focused before seeding when the seeded element leaves the document (the modal-returns-focus-to-its-trigger pattern). Pair with `tabIndex(-1)` for elements that are not natively focusable.
@@ -129,7 +130,7 @@ Finite value domains are typed the same way, each covered in its own section bel
 - Links: `UI.a` with `.href(v: Href)`, `.href(v, target)`, `.target(v)`. See [Domain enums for attributes](#domain-enums-for-attributes).
 - Labels: `UI.label.forId(v)` (alias `.\`for\`(v)` for HTML symmetry).
 - Images: `UI.img(src, alt)` with `.src(v: ImgSrc)` and `.alt(v)`.
-- Frames: `UI.iframe(src)` with `.title(v)`, `.srcdoc(html)` (a `String` or a `Signal[String]`) to show a document given inline, and `.sandbox(tokens*)` to restrict it, where no tokens is the strictest sandbox. HTML the page does not trust goes in `srcdoc` under a sandbox that does not combine `allow-scripts` with `allow-same-origin`, so its scripts run in an opaque origin with no access to the page.
+- Frames: `UI.iframe(src)` with `.title(v)`, as on every element, `.srcdoc(html)` (a `String` or a `Signal[String]`) to show a document given inline, and `.sandbox(tokens*)` to restrict it, where no tokens is the strictest sandbox. HTML the page does not trust goes in `srcdoc` under a sandbox that does not combine `allow-scripts` with `allow-same-origin`, so its scripts run in an opaque origin with no access to the page.
 
 ```scala
 import UI.*

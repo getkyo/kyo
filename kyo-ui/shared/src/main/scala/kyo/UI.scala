@@ -677,6 +677,11 @@ object UI:
             def id(v: String): Self      = withAttrs(attrs.copy(identifier = Present(v)))
             def hidden(v: Boolean): Self = withAttrs(attrs.copy(hidden = Present(v)))
 
+            /** The element's advisory text, which a browser shows as a tooltip on hover: the `title` attribute. On a frame it names the
+              * frame's content. A browser shows no tooltip for it on an SVG element, where an `Svg.title` child is the tooltip.
+              */
+            def title(v: String): Self = withAttrs(attrs.copy(title = Present(v)))
+
             /** Reactive `hidden`: re-renders when the signal emits. */
             def hidden(v: Signal[Boolean]): Reactive[Self] =
                 given Frame = frame
@@ -1162,6 +1167,7 @@ object UI:
 
         final private[kyo] case class Attrs(
             identifier: Maybe[String] = Absent,
+            title: Maybe[String] = Absent,
             hidden: Maybe[Boolean] = Absent,
             tabIndex: Maybe[Int] = Absent,
             focusTrap: Maybe[Boolean] = Absent,
@@ -2030,7 +2036,6 @@ object UI:
         final case class Iframe(
             attrs: Attrs = Attrs(),
             src: Maybe[String] = Absent,
-            frameTitle: Maybe[String] = Absent,
             sandbox: Maybe[String] = Absent,
             srcdoc: Maybe[String] = Absent
         )(using val frame: Frame) extends Block with Void:
@@ -2040,7 +2045,6 @@ object UI:
             def src(v: Signal[String]): Reactive[Self] =
                 given Frame = frame
                 Reactive[Self](v.map(s => this.src(s): UI))
-            def title(v: String): Iframe = copy(frameTitle = Present(v))
 
             /** Sandboxes the frame, lifting only the restrictions `tokens` names; no tokens is the most restrictive sandbox. */
             def sandbox(tokens: String*): Iframe = copy(sandbox = Present(tokens.mkString(" ")))

@@ -798,6 +798,23 @@ class HtmlRendererTest extends UITest:
         }
     }
 
+    "title is written as one escaped title attribute, on any element and on a frame" in {
+        val name = "gen_ai.client.inference.usage.cache_read.input_tokens"
+        kyo.internal.HtmlRenderer.render(
+            UI.div(
+                UI.span.title(name)("gen_ai.client…"),
+                UI.button.title("Tom & \"Jerry\"")("go"),
+                UI.iframe("about:blank").title("Revenue")
+            ),
+            Seq.empty
+        ).map { html =>
+            assert(html.contains(s"""<span data-kyo-path="0" title="$name">gen_ai.client…</span>"""), html)
+            assert(html.contains("""<button data-kyo-path="1" title="Tom &amp; &quot;Jerry&quot;" type="submit">go</button>"""), html)
+            assert(html.contains("""<iframe data-kyo-path="2" title="Revenue" src="about:blank"></iframe>"""), html)
+            assert(html.split(" title=").length == 4, html)
+        }
+    }
+
     "iframe sandbox with no tokens renders the full sandbox" in {
         kyo.internal.HtmlRenderer.render(UI.iframe("about:blank").sandbox(), Seq.empty).map { html =>
             assert(html.contains(" sandbox=\"\""), html)
