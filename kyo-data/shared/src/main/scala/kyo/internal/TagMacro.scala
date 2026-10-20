@@ -112,7 +112,7 @@ private[kyo] object TagMacro:
                     case (map, (id, (_, tag))) =>
                         '{ $map.updated(${ Expr(id) }, $tag) }
                 }
-            '{ Tag.internal.Dynamic($encoded, $reifiedDB) }
+            '{ Tag.internal.composed($encoded, $reifiedDB) }
         end if
     end deriveImpl
 

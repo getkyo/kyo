@@ -278,13 +278,13 @@ class TagTest extends kyo.test.Test[Any]:
             def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]] = Tag.dynamic[Map[A, List[B]]]
             val tag                                          = nested[String, Int]
             val _: Tag[Map[String, List[Int]]]               = tag
-            val tpe                                          = tag.tpe
-            val encoded                                      = Tag.internal.encode[Map[String, List[Int]]](tpe.staticDB)
-            assert(tpe.dynamicDB.nonEmpty)
-            val original = Tag.internal.Dynamic(encoded, tpe.dynamicDB)
+            // the tag as the compiler built it: its text with a slot for each part, and the parts
+            val built    = tag.asInstanceOf[Tag.internal.Dynamic]
+            val original = Tag.internal.Dynamic(built.tag, built.map)
+            assert(built.map.nonEmpty)
             assert(original.hashCode == tag.hash)
             assert(original.tpe.toString == tag.show)
-            assert(Tag.internal.Dynamic(encoded, tpe.dynamicDB.toSeq.reverse.toMap).hashCode == tag.hash)
+            assert(Tag.internal.Dynamic(built.tag, built.map.toSeq.reverse.toMap).hashCode == tag.hash)
             assert(nested[String, Int].hash == tag.hash)
             assert(nested[Int, String].hash != tag.hash)
         }
@@ -353,6 +353,83 @@ class TagTest extends kyo.test.Test[Any]:
                 "*0:A"
             )
             assert(texts.map(Tag.internal.parse[Any]) == texts.map(_ => Absent))
+        }
+    }
+
+    "a union or an intersection built at run time" - {
+        abstract class Event
+        abstract class Message extends Event
+        abstract class Note    extends Event
+        abstract class Other
+        final case class Fact[+V](value: V)    extends Event
+        final case class Relation[+K](kind: K) extends Event
+        def union[A: Tag, B: Tag]: Tag[A | B]                             = Tag.dynamic[A | B]
+        def intersection[A: Tag, B: Tag]: Tag[A & B]                      = Tag.dynamic[A & B]
+        def layer[E: Tag, V: Tag, K: Tag]: Tag[E | Fact[V] | Relation[K]] = Tag.dynamic[E | Fact[V] | Relation[K]]
+        def withEvent[A: Tag]: Tag[A | Event]                             = Tag.dynamic[A | Event]
+        def andString[A: Tag]: Tag[A & String]                            = Tag.dynamic[A & String]
+        def facts[V: Tag]: Tag[Fact[V]]                                   = Tag.dynamic[Fact[V]]
+        def nested[A: Tag, B: Tag, C: Tag]: Tag[(A | B) | C]              =
+            given Tag[A | B] = union[A, B]
+            Tag.dynamic[(A | B) | C]
+
+        "is the type the compiler derives, whatever order its members are written in" in {
+            assert(union[Note, Message] =:= Tag[Message | Note])
+            assert(Tag[Message | Note] =:= union[Note, Message])
+            assert(layer[Message, Nothing, Nothing] =:= Tag[Message | Fact[Nothing] | Relation[Nothing]])
+            assert(layer[Message, String, String] =:= Tag[Message | Fact[String] | Relation[String]])
+            assert(intersection[Serializable, Product] =:= Tag[Product & Serializable])
+        }
+        "splices a union filling one of its members into its own" in {
+            assert(nested[Message, Note, Other] =:= Tag[Message | Note | Other])
+            assert(nested[Message, Note, Other] =:= union[Message, Note | Other])
+        }
+        "drops a member another one covers, as the compiler does" in {
+            assert(union[Message, Event] =:= Tag[Event])
+            assert(union[Nothing, Message] =:= Tag[Message])
+            assert(union[List[Int], Seq[Int]] =:= Tag[Seq[Int]])
+            assert(union[Fact[Message], Fact[Event]] =:= Tag[Fact[Event]])
+            assert(layer[Event, Int, Int] =:= Tag[Event])
+            assert(intersection[Message, Event] =:= Tag[Message])
+            assert(intersection[Any, Message] =:= Tag[Message])
+        }
+        "left with a class without parameters, is the text the compiler writes for it" in {
+            val collapsed = Chunk(
+                (union[Message, Event].erased, Tag[Event].erased),
+                (withEvent[Message].erased, Tag[Event].erased),
+                (intersection[String, CharSequence].erased, Tag[String].erased),
+                (andString[CharSequence].erased, Tag[String].erased)
+            )
+            assert(collapsed.map((built, compiled) => (built.equals(compiled), built.hash == compiled.hash)) ==
+                collapsed.map(_ => (true, true)))
+        }
+        "stays apart from a different type" in {
+            assert(!(union[Note, Message] =:= Tag[Message | Other]))
+            assert(!(layer[Message, String, Int] =:= Tag[Message | Fact[Int] | Relation[Int]]))
+            assert(!(union[Message, Event] =:= Tag[Message]))
+            assert(union[Note, Message] <:< Tag[Event])
+            assert(!(union[Note, Other] <:< Tag[Event]))
+        }
+        "shows each part as the type it is" in {
+            assert(facts[Map[String, Int]].show == Tag[Fact[Map[String, Int]]].show)
+            assert(union[Message, Fact[Int]].show == Tag[Message | Fact[Int]].show)
+            assert(layer[Message, Nothing, Nothing].show == Tag[Message | Fact[Nothing] | Relation[Nothing]].show)
+            assert(facts[Fact[Int]].show == Tag[Fact[Fact[Int]]].show)
+        }
+        "is written as the compiler's type is, and reads back as it" in {
+            val pairs = Chunk(
+                (union[Note, Message].erased, Tag[Message | Note].erased),
+                (layer[Message, String, String].erased, Tag[Message | Fact[String] | Relation[String]].erased),
+                (nested[Message, Note, Other].erased, Tag[Message | Note | Other].erased),
+                (union[List[Int], Seq[Int]].erased, Tag[Seq[Int]].erased)
+            )
+            def written(tag: Tag[Any]) = Tag.internal.encode(tag)
+            assert(pairs.map((built, compiled) => written(built) == written(compiled)) == pairs.map(_ => true))
+            assert(pairs.map((built, _) => Tag.internal.parse[Any](written(built)).map(_ =:= built)) == pairs.map(_ => Present(true)))
+            assert(pairs.map((built, _) => Tag.internal.parse[Any](written(built)).map(written)) == pairs.map((built, _) =>
+                Present(written(built))
+            ))
+            assert(written(layer[Message, String, Int].erased) != written(Tag[Message | Fact[Int] | Relation[Int]].erased))
         }
     }
 
