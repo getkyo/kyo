@@ -318,4 +318,23 @@ class FormTest extends UITest:
         }
     }
 
+    "Enter in an input submits its form once when a keydown handler is above it".pendingUntilFixed(
+        "the bubbled Enter submits the form on the server beside the browser's own submit"
+    ) in {
+        // The wrapper's keydown runs after the form's handling of the same key, so a submit from that key is logged before its K.
+        val app: UI < Async =
+            for log <- Signal.initRef("")
+            yield UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+                UI.form.onSubmit(log.getAndUpdate(_ + "S").unit)(UI.input.id("i")),
+                log.map(v => UI.span(s"log:$v").id("log"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.press(Selector.id("i"), Key.Enter)
+                _ <- Browser.press(Selector.id("i"), Key('x'))
+                _ <- Browser.assertText(Selector.id("log"), "log:KSK")
+            yield ()
+        }
+    }
+
 end FormTest
