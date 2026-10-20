@@ -92,9 +92,9 @@ Global / concurrentRestrictions := {
     // Fixed at 2 rather than the host's count: several sbt drivers share one machine (one per agent
     // worktree), and a driver sized to every core starves the others. The forked test JVMs get the
     // same bound through -XX:ActiveProcessorCount below.
-    val cores = 2
-    val isCI        = sys.env.contains("CI")
-    val testLimit   = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
+    val cores     = 2
+    val isCI      = sys.env.contains("CI")
+    val testLimit = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
     // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
     // podman fork and a docker fork (KYO_POD_RUNTIME pinning), so this bounds container-daemon
     // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon); real
