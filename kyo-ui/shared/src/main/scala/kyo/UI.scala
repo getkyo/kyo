@@ -1526,10 +1526,16 @@ object UI:
 
         final case class Textarea(
             attrs: Attrs = Attrs(),
-            textInputAttrs: TextInputAttrs = TextInputAttrs()
+            textInputAttrs: TextInputAttrs = TextInputAttrs(),
+            rows: Maybe[Int] = Absent
         )(using val frame: Frame) extends Block with Interactive with ConstrainedInput with Void:
             type Self = Textarea
             def withAttrs(a: Attrs): Textarea = copy(attrs = a)
+
+            /** The height in lines, the `rows` attribute, at least 1. A field sized to its content (`Style.fieldSizing(_.content)`) grows
+              * past it instead, where the browser supports that.
+              */
+            def rows(v: Int): Textarea = copy(rows = Present(math.max(1, v)))
 
             def value: Maybe[Bound[String]]            = textInputAttrs.value
             def placeholder: Maybe[String]             = textInputAttrs.placeholder

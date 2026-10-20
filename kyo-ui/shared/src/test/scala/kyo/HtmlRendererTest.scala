@@ -815,6 +815,17 @@ class HtmlRendererTest extends UITest:
         }
     }
 
+    "a textarea's rows is written as its rows attribute, at least 1, and none is written when it is not set" in {
+        kyo.internal.HtmlRenderer.render(
+            UI.div(UI.textarea.id("three").rows(3), UI.textarea.id("none").rows(0), UI.textarea.id("unset")),
+            Seq.empty
+        ).map { html =>
+            assert(html.contains("""<textarea data-kyo-path="0" id="three" rows="3"></textarea>"""), html)
+            assert(html.contains("""<textarea data-kyo-path="1" id="none" rows="1"></textarea>"""), html)
+            assert(html.contains("""<textarea data-kyo-path="2" id="unset"></textarea>"""), html)
+        }
+    }
+
     "iframe sandbox with no tokens renders the full sandbox" in {
         kyo.internal.HtmlRenderer.render(UI.iframe("about:blank").sandbox(), Seq.empty).map { html =>
             assert(html.contains(" sandbox=\"\""), html)

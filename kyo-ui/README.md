@@ -354,6 +354,8 @@ Input elements share three capability traits.
 
 `TextInput`: text-shaped fields with a string value, placeholder, and Input + Change handlers. Setters common to all `TextInput` variants: `.value(v: String)`, `.value(ref: SignalRef[String])`, `.placeholder(v: String)`, `.readOnly(v: Boolean)`, `.disabled(v: Boolean)`, `.onInput(f: String => Unit < Async)`, `.onChange(f: String => Unit < Async)`. Implementations: `UI.input`, `UI.passwordInput`, `UI.emailInput`, `UI.telInput`, `UI.urlInput`, `UI.searchInput`, `UI.numberInput`, `UI.textarea`.
 
+`UI.textarea` also takes `.rows(n)`, its height in lines, at least 1. Styled with `.fieldSizing(_.content)` it grows with what is typed instead, within its min and max height, where the browser supports `field-sizing`; `rows` is the height elsewhere.
+
 `PickerInput`: picker-shaped fields with a string value, disabled, and a Change handler (no placeholder, no onInput). Implementations: `UI.dateInput`, `UI.timeInput`, `UI.colorInput`, `UI.select`, `UI.dropdown(options*)`.
 
 `BooleanInput`: boolean-shaped fields with `.checked`, disabled, and a `Boolean => Unit < Async` Change handler. Implementations: `UI.checkbox`, `UI.radio`.
@@ -815,6 +817,7 @@ val fullWidth: Style = Style.width(100.pct).maxWidth(960.px)
 - `.lineHeight(v: Double)`: clamped to `>= 0.1`.
 - `.letterSpacing(v: Px | Em)`, `.textTransform(v)`, `.textOverflow(v)`, `.textWrap(v)`.
 - `.lineClamp(lines: Int)`: at most `lines` lines, the last ending in an ellipsis. It sets the display and overflow the clamp needs; `lines` is clamped to at least 1.
+- `.fieldSizing(v)`: `fixed`, the size a form field's attributes and styles give it, or `content`, sized to what it holds, so a text area grows a line with each line typed, within its min and max height.
 
 ### Borders, corners, shadows
 

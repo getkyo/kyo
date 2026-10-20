@@ -502,6 +502,14 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(s.props.size == 1)
             assert(s.toCss.contains("-webkit-line-clamp: 4;"))
         }
+
+        "fieldSizing renders each value, from the companion as from a style, and keeps the last call" in {
+            assert(Style.fieldSizing(_.content).toCss == "field-sizing: content;")
+            assert(Style.fieldSizing(Style.FieldSizing.fixed).toCss == "field-sizing: fixed;")
+            assert(Style.fieldSizing(_.content).props(0) == Style.empty.fieldSizing(_.content).props(0))
+            val s = Style.fieldSizing(_.content).fieldSizing(_.fixed)
+            assert(s.props == Chunk(Style.Prop.FieldSizingProp(Style.FieldSizing.fixed)))
+        }
     }
 
     "borders" - {

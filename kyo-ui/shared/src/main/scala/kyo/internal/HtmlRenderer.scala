@@ -775,6 +775,7 @@ private[kyo] object HtmlRenderer:
                 boolAttr(sb, "disabled", ta.disabled)
                 boolAttr(sb, "readonly", ta.readOnly)
                 ta.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
+                ta.rows.foreach(n => w(sb, s""" rows="$n""""))
             case sel: Select =>
                 boolAttr(sb, "disabled", sel.disabled)
                 // The browser ignores a `value` attribute on <select> and shows the first option, so the attribute only mirrors the

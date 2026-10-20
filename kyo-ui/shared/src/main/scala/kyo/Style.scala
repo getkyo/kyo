@@ -319,6 +319,12 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
       */
     def lineClamp(lines: Int): Style = appendProp(Prop.LineClampProp(math.max(1, lines)))
 
+    /** Maps to the CSS `field-sizing` property: whether a form field keeps the size its attributes and styles give it, or sizes itself to
+      * its content, so a text area grows a line with each line typed. Its min and max height bound the growth.
+      */
+    def fieldSizing(v: FieldSizing): Style                     = appendProp(Prop.FieldSizingProp(v))
+    def fieldSizing(f: FieldSizing.type => FieldSizing): Style = fieldSizing(f(FieldSizing))
+
     // Borders: width is px only
 
     def border(width: Length.Px, style: BorderStyle, c: Color): Style =
@@ -754,6 +760,8 @@ object Style:
     def whiteSpace(v: WhiteSpace): Style                                            = empty.whiteSpace(v)
     def whiteSpace(f: WhiteSpace.type => WhiteSpace): Style                         = empty.whiteSpace(f)
     def lineClamp(lines: Int): Style                                                = empty.lineClamp(lines)
+    def fieldSizing(v: FieldSizing): Style                                          = empty.fieldSizing(v)
+    def fieldSizing(f: FieldSizing.type => FieldSizing): Style                      = empty.fieldSizing(f)
     def border(width: Length.Px, style: BorderStyle, c: Color): Style               = empty.border(width, style, c)
     def border(width: Length.Px, style: BorderStyle, f: Color.type => Color): Style = empty.border(width, style, f)
     def border(width: Length.Px, c: Color): Style                                   = empty.border(width, c)
@@ -1064,6 +1072,14 @@ object Style:
     enum WhiteSpace derives CanEqual:
         case normal, noWrap, pre, preWrap, preLine
 
+    /** Maps to the CSS `field-sizing` property.
+      *
+      *   - `fixed`: the field keeps the size its attributes and styles give it (the CSS default).
+      *   - `content`: the field sizes itself to its content, within its min and max sizes.
+      */
+    enum FieldSizing derives CanEqual:
+        case fixed, content
+
     /** Maps to the CSS `font-family` property; `Custom` carries an arbitrary family name. */
     enum FontFamily derives CanEqual:
         case SansSerif, Serif, Monospace, Cursive, Fantasy, SystemUi
@@ -1255,6 +1271,7 @@ object Style:
         case TextWrapProp(value: TextWrap)
         case WhiteSpaceProp(value: WhiteSpace)
         case LineClampProp(lines: Int)
+        case FieldSizingProp(value: FieldSizing)
         // Borders
         case BorderColorProp(top: Color, right: Color, bottom: Color, left: Color)
         case BorderWidthProp(top: Length, right: Length, bottom: Length, left: Length)
