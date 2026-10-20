@@ -18,7 +18,9 @@ import kyo.net.NetException
   * [[onDrained]] waiter fires inside the [[encode]] or [[send]] that brings [[owed]] to zero, on the owner, so it must re-enter through
   * `IoDriver.runOwned` rather than act inline: on NIO the owner holds the handle's gate at that point.
   *
-  * The first write-side failure is sticky: [[fail]] records it once, and every later write reports it.
+  * The first write-side failure is sticky: [[fail]] records it once, and every later write reports it. It also fires the [[onDrained]]
+  * waiter, from whichever carrier saw the failure: what is owed then never drains, and a close waiting on it must learn of the failure
+  * instead, since a pump that already tore down is not woken by it.
   */
 final private[kyo] class OutboundLedger private (
     queued: AtomicLong.Unsafe,
@@ -54,13 +56,17 @@ final private[kyo] class OutboundLedger private (
     end direct
 
     /** Records the first write-side failure. `true` for the call that recorded it. */
-    def fail(cause: NetException)(using AllowUnsafe): Boolean = firstFailure.compareAndSet(Absent, Present(cause))
+    def fail(cause: NetException)(using AllowUnsafe): Boolean =
+        val recorded = firstFailure.compareAndSet(Absent, Present(cause))
+        if recorded then fireIfDrained()
+        recorded
+    end fail
 
     /** Bytes accepted or produced and not yet taken by the kernel. */
     def owed(using AllowUnsafe): Long = queued.get() + produced.get() - sent.get()
 
-    /** Runs `f` now when nothing is owed, otherwise once, inside the next [[encode]] or [[send]] that brings [[owed]] to zero. A later
-      * registration replaces an earlier one that has not fired.
+    /** Runs `f` now when nothing is owed or a failure is recorded, otherwise once, inside the next [[encode]] or [[send]] that brings
+      * [[owed]] to zero or the [[fail]] that records the first failure. A later registration replaces an earlier one that has not fired.
       */
     def onDrained(f: () => Unit)(using AllowUnsafe): Unit =
         drainedWaiter.set(Present(f))
@@ -73,8 +79,10 @@ final private[kyo] class OutboundLedger private (
     /** The first write-side failure, if any. */
     def failure(using AllowUnsafe): Maybe[NetException] = firstFailure.get()
 
+    // A registration sets the waiter before it reads the counters and the failure, and a fail records the failure before it reads the
+    // waiter, so of a racing pair at least one sees the other; getAndSet runs the waiter once.
     private def fireIfDrained()(using AllowUnsafe): Unit =
-        if owed == 0 && drainedWaiter.get().nonEmpty then
+        if (owed == 0 || firstFailure.get().nonEmpty) && drainedWaiter.get().nonEmpty then
             drainedWaiter.getAndSet(Absent).foreach(_())
 
 end OutboundLedger

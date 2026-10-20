@@ -14,11 +14,14 @@ import scala.scalajs.js.annotation.*
   * a missing binding.
   *
   * The `node:` scheme is required because under ESModule a namespace import of a bare id ("net") does not reliably expose the module's named
-  * members. The members are reached dynamically at the call sites, matching the existing usage, so the facades are plain `js.Object`.
+  * members. The members are reached dynamically at the call sites, matching the existing usage, so the facades are plain `js.Object`;
+  * `NodeNet.connect` is typed, so the TCP connect that both the plain and the TLS client open needs no cast to `js.Dynamic`.
   */
 @js.native
 @JSImport("node:net", JSImport.Namespace)
-private[net] object NodeNet extends js.Object
+private[net] object NodeNet extends js.Object:
+    def connect(port: Int, host: String): js.Dynamic = js.native
+end NodeNet
 
 @js.native
 @JSImport("node:tls", JSImport.Namespace)

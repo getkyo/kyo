@@ -3,8 +3,8 @@ package kyo.net
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.internal.BoringSslProvider
 import kyo.net.internal.BoringSslTestBindings
-import kyo.net.internal.NativeSslEngine
 import kyo.net.internal.TlsEngine
 import kyo.net.internal.TlsProviderPlatform
 
@@ -12,11 +12,12 @@ import kyo.net.internal.TlsProviderPlatform
   * on cue: a close_notify with no FIN, records whose ciphertext the leaf holds back or splits, and a decrypt of exactly what reached the
   * wire, reporting whether the kyo side's close_notify arrived before its FIN.
   *
-  * The engine is the cell provider's own in-process engine (BoringSSL, OpenSSL or the JDK SSLEngine), built through the same platform
-  * registry the posix transport uses, so a leaf pins the peer to the provider under test. A provider with no in-process engine (Node's own
-  * TLS) has no `PeerTls`; [[PeerTls.available]] says so. The engine is freed when the enclosing scope closes.
+  * The engine is the cell provider's own in-process engine (BoringSSL, OpenSSL or the JDK SSLEngine), built by the same provider the posix
+  * transport selects for it, so a leaf pins the peer to the provider under test. A provider with no in-process engine (Node's own TLS) has
+  * no `PeerTls`; [[PeerTls.available]] says so. The engine is freed when the enclosing scope closes. `ssl` is the native session of a
+  * BoringSSL peer, the one the KeyUpdate seam drives.
   */
-final class PeerTls private (engine: TlsEngine, provider: String, val peer: RawPeer):
+final class PeerTls private (engine: TlsEngine, ssl: Maybe[Long], val peer: RawPeer):
 
     import AllowUnsafe.embrace.danger
 
@@ -73,12 +74,12 @@ final class PeerTls private (engine: TlsEngine, provider: String, val peer: RawP
       */
     def keyUpdate()(using Frame): Span[Byte] < Sync =
         Sync.defer {
-            engine match
-                case native: NativeSslEngine[?] if provider == "boringssl" =>
-                    if Ffi.load[BoringSslTestBindings].kyo_bssl_test_key_update(native.ssl) != 0 then
-                        throw new IllegalStateException("the peer's session could not send a KeyUpdate; is it TLS 1.3?")
-                    PeerTls.drainAll(engine)
-                case _ => throw new IllegalStateException(s"a $provider peer has no KeyUpdate seam; only a boringssl peer sends one")
+            ssl match
+                case Present(session) =>
+                    if Ffi.load[BoringSslTestBindings].kyo_bssl_test_key_update(session) != 0 then
+                        Abort.panic(new IllegalStateException("the peer's session could not send a KeyUpdate; is it TLS 1.3?"))
+                    else PeerTls.drainAll(engine)
+                case Absent => Abort.panic(new IllegalStateException("only a boringssl peer has a KeyUpdate seam"))
         }
 
     /** Encrypts and sends `plain`. */
@@ -144,21 +145,27 @@ object PeerTls:
 
     /** The client side of a session over `peer`, trusting any certificate, on `provider`'s engine. Call [[handshake]] before sending. */
     def client(peer: RawPeer, provider: String)(using Frame): PeerTls < (Sync & Scope) =
-        open(
-            peer,
-            provider,
-            TlsProviderPlatform.engine(NetTlsConfig(trustAll = true, tlsProvider = Present(provider)), "localhost", isServer = false)
-        )
+        open(peer, provider, NetTlsConfig(trustAll = true, tlsProvider = Present(provider)), isServer = false)
 
     /** The server side of a session over `peer`, presenting the shared test certificate, on `provider`'s engine. */
     def server(peer: RawPeer, provider: String)(using Frame): PeerTls < (Async & Scope) =
         TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
             val config = NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), tlsProvider = Present(provider))
-            open(peer, provider, TlsProviderPlatform.engine(config, "localhost", isServer = true))
+            open(peer, provider, config, isServer = true)
         }
 
-    private def open(peer: RawPeer, provider: String, engine: => TlsEngine)(using Frame): PeerTls < (Sync & Scope) =
-        Sync.defer(engine).map(e => Scope.ensure(Sync.defer(e.free())).andThen(new PeerTls(e, provider, peer)))
+    /** A BoringSSL peer is built by its provider directly, which returns the native engine and so its session; any other through the
+      * platform registry.
+      */
+    private def open(peer: RawPeer, provider: String, config: NetTlsConfig, isServer: Boolean)(using Frame): PeerTls < (Sync & Scope) =
+        Sync.defer {
+            val built: (TlsEngine, Maybe[Long]) =
+                if provider == "boringssl" then
+                    val native = BoringSslProvider.createEngine(config, "localhost", isServer)
+                    (native, Present(native.ssl))
+                else (TlsProviderPlatform.engine(config, "localhost", isServer), Absent)
+            built
+        }.map((e, ssl) => Scope.ensure(Sync.defer(e.free())).andThen(new PeerTls(e, ssl, peer)))
 
     private def drainAll(engine: TlsEngine): Span[Byte] =
         val acc  = new java.io.ByteArrayOutputStream

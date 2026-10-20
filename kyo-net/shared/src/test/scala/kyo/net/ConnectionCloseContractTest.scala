@@ -578,6 +578,25 @@ class ConnectionCloseContractTest extends Test:
 
     "X1" - {
 
+        // The pump tore down before the failure, so nothing wakes it, and the grace is infinite: only the failure itself can end the close.
+        "a send failure after the pump tore down releases the close as Dropped with the bytes owed" in onScriptedClock { (_, clock) =>
+            val driver = new ScriptedPeerDriver(tailBound = Present(8))
+            val conn   = scripted(driver, clock, Duration.Infinity, 8)
+            conn.close()
+            assert(!conn.isReleased, "the close released while the driver still owed the kernel 8 bytes")
+            val cause = NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "the peer reset")
+            discard(driver.ledger.fail(cause))
+            releasedOutcome(conn, "a close whose owed tail met a send failure").map { outcome =>
+                assert(
+                    outcome match
+                        case Connection.CloseOutcome.Dropped(unsent, reported) => unsent == 8 && (reported eq cause)
+                        case _                                                 => false
+                    ,
+                    s"the 8 owed bytes and the send's cause must be reported as Dropped, got $outcome"
+                )
+            }
+        }
+
         "a write after the peer reset fails the connection and released reports Dropped" - eachBackendOnClock { (transport, _) =>
             val accepted = Promise.Unsafe.init[Connection, Any]()
             val span     = Span.fromUnsafe(Array.fill[Byte](16 * 1024)(5))
@@ -650,7 +669,7 @@ class ConnectionCloseContractTest extends Test:
 
     "W2" - {
 
-        "a record the engine produces while reading reaches the peer without an application write" - eachBackendTls {
+        "a record the engine produces while reading reaches the peer without an application write" - eachBackendTlsExcept {
             (transport, serverTls, _) =>
                 if !PeerTls.available("boringssl") then cancel("the KeyUpdate peer needs a staged BoringSSL on this host")
                 val accepted = Promise.Unsafe.init[Connection, Any]()
@@ -688,6 +707,14 @@ class ConnectionCloseContractTest extends Test:
                     after <- recvPlain(tls, 5)
                 yield assert(new String(after, "UTF-8") == "after", "the peer decrypts what the server writes under its updated keys")
                 end for
+        } { (backend, provider) =>
+            // Node 24.16.0 sent no record within 3 s of an openssl s_client KeyUpdate that requested one, on a server that only reads.
+            if backend == "node" && provider == "node" then
+                Present(
+                    "Node runs this cell's TLS and holds the answer to a KeyUpdate until the next application write, as RFC 8446 4.6.3 " +
+                        "allows; it has no call that sends it sooner"
+                )
+            else Absent
         }
     }
 

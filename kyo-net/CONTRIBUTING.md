@@ -83,6 +83,19 @@ Every handle (`PosixHandle`, `NioHandle`, `JsHandle`) holds one `HandleLife` (`i
 - A wait that is not a slot registers with `life.onCancel`, so `cancel` and the release reach it too: the posix STARTTLS handshake parks through `PosixHandle.parkUpgradeWaiter`, never a bare CAS on `upgradeHandoff`. The io_uring upgrade producer's recv promise registers the same way instead of parking in `read`: nothing observes it, and a read failure found off a read's own path goes to whatever `read` holds, which must be the connection's next read.
 - No driver path releases a descriptor on its own. A fatal TLS record completes the read with a `Decrypt` failure, and the connection turns it into its own release.
 
+### The close contract
+
+`close()` returns at once; what it promises happens afterwards, on the handle's owner.
+
+- **Release once nothing is owed.** A close releases the handle when the write pump has torn down and the handle's `OutboundLedger` owes the kernel nothing. `IoDriver.write` returning `Done` means the driver owns the bytes, not that the kernel has them, so the release reads `owed`, never the pump alone. A pump that tore down while bytes are still owed leaves the release to `ledger.onDrained`, whose waiter re-enters through `runOwned`: on NIO the owner holds the gate inside the `send` that fires it.
+- **One grace window, measured in bytes sent.** The close runs on one `CloseTimer`, and a second `close()` keeps the running window. A window in which `sentTotal` did not move is a stall and aborts; any byte the kernel took starts the next window, so a tail that drains and refills inside a window is progress and a slow reader is never cut.
+- **An abort is a reset.** `ReleaseMode.Abortive` sends no close_notify and closes with SO_LINGER {1, 0}, because a FIN after a truncated stream tells the peer it is complete. io_uring first cancels the handle's in-flight sends and recvs, whose SQEs pin the file; Node resets the raw socket under a TLS socket, since a TLS socket cannot be reset itself.
+- **The first write failure is sticky.** A hard send error or a refused encrypt records `ledger.fail(cause)`; every later `write` returns `WriteResult.Error(cause)`, and the close aborts with that cause.
+- **What the engine owes the peer goes out without a write.** A read that leaves a record due, such as the answer to a TLS 1.3 KeyUpdate, is flushed by the driver and counted with `ledger.generate`, so a close waits for it as for data. BoringSSL and OpenSSL queue that answer until the next write, so the shim's `read_plain` issues a zero-length one. Node runs its own TLS and also holds the answer until the next application write, which RFC 8446 4.6.3 allows and no Node call changes, so the Node cell is exempt.
+- **A loss is reported.** `Connection.released` completes after the OS close with `Flushed`, or with `Dropped(unsentBytes, cause)` counting what the ledger owed, what the pump held and what the outbound channel still held.
+
+The `*CloseContractTest` suites run each clause on every backend cell, plain and TLS; a new driver proves the contract by passing them.
+
 ### Backend and TLS selection
 
 Both the I/O backend and the TLS provider are chosen at startup through one shared `IoBackend.select`: a forced `-D` property name wins if its entry is available (and fails with `NetBackendUnavailableException`/`NetTlsProviderUnavailableException` if forced-but-unavailable, never a silent fall-through), otherwise the highest-priority available entry wins.

@@ -112,6 +112,27 @@ class OutboundLedgerTest extends Test:
             assert(!ledger.fail(later))
             assert(ledger.failure.exists(_ eq first))
         }
+
+        "fires a waiting onDrained once, though bytes are still owed" in {
+            val ledger = OutboundLedger.init()
+            ledger.generate(8)
+            var runs = 0
+            ledger.onDrained(() => runs += 1)
+            assert(ledger.fail(send()))
+            assert(runs == 1, "what is owed never drains after a failure, so the waiter must learn of it")
+            assert(!ledger.fail(send()))
+            ledger.send(8)
+            assert(runs == 1, "the waiter is one-shot")
+        }
+
+        "makes a later onDrained run at once" in {
+            val ledger = OutboundLedger.init()
+            ledger.generate(8)
+            discard(ledger.fail(send()))
+            var runs = 0
+            ledger.onDrained(() => runs += 1)
+            assert(runs == 1)
+        }
     }
 
 end OutboundLedgerTest

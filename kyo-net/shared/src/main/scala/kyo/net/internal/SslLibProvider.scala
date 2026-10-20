@@ -35,7 +35,7 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
             else CapabilityOutcome.Unavailable(s"the '$name' TLS library is present but its SSL_CTX probe reported it unusable")
         }
 
-    def createEngine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): TlsEngine =
+    def createEngine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): NativeSslEngine[SslLibBindings] =
         val l   = lib
         val ctx = l.ctxNew(if isServer then 1 else 0)
         if ctx == 0L then throw NetTlsConfigException("SSL_CTX_new failed")

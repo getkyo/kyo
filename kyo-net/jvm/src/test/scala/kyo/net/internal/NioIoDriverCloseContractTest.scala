@@ -5,12 +5,10 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
-import javax.net.ssl.SSLException
 import kyo.*
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.transport.*
-import kyo.scheduler.IOPromise
 
 /** Close-contract leaves for [[NioIoDriver]] that the public surface cannot reach: each forces one driver-internal window with real
   * sockets, real JDK `SSLEngine`s and the driver's own selector loop.
@@ -89,8 +87,8 @@ class NioIoDriverCloseContractTest extends Test:
     end closeNotify
 
     /** The read's outcome once it completes, or `Absent` when nothing completes it within `hangBound`. */
-    private def awaitOutcome(p: IOPromise[Closed, ReadOutcome])(using Frame): Maybe[Result[Closed, ReadOutcome]] < Async =
-        Abort.run[Closed | Timeout](Async.timeout(hangBound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
+    private def awaitOutcome(p: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using Frame): Maybe[Result[Closed, ReadOutcome]] < Async =
+        Abort.run[Closed | Timeout](Async.timeout(hangBound)(p.safe.get)).map {
             case Result.Success(outcome)        => Present(Result.succeed(outcome))
             case Result.Failure(_: Timeout)     => Absent
             case Result.Failure(closed: Closed) => Present(Result.fail(closed))
@@ -142,14 +140,22 @@ class NioIoDriverCloseContractTest extends Test:
     final private class HookedEngine(inner: SSLEngine) extends SSLEngine:
         @volatile private var wrapHook: SSLEngineResult => Unit   = _ => ()
         @volatile private var unwrapHook: SSLEngineResult => Unit = _ => ()
+        @volatile private var closed: Boolean                     = false
 
         def onWrap(f: SSLEngineResult => Unit): Unit   = wrapHook = f
         def onUnwrap(f: SSLEngineResult => Unit): Unit = unwrapHook = f
 
+        /** Every later unwrap reports the engine closed without running it: the way out of an unwrap loop a leaf proved spins, which every
+          * later selector pass re-enters.
+          */
+        def close(): Unit = closed = true
+
         override def unwrap(src: ByteBuffer, dsts: Array[ByteBuffer], offset: Int, length: Int): SSLEngineResult =
-            val result = inner.unwrap(src, dsts, offset, length)
-            unwrapHook(result)
-            result
+            if closed then new SSLEngineResult(SSLEngineResult.Status.CLOSED, SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING, 0, 0)
+            else
+                val result = inner.unwrap(src, dsts, offset, length)
+                unwrapHook(result)
+                result
         end unwrap
 
         override def wrap(srcs: Array[ByteBuffer], offset: Int, length: Int, dst: ByteBuffer): SSLEngineResult =
@@ -187,7 +193,7 @@ class NioIoDriverCloseContractTest extends Test:
             val driver = NioIoDriver.init()
             val engine = new HookedEngine(clientEngine)
             val handle = NioHandle.initTls(client, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
-            val read   = new IOPromise[Closed, ReadOutcome]
+            val read   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             val hooked = Promise.Unsafe.init[Unit, Any]()
             val closer = Promise.Unsafe.init[Unit, Any]()
             // The release is decided on its own thread while the selector carrier holds the gate inside the dispatch: it takes the release
@@ -210,7 +216,7 @@ class NioIoDriverCloseContractTest extends Test:
                 peer.close()
                 driver.close()
             }) {
-                driver.awaitRead(handle, read.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                driver.awaitRead(handle, read)
                 // Half a record: the dispatch feeds it to the engine and takes the need-more-data path, which re-puts the read entry.
                 discard(peer.write(ByteBuffer.wrap(wrapRecord(serverEngine, Array.fill[Byte](100)(3)).take(10))))
                 hooked.safe.get.andThen(closer.safe.get).andThen {
@@ -243,8 +249,8 @@ class NioIoDriverCloseContractTest extends Test:
             driver.registerChannel(handle)
             discard(driver.start())
             Sync.ensure(Sync.defer(closeAll(driver, handle, peer))) {
-                val read = new IOPromise[Closed, ReadOutcome]
-                driver.awaitRead(handle, read.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                val read = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                driver.awaitRead(handle, read)
                 // TLS 1.2: the JDK engine answers a peer close_notify by closing its own outbound side.
                 discard(peer.write(ByteBuffer.wrap(closeNotify(serverEngine))))
                 awaitOutcome(read).map { outcome =>
@@ -276,19 +282,17 @@ class NioIoDriverCloseContractTest extends Test:
             engine.onUnwrap { result =>
                 if (result.getStatus eq SSLEngineResult.Status.OK) && result.bytesConsumed() == 0 && result.bytesProduced() == 0 then
                     stalled += 1
-                    // Throwing is the only way out of the loop once it is proven, and it must keep throwing: a later selector pass re-enters
-                    // the same loop, and a single throw leaves the carrier spinning past the leaf's end.
-                    if stalled >= spinProof then
+                    if stalled == spinProof then
                         spun = true
-                        throw new SSLException("spin proven")
+                        engine.close()
                     end if
                 else stalled = 0
             }
             driver.registerChannel(handle)
             discard(driver.start())
             Sync.ensure(Sync.defer(closeAll(driver, handle, peer))) {
-                val read = new IOPromise[Closed, ReadOutcome]
-                driver.awaitRead(handle, read.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                val read = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                driver.awaitRead(handle, read)
                 // A TLS 1.2 renegotiation ClientHello: the server engine's unwrap reports OK with nothing consumed and waits on a delegated task.
                 clientEngine.beginHandshake()
                 val hello = ByteBuffer.allocate(clientEngine.getSession.getPacketBufferSize)

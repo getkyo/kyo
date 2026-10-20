@@ -81,12 +81,7 @@ class PollerIoDriverRaceTest extends Test:
                 val targetFd = acceptedFd
                 val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
 
-                var driverRef: PollerIoDriver = null
-                var handleRef: PosixHandle    = null
-
                 val engine = new RecordingTlsEngine(clientEngine)
-                engine.onFeedCiphertext = () =>
-                    if driverRef != null && handleRef != null then driverRef.release(handleRef, ReleaseMode.Graceful, Promise.Unsafe.init())
 
                 // Real epoll/kqueue: once the accepted fd has the buffered ciphertext, the first poll after awaitRead registers read interest and
                 // fires a real read-ready event. The spy delegates poll to the real backend (no synthetic events).
@@ -94,10 +89,9 @@ class PollerIoDriverRaceTest extends Test:
                 val pollerFd = real.create()
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                driverRef = driver
-                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val handle   = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 handle.tls = Present(engine)
-                handleRef = handle
+                engine.onFeedCiphertext = () => driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
 
                 // Start the poll loop first: it is the single carrier that drains the engine FIFO (and later fires the read poll), so the handshake
                 // engine op below runs on it. The poll loop bounded-waits on the idle poller fd until awaitRead arms the read interest.

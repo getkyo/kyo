@@ -28,10 +28,11 @@ abstract class Connection:
     /** Close the connection. Idempotent and non-blocking: it returns at once, and every later call, as well as a peer FIN or a read error
       * arriving during the close, changes nothing.
       *
-      * The outbound channel stops accepting writes, and the spans it already holds, together with the one being written, are sent to the
-      * peer in order before the socket is released. The release is therefore asynchronous unless nothing is left to write. A peer that stops
-      * reading holds it for at most [[NetConfig.closeFlushGrace]] without progress, after which the unsent tail is dropped. The inbound
-      * channel accepts no more spans and ends once the spans it holds are taken.
+      * The outbound channel stops accepting writes, and the spans it already holds, together with the one being written, reach the kernel
+      * in order before the socket is released; [[released]] reports whether all of them did. The release is therefore asynchronous unless
+      * nothing is left to write. A peer that stops reading holds it for at most [[NetConfig.closeFlushGrace]] with no byte reaching the
+      * kernel, after which the connection is reset and the unsent bytes are dropped; a write failure drops them at once. The inbound channel
+      * accepts no more spans and ends once the spans it holds are taken.
       */
     def close()(using AllowUnsafe, Frame): Unit
 

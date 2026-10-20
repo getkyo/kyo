@@ -122,7 +122,7 @@ final private[kyo] class JsTransport private (
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        val socket = NodeNet.asInstanceOf[js.Dynamic].connect(port, host)
+        val socket = NodeNet.connect(port, host)
         connectSocket(socket, host, port, tcpNoDelay = true, connectEvent = "connect", connectTimeout, config)
     end connect
 
@@ -187,7 +187,7 @@ final private[kyo] class JsTransport private (
             // The TLS socket wraps a raw socket opened here, so an abortive release can reset the connection: Node resets only a TCP handle,
             // and `resetAndDestroy` on a tls.TLSSocket's own handle throws ERR_INVALID_HANDLE_TYPE (Node 24). Connect errors on the raw
             // socket reach the TLS socket, and destroying the TLS socket destroys it.
-            opts.socket = NodeNet.asInstanceOf[js.Dynamic].connect(port, host)
+            opts.socket = NodeNet.connect(port, host)
             val socket = NodeTls.asInstanceOf[js.Dynamic].connect(opts)
             // TLS sockets emit "secureConnect" after handshake (not "connect" which fires on raw TCP). TLSSocket.setNoDelay reaches the TCP
             // handle under the TLS layer. Without TCP_NODELAY a message written as more than one TLS record waits on the peer's delayed ACK:

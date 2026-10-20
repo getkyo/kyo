@@ -144,7 +144,8 @@ class JdkSslEngineTest extends Test:
       * what no [[TlsEngine]] call starts: a renegotiation, a KeyUpdate.
       */
     private def handshakenPair(protocol: String)(using
-        Frame
+        Frame,
+        kyo.test.AssertScope
     ): (JdkSslEngine, javax.net.ssl.SSLEngine, JdkSslEngine, javax.net.ssl.SSLEngine) =
         val rawClient = NioTransport.createSslContext(clientConfig, isServer = false).createSSLEngine("localhost", 443)
         val rawServer = NioTransport.createSslContext(serverConfig, isServer = true).createSSLEngine()
@@ -156,7 +157,7 @@ class JdkSslEngineTest extends Test:
         rawServer.beginHandshake()
         val client = new JdkSslEngine(rawClient)
         val server = new JdkSslEngine(rawServer)
-        if !TlsEngineLoopback.handshake(client, server) then throw new IllegalStateException(s"the $protocol handshake did not complete")
+        assert(TlsEngineLoopback.handshake(client, server), s"the $protocol handshake did not complete")
         // A TLS 1.3 server's session tickets ride on its next output; deliver them so neither side has a record in flight.
         val tickets = TlsEngineLoopback.drainAll(server)
         if tickets.nonEmpty then

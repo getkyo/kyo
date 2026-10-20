@@ -59,7 +59,24 @@ def echo(conn: Connection): Maybe[Span[Byte]] < (Async & Abort[Closed]) =
     }
 ```
 
-`close()` releases the connection; `isOpen` reports whether it is still live. The caller closes every connection it opens.
+`close()` returns at once and releases the connection once the bytes it accepted have reached the kernel; `isOpen` reports whether it is still live. The caller closes every connection it opens.
+
+`released` completes after the release with what happened to those bytes: `CloseOutcome.Flushed` when every one reached the kernel, or `CloseOutcome.Dropped(unsentBytes, cause)` when the peer stopped reading for a whole `closeFlushGrace` or a write failed. A dropping close resets a socket instead of ending it with a FIN, so the peer cannot take the truncated stream for a complete one.
+
+```scala
+import AllowUnsafe.embrace.danger
+import kyo.*
+import kyo.net.*
+
+def sendAndClose(conn: Connection, bytes: Span[Byte]): Boolean < (Async & Abort[Closed]) =
+    conn.outbound.safe.put(bytes).andThen {
+        conn.close()
+        conn.released.safe.get.map {
+            case Connection.CloseOutcome.Flushed       => true
+            case Connection.CloseOutcome.Dropped(_, _) => false
+        }
+    }
+```
 
 When the peer closes, `inbound` completes. At that point `status` reports how the stream ended. For a TLS connection this separates an orderly close, where the peer sent its authenticated `close_notify` before the TCP FIN (`Status.CleanClose`), from a `Status.Truncated` end, where the connection dropped with a bare FIN and no `close_notify`. A plaintext connection has no `close_notify` exchange, so its status stays `Status.Active` through every close, its own and its peer's. The posix and NIO transports drive the TLS record layer themselves and report the reason; the Node transport delegates TLS to Node, which surfaces a clean close and a truncation identically, so there every close reads `Status.Active`. A caller that frames a stream by its close reads the transport's `reportsTlsCloseReason` to know whether `Active` at the close means "nothing observed" or "no `close_notify`".
 
