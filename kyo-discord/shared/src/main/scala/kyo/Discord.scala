@@ -78,8 +78,10 @@ object Discord:
       * cleanly, on a close it would otherwise have reconnected from. `Discord.run(config)(Discord.receive(handler))` is a bot in one
       * call.
       *
-      * Each event is handled on its own fiber, with the client provided, so the handler calls the verbs directly; order between
-      * handlers is not kept. A dispatch is answered with `Unit`. An interaction is answered with what its kind admits, which the module
+      * Each event is handled on its own fiber, with the client provided, so the handler calls the verbs directly. Dispatches reach the
+      * handler one at a time in the order the Gateway sent them, so an edit is handled after the message it edits; an interaction is
+      * handled at once, beside them. A dispatch's handler that does not return holds the dispatches after it, so long work is forked.
+      * A dispatch is answered with `Unit`. An interaction is answered with what its kind admits, which the module
       * posts as the callback, bounded by `config.interactionDeadline`: past it the handler is interrupted and nothing is posted. Long
       * work answers `DeferredMessage` at once and forks the work, which then calls `editResponse` or `followUp`. A handler names the
       * events it handles and ends with `case other => Event.unhandled(other)`, which declines the interactions it did not name.

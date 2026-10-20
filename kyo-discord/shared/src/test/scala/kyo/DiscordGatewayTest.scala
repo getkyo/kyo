@@ -417,6 +417,42 @@ class DiscordGatewayTest extends kyo.test.Test[Any]:
 
     // --- Handlers and the end of receive ---
 
+    "dispatches reach the handler one at a time in the order Discord sent them, while an interaction is answered beside them" in {
+        withGateway { gw =>
+            connected(gw) { (conn, discord) =>
+                Latch.init(1).map { started =>
+                    Latch.init(1).map { proceed =>
+                        Channel.init[String](16).map { received =>
+                            Fiber.initUnscoped(Discord.run(discord)(Discord.receive[Nothing]([A] =>
+                                (event: Event[A]) =>
+                                    event match
+                                        case _: Event.MessageCreated =>
+                                            started.release.andThen(proceed.await).andThen(record(received, event))
+                                        case other => record(received, other).andThen(answer[A](other))
+                            ))).map { loop =>
+                                for
+                                    _ <- conn.send(dispatch(2, "MESSAGE_CREATE", messageJson))
+                                    _ <- started.await
+                                    _ <- conn.send(dispatch(3, "MESSAGE_UPDATE", messageJson.replace("\"hi\"", "\"hi again\"")))
+                                    _ <- conn.send(dispatch(4, "INTERACTION_CREATE", commandJson("901", "roll")))
+                                    // answered while the message's handler is still held
+                                    callbacks <- gw.callbacks(1)
+                                    _         <- proceed.release
+                                    events    <- received.takeExactly(4)
+                                    _         <- loop.interrupt
+                                    _         <- Discord.close(discord)
+                                yield
+                                    assert(callbacks == Chunk((s"/interactions/901/$interactionSecret/callback", """{"type":5}""")))
+                                    assert(events == Chunk("Ready", "Command", "MessageCreated", "MessageUpdated"), s"got: $events")
+                                end for
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "a handler's typed failure ends receive with it and closes the socket with 1000, and a panic is logged and the loop goes on" in {
         withGateway { gw =>
             Fiber.initUnscoped(Abort.run[DiscordReceiveFailure | String](Discord.run(gw.config)(Discord.receive[String]([A] =>
