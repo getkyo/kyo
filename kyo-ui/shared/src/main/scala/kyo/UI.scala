@@ -1537,6 +1537,15 @@ object UI:
               */
             def rows(v: Int): Textarea = copy(rows = Present(math.max(1, v)))
 
+            /** Enter submits the form this textarea is in, as Enter in an input does, and Shift+Enter breaks the line. Without it Enter
+              * breaks the line and never submits, as in a browser. An Enter that confirms an input method's composition breaks nothing
+              * and submits nothing.
+              *
+              * Declarative for the reason [[Interactive.preventScrollKeys]] is: the browser reads the emitted `data-kyo-submit-enter`
+              * attribute and declines the line break before the keydown is posted.
+              */
+            def submitOnEnter: Textarea = withAttrs(attrs.copy(dataAttrs = attrs.dataAttrs.updated("kyo-submit-enter", "1")))
+
             def value: Maybe[Bound[String]]            = textInputAttrs.value
             def placeholder: Maybe[String]             = textInputAttrs.placeholder
             def readOnly: Maybe[Boolean]               = textInputAttrs.readOnly

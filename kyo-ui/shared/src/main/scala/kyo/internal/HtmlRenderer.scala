@@ -1626,6 +1626,12 @@ private[kyo] object HtmlRenderer:
            |    // kyo-ui treats Enter on Select as a dropdown interaction (see ReactiveUI.dispatchToElement),
            |    // so we suppress the browser default to keep TUI/browser parity.
            |    if(e.key==="Enter"&&e.target&&e.target.tagName==="SELECT")e.preventDefault();
+           |    // Enter in a textarea marked by Textarea.submitOnEnter submits its form once the keydown is posted, the order Enter in an
+           |    // input has; requestSubmit validates the form as that Enter does. Shift+Enter keeps the line break, and so does an Enter that
+           |    // confirms an input method's composition, which Safari reports with keyCode 229 instead of isComposing.
+           |    var __sf=(e.key==="Enter"&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229&&e.target&&e.target.tagName==="TEXTAREA"&&
+           |      e.target.hasAttribute("data-kyo-submit-enter"))?e.target.form:null;
+           |    if(__sf)e.preventDefault();
            |    // Enter on a focused <input type=checkbox|radio>: HTML spec only activates these via Space,
            |    // not Enter. kyo-ui synthesizes Enter activation via click() for TUI/browser parity.
            |    // click() fires the native change event which the existing change handler picks up as
@@ -1704,6 +1710,7 @@ private[kyo] object HtmlRenderer:
            |      if((e.key==='Enter'||isSpaceKey)&&!isOpen&&opts2){e.preventDefault();return;}
            |    }
            |    if(he(el,"keydown")){var ktid=e.target&&e.target.id?e.target.id:null;post({KeyDown:{path:p,keyboard:mkKbd(e.key,{ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey},ktid)}});}
+           |    if(__sf)__sf.requestSubmit();
            |  }
            |  else if(t==="keyup"&&he(el,"keyup")){var kutid=e.target&&e.target.id?e.target.id:null;post({KeyUp:{path:p,keyboard:mkKbd(e.key,{ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey},kutid)}});}
            |  else if(t==="focus"&&he(el,"focus")){var ftid=e.target&&e.target.id?e.target.id:null;post({Focus:{path:p,mouse:mkMouse({ctrl:false,alt:false,shift:false,meta:false},ftid)}});}

@@ -314,4 +314,47 @@ class TextareaTest extends UITest:
         }
     }
 
+    // The wrapper's keydown runs after the form's handling of the same key, so a submit from that key is logged before its K.
+    def keyLog(textarea: UI.Ast.Textarea): UI < Async =
+        for log <- Signal.initRef("")
+        yield UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+            UI.form.onSubmit(log.getAndUpdate(_ + "S").unit)(textarea),
+            log.map(v => UI.span(s"log:$v").id("log"))
+        )
+
+    "Enter and Shift+Enter in a textarea break the line and never submit its form" in {
+        withUI(keyLog(UI.textarea.id("t"))) {
+            for
+                _     <- Browser.fill(Selector.id("t"), "hi")
+                _     <- Browser.press(Selector.id("t"), Key.Enter)
+                _     <- Browser.press(Selector.id("t"), Key.Enter, KeyModifiers(shift = true))
+                _     <- Browser.assertText(Selector.id("log"), "log:KK")
+                value <- Browser.evalJson[String]("document.getElementById('t').value")
+            yield assert(value == "hi\n\n")
+        }
+    }
+
+    "submitOnEnter: Enter submits the form once, after its keydown, without a line break; Shift+Enter breaks the line" in {
+        withUI(keyLog(UI.textarea.id("t").submitOnEnter)) {
+            for
+                _     <- Browser.assertAttribute(Selector.id("t"), "data-kyo-submit-enter", "1")
+                _     <- Browser.fill(Selector.id("t"), "hi")
+                _     <- Browser.press(Selector.id("t"), Key.Enter, KeyModifiers(shift = true))
+                _     <- Browser.press(Selector.id("t"), Key.Enter)
+                _     <- Browser.assertText(Selector.id("log"), "log:KKS")
+                value <- Browser.evalJson[String]("document.getElementById('t').value")
+            yield assert(value == "hi\n")
+        }
+    }
+
+    "submitOnEnter outside a form keeps Enter's line break" in {
+        withUI(UI.div(UI.textarea.id("t").submitOnEnter)) {
+            for
+                _     <- Browser.fill(Selector.id("t"), "hi")
+                _     <- Browser.press(Selector.id("t"), Key.Enter)
+                value <- Browser.evalJson[String]("document.getElementById('t').value")
+            yield assert(value == "hi\n")
+        }
+    }
+
 end TextareaTest

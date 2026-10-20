@@ -635,6 +635,9 @@ private[kyo] object DomBackend:
                 if tgt != null && scrollKeyPrevented(ke.key, tgt) && tgt.closest("[data-kyo-scroll-keys]") != null then
                     e.preventDefault()
             end if
+            // The line break is declined now and the form submitted once the keydown is dispatched, the order Enter in an input has.
+            val enterSubmits = enterSubmitForm(e)
+            enterSubmits.foreach(_ => e.preventDefault())
             findPathElement(e.target.asInstanceOf[dom.Element]).foreach { target =>
                 val path    = parsePath(target.getAttribute("data-kyo-path"))
                 val evTypes = ChainTypes(target)
@@ -767,6 +770,8 @@ private[kyo] object DomBackend:
                     fireFromJs(events, dispatch(path, ev).unit)
                 }
             }
+            // scalajs-dom has no requestSubmit; it validates the form as Enter in an input does, where submit() does not
+            enterSubmits.foreach(form => discard(form.asInstanceOf[scalajs.js.Dynamic].requestSubmit()))
         end handler
 
         val wheelOptions = js.Dynamic.literal(capture = true, passive = false).asInstanceOf[dom.EventListenerOptions]
@@ -1056,6 +1061,22 @@ private[kyo] object DomBackend:
                 if nv != v then setValue(t, nv)
             end if
         end if
+
+    /** The form a keydown submits: a plain Enter in a textarea marked by `Textarea.submitOnEnter`. Shift+Enter keeps the line break,
+      * and so does an Enter that confirms an input method's composition, which Safari reports with keyCode 229 instead of
+      * `isComposing`. Mirrors clientJs's `data-kyo-submit-enter` branch.
+      */
+    private def enterSubmitForm(e: dom.Event): Maybe[dom.HTMLFormElement] =
+        if e.`type` != "keydown" then Absent
+        else
+            val ke  = e.asInstanceOf[dom.KeyboardEvent]
+            val tgt = e.target.asInstanceOf[dom.Element]
+            if tgt != null && ke.key == "Enter" && !ke.shiftKey && !ke.isComposing && ke.keyCode != 229 &&
+                tgt.tagName == "TEXTAREA" && tgt.hasAttribute("data-kyo-submit-enter")
+            then Maybe(tgt.asInstanceOf[dom.HTMLTextAreaElement].form)
+            else Absent
+            end if
+    end enterSubmitForm
 
     /** True when `key` is a page-scrolling navigation key a `preventScrollKeys` region should suppress on `target`.
       * Vertical keys are exempt when `target` consumes them itself (caret line movement, option change) — there the

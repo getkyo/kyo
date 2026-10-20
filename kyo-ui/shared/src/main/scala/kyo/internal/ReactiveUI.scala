@@ -300,7 +300,7 @@ private[kyo] object ReactiveUI:
 
             for
                 // Disabled-target (Form submit suppression), Button-target (only Button clicks submit
-                // forms), and Select-target (Enter on Select must not submit) all resolve through any
+                // forms), and a target that keeps Enter (Enter there must not submit) all resolve through any
                 // Reactive/Foreach boundary wrapping the target, so signal-typed setters do not hide it.
                 targetDisabled <- event match
                     case _: UIEvent.Click => isTargetDisabled(elem, myPath, targetPath)
@@ -308,8 +308,8 @@ private[kyo] object ReactiveUI:
                 targetIsButton <- event match
                     case _: UIEvent.Click => isTargetButton(elem, myPath, targetPath)
                     case _                => Kyo.lift(false)
-                targetIsSelect <- event match
-                    case _: UIEvent.KeyDown => isTargetSelect(elem, myPath, targetPath)
+                targetKeepsEnter <- event match
+                    case _: UIEvent.KeyDown => keepsEnter(elem, myPath, targetPath)
                     case _                  => Kyo.lift(false)
                 bubble = dispatchToElement(
                     elem,
@@ -317,7 +317,7 @@ private[kyo] object ReactiveUI:
                     isTarget = false,
                     disabledTarget = targetDisabled,
                     submitOrigin = targetIsButton,
-                    selectTarget = targetIsSelect
+                    targetKeepsEnter = targetKeepsEnter
                 )
                 result <- Maybe.fromOption(reactiveChild) match
                     case Present(child) =>
@@ -482,8 +482,10 @@ private[kyo] object ReactiveUI:
     private def isTargetButton(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
         targetSatisfies(elem, myPath, targetPath, _.isInstanceOf[Button])
 
-    private def isTargetSelect(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
-        targetSatisfies(elem, myPath, targetPath, _.isInstanceOf[Select])
+    // A Select takes Enter to cycle its options and a Textarea to break a line. A `submitOnEnter` Textarea submits through
+    // the browser's own submit event, so an Enter from either never submits here.
+    private def keepsEnter(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
+        targetSatisfies(elem, myPath, targetPath, e => e.isInstanceOf[Select] || e.isInstanceOf[Textarea])
 
     /** Bubble-continue value after an element handled `event`: `false` (consume) only when the element set
       * `stopPropagation(true)` AND actually declared a handler for this event's type (`declared`). The result flows up the
@@ -501,7 +503,7 @@ private[kyo] object ReactiveUI:
         isTarget: Boolean,
         disabledTarget: Boolean = false,
         submitOrigin: Boolean = false,
-        selectTarget: Boolean = false
+        targetKeepsEnter: Boolean = false
     )(
         using Frame
     ): Boolean < Async =
@@ -587,8 +589,8 @@ private[kyo] object ReactiveUI:
                                 case _           => Kyo.lift(())
                         else Kyo.lift(())
                     // Enter key bubbling to Form triggers onSubmit (browser behavior)
-                    // Enter on Select should NOT submit; it interacts with the dropdown
-                    val formSubmit = if !isTarget && e.keyboard.key == "Enter" && !selectTarget then
+                    // Enter on a Select or a Textarea should NOT submit; see keepsEnter
+                    val formSubmit = if !isTarget && e.keyboard.key == "Enter" && !targetKeepsEnter then
                         elem match
                             case f: Form => invoke(f.onSubmit)
                             case _       => Kyo.lift(())

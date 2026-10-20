@@ -356,6 +356,8 @@ Input elements share three capability traits.
 
 `UI.textarea` also takes `.rows(n)`, its height in lines, at least 1. Styled with `.fieldSizing(_.content)` it grows with what is typed instead, within its min and max height, where the browser supports `field-sizing`; `rows` is the height elsewhere.
 
+Enter in a textarea breaks the line and never submits its form, as in a browser. `.submitOnEnter` makes it a message box: Enter submits the form it is in, as Enter in an input does, and Shift+Enter breaks the line.
+
 `PickerInput`: picker-shaped fields with a string value, disabled, and a Change handler (no placeholder, no onInput). Implementations: `UI.dateInput`, `UI.timeInput`, `UI.colorInput`, `UI.select`, `UI.dropdown(options*)`.
 
 `BooleanInput`: boolean-shaped fields with `.checked`, disabled, and a `Boolean => Unit < Async` Change handler. Implementations: `UI.checkbox`, `UI.radio`.
@@ -438,7 +440,7 @@ A few things to notice in this block:
 - `Signal.initRef` returns `< Sync`. Allocating three of them happens in a `for` comprehension.
 - `valid` is a `Signal[Boolean]` derived from two refs with `combineLatest` and `map`. It is read-only.
 - `.disabled(valid.map(!_))` uses the `Signal[Boolean]` overload, so the button is wrapped in a `Reactive`. That is the right behavior here: when validity flips, the button's disabled attribute flips.
-- `Form.onSubmit(action)` fires on Enter inside a child input AND on a button click inside the form (no event-type discrimination needed). The action runs with `Async` available.
+- `Form.onSubmit(action)` fires on Enter inside a child input or `.submitOnEnter` textarea AND on a button click inside the form (no event-type discrimination needed). The action runs with `Async` available.
 
 > **Note:** `Form.onSubmit` is a `Form`-specific extra, not an `Interactive` event. The handler is `=> Unit < Async`, same shape as `onClick`. Buttons inside a `Form` submit it; a `Button` outside a `Form` does not.
 
