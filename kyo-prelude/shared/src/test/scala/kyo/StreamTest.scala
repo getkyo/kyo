@@ -291,6 +291,12 @@ class StreamTest extends kyo.test.Test[Any]:
             assert(Var.runTuple(0)(taken).eval == (4, Seq(1, 2, 3)))
         }
 
+        "ends without pulling the chunk after the one the predicate failed in" in {
+            val stream = Stream.init(Seq(1, 2, 3)).concat(Stream(Var.update[Int](_ + 1).andThen(Emit.value(Chunk(4)))))
+            val taken  = stream.takeWhile(v => Kyo.lift(v < 3)).run
+            assert(Var.runTuple(0)(taken).eval == (0, Seq(1, 2)))
+        }
+
         "stack safety" in {
             assert(
                 Stream.init(Seq.fill(n)(1)).takeWhile(_ == 1).run.eval ==
@@ -325,6 +331,12 @@ class StreamTest extends kyo.test.Test[Any]:
                 Stream.init(Seq.empty[Int]).takeWhilePure(_ => true).run.eval ==
                     Seq.empty
             )
+        }
+
+        "ends without pulling the chunk after the one the predicate failed in" in {
+            val stream = Stream.init(Seq(1, 2, 3)).concat(Stream(Var.update[Int](_ + 1).andThen(Emit.value(Chunk(4)))))
+            val taken  = stream.takeWhilePure(_ < 3).run
+            assert(Var.runTuple(0)(taken).eval == (0, Seq(1, 2)))
         }
 
         "stack safety" in {

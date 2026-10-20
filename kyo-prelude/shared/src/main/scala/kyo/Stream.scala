@@ -290,7 +290,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                     else if input.isEmpty then Loop.continue(state, ())
                     else
                         val c = input.takeWhile(f)
-                        Emit.valueWith(c)(Loop.continue(c.size == input.size, ()))
+                        Emit.valueWith(c)(if c.size == input.size then Loop.continue(true, ()) else Loop.done(()))
             )
         )
     end takeWhilePure
@@ -309,7 +309,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                     if !state then Loop.done(())
                     else
                         Kyo.takeWhile(input)(f).map { c =>
-                            Emit.valueWith(c)(Loop.continue(c.size == input.size, ()))
+                            Emit.valueWith(c)(if c.size == input.size then Loop.continue(true, ()) else Loop.done(()))
                         }
             )
         )
