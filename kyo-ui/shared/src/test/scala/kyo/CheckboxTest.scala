@@ -181,6 +181,29 @@ class CheckboxTest extends UITest:
         }
     }
 
+    "Enter toggles a checkbox once when a keydown handler is above it".pendingUntilFixed(
+        "the server toggles the checkbox again on the posted Enter after the page toggled it"
+    ) in {
+        // The wrapper's keydown runs after the checkbox's handling of the same key, so a toggle from that key is logged before its K.
+        val app: UI < Async =
+            for
+                checked <- Signal.initRef(false)
+                log     <- Signal.initRef("")
+            yield UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+                UI.checkbox.id("c").checked(checked).onChange(on => log.getAndUpdate(_ + (if on then "T" else "F")).unit),
+                checked.map(on => UI.span(s"checked:$on").id("checked")),
+                log.map(v => UI.span(s"log:$v").id("log"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.press(Selector.id("c"), Key.Enter)
+                _ <- Browser.press(Selector.id("c"), Key('x'))
+                _ <- Browser.assertText(Selector.id("log"), "log:TKK")
+                _ <- Browser.assertText(Selector.id("checked"), "checked:true")
+            yield ()
+        }
+    }
+
     "pressKey Space toggles" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
