@@ -41,17 +41,18 @@ class ConnectionCloseContractPosixTest extends Test:
         end for
     end closeAfterPayload
 
-    "a TLS close delivers every byte accepted before it" - eachBackendTlsPending((backend, _) =>
-        if backend == "epoll" then
-            Present(
-                "the client's read takes the last record, the close_notify and the FIN on one epoll edge, and no edge follows to end it"
-            )
-        else Absent
-    ) { (transport, serverTls, clientTls) =>
+    "a TLS close delivers every byte accepted before it" - eachBackendTlsExcept { (transport, serverTls, clientTls) =>
         closeAfterPayload(transport, serverTls, clientTls).map { (received, _) =>
             assert(received.length == payload.length, s"the client read ${received.length} of ${payload.length} bytes before the close")
             assert(received.sameElements(payload), "every byte accepted before the close reaches the peer in order")
         }
+    } { (backend, _) =>
+        // Skipped, not pending: the hang depends on whether one read takes the close_notify and the FIN with the last record.
+        if backend == "epoll" then
+            Present(
+                "the client's read can take the last record, the close_notify and the FIN on one epoll edge, and no edge follows to end it"
+            )
+        else Absent
     }
 
     "a TLS close sends close_notify after every byte accepted before it" - eachBackendTlsPending((backend, _) =>

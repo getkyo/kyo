@@ -264,20 +264,20 @@ abstract class Test extends kyo.test.Test[Any]:
             NetTlsConfig
         ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(using Frame): Unit =
-        eachBackendTlsOnClockPending((_, _) => Absent)(scenario)
+        eachBackendTlsOnClockExcept(scenario)((_, _) => Absent)
 
-    /** Like [[eachBackendTlsOnClock]], but marks `pendingUntilFixed` (with the returned reason) every (backend, provider) cell `pendingCell`
-      * maps to `Present`. The controlled-clock counterpart of [[eachBackendTlsPending]].
+    /** Like [[eachBackendTlsOnClock]], but cancels (with the returned reason) every (backend, provider) cell `skipCell` maps to `Present`. The
+      * controlled-clock counterpart of [[eachBackendTlsExcept]].
       */
-    def eachBackendTlsOnClockPending(pendingCell: (String, String) => Maybe[String])(
+    def eachBackendTlsOnClockExcept(
         scenario: (
             Transport,
             Clock.TimeControl,
             NetTlsConfig,
             NetTlsConfig
         ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
-    )(using Frame): Unit =
-        tlsCells((_, _) => Absent, pendingCell) { (entry, serverTls, clientTls) =>
+    )(skipCell: (String, String) => Maybe[String])(using Frame): Unit =
+        tlsCells(skipCell, (_, _) => Absent) { (entry, serverTls, clientTls) =>
             onClock(entry)((transport, timeControl) => scenario(transport, timeControl, serverTls, clientTls))
         }
 

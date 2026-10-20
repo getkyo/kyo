@@ -323,13 +323,7 @@ class ConnectionCloseContractTest extends Test:
             }
 
             // No clock advance anywhere: the grace may be armed, and the release must still come from the tail draining.
-            eachBackendTlsOnClockPending((backend, _) =>
-                if backend == "epoll" then
-                    Present(
-                        "the client's read takes the last record, the close_notify and the FIN on one epoll edge, and no edge follows to end it"
-                    )
-                else Absent
-            ) { (transport, _, serverTls, clientTls) =>
+            eachBackendTlsOnClockExcept { (transport, _, serverTls, clientTls) =>
                 val accepted = Promise.Unsafe.init[Connection, Any]()
                 for
                     listener <- transport.listenTls(
@@ -353,6 +347,13 @@ class ConnectionCloseContractTest extends Test:
                     assert(received.sameElements(want), s"received ${received.length} of ${want.length} bytes accepted before close()")
                     assert(outcome == Connection.CloseOutcome.Flushed, s"the peer read every byte, yet released reported $outcome")
                 end for
+            } { (backend, _) =>
+                // Skipped, not pending: the hang depends on whether one read takes the close_notify and the FIN with the last record.
+                if backend == "epoll" then
+                    Present(
+                        "the client's read can take the last record, the close_notify and the FIN on one epoll edge, and no edge follows to end it"
+                    )
+                else Absent
             }
         }
     }
