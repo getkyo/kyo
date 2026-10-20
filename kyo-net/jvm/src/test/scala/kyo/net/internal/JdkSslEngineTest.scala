@@ -152,6 +152,8 @@ class JdkSslEngineTest extends Test:
         rawServer.setUseClientMode(false)
         rawClient.setEnabledProtocols(Array(protocol))
         rawServer.setEnabledProtocols(Array(protocol))
+        rawClient.beginHandshake()
+        rawServer.beginHandshake()
         val client = new JdkSslEngine(rawClient)
         val server = new JdkSslEngine(rawServer)
         if !TlsEngineLoopback.handshake(client, server) then throw new IllegalStateException(s"the $protocol handshake did not complete")
@@ -185,7 +187,8 @@ class JdkSslEngineTest extends Test:
                 // TLS 1.2: the JDK engine answers the peer's close_notify by closing its own outbound side.
                 discard(server.shutdownStep())
                 feed(client, TlsEngineLoopback.drainAll(server))
-                assert(readOnce(client) == -3, "setup: the peer's close_notify must read as a clean close")
+                val read = readOnce(client)
+                assert(read == -3, s"setup: the peer's close_notify must read as a clean close, got $read")
                 val plain = Buffer.fromArray[Byte](Array.fill[Byte](100)(1))
                 val wrote =
                     try client.writePlain(plain, 100)
@@ -220,13 +223,17 @@ class JdkSslEngineTest extends Test:
         Sync.defer {
             val (client, _, server, rawServer) = handshakenPair("TLSv1.3")
             try
-                // A TLS 1.3 JDK engine's beginHandshake after the handshake issues a KeyUpdate that requests one back.
+                // A TLS 1.3 JDK engine's beginHandshake after the handshake issues a KeyUpdate that requests one back, on its next wrap.
                 rawServer.beginHandshake()
-                discard(server.handshakeStep())
-                val update = TlsEngineLoopback.drainAll(server)
+                val out = java.nio.ByteBuffer.allocate(rawServer.getSession.getPacketBufferSize)
+                discard(rawServer.wrap(java.nio.ByteBuffer.allocate(0), out))
+                out.flip()
+                val update = new Array[Byte](out.remaining())
+                out.get(update)
                 assert(update.nonEmpty, "setup: the server engine must produce a KeyUpdate")
                 feed(client, update)
-                assert(readOnce(client) == 0, "setup: a KeyUpdate carries no application data")
+                val read = readOnce(client)
+                assert(read == 0, s"setup: a KeyUpdate carries no application data, got $read")
                 val answer = TlsEngineLoopback.drainAll(client)
                 assert(answer.nonEmpty, "the client read the KeyUpdate yet queued no answer for the next drain")
             finally

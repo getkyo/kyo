@@ -69,7 +69,7 @@ class ConnectionCloseContractTest extends Test:
         Clock.let(Clock.live) {
             Abort.run[Timeout](Async.timeout(armedBudget)(conn.released.safe.get)).map {
                 case Result.Success(outcome) => outcome
-                case _                       => fail(s"$what: released did not complete within $armedBudget, so no outcome was observed")
+                case _ => fail(s"$what: released did not complete within ${armedBudget.show}, so no outcome was observed")
             }
         }
 
@@ -308,10 +308,9 @@ class ConnectionCloseContractTest extends Test:
                 val driver = new ScriptedPeerDriver(tailBound = Present(8))
                 val conn   = scripted(driver, clock, 5.seconds, 8)
                 conn.close()
-                val early = conn.isReleased
+                assert(!conn.isReleased, "the close released while the driver still owed the kernel 8 bytes")
                 driver.peerReads(8)
                 releasedOutcome(conn, "a close whose tail drained after the pump tore down").map { outcome =>
-                    assert(!early, "the close released while the driver still owed the kernel 8 bytes")
                     assert(outcome == Connection.CloseOutcome.Flushed, s"the tail drained whole, yet released reported $outcome")
                 }
             }
@@ -381,17 +380,16 @@ class ConnectionCloseContractTest extends Test:
                 for
                     (server, peer, _) <- stalledClose(transport, grace)
                     _                 <- advanceUntilReleased(server, control, grace, (timeout.toMillis / 100 / 2).toInt)
-                    outcome           <- releasedOutcome(server, "a close released by the grace")
                     (_, ending)       <- peer.recvToEnd()
-                yield
-                    assert(dropped(outcome), s"setup: the grace must drop the tail, got $outcome")
-                    assert(
+                    _ = assert(
                         ending match
                             case RawPeer.Read.Reset(_) => true
                             case _                     => false
                         ,
                         s"a release that dropped bytes must reset the connection, the peer saw $ending"
                     )
+                    outcome <- releasedOutcome(server, "a close released by the grace")
+                yield assert(dropped(outcome), s"the grace must drop the tail, got $outcome")
                 end for
             }
 
@@ -413,23 +411,22 @@ class ConnectionCloseContractTest extends Test:
                     server  <- accepted.safe.get.map(_.asInstanceOf[InternalConnection[?]])
                     stalled <- fillUntilStalled(server)
                     _ = assert(stalled.nonEmpty, "the write pump never parked against the peer that stopped reading")
-                    _       <- Sync.defer(server.close())
-                    _       <- advanceUntilReleased(server, control, grace, (timeout.toMillis / 100 / 2).toInt)
-                    outcome <- releasedOutcome(server, "a TLS close released by the grace")
-                    ended   <- tls.recvToEnd()
-                yield
-                    assert(dropped(outcome), s"setup: the grace must drop the tail, got $outcome")
-                    assert(
+                    _     <- Sync.defer(server.close())
+                    _     <- advanceUntilReleased(server, control, grace, (timeout.toMillis / 100 / 2).toInt)
+                    ended <- tls.recvToEnd()
+                    _ = assert(
                         !ended.closeNotify,
                         "a release that dropped bytes sent close_notify, which tells the peer the stream is complete"
                     )
-                    assert(
+                    _ = assert(
                         ended.end match
                             case RawPeer.Read.Reset(_) => true
                             case _                     => false
                         ,
                         s"a release that dropped bytes must reset the connection, the peer saw ${ended.end}"
                     )
+                    outcome <- releasedOutcome(server, "a TLS close released by the grace")
+                yield assert(dropped(outcome), s"the grace must drop the tail, got $outcome")
                 end for
             }
         }
@@ -480,16 +477,15 @@ class ConnectionCloseContractTest extends Test:
                 _        <- Sync.defer(driver.signalWritable())
                 _        <- control.advance(grace)
                 released <- releasedOrArmed(conn.isReleased, control, "close-flush grace (window 2)", grace)
-                outcome  <- releasedOutcome(conn, "a close whose pump moved no byte for a window")
-            yield
-                assert(released, "a window in which no byte reached the kernel must release, however often the pump woke")
-                assert(
-                    outcome match
-                        case Connection.CloseOutcome.Dropped(8, _) => true
-                        case _                                     => false
-                    ,
-                    s"the 4 bytes in the tail and the 4 the pump held were dropped, got $outcome"
-                )
+                _ = assert(released, "a window in which no byte reached the kernel must release, however often the pump woke")
+                outcome <- releasedOutcome(conn, "a close whose pump moved no byte for a window")
+            yield assert(
+                outcome match
+                    case Connection.CloseOutcome.Dropped(8, _) => true
+                    case _                                     => false
+                ,
+                s"the 4 bytes in the tail and the 4 the pump held were dropped, got $outcome"
+            )
             end for
         }
 
@@ -527,13 +523,12 @@ class ConnectionCloseContractTest extends Test:
                 _        <- Sync.defer(conn.close())
                 _        <- control.advance(3.seconds)
                 released <- releasedOrArmed(conn.isReleased, control, "close-flush grace restarted by the second close()", grace)
-                outcome  <- releasedOutcome(conn, "a close whose first window expired")
-            yield
-                assert(
+                _ = assert(
                     released,
                     "the window the first close() started must expire at its own deadline, not one the second close() restarted"
                 )
-                assert(dropped(outcome), s"no byte left during the window, got $outcome")
+                outcome <- releasedOutcome(conn, "a close whose first window expired")
+            yield assert(dropped(outcome), s"no byte left during the window, got $outcome")
             end for
         }
     }
@@ -664,26 +659,27 @@ class ConnectionCloseContractTest extends Test:
                     _      <- Scope.ensure(Sync.defer(server.close()))
                     // A round trip first: what the server sends once the handshake ends (TLS 1.3 session tickets) is on the wire ahead of its
                     // answer, so after it nothing the server wrote is still in flight.
-                    _        <- tls.send(Span.fromUnsafe("ping".getBytes("UTF-8")))
-                    _        <- server.inbound.safe.take
-                    _        <- server.outbound.safe.put(Span.fromUnsafe("pong".getBytes("UTF-8")))
-                    pong     <- recvPlain(tls, 4)
-                    update   <- tls.keyUpdate()
-                    _        <- raw.send(update)
-                    reply    <- Clock.let(Clock.live)(Abort.run[Timeout](Async.timeout(armedBudget)(raw.recv())))
-                    answered <- reply match
-                        case Result.Success(RawPeer.Read.Bytes(span)) => tls.decrypt(span).map(Maybe(_))
-                        case _                                        => Sync.defer(Maybe.empty[PeerTls.Decrypted])
+                    _    <- tls.send(Span.fromUnsafe("ping".getBytes("UTF-8")))
+                    _    <- server.inbound.safe.take
+                    _    <- server.outbound.safe.put(Span.fromUnsafe("pong".getBytes("UTF-8")))
+                    pong <- recvPlain(tls, 4)
+                    _ = assert(new String(pong, "UTF-8") == "pong", s"setup: the round trip read ${pong.length} bytes")
+                    update <- tls.keyUpdate()
+                    _      <- raw.send(update)
+                    // The bound only turns an answer that never comes into a failure; the server writes nothing meanwhile.
+                    reply  <- Clock.let(Clock.live)(Abort.run[Timeout](Async.timeout(armedBudget)(raw.recv())))
+                    answer <- reply match
+                        case Result.Success(RawPeer.Read.Bytes(span)) => tls.decrypt(span)
+                        case Result.Success(ending)                   => fail(s"the stream ended with $ending after the peer's KeyUpdate")
+                        case _                                        =>
+                            fail(s"no record reached the peer within ${armedBudget.show} of its KeyUpdate, though the server wrote nothing")
+                    _ = assert(
+                        answer.plain.isEmpty && !answer.closeNotify,
+                        s"the server's answer to the KeyUpdate carried data or an alert: $answer"
+                    )
                     _     <- server.outbound.safe.put(Span.fromUnsafe("after".getBytes("UTF-8")))
                     after <- recvPlain(tls, 5)
-                yield
-                    assert(new String(pong, "UTF-8") == "pong", s"setup: the round trip read ${pong.length} bytes")
-                    answered match
-                        case Present(d) =>
-                            assert(d.plain.isEmpty && !d.closeNotify, s"the server's answer to the KeyUpdate carried data or an alert: $d")
-                        case Absent => fail(s"no record reached the peer after its KeyUpdate, though the server wrote nothing ($reply)")
-                    end match
-                    assert(new String(after, "UTF-8") == "after", "the peer decrypts what the server writes under its updated keys")
+                yield assert(new String(after, "UTF-8") == "after", "the peer decrypts what the server writes under its updated keys")
                 end for
         }
     }
