@@ -15,7 +15,7 @@ import kyo.net.internal.TlsProviderPlatform
   * At the resource level this is an ORDERING violation: when a finite `handshakeTimeout` reaps a server TLS handshake that is parked in
   * `awaitReadCiphertext` with an in-flight io_uring recv SQE pointed at the handle's `readBuffer`, the teardown must NOT free that `readBuffer`
   * while the recv SQE is still kernel-owned (in-flight count > 0). Freeing it directly (`PosixHandle.close`) while the recv is
-  * in flight would violate that ordering; the free routes through `ioDriver.closeHandle`, which on io_uring DEFERS the free until the in-flight recv CQE reaps and
+  * in flight would violate that ordering; the free routes through `ioDriver.release`, which on io_uring DEFERS the free until the in-flight recv CQE reaps and
   * forces that recv to complete with `shutdown(SHUT_RDWR)`.
   *
   * This test asserts that ordering directly, no Valgrind / ASan required. It drives the real `PosixTransport.handleAccepted` teardown path on a
@@ -24,8 +24,8 @@ import kyo.net.internal.TlsProviderPlatform
   * complete that in-flight recv (the stalled client sends nothing and io_uring's cancel submits no async-cancel SQE), so the correct teardown makes
   * the recv CQE reap and the deferred close frees the `readBuffer` AS PART of that reap. Freeing the `readBuffer` synchronously in the teardown while
   * the recv is still kernel-owned would instead leave that recv CQE unable to reap. The observation mechanism is the [[RecordingIoUringBindings]]
-  * reap latch, exactly as the sibling `IoUringDriverTest` -> "closeHandle defers PosixHandle.close until the in-flight read CQE is reaped" uses it,
-  * but driven through the handshake-timeout teardown rather than a direct `closeHandle` call.
+  * reap latch, exactly as the sibling `IoUringDriverTest` -> "release defers PosixHandle.close until the in-flight read CQE is reaped" uses it,
+  * but driven through the handshake-timeout teardown rather than a direct `release` call.
   *
   * io_uring-only (`assumeUring`): this is the validated platform exception. The poller path is already UAF-safe (it never hands the kernel the
   * read buffer), so the deferred-free ordering distinction only exists on io_uring. The cross-backend reap BEHAVIOR is proven by the shared soak
@@ -147,7 +147,7 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
                                                 fail(
                                                     s"ordering violation: the in-flight recv CQE never reaped after the handshake-timeout teardown " +
                                                         s"(recv readBuffer isClosed=${recvBuf.isClosed} while the recv SQE was still kernel-owned). The teardown " +
-                                                        s"must defer the readBuffer free through ioDriver.closeHandle and force the recv to complete via " +
+                                                        s"must defer the readBuffer free through ioDriver.release and force the recv to complete via " +
                                                         s"shutdown(SHUT_RDWR), so the kernel-owned buffer is freed only after its recv CQE reaps."
                                                 )
                                             end if

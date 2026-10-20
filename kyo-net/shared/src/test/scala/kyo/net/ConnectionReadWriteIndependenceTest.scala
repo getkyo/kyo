@@ -2,8 +2,10 @@ package kyo.net
 
 import kyo.*
 import kyo.net.internal.transport.Connection
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Concurrent read delivery and write flush are independent through the Connection pumps.
@@ -37,7 +39,10 @@ class ConnectionReadWriteIndependenceTest extends Test:
         def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit  = ()
         def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit    = ()
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                                                                     = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                                                                = ()
+        private val handleLife             = HandleLife.init()
+        def life(handle: Unit): HandleLife = handleLife
+        def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+            released.completeUnitDiscard()
         def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
         def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
         def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =

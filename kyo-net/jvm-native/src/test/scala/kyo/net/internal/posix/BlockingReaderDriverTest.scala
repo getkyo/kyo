@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Tests the [[BlockingReaderDriver]] regular-file fallback in isolation, against a real temp-file fd and a real PollerIoDriver.
@@ -129,7 +130,7 @@ class BlockingReaderDriverTest extends Test:
             Sync.ensure(Sync.defer(driver.close()))(PosixTestSockets.blockingLoopbackPair().map { case (peerFd, readFd) =>
                 val h = PosixHandle.socket(readFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 driver.awaitRead(h, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
-                // The test holds the fd-close claim so closeHandle does not shut the fd down, which would end the read before the free and
+                // The test holds the fd-close claim so release does not shut the fd down, which would end the read before the free and
                 // hide the window. The test installs the fd-close credit in its place: it runs once the resources are freed.
                 assert(h.claimFdClose())
                 val released = Promise.Unsafe.init[Boolean, Any]()
@@ -137,12 +138,12 @@ class BlockingReaderDriverTest extends Test:
                     discard(sock.close(readFd))
                     released.completeDiscard(Result.succeed(h.readBuffer.isClosed))
                 }
-                driver.closeHandle(h)
+                driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init())
                 val freedInFlight = h.readBuffer.isClosed
                 discard(sock.close(peerFd))
                 driver.close()
                 released.safe.get.map { freedOnRelease =>
-                    assert(!freedInFlight, "closeHandle freed the read buffer while read(2) was still in flight on it")
+                    assert(!freedInFlight, "release freed the read buffer while read(2) was still in flight on it")
                     assert(freedOnRelease, "the read buffer was not freed once the in-flight read(2) returned")
                 }
             })

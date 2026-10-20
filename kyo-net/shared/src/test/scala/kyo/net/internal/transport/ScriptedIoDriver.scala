@@ -1,6 +1,7 @@
 package kyo.net.internal.transport
 
 import kyo.*
+import kyo.net.NetConnectionClosedException
 import kyo.net.NetException
 
 /** An [[IoDriver]] for one connection whose write outcomes, writable readiness and handle close are decided by the test, so a [[WritePump]]
@@ -10,15 +11,15 @@ import kyo.net.NetException
   * about the pump:
   *
   *   - `write` of an empty span is `Done`; so is a write at `offset >= data.size` when no step is scripted.
-  *   - `write` after `closeHandle` is `Error`.
+  *   - `write` after `release` is `Error`.
   *   - Otherwise the next [[ScriptedIoDriver.Step]] decides. `Accept(n)` takes up to `n` bytes from `offset`: `Done` when that reaches the end
   *     of the span, else `Partial(data, offset + n)` on the same span reference, so `Accept(0)` is the EAGAIN `Partial(data, offset)`.
   *     `TailFull` is `TailPartial(data, offset)` and `Fail` is `Error`. Once the script is exhausted every write is taken in full.
   *   - Accepted bytes are appended to [[wire]] in order: they are what the kernel took.
-  *   - `awaitWritable` after `closeHandle` fails the promise `Closed` at once. Otherwise the promise is held until the test settles it with
+  *   - `awaitWritable` after `release` fails the promise `Closed` at once. Otherwise the promise is held until the test settles it with
   *     [[signalWritable]] or [[failWritable]], standing in for the poll carrier's later completion. The posix drivers keep one writable
   *     promise per handle, so a second wait while one is held would strand the first; it is counted in [[overlappingWritableWaits]].
-  *   - `closeHandle` and `cancel` fail a held writable `Closed` synchronously, as the posix `deregisterFds` does.
+  *   - `release` and `cancel` fail a held writable `Closed` synchronously, as the posix `deregisterFds` does.
   *
   * The other drivers diverge, and the fake reaches the divergences the pump must survive:
   *
@@ -96,7 +97,10 @@ final class ScriptedIoDriver(steps: ScriptedIoDriver.Step*) extends IoDriver[Uni
         before.foreach(_())
         val result =
             if data.isEmpty || (offset >= data.size && script.isEmpty) then WriteResult.Done
-            else if handleClosed then WriteResult.Error
+            else if handleClosed then
+                WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "handle closed")(using
+                    Frame.internal
+                ))
             else
                 val step = script match
                     case next :: rest =>
@@ -109,7 +113,10 @@ final class ScriptedIoDriver(steps: ScriptedIoDriver.Step*) extends IoDriver[Uni
                         if end == data.size then WriteResult.Done else WriteResult.Partial(data, end)
                     case Step.AcceptPark(n) => WriteResult.Partial(data, take(data, offset, n))
                     case Step.TailFull      => WriteResult.TailPartial(data, offset)
-                    case Step.Fail          => WriteResult.Error
+                    case Step.Fail          =>
+                        WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "scripted")(using
+                            Frame.internal
+                        ))
                 end match
         writeLog = writeLog.append((data, offset, result))
         val after = afterNextWrite
@@ -142,13 +149,21 @@ final class ScriptedIoDriver(steps: ScriptedIoDriver.Step*) extends IoDriver[Uni
         pending.foreach(_.completeDiscard(Result.fail(closedError)))
     end cancel
 
-    def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit =
+    private val handleLife = HandleLife.init()(using AllowUnsafe.embrace.danger)
+
+    def life(handle: Unit): HandleLife = handleLife
+
+    def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
         handleClosed = true
         cancel(handle)
+        released.completeUnitDiscard()
+    end release
 
     def close()(using AllowUnsafe, Frame): Unit =
-        closeHandle(())
+        handleClosed = true
+        cancel(())
         loop.foreach(_.completeDiscard(Result.succeed(())))
+    end close
 
     def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         throw new UnsupportedOperationException("ScriptedIoDriver drives writes only")

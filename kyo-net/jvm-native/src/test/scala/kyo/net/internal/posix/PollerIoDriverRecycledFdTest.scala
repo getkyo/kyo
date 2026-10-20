@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** No driver operation ever uses a freed fd: each recycled-fd defect below, driven white-box over a real driver.
   *
@@ -77,13 +78,17 @@ class PollerIoDriverRecycledFdTest extends Test:
                         drv.awaitRead(fillerH, fillerP) // consumes the one SQE, stays in flight (no peer bytes)
                         val recvP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         drv.awaitRead(handle, recvP) // get_sqe Absent -> parks in stalledSubmits
-                        drv.closeHandle(handle)      // closeNow must drain stalledSubmits -> fail recvP Closed, NOT re-arm on the closed fd
+                        drv.release(
+                            handle,
+                            ReleaseMode.Graceful,
+                            Promise.Unsafe.init()
+                        ) // closeNow must drain stalledSubmits -> fail recvP Closed, NOT re-arm on the closed fd
                         gate.countDown()
                         Abort.run[Closed](recvP.safe.get).map { result =>
                             // Settle a couple reap turns so a base re-arm (reArmStalledSubmits) would have submitted a recv on the closed fd by now.
                             // Use engine-op barriers, not awaitReap: nothing is re-armed here so no CQE reaps, and an awaitReap would hang.
                             fifoBarrier(drv).safe.get.andThen(fifoBarrier(drv).safe.get).map { _ =>
-                                drv.closeHandle(fillerH)
+                                drv.release(fillerH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(fillerClient))
                                 discard(sock.close(client))
                                 assert(result.isFailure, s"the parked recv must be failed Closed by the close-time drain, got $result")
@@ -130,7 +135,7 @@ class PollerIoDriverRecycledFdTest extends Test:
             sendBuf.close()
 
             Abort.run[Timeout | Closed](Async.timeout(5.seconds)(liveRead.safe.get)).map { outcome =>
-                driver.closeHandle(live)
+                driver.release(live, ReleaseMode.Graceful, Promise.Unsafe.init())
                 discard(sock.close(client))
                 Sync.defer(driver.close()).map { _ =>
                     outcome match
@@ -184,7 +189,7 @@ class PollerIoDriverRecycledFdTest extends Test:
             sendBuf.close()
 
             Abort.run[Timeout | Closed](Async.timeout(5.seconds)(liveRead.safe.get)).map { outcome =>
-                driver.closeHandle(live)
+                driver.release(live, ReleaseMode.Graceful, Promise.Unsafe.init())
                 stale.requestClose() // frees the stale handle's buffers; it never closes the socket fd
                 discard(sock.close(client))
                 Sync.defer(driver.close()).map { _ =>
@@ -234,7 +239,7 @@ class PollerIoDriverRecycledFdTest extends Test:
         val connecting = Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get)
         connecting.andThen(Abort.run[Timeout | Closed | NetException](Async.timeout(5.seconds)(liveAccept.safe.get))).map { outcome =>
             Abort.run[Closed | NetException](deadAccept.safe.get).map { deadOutcome =>
-                driver.closeHandle(live)
+                driver.release(live, ReleaseMode.Graceful, Promise.Unsafe.init())
                 discard(spy.close(client))
                 outcome.foreach(accepted => discard(spy.close(accepted)))
                 // The loop's terminal exit runs every withdrawal still pending, so the deferred close(fd) of `live` has run once it is done.

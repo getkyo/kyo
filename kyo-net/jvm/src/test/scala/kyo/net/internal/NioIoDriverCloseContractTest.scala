@@ -106,7 +106,7 @@ class NioIoDriverCloseContractTest extends Test:
             case _                                              => false
 
     private def closeAll(driver: NioIoDriver, handle: NioHandle, peer: SocketChannel)(using Frame): Unit =
-        driver.closeHandle(handle)
+        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
         peer.close()
         driver.close()
     end closeAll
@@ -197,7 +197,7 @@ class NioIoDriverCloseContractTest extends Test:
                 if !hooked.done() then
                     hooked.completeDiscard(Result.succeed(()))
                     val t = new Thread(() =>
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         closer.completeDiscard(Result.succeed(()))
                     )
                     t.setDaemon(true)
@@ -255,8 +255,8 @@ class NioIoDriverCloseContractTest extends Test:
                     assert(!spun, s"write spun: $spinProof consecutive wraps returned CLOSED with nothing consumed or produced")
                     assert(
                         result match
-                            case WriteResult.Error => true
-                            case _                 => false
+                            case WriteResult.Error(_) => true
+                            case _                    => false
                         ,
                         s"a write the engine can no longer encrypt fails; got $result"
                     )

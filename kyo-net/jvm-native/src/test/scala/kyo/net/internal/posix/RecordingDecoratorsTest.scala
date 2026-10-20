@@ -7,6 +7,7 @@ import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Smoke tests verifying that each recording decorator delegates to the real component.
@@ -38,8 +39,8 @@ class RecordingDecoratorsTest extends Test:
                     driver.awaitRead(acceptedH, readP)
                     readP.safe.get.map {
                         case ReadOutcome.Bytes(got) =>
-                            driver.closeHandle(clientH)
-                            driver.closeHandle(acceptedH)
+                            driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             // The real bytes reached the peer (real send ran).
                             assert(
                                 got.toArray.sameElements(Array[Byte](5, 6, 7, 8)),
@@ -49,8 +50,8 @@ class RecordingDecoratorsTest extends Test:
                             // (The server fd was closed inside loopbackPair by the recording spy.)
                             assert(!recording.closeCounts.isEmpty, "no close was recorded despite loopbackPair closing the server fd")
                         case other =>
-                            driver.closeHandle(clientH)
-                            driver.closeHandle(acceptedH)
+                            driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             fail(s"expected ReadOutcome.Bytes but got $other")
                     }
                 }

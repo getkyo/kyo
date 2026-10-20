@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduction + regression guard for read/write interest starvation on the same fd in [[PollerIoDriver]].
   *
@@ -113,7 +114,7 @@ class PollerIoDriverConcurrentInterestTest extends Test:
                         // readiness. The driver re-arms the read survivor, so it fires and delivers the bytes.
                         _           <- sendAll(client, payload)
                         readOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
-                        _ = driver.closeHandle(acceptedH)
+                        _ = driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         _ <- sock.close(client).safe.get
                     yield
                         writeOutcome match

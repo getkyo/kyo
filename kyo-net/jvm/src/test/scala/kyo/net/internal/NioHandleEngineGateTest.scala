@@ -6,6 +6,7 @@ import kyo.net.Connection
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.TlsTestCert
+import kyo.net.internal.transport.ReleaseMode
 
 /** NIO engine-gate exclusion: concurrent read and write on the same TLS connection never corrupt data.
   *
@@ -220,7 +221,7 @@ class NioHandleEngineGateTest extends Test:
 
                 assert(!handle.gate.isHeld, "gate must start false (unowned) before close")
 
-                NioHandle.close(handle)
+                NioHandle.close(handle, ReleaseMode.Graceful)
 
                 assert(!handle.gate.isHeld, "gate must be false after close (released by finally)")
                 assert(!handle.channel.isOpen, "channel must be closed after NioHandle.close")

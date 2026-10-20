@@ -47,7 +47,7 @@ object CancelContractCells:
                     val handle = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
                     assert(driver.registerChannel(handle), "registerChannel failed")
                     Scope.ensure(Sync.defer {
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         peer.foreach(_.close())
                     }).andThen(new CancelCell.DriverSubject[NioHandle](driver, handle):
                         def peerSend(bytes: Array[Byte])(using AllowUnsafe, Frame): Unit < Async =

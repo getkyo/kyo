@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduction + regression guard (libuv #4598, CWE-252 mishandled return value) in [[IoUringDriver]].
   *
@@ -93,7 +94,7 @@ class IoUringDriverShortSubmitTest extends Test:
                     val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     drv.awaitRead(acceptedH, promise)
                     Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
-                        drv.closeHandle(acceptedH)
+                        drv.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(sock.close(client))
                         outcome match
                             case Result.Success(ReadOutcome.Bytes(got)) =>

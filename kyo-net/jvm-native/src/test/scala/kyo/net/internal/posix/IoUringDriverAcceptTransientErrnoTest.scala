@@ -7,6 +7,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.NetException
 import kyo.net.Test
+import kyo.net.internal.transport.ReleaseMode
 
 /** [[IoUringDriver]]'s SQE-based accept path must classify a transient accept errno (`EMFILE`/`ENFILE`/`ECONNABORTED`/
   * `EINTR`) and re-arm the accept rather than failing the accept promise. The transport accept loop
@@ -99,7 +100,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
         }
     end withInjectingDriver
 
-    /** Bind + listen a fresh loopback server fd; returns (serverFd, port). The caller wraps serverFd in a handle whose `closeHandle` closes it. */
+    /** Bind + listen a fresh loopback server fd; returns (serverFd, port). The caller wraps serverFd in a handle whose `release` closes it. */
     private def listenSocket()(using Frame): (Int, Int) =
         val s      = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(???)
@@ -151,7 +152,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                         }
                     }
                 }.map { (client1, client2, outcome) =>
-                    drv.closeHandle(listenH)
+                    drv.release(listenH, ReleaseMode.Graceful, Promise.Unsafe.init())
                     discard(sockets.close(client1))
                     discard(sockets.close(client2))
                     outcome match
@@ -195,7 +196,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                         }
                     }
                 }.map { (client1, reArmedEarly) =>
-                    drv.closeHandle(listenH)
+                    drv.release(listenH, ReleaseMode.Graceful, Promise.Unsafe.init())
                     discard(sockets.close(client1))
                     assert(
                         !reArmedEarly,
@@ -208,7 +209,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
         }
     }
 
-    // The handle owns serverFd once closeHandle runs, so the driver's close must be the only one: a second close of the same number lands on
+    // The handle owns serverFd once release runs, so the driver's close must be the only one: a second close of the same number lands on
     // whatever reused it (a later suite's socket, or the class loader's open .class file in one CI run).
     private def assertClosedOnce(sockets: RecordingSocketBindings, serverFd: Int)(using Frame, kyo.test.AssertScope): Unit =
         val closes = sockets.closeCounts.getOrDefault(serverFd, 0)

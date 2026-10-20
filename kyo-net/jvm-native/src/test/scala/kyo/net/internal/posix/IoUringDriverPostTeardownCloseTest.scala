@@ -5,11 +5,12 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.TlsRealEngines
+import kyo.net.internal.transport.ReleaseMode
 
 /** Deterministic regression coverage for the io_uring driver's post-teardown close path: once `teardownRing` has run (the ring is exited, the
-  * reap carrier is gone), a `closeHandle` call for a handle registered after that point must discharge via `closeNow` directly, inline on the
+  * reap carrier is gone), a `release` call for a handle registered after that point must discharge via `closeNow` directly, inline on the
   * calling carrier, and must NEVER touch the ring (a use-after-free class: the queued-closure path calls `cancel`/`shutdownTls`/
-  * `registerDeferredClose`, all of which reach `get_sqe` on the exited ring). See [[IoUringDriver.closeHandle]]'s put-then-recheck against
+  * `registerDeferredClose`, all of which reach `get_sqe` on the exited ring). See [[IoUringDriver.release]]'s put-then-recheck against
   * [[IoUringDriver.teardownDone]].
   *
   * A driver whose reap loop is never started tears its ring down SYNCHRONOUSLY inside `close()` (no reap carrier to defer to, so
@@ -23,7 +24,7 @@ class IoUringDriverPostTeardownCloseTest extends Test:
 
     "IoUringDriver post-teardown close" - {
 
-        "closeHandle for a TLS handle after teardownRing runs closeNow inline, with no ring touch" in {
+        "release for a TLS handle after teardownRing runs closeNow inline, with no ring touch" in {
             PosixTestSockets.assumeUring()
             val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
             val realUring = Ffi.load[IoUringBindings]
@@ -48,7 +49,7 @@ class IoUringDriverPostTeardownCloseTest extends Test:
                 handle.tls = Present(engine)
                 val keysBefore  = recording.submittedKeys.size
                 val sendsBefore = recording.sendBufs.size
-                driver.closeHandle(handle)
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 discard(sock.close(client))
                 assert(
                     spy.closeCounts.getOrDefault(accepted, 0) == 1,
@@ -57,11 +58,11 @@ class IoUringDriverPostTeardownCloseTest extends Test:
                 assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, was ${engine.freeCount.get()}")
                 assert(
                     recording.submittedKeys.size == keysBefore,
-                    "a post-teardown closeHandle must never submit a new SQE (no ring touch)"
+                    "a post-teardown release must never submit a new SQE (no ring touch)"
                 )
                 assert(
                     recording.sendBufs.size == sendsBefore,
-                    "a post-teardown closeHandle must never attempt a TLS close_notify send (no ring touch)"
+                    "a post-teardown release must never attempt a TLS close_notify send (no ring touch)"
                 )
                 succeed
             }

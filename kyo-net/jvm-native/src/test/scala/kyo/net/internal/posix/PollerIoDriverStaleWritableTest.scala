@@ -5,6 +5,7 @@ import kyo.ffi.Ffi
 import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Regression guard for the stale-fd monotonic-id equality check on the WRITABLE dispatch path of [[PollerIoDriver]].
   *
@@ -58,7 +59,7 @@ class PollerIoDriverStaleWritableTest extends Test:
                     discard(driver.start())
 
                     Abort.run[Timeout | Closed](Async.timeout(10.seconds)(oldWritable.safe.get)).map { result =>
-                        driver.closeHandle(newHandle)
+                        driver.release(newHandle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(sock.close(client))
                         // A stale writable for a recycled fd must resolve Closed (stale-dropped), never Success.
                         result match

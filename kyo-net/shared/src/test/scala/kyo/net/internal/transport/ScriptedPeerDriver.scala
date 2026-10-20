@@ -18,11 +18,13 @@ import kyo.net.NetException
 final class ScriptedPeerDriver(tailBound: Maybe[Int] = Absent) extends IoDriver[Unit]:
     import AllowUnsafe.embrace.danger
 
-    val written          = AtomicInt.Unsafe.init(0)
-    val closeHandleCalls = AtomicInt.Unsafe.init(0)
+    val written      = AtomicInt.Unsafe.init(0)
+    val releaseCalls = AtomicInt.Unsafe.init(0)
+
+    private val handleLife = HandleLife.init()
 
     /** What the handle owes the kernel and what the kernel took. */
-    val ledger: OutboundLedger = OutboundLedger.init()
+    val ledger: OutboundLedger = handleLife.ledger
 
     @volatile private var parked: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
     @volatile private var read: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]]           = Absent
@@ -89,7 +91,12 @@ final class ScriptedPeerDriver(tailBound: Maybe[Int] = Absent) extends IoDriver[
         }
     end cancel
 
-    def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCalls.incrementAndGet())
+    def life(handle: Unit): HandleLife = handleLife
+
+    def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        discard(releaseCalls.incrementAndGet())
+        released.completeUnitDiscard()
+    end release
 
     def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
 

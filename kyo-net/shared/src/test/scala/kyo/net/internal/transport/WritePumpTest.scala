@@ -156,7 +156,7 @@ class WritePumpTest extends Test:
             f.pump.start()
             assert(f.driver.holdsWritable)
 
-            f.driver.closeHandle(())
+            f.driver.release((), ReleaseMode.Graceful, Promise.Unsafe.init())
             assert(f.teardowns.get() == 1)
             assert(f.state.get() == WriteState.TornDown)
             assert(f.channel.closed())
@@ -209,10 +209,14 @@ class WritePumpTest extends Test:
             assert(f.offer(parked) == Result.succeed(true))
             f.pump.start()
 
-            f.driver.onNextWrite(() => f.driver.closeHandle(()))
+            f.driver.onNextWrite(() => f.driver.release((), ReleaseMode.Graceful, Promise.Unsafe.init()))
             f.driver.signalWritable()
             assert(f.presented((parked, 0), (parked, 2)), f.trace)
-            assert(f.driver.writes.last._3 == WriteResult.Error)
+            assert(
+                f.driver.writes.last._3 match
+                    case WriteResult.Error(_) => true
+                    case _                    => false
+            )
             assert(f.teardowns.get() == 1)
             assert(f.state.get() == WriteState.TornDown)
             assert(f.driver.wire == bytesOf(parked).take(2))
@@ -221,7 +225,7 @@ class WritePumpTest extends Test:
         "a handle close that lands between a Partial write and its park tears the pump down through the failed wait" in {
             val f = new Fixture(Step.Accept(2))
             assert(f.offer(span(0, 8)) == Result.succeed(true))
-            f.driver.afterNextWrite(() => f.driver.closeHandle(()))
+            f.driver.afterNextWrite(() => f.driver.release((), ReleaseMode.Graceful, Promise.Unsafe.init()))
             f.pump.start()
 
             assert(f.driver.writableWaits == 1, "the pump must still park the tail it holds")

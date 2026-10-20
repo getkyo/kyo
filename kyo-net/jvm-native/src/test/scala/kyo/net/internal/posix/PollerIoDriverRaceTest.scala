@@ -8,13 +8,14 @@ import kyo.net.internal.TlsEngine
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Deterministic reproduction + regression guard for the dispatchRead-vs-close use-after-free race in [[PollerIoDriver]].
   *
   * The poll loop's `dispatchRead` acquires `beginDispatch` to own the handle's resources, then calls `recvNow` synchronously (the fd is
-  * O_NONBLOCK so recv never parks). The decrypt then runs on the engine FIFO worker: `feedCiphertext` then `decryptAll`. If `closeHandle` runs
+  * O_NONBLOCK so recv never parks). The decrypt then runs on the engine FIFO worker: `feedCiphertext` then `decryptAll`. If `release` runs
   * concurrently from another fiber while that body is in flight, it must DEFER the resource free until `endDispatch` releases the guard. The race
-  * is forced deterministically by re-entrancy: a [[RecordingTlsEngine]] over a real BoringSSL engine fires `closeHandle` on its `onFeedCiphertext`
+  * is forced deterministically by re-entrancy: a [[RecordingTlsEngine]] over a real BoringSSL engine fires `release` on its `onFeedCiphertext`
   * one-shot hook (the exact moment the dispatch guard is held), exactly as [[PollerIoDriverWriteRaceTest]] does for the write-path.
   *
   * Gate: `PosixTestSockets.assumePoller()` (real loopback pair for real non-blocking recvNow) and `TlsRealEngines.assumeTlsReady()` (a real
@@ -67,10 +68,10 @@ class PollerIoDriverRaceTest extends Test:
     end handshakeAndEncrypt
 
     "PollerIoDriver dispatchRead vs close race" - {
-        "a TLS engine freed by closeHandle is never used by an in-flight dispatchRead (use-after-free guard)" in {
+        "a TLS engine freed by release is never used by an in-flight dispatchRead (use-after-free guard)" in {
             PosixTestSockets.assumePoller()
             TlsRealEngines.assumeTlsReady()
-            // The DRIVER frees the client engine via closeHandle, so it is created with singleEngine (no auto-free finally that would double-free
+            // The DRIVER frees the client engine via release, so it is created with singleEngine (no auto-free finally that would double-free
             // the native session). The server engine encrypts the peer's ciphertext on the FIFO worker, then is freed there; the handshake +
             // encryption run on the SAME worker that later runs feedCiphertext, so the sessions stay single-carrier.
             val clientEngine = TlsRealEngines.singleEngine(isServer = false)
@@ -85,7 +86,7 @@ class PollerIoDriverRaceTest extends Test:
 
                 val engine = new RecordingTlsEngine(clientEngine)
                 engine.onFeedCiphertext = () =>
-                    if driverRef != null && handleRef != null then driverRef.closeHandle(handleRef)
+                    if driverRef != null && handleRef != null then driverRef.release(handleRef, ReleaseMode.Graceful, Promise.Unsafe.init())
 
                 // Real epoll/kqueue: once the accepted fd has the buffered ciphertext, the first poll after awaitRead registers read interest and
                 // fires a real read-ready event. The spy delegates poll to the real backend (no synthetic events).
@@ -112,27 +113,27 @@ class PollerIoDriverRaceTest extends Test:
                     val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(handle, readPromise)
 
-                    // The dispatch runs on the FIFO worker: recvNow returns the real ciphertext (pre-buffered), feedCiphertext fires closeHandle (the
+                    // The dispatch runs on the FIFO worker: recvNow returns the real ciphertext (pre-buffered), feedCiphertext fires release (the
                     // race), decryptAll runs on the live engine and recovers knownPlain, finishDispatch delivers it, endDispatch releases the guard and
                     // submits the deferred free. The readPromise resolves within the bounded window.
                     Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get)).map { outcome =>
                         // Settle the deferred free (a separate FIFO op submitted at endDispatch).
                         fifoBarrier(driver).safe.get.andThen(fifoBarrier(driver).safe.get).map { _ =>
                             driver.close()
-                            // Close the client fd (driver.close does not close socket fds; closeHandle closed acceptedFd via spy).
+                            // Close the client fd (driver.close does not close socket fds; release closed acceptedFd via spy).
                             PosixTestSockets.closePeerForEof(spy, clientFd)
                             assert(
                                 engine.freeCount.get() == 1,
-                                s"closeHandle must free the engine exactly once, was ${engine.freeCount.get()}"
+                                s"release must free the engine exactly once, was ${engine.freeCount.get()}"
                             )
                             assert(
                                 !engine.usedAfterFree.get(),
-                                "use-after-free: dispatchRead touched the engine after closeHandle freed it"
+                                "use-after-free: dispatchRead touched the engine after release freed it"
                             )
-                            // Real close recorded: closeHandle called sockets.close(targetFd) exactly once.
+                            // Real close recorded: release called sockets.close(targetFd) exactly once.
                             assert(
                                 spy.closeCounts.getOrDefault(targetFd, 0) == 1,
-                                s"closeHandle must have closed targetFd=$targetFd exactly once, counts=${spy.closeCounts}"
+                                s"release must have closed targetFd=$targetFd exactly once, counts=${spy.closeCounts}"
                             )
                             outcome match
                                 // genuine close-during-decrypt race; read may resolve Success or Closed, the free-once/no-UAF invariant is pinned unconditionally above

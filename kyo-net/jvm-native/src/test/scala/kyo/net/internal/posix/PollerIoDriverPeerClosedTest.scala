@@ -58,7 +58,7 @@ class PollerIoDriverPeerClosedTest extends Test:
                         assert(!driver.isPeerClosed(handle), "the peer is still live before the FIN")
                         PosixTestSockets.closePeerForEof(sock, peerFd) // FIN with no read armed
                         awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { closed =>
-                            driver.closeHandle(handle)
+                            driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                             assert(closed, "the poller must latch a peer FIN arriving with no read armed")
                         }
                     }
@@ -75,7 +75,7 @@ class PollerIoDriverPeerClosedTest extends Test:
                     PosixTestSockets.drainPeer(driver, handle, driverFd, 4).map { _ =>
                         PosixTestSockets.resetPeer(sock, peerFd) // RST with no read armed
                         awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { closed =>
-                            driver.closeHandle(handle)
+                            driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                             assert(closed, "the poller must latch a peer RST through dispatchError")
                         }
                     }

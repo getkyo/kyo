@@ -7,6 +7,7 @@ import kyo.net.NetException
 import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.Test
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Tests the `PosixHandle`-backed [[PosixTransport]] stdio factory: the split-fd handle, the process-wide single-stdio CAS, the
@@ -128,7 +129,7 @@ class PosixTransportTest extends Test:
             }
         }
 
-        // Anti-flakiness: closeHandle is synchronous wrt the close decision; spy.closeCounts is immediately readable. No sleep.
+        // Anti-flakiness: release is synchronous wrt the close decision; spy.closeCounts is immediately readable. No sleep.
         "closing a split-fd (stdio) handle never closes fds 0/1" in {
             assumePoller()
             val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
@@ -136,8 +137,8 @@ class PosixTransportTest extends Test:
             val pollerFd = real.create()
             val driver   = TestDrivers.forBackend(RecordingPollerBackend(real), pollerFd, spy)
             val handle   = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize, Frame.internal) // readFd=0, writeFd=1
-            // closeHandle issues sockets.close ONLY when readFd == writeFd (a socket); the split stdio handle (0 != 1) skips that branch.
-            driver.closeHandle(handle)
+            // release issues sockets.close ONLY when readFd == writeFd (a socket); the split stdio handle (0 != 1) skips that branch.
+            driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
             // Free the real poller fd and scratch the recording backend allocated (the poll loop was never started).
             driver.close()
             assert(

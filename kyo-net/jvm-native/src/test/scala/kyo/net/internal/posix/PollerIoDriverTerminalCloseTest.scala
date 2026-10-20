@@ -4,8 +4,9 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.TlsRealEngines
+import kyo.net.internal.transport.ReleaseMode
 
-/** Deterministic regression coverage for the poller driver's terminal-close path (the CLOSE_WAIT fix): a TLS `closeHandle`'s fd-close obligation
+/** Deterministic regression coverage for the poller driver's terminal-close path (the CLOSE_WAIT fix): a TLS `release`'s fd-close obligation
   * must be discharged exactly once no matter which of {the normal deferred engine op, the terminal sweep, the post-terminal self-close} ends up
   * running it first. See [[PollerIoDriver.pendingCloses]] / [[PollerIoDriver.dischargeClose]] / [[PollerIoDriver.sweepPendingCloses]] /
   * [[PollerIoDriver.terminalTeardown]].
@@ -22,7 +23,7 @@ class PollerIoDriverTerminalCloseTest extends Test:
 
     "PollerIoDriver terminal fd-close discharge" - {
 
-        "closeHandle on a live TLS handle after the driver has gone terminal self-closes: fd closed and engine freed exactly once" in {
+        "release on a live TLS handle after the driver has gone terminal self-closes: fd closed and engine freed exactly once" in {
             PosixTestSockets.assumePoller()
             // Gate before anything is allocated: TlsRealEngines.singleEngine below cancels without BoringSSL, and a cancel past this point
             // would strand the started driver, its poller fd, and the loopback pair.
@@ -41,10 +42,10 @@ class PollerIoDriverTerminalCloseTest extends Test:
                 val closeWakeDone = backend.closeWakeDone()
                 driver.close()
                 closeWakeDone.safe.get.map { _ =>
-                    // The driver is now provably terminal (closeWake ran at the tail of the terminal exit). closeHandle's TLS branch must take
+                    // The driver is now provably terminal (closeWake ran at the tail of the terminal exit). release's TLS branch must take
                     // the post-terminal self-close fallback: the queued engine op it also submits will never run (the executor is dead), so the
                     // fd/engine must be reclaimed synchronously here instead of stranding.
-                    driver.closeHandle(handle)
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     discard(sock.close(client))
                     assert(
                         spy.closeCounts.getOrDefault(accepted, 0) == 1,
@@ -74,7 +75,7 @@ class PollerIoDriverTerminalCloseTest extends Test:
                 val closeWakeDone = backend.closeWakeDone()
                 // Register the fd-close obligation WHILE the driver is still live: this submits the discharge op to engineQueue (and does NOT
                 // self-close inline, since the driver has not gone terminal yet).
-                driver.closeHandle(handle)
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 driver.close()
                 closeWakeDone.safe.get.map { _ =>
                     discard(sock.close(client))
@@ -101,8 +102,8 @@ class PollerIoDriverTerminalCloseTest extends Test:
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)
                 val engine    = new RecordingTlsEngine(rawEngine)
                 handle.tls = Present(engine)
-                // No poll loop ever drains the engine FIFO here, so the discharge op closeHandle queues only runs if close() drains it.
-                driver.closeHandle(handle)
+                // No poll loop ever drains the engine FIFO here, so the discharge op release queues only runs if close() drains it.
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 driver.close()
                 discard(sock.close(client))
                 assert(

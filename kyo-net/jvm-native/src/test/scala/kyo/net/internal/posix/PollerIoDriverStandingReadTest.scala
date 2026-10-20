@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.scheduler.IOPromise
 
 /** Reproduction + regression guard for a LOST server-side read re-arm in [[PollerIoDriver]] under back-to-back reads on one fd.
@@ -148,7 +149,7 @@ class PollerIoDriverStandingReadTest extends Test:
                             sendAll(client, payload).andThen(Loop.continue(i + 1))
                     }.andThen {
                         Abort.run[Timeout | Closed](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client))
                             outcome match
                                 case Result.Success(()) =>

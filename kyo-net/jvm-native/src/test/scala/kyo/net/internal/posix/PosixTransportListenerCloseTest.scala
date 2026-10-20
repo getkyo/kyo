@@ -5,6 +5,7 @@ import kyo.ffi.Ffi
 import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** How a poller-backed listener gives its descriptor back: `released` reports the close only once close(2) has returned, and no interest
   * change for the descriptor reaches the kernel alongside or after that close.
@@ -165,7 +166,8 @@ class PosixTransportListenerCloseTest extends Test:
                 val submittedAfterClose = new java.util.concurrent.atomic.AtomicBoolean(false)
                 // Closing from inside the registration puts the closing deregister in the same drain, after a read arm that is already
                 // admitted: a batching backend has staged its EV_ADD but not yet handed it to the kernel.
-                backend.onRegisterRead = registered => if registered == fd then driver.closeHandle(handle)
+                backend.onRegisterRead =
+                    registered => if registered == fd then driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 backend.onPoll = (changelist, nChanges) =>
                     if sockets.closeCounts.getOrDefault(fd, 0) > 0 then
                         var i = 0
@@ -192,7 +194,7 @@ class PosixTransportListenerCloseTest extends Test:
                 val read   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, read)
                 val closed = sockets.closed(fd)
-                driver.closeHandle(handle)
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 val closedBeforeWithdrawal = sockets.closeCounts.getOrDefault(fd, 0)
                 start()
                 closed.safe.get.andThen(read.safe.getResult).map { readResult =>

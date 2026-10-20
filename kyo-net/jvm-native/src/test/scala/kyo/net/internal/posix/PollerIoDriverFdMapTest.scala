@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** The poller's fd-keyed tables (`activeFds`, `pendingReads`, `pendingWritables`, `pendingAccepts`) are PRIMITIVE open-addressing
@@ -52,7 +53,7 @@ class PollerIoDriverFdMapTest extends Test:
                     }
                     // Run N independent connection lifecycles CONCURRENTLY (Async.foreach across N fibers): each writes its distinct payload, arms a
                     // read, reads it back, then closes the handle. Concurrently across N fibers this drives many activeFds+pendingReads PUTs (each
-                    // awaitRead) AND many removals (each closeHandle's OpDeregister) through the change queue at once -- the concurrent
+                    // awaitRead) AND many removals (each release's OpDeregister) through the change queue at once -- the concurrent
                     // register+deregister the single-writer confinement must serialize on the poll fiber. A non-confined non-thread-safe
                     // map would corrupt a probe chain under this concurrency (a lost entry hangs a read; a crossed entry misroutes bytes), so every
                     // read completing with ITS OWN payload is the observable witness of confinement.
@@ -67,7 +68,7 @@ class PollerIoDriverFdMapTest extends Test:
                                 assert(got.toArray.head == payload, s"misrouted read: ${got.toArray.head} != $payload (map corruption?)")
                                 // Close the handle here (concurrently with the other fibers' reads + closes): exercises OpDeregister map removal under
                                 // concurrency, the deregister half of the confinement.
-                                driver.closeHandle(acceptedH)
+                                driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(client).poll())
                                 payload
                             case other =>

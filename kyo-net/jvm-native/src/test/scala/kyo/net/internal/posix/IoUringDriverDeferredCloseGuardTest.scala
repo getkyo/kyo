@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduce-first regression for a `CLOSE_WAIT` leak in the deferred fd-close guard: in [[IoUringDriver.registerDeferredClose]]'s deferred branch (an
   * in-flight recv races a close), registering the handle in its private `closeAfterDrain` map WITHOUT holding [[PosixHandle]]'s guard
@@ -21,7 +22,7 @@ import kyo.net.internal.transport.ReadOutcome
   * side wins the (independent) `claimFdClose` race.
   *
   * Anti-flakiness: awaits `driver.hasInFlightRead(handle)` becoming true (the recv is genuinely kernel-owned) before closing, then drives
-  * the racing `PosixHandle.close` call itself through `submitEngineOp`, in the SAME op-drain batch as `closeHandle`'s own submission
+  * the racing `PosixHandle.close` call itself through `submitEngineOp`, in the SAME op-drain batch as `release`'s own submission
   * (`drainEngineOps` runs the whole queued batch to completion before the reap carrier ever waits for or processes a CQE), rather than
   * from a separate fiber woken by a completed promise: waking a parked fiber is a real scheduling hop, and gives the reap carrier's own
   * CQE-driven `closeNow` (triggered by the `shutdown(SHUT_RD)` above, which resolves near-instantly on a loopback pair) ample time to win
@@ -58,9 +59,9 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                         val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(handle, readPromise)
                         assertEventually(Sync.defer(driver.hasInFlightRead(handle))).map { _ =>
-                            driver.closeHandle(handle)
-                            // Drive the racer through the SAME engine queue as closeHandle's own submission: drainEngineOps runs the
-                            // whole batch (closeHandle's op, then this one) to completion before the reap carrier ever waits for or
+                            driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
+                            // Drive the racer through the SAME engine queue as release's own submission: drainEngineOps runs the
+                            // whole batch (release's op, then this one) to completion before the reap carrier ever waits for or
                             // processes a CQE, so this op is guaranteed to observe registerDeferredClose's completed state (won
                             // claimFdClose, taken the deferred-close guard hold) and to run strictly before the recv's CQE
                             // can reap -- the exact "racer lands while the close is still deferred" interleaving the bug requires,
@@ -94,7 +95,7 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
             }
         }
 
-        "does not strand the deferred close when one handle is closeHandle'd twice while a recv is in flight (one guard hold per closeAfterDrain entry)" in {
+        "does not strand the deferred close when one handle is released twice while a recv is in flight (one guard hold per closeAfterDrain entry)" in {
             PosixTestSockets.assumeUring()
             given Frame   = Frame.internal
             val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
@@ -115,22 +116,22 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                         val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(handle, readPromise)
                         assertEventually(Sync.defer(driver.hasInFlightRead(handle))).map { _ =>
-                            // The production double-close shape (an onFatal closeHandle plus the ReadPump-teardown closeHandle, both drained
+                            // The production double-close shape (an onFatal release plus the ReadPump-teardown release, both drained
                             // in one pass while an unrelated in-flight op keeps inFlight above zero), collapsed to its driver-level essence:
-                            // two closeHandle calls for the same handle. Both are adjacent in the engine queue and drain in one
+                            // two release calls for the same handle. Both are adjacent in the engine queue and drain in one
                             // drainEngineOps pass, before the SHUT_RD-forced EOF CQE can reap (the reap carrier runs the whole queued batch
                             // to completion before it processes a CQE), so both observe inFlight == 1 and both take registerDeferredClose's
                             // deferral branch. Under the bug the second stacks a redundant beginDeferredClose hold behind the single
                             // closeAfterDrain entry: the one discharge under-releases the guard, freeResources never runs, and the installed
                             // close(fd) credit strands forever.
-                            driver.closeHandle(handle)
-                            driver.closeHandle(handle)
+                            driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
+                            driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                             // Bounded, not a sleep: the real close(fd) runs only once the recv's CQE reaps and discharges closeAfterDrain,
                             // on the driver's own dedicated reap thread. spy.closed is a per-fd latch completed only by the real close(fd).
                             Abort.run[Closed | Timeout](Async.timeout(5.seconds)(spy.closed(accepted).safe.get)).map { outcome =>
                                 assert(
                                     outcome.isSuccess,
-                                    "the real close(fd) never ran: a second closeHandle stacked a redundant deferred-close guard hold behind " +
+                                    "the real close(fd) never ran: a second release stacked a redundant deferred-close guard hold behind " +
                                         s"the single closeAfterDrain entry, stranding the terminal free forever. Got $outcome"
                                 )
                             }

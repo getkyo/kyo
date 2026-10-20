@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduce-first confirmation of a second guarantee for the steady-state "Closed at collect" corruption: a stale,
   * non-`handshakeOwned` recv armed by the PLAINTEXT ReadPump BEFORE `detachForUpgrade` runs (the ordinary pre-upgrade continuation, not the
@@ -120,7 +121,7 @@ class IoUringStalePumpRecvRoutingTest extends Test:
                             Abort.run[Timeout | Closed](Async.timeout(5.seconds)(next.safe.get)).map { outcome =>
                                 // The leaf owns the engine's free, so the release must not reach the engine after it.
                                 acceptedH.tls = Absent
-                                driver.closeHandle(acceptedH)
+                                driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 outcome match
                                     case Result.Success(ReadOutcome.Failed(e: kyo.net.NetConnectionIoException)) =>
                                         assert(

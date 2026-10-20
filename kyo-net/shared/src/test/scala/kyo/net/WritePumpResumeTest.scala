@@ -1,8 +1,10 @@
 package kyo.net
 
 import kyo.*
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WritePump
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.transport.WriteState
@@ -63,8 +65,11 @@ class WritePumpResumeTest extends Test:
                         WriteResult.Done
                     end if
                 end write
-                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
-                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = ()
+                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit = ()
+                private val handleLife                                   = HandleLife.init()
+                def life(handle: Unit): HandleLife                       = handleLife
+                def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+                    released.completeUnitDiscard()
                 def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
                 def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
                 def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
@@ -161,8 +166,11 @@ class WritePumpResumeTest extends Test:
                         WriteResult.Done
                     end if
                 end write
-                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
-                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = ()
+                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit = ()
+                private val handleLife                                   = HandleLife.init()
+                def life(handle: Unit): HandleLife                       = handleLife
+                def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+                    released.completeUnitDiscard()
                 def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
                 def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
                 def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =

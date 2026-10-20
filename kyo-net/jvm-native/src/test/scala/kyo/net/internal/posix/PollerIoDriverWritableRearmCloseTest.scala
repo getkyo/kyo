@@ -6,6 +6,7 @@ import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** The poller's writable waits: every one parked on a handle is settled by the cancel or close that ends it.
@@ -25,7 +26,7 @@ class PollerIoDriverWritableRearmCloseTest extends Test:
     private def sock = Ffi.load[SocketBindings]
 
     "PollerIoDriver writable slot" - {
-        "a writable re-armed while closeHandle fails the previous one is failed Closed, not stranded" in {
+        "a writable re-armed while release fails the previous one is failed Closed, not stranded" in {
             PosixTestSockets.assumePoller()
             val backend  = PollerBackend.default()
             val pollerFd = backend.create()
@@ -38,8 +39,8 @@ class PollerIoDriverWritableRearmCloseTest extends Test:
                     first.onComplete(_ => driver.awaitWritable(handle, second))
                     driver.awaitWritable(handle, first)
 
-                    driver.closeHandle(handle)
-                    assert(first.done(), "closeHandle must fail the writable it found")
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
+                    assert(first.done(), "release must fail the writable it found")
                     discard(driver.start())
 
                     second.safe.getResult.map { result =>
@@ -68,7 +69,7 @@ class PollerIoDriverWritableRearmCloseTest extends Test:
                     val server = TlsRealEngines.singleEngine(isServer = true)
                     val handle = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     Sync.ensure(Sync.defer {
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(sock.close(peer))
                         driver.submitEngineOp { () =>
                             client.free()

@@ -13,7 +13,7 @@ import kyo.net.Test
   * `onComplete` reaches `closeUnwiredHandle`, and nothing exercised that forwarding, so it could stop reclaiming and no test would notice
   * until a workload that interrupts connects ran out of descriptors.
   *
-  * The connect-phase release runs on the reap carrier behind `closeHandle`, so with the connect SQE in flight it is the driver's deferred
+  * The connect-phase release runs on the reap carrier behind `release`, so with the connect SQE in flight it is the driver's deferred
   * close that owns the fd: it claims the close, submits a cancel for the connect, and closes once the connect's completion drains the
   * handle's in-flight count. The transport's own release then loses the claim, which is what keeps the close single. A shutdown cannot
   * force an unestablished connect to reap, so the cancel is the only thing that ever returns this descriptor; without it every interrupted

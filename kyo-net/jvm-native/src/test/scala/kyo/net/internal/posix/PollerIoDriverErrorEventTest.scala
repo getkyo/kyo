@@ -96,7 +96,7 @@ class PollerIoDriverErrorEventTest extends Test:
                     writeOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(writePromise.safe.get))
                     _            <- Sync.defer {
                         driver.close()
-                        // Close the accepted fd (driver.close does not close socket fds; closeHandle would, but it wasn't called here).
+                        // Close the accepted fd (driver.close does not close socket fds; release would, but it wasn't called here).
                         PosixTestSockets.closePeerForEof(spy, acceptedFd)
                     }
                 yield

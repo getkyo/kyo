@@ -9,6 +9,7 @@ import kyo.net.internal.TlsEngine
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.scheduler.IOPromise
 
 /** Aliasing / single-in-flight guard for the per-handle TLS `recvStaging` buffer on the [[PollerIoDriver]] read path.
@@ -183,8 +184,8 @@ class PollerIoDriverTlsStagingAliasTest extends Test:
                                                 acceptedH.recvStaging.getOrElse(fail("recvStaging must be Present after TLS reads"))
                                             val maxIn = recordingServer.maxInFlight.get()
                                             driver.submitEngineOp(() => clientEngine.free())
-                                            driver.closeHandle(acceptedH)
-                                            driver.closeHandle(clientH)
+                                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                            driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                             discard(sock.close(client))
                                             outcome match
                                                 case Result.Success(()) =>

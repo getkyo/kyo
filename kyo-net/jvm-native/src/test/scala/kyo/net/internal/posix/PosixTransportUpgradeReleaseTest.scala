@@ -84,13 +84,13 @@ private class ThrowOnFeedEngine(cause: Throwable) extends TlsEngine:
 end ThrowOnFeedEngine
 
 /** Release discipline of an abandoned or failed STARTTLS upgrade in [[PosixTransport]]: every release of the detached fd must route through
-  * the driver's close (`closeUnwiredHandle` -> `driver.closeHandle`), never a bare `PosixHandle.close`.
+  * the driver's close (`closeUnwiredHandle` -> `driver.release`), never a bare `PosixHandle.close`.
   *
   * On io_uring the distinction is memory safety, not hygiene: a failed or abandoned upgrade routinely leaves a kernel-owned recv SQE in
   * flight for this handle (the stale plaintext pump recv the upgrade window cannot cancel), and that SQE has already captured the read
   * buffer's address. A bare `PosixHandle.close` runs `freeResources` inline with zero guard holders (io_uring reads hold no handle-guard),
   * returning the off-heap buffer to the process-wide allocator while the kernel can still complete the old recv into it: a cross-connection
-  * corruption with no driver-side evidence. `driver.closeHandle` defers the free until the handle's in-flight count drains to zero
+  * corruption with no driver-side evidence. `driver.release` defers the free until the handle's in-flight count drains to zero
   * (`registerDeferredClose`), which the two io_uring leaves below assert at both edges (open while the recv is kernel-owned, closed once its
   * CQE reaps). Both leaves pin or probe the reap carrier through the engine FIFO so the observation is ordered against the reap, never racing
   * it.
@@ -169,7 +169,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                             val reapLatch = recording.awaitReap()
                             // Run the buildEngine-failure upgrade ON THE REAP CARRIER via an engine op, so its release orders on the same
                             // FIFO as the observation without ever parking a thread. The release path (closeUnwiredHandle's synchronous
-                            // shutdown forces the still-kernel-owned pump recv to EOF, then driver.closeHandle enqueues the deferred close)
+                            // shutdown forces the still-kernel-owned pump recv to EOF, then driver.release enqueues the deferred close)
                             // runs on this carrier, and the reap loop can only reap that forced EOF in a LATER drainReady pass, never during
                             // this drainEngineOps pass. A probe op enqueued right after the release therefore runs strictly after it (buffer
                             // not yet freed, recv still kernel-owned) and strictly before the reap, mirroring the mid-handshake leaf below.
@@ -244,7 +244,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     // Abandon the upgrade through the production route, ON THE REAP CARRIER via an engine op, mirroring the
                                     // buildEngine-failure leaf above: close() of the plaintext connection routes to the upgrade's owner promise,
                                     // whose discharge runs releaseFailedUpgrade (its closeUnwiredHandle shutdown forces the still-kernel-owned stale
-                                    // recv to EOF, then driver.closeHandle enqueues the deferred close) on THIS carrier. A probe op enqueued from
+                                    // recv to EOF, then driver.release enqueues the deferred close) on THIS carrier. A probe op enqueued from
                                     // inside the same op sits behind that discharge in the same drainEngineOps pass, so it observes the state strictly
                                     // after the release ran and strictly before that pass's later drainReady reap of the shutdown-forced EOF. Running
                                     // close() from inside the engine op (rather than on the test carrier, then enqueuing the probe after) removes the
@@ -328,7 +328,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     two.close()
                                     assert(drained, "the pump must park on the full channel with no recv in flight")
                                     // Order observation (no carrier is ever held): the release's shutdown(SHUT_RDWR) sits immediately before
-                                    // it installs the fdCloseSink credit, and IoUringDriver.closeHandle replaces handle.engineFreeSink
+                                    // it installs the fdCloseSink credit, and IoUringDriver.release replaces handle.engineFreeSink
                                     // synchronously when the driver close is requested. A client shutdown seen with engineFreeSink already
                                     // replaced therefore proves the driver close (which enables the credit's single freeResources consumer)
                                     // was requested before the credit was installed, so that consumer can read the sink Absent and the credit

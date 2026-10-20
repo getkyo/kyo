@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduction + regression guard for the io_uring C shim signed-length-to-unsigned cast (CWE-190 / CWE-195 / CWE-805) in
   * [[IoUringBindings]] / [[IoUringDriver]].
@@ -137,7 +138,7 @@ class IoUringDriverNegativeLengthTest extends Test:
                     val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, promise)
                     Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
-                        driver.closeHandle(acceptedH)
+                        driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(Ffi.load[SocketBindings].close(client))
                         outcome match
                             // A negative-length recv rejection is a driver-invariant breach (a C-boundary guard), so it aborts the connection

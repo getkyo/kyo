@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduce-first coverage for the STARTTLS detach-vs-read strand on io_uring: the single-recv gate in [[IoUringDriver.awaitRead]] rejects a
   * stray plaintext-pump re-arm while `upgradeActive` is set, and the rejection must still fail the promise. Dropping it silently strands the
@@ -42,7 +43,7 @@ class IoUringDriverUpgradeDetachTest extends Test:
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 Sync.ensure(Sync.defer {
-                    driver.closeHandle(handle)
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     discard(sock.close(client).poll())
                 }) {
                     val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()

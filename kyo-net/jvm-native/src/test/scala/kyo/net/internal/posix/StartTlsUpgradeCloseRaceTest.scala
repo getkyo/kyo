@@ -10,9 +10,10 @@ import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.BoringSslBindings
 import kyo.net.internal.TlsTestCert
+import kyo.net.internal.transport.ReleaseMode
 
 /** Probes the STARTTLS upgrade racing a concurrent close: the upgrade detaches the plaintext connection (`detachForUpgrade`), builds a new
-  * TLS engine, and re-handshakes over the SAME fd; a `closeHandle` fired while that re-handshake is in flight must not use-after-free, must
+  * TLS engine, and re-handshakes over the SAME fd; a `release` fired while that re-handshake is in flight must not use-after-free, must
   * not double-close the fd, must not hang, and must leave the connection in a consistent terminal state (a clean abort `Closed`).
   *
   * Driven over a real loopback socket pair with the real `PosixTransport.upgradeRole` and a real BoringSSL engine. Only the SERVER side
@@ -57,7 +58,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
         if !boringSslAvailable then cancel("BoringSSL not staged for this host")
 
     "STARTTLS upgrade racing a concurrent close" - {
-        "a closeHandle fired while the server re-handshake is in flight aborts cleanly, closes the fd once, never UAFs or hangs" in {
+        "a release fired while the server re-handshake is in flight aborts cleanly, closes the fd once, never UAFs or hangs" in {
             assumeReady()
             // Many iterations: invariant stress so any latent UAF / double-close / hang surfaces reliably (a hang fails the suite timeout).
             val iterations  = 40
@@ -116,7 +117,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                             val fireClose = recvSignal.safe.get.map { _ =>
                                 Sync.defer {
                                     discard(latchFired.incrementAndGet())
-                                    driver.closeHandle(serverHandle)
+                                    driver.release(serverHandle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 }
                             }
 
@@ -125,7 +126,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                                     closeFiber.get.map { _ =>
                                         // Idempotent extra close of the plaintext connection.
                                         serverPlain.close()
-                                        // Await the real close(fd) before counting it. The fd close is DEFERRED behind a credit: closeHandle
+                                        // Await the real close(fd) before counting it. The fd close is DEFERRED behind a credit: release
                                         // installs `fdCloseSink` and only `freeResources`, running on whichever carrier releases the last guard
                                         // holder, performs the syscall. When that last holder is the poll carrier's own dispatch bracket, the
                                         // upgrade settles (freeResources fails the parked upgrade waiter before it discharges the credit) and the

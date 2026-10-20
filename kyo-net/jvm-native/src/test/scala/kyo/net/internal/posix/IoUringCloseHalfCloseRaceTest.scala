@@ -5,10 +5,11 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduce-first regression guard for the io_uring local-close half-close-state race.
   *
-  * The defect: [[IoUringDriver.closeHandle]] (via its private `registerDeferredClose`) deliberately issues `shutdown(readFd, SHUT_RD)`
+  * The defect: [[IoUringDriver.release]] (via its private `registerDeferredClose`) deliberately issues `shutdown(readFd, SHUT_RD)`
   * to force a kernel-owned in-flight recv SQE to complete, because io_uring holds its own reference to the file and closing the fd alone
   * does not complete it. That self-induced `res == 0` completion reaps through the SAME branch a genuine unprompted peer half-close (a
   * bare TCP FIN, no close_notify) uses, with no guard distinguishing "I closed myself" from "the peer actually sent EOF": it
@@ -16,7 +17,7 @@ import kyo.net.internal.transport.ReadOutcome
   * the `LocalClose` fallback, so a connection the LOCAL side closed (no peer FIN ever happened) incorrectly reports `Truncated`.
   *
   * This is a TIMING RACE through the public `Connection` API: `HalfCloseStateTest`'s "local-close" leaf can fail only intermittently, because
-  * `Connection.close()` synchronously CASes the connection state but only ENQUEUES the driver-side teardown (`closeHandle` ->
+  * `Connection.close()` synchronously CASes the connection state but only ENQUEUES the driver-side teardown (`release` ->
   * `submitEngineOp`), so the public-API race depends on whether the async cancel+SHUT_RD+CQE-reap settles before or after the
   * `status` read. This test removes that timing dependence by driving the exact mechanism directly at the driver level (no
   * `Connection`/`Transport` involved) and waiting on a REAL completion signal -- `handle.isClosing()`, set only at the very end of
@@ -29,7 +30,7 @@ import kyo.net.internal.transport.ReadOutcome
   * stays `Open`.
   *
   * Also verifies the in-flight read promise is not stranded by guarding the stamp out: `cancel` (run synchronously inside
-  * `closeHandle`, strictly before `registerDeferredClose`'s SHUT_RD) already fails it `Closed` independently of the later CQE reap, so
+  * `release`, strictly before `registerDeferredClose`'s SHUT_RD) already fails it `Closed` independently of the later CQE reap, so
   * it must already be resolved once the close sequence has settled, independently of the SHUT_RD reap ordering.
   *
   * io_uring-only ([[PosixTestSockets.assumeUring]]): the poller backends (epoll/kqueue) synchronously deregister interest before
@@ -80,7 +81,7 @@ class IoUringCloseHalfCloseRaceTest extends Test:
                     // ONLY thing that can complete it is the close path's self-induced SHUT_RD below.
                     driver.awaitRead(acceptedH, promise)
                     // Local close; no peer-initiated close ever happens (the test never sends on or closes `client` before this).
-                    driver.closeHandle(acceptedH)
+                    driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                     awaitCondition(5.seconds)(acceptedH.isClosing()).map { settled =>
                         assert(settled, "close sequence did not settle within 5s (closeNow never ran: a hang, not the race under test)")
                         promise.poll() match

@@ -2,8 +2,10 @@ package kyo.net
 
 import kyo.*
 import kyo.net.internal.transport.Connection as InternalConnection
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.ScriptedPeerDriver
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.transport.WriteState
@@ -155,8 +157,13 @@ class ConnectionCloseContractTest extends Test:
             discard(written.incrementAndGet())
             WriteResult.Done
         end write
-        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = released.set(true)
+        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                                                      = ()
+        private val handleLife                                                                                        = HandleLife.init()
+        def life(handle: Unit): HandleLife                                                                            = handleLife
+        def release(handle: Unit, mode: ReleaseMode, done: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+            released.set(true)
+            done.completeUnitDiscard()
+        end release
         def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
         def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
         def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
@@ -204,19 +211,19 @@ class ConnectionCloseContractTest extends Test:
                 discard(conn.start())
                 discard(conn.outbound.offer(Span.fromUnsafe(Array.fill[Byte](3)(1))))
                 conn.close()
-                assert(driver.closeHandleCalls.get() == 0, "the close must start out waiting for the parked tail")
+                assert(driver.releaseCalls.get() == 0, "the close must start out waiting for the parked tail")
                 source(conn, driver)
-                val releasedEarly = driver.closeHandleCalls.get()
+                val releasedEarly = driver.releaseCalls.get()
                 driver.peerReads()
                 driver.peerReads()
                 assert(
                     releasedEarly == 0,
-                    s"a second teardown source must not release while the pump holds a span; closeHandle=$releasedEarly"
+                    s"a second teardown source must not release while the pump holds a span; releases=$releasedEarly"
                 )
                 assert(driver.written.get() == 3, s"every byte of the parked span must be written; writes=${driver.written.get()}")
                 assert(
-                    driver.closeHandleCalls.get() == 1,
-                    s"the handle must be released once; closeHandle=${driver.closeHandleCalls.get()}"
+                    driver.releaseCalls.get() == 1,
+                    s"the handle must be released once; releases=${driver.releaseCalls.get()}"
                 )
             end scenario
 

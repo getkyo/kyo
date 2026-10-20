@@ -6,11 +6,12 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Deterministic regression coverage for the fd-close ordering guarantee: the winner of `claimFdClose` must never close the fd directly while another
   * carrier can still be mid-syscall on it under a live [[PosixHandle.beginWrite]] / [[PosixHandle.beginDispatch]] hold.
-  * If `PollerIoDriver.closeHandle`'s plaintext branch closed `sockets.close(fd)` synchronously on the claiming carrier the instant it won the
+  * If `PollerIoDriver.release`'s plaintext branch closed `sockets.close(fd)` synchronously on the claiming carrier the instant it won the
   * claim, regardless of whether a pump write (`writeRaw`, guarded by `beginWrite`) or a poll-carrier read dispatch (`dispatchRead`, guarded
   * by `beginDispatch`) was still inside its send/recv syscall on that same fd, then under load the kernel could recycle a closed fd number to a
   * concurrently-connecting leaf before that in-flight syscall completes, corrupting an unrelated connection (a late send injects stale bytes
@@ -19,7 +20,7 @@ import kyo.net.internal.transport.WriteResult
   * point that already frees the engine and buffers, so the fd number inherits that same guarantee.
   *
   * Both leaves force the exact interleaving through `RecordingSocketBindings`' `onSend` / `onRecvNow` hooks, which fire synchronously,
-  * before delegating to the real syscall, from inside the guarded write/dispatch call: `closeHandle` is invoked from the hook itself, so
+  * before delegating to the real syscall, from inside the guarded write/dispatch call: `release` is invoked from the hook itself, so
   * the race is deterministic (one interleaving, not a probabilistic one) rather than relying on timing.
   */
 class PollerIoDriverCloseDuringIoTest extends Test:
@@ -30,7 +31,7 @@ class PollerIoDriverCloseDuringIoTest extends Test:
 
     "PollerIoDriver close racing an in-flight guarded syscall" - {
 
-        "closeHandle racing a write in flight under beginWrite defers the real close until the write releases the guard" in {
+        "release racing a write in flight under beginWrite defers the real close until the write releases the guard" in {
             PosixTestSockets.assumePoller()
             val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
             val backend  = PollerBackend.default()
@@ -43,7 +44,7 @@ class PollerIoDriverCloseDuringIoTest extends Test:
                 spy.onSend = () =>
                     // beginWrite is already held by write() at this point (writeRaw calls sockets.send from inside it, before this hook's
                     // caller returns): the claimed close must shut the fd down and defer the real close, never run it here.
-                    driver.closeHandle(handle)
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     closeCountAtSendTime.set(spy.closeCounts.getOrDefault(accepted, 0))
                 val result = driver.write(handle, Span.fromUnsafe(Array[Byte](1, 2)), 0)
                 // The real close also waits for the poll carrier to withdraw the fd, so it runs on that carrier: await it, not a fixed point.
@@ -75,7 +76,7 @@ class PollerIoDriverCloseDuringIoTest extends Test:
             }
         }
 
-        "closeHandle racing a read dispatch in flight under beginDispatch defers the real close until the dispatch releases the guard" in {
+        "release racing a read dispatch in flight under beginDispatch defers the real close until the dispatch releases the guard" in {
             PosixTestSockets.assumePoller()
             val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
             val backend  = PollerBackend.default()
@@ -88,7 +89,7 @@ class PollerIoDriverCloseDuringIoTest extends Test:
                 spy.onRecvNow = (fd: Int) =>
                     // beginDispatch is already held by dispatchRead() at this point (recvNow is called from inside it, before this hook's
                     // caller returns): the claimed close must shut the fd down and defer the real close, never run it here.
-                    driver.closeHandle(handle)
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     closeCountAtRecvTime.set(spy.closeCounts.getOrDefault(accepted, 0))
                 val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, readPromise)

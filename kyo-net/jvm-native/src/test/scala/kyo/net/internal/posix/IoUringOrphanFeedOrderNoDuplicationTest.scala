@@ -52,7 +52,7 @@ import scala.jdk.CollectionConverters.*
   * Both engines are allocated via [[TlsRealEngines.singleEngine]] (caller-owned) rather than [[TlsRealEngines.withEngines]] (auto-free on the
   * body's return), and freed explicitly right after this test's own assertions complete, mirroring the established fix from
   * `IoUringFatalRecordCloseRaceTest`'s test-construction hazard (an auto-freed engine racing a real driver's async engine-touching close):
-  * this test never triggers a fatal record or `closeHandle` (the ciphertext is always valid), so there is no async teardown to race at all
+  * this test never triggers a fatal record or `release` (the ciphertext is always valid), so there is no async teardown to race at all
   * during the body; only the final `driver.close()` (deferred to the outermost `Sync.ensure`, run after the engines are already freed,
   * matching the sibling tests' validated nesting order) touches the ring afterward.
   *

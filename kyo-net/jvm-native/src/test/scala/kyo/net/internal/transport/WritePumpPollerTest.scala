@@ -155,7 +155,7 @@ class WritePumpPollerTest extends Test:
                 val channel       = Channel.Unsafe.init[Span[Byte]](16)
                 val (pump, state) = newPump(spy, clientFd, channel, () => closedLatch.completeDiscard(Result.succeed(())))
                 spy.onAwaitWritable = h =>
-                    spy.closeHandle(h)
+                    spy.release(h, ReleaseMode.Graceful, Promise.Unsafe.init())
                     discard(channel.close())
 
                 pump.start()
@@ -164,7 +164,7 @@ class WritePumpPollerTest extends Test:
                 closedLatch.safe.get.map { _ =>
                     assert(state.get() == WriteState.TornDown)
                     spy.close()
-                    // closeHandle closed clientFd; only peerFd remains to close.
+                    // release closed clientFd; only peerFd remains to close.
                     discard(sock.close(peerFd))
                     succeed
                 }
@@ -199,7 +199,7 @@ class WritePumpPollerTest extends Test:
                     val swept = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                     swept.onComplete(_ => spy.releaseHeldWritable())
                     spy.awaitWritable(handle, swept)
-                    spy.closeHandle(handle)
+                    spy.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     closedLatch.safe.get.map { _ =>
                         assert(state.get() == WriteState.TornDown)
                         spy.close()

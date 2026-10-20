@@ -42,7 +42,7 @@ class IoUringDriverPeerClosedTest extends Test:
                     assert(!driver.isPeerClosed(handle), "a live peer must read as not closed")
                     PosixTestSockets.closePeerForEof(sock, peerFd) // FIN
                     awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { closed =>
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         assert(closed, "io_uring isPeerClosed must observe the peer FIN via poll(2) POLLRDHUP")
                     }
                 }
@@ -56,7 +56,7 @@ class IoUringDriverPeerClosedTest extends Test:
                     val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     PosixTestSockets.resetPeer(sock, peerFd) // RST
                     awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { closed =>
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         assert(closed, "io_uring isPeerClosed must observe a peer RST via poll(2) POLLERR/POLLHUP")
                     }
                 }

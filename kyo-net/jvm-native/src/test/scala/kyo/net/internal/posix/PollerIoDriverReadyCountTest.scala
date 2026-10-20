@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Poll ready-count read as a raw int. The poll loop reads the number of ready fds as a raw `Int` off the per-driver scratch
@@ -66,7 +67,7 @@ class PollerIoDriverReadyCountTest extends Test:
                                         readAll(rest).map(_ => exp :: Nil).map(identity)
                                 }
                     readAll(accepted.zip(payloads)).map { received =>
-                        accepted.foreach(driver.closeHandle)
+                        accepted.foreach(h => driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init()))
                         pairs.foreach { case (client, _) => discard(sock.close(client).poll()) }
                         // Every distinct payload was delivered exactly once: the count drove exactly N dispatches, no more, no fewer.
                         assert(received.sorted == payloads.sorted, s"all $n payloads must be delivered: $received vs $payloads")
@@ -89,7 +90,7 @@ class PollerIoDriverReadyCountTest extends Test:
                     driver.awaitRead(acceptedH, promise)
                     promise.safe.get.map {
                         case ReadOutcome.Bytes(got) =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client).poll())
                             assert(got.toArray.toList == payload.toList)
                         case other =>

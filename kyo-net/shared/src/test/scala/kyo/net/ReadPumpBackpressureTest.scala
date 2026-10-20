@@ -2,8 +2,10 @@ package kyo.net
 
 import kyo.*
 import kyo.net.internal.transport.Connection
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Verifies that write backpressure does not deadlock the inbound channel, that the ReadPump re-arms exactly once per drain cycle, and
@@ -43,8 +45,11 @@ class ReadPumpBackpressureTest extends Test:
             if !captured then WriteResult.Partial(data, math.max(1, data.size / 2))
             else WriteResult.Done
         end write
-        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = ()
+        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit = ()
+        private val handleLife                                   = HandleLife.init()
+        def life(handle: Unit): HandleLife                       = handleLife
+        def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+            released.completeUnitDiscard()
         def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
         def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
         def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
@@ -126,10 +131,13 @@ class ReadPumpBackpressureTest extends Test:
                     ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
-                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
-                def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
-                def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit             = op()
-                def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+                private val handleLife                                                                 = HandleLife.init()
+                def life(handle: Unit): HandleLife                                                     = handleLife
+                def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+                    released.completeUnitDiscard()
+                def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+                def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
+                def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
                     try cancel(handle)
                     finally releaseFd(handle, closeFd)
                 def close()(using AllowUnsafe, Frame): Unit = ()
@@ -179,7 +187,7 @@ class ReadPumpBackpressureTest extends Test:
             val cap = 1
             final class BackpressureFinDriver extends IoDriver[Unit]:
                 val awaitReadCalls                                             = AtomicInt.Unsafe.init(0)
-                val closeHandleCalls                                           = AtomicInt.Unsafe.init(0)
+                val releaseCalls                                               = AtomicInt.Unsafe.init(0)
                 def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
                     Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
                 def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
@@ -199,7 +207,12 @@ class ReadPumpBackpressureTest extends Test:
                     ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
-                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCalls.incrementAndGet())
+                private val handleLife                                                                 = HandleLife.init()
+                def life(handle: Unit): HandleLife                                                     = handleLife
+                def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+                    discard(releaseCalls.incrementAndGet())
+                    released.completeUnitDiscard()
+                end release
                 def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
                 def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
                 def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
@@ -224,8 +237,8 @@ class ReadPumpBackpressureTest extends Test:
                 // held: the behavior a backend with no peer-close detection keeps. The grace-driven reclaim is asserted in the sibling section
                 // with a driver that implements isPeerClosed.
                 assert(
-                    driver.closeHandleCalls.get() == 0,
-                    s"with no peer-close detection the backpressured handle must be held (not reclaimed); closeHandle=${driver.closeHandleCalls.get()}"
+                    driver.releaseCalls.get() == 0,
+                    s"with no peer-close detection the backpressured handle must be held (not reclaimed); releases=${driver.releaseCalls.get()}"
                 )
             }
         }
@@ -235,11 +248,11 @@ class ReadPumpBackpressureTest extends Test:
 
         /** A spy driver that fills a capacity-`cap` inbound channel (one span per read arm, distinct bytes so order is checkable), parks the pump
           * on the overflow, and exposes a `peerClosed` latch the test flips to simulate a FIN. `isPeerClosed` reads that latch (the poll-on-expiry
-          * grace polls it on each timer expiry). Counts `closeHandle`.
+          * grace polls it on each timer expiry). Counts releases.
           */
         final class WatchDriver(cap: Int) extends IoDriver[Unit]:
             val awaitReadCalls                                             = AtomicInt.Unsafe.init(0)
-            val closeHandleCalls                                           = AtomicInt.Unsafe.init(0)
+            val releaseCalls                                               = AtomicInt.Unsafe.init(0)
             @volatile var peerClosed: Boolean                              = false
             def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
                 Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
@@ -253,9 +266,14 @@ class ReadPumpBackpressureTest extends Test:
             def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit   = ()
             def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
             def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
-            def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                    = discard(closeHandleCalls.incrementAndGet())
-            def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
-            def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit       = op()
+            private val handleLife                                                                 = HandleLife.init()
+            def life(handle: Unit): HandleLife                                                     = handleLife
+            def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+                discard(releaseCalls.incrementAndGet())
+                released.completeUnitDiscard()
+            end release
+            def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+            def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
             def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
                 try cancel(handle)
                 finally releaseFd(handle, closeFd)
@@ -275,8 +293,8 @@ class ReadPumpBackpressureTest extends Test:
                     driver.peerClosed = true // peer FIN: the grace expiry polls isPeerClosed and observes it
                     armedThenAdvance(tc, "peer-close grace", 100.millis).map { _ =>
                         assert(
-                            driver.closeHandleCalls.get() == 1,
-                            s"the grace must reclaim an abandoned backpressured connection; closeHandle=${driver.closeHandleCalls.get()}"
+                            driver.releaseCalls.get() == 1,
+                            s"the grace must reclaim an abandoned backpressured connection; releases=${driver.releaseCalls.get()}"
                         )
                     }
                 }
@@ -302,8 +320,8 @@ class ReadPumpBackpressureTest extends Test:
                             s"the overflow span must be delivered, not dropped; got $b"
                         )
                         assert(
-                            driver.closeHandleCalls.get() == 0,
-                            s"consumer progress within the grace must NOT reclaim; closeHandle=${driver.closeHandleCalls.get()}"
+                            driver.releaseCalls.get() == 0,
+                            s"consumer progress within the grace must NOT reclaim; releases=${driver.releaseCalls.get()}"
                         )
                     }
                 }
@@ -321,8 +339,8 @@ class ReadPumpBackpressureTest extends Test:
                     armedThenAdvance(tc, "peer-close grace", 100.millis).map {
                         _ => // first expiry: isPeerClosed false -> re-arm, no reclaim
                             assert(
-                                driver.closeHandleCalls.get() == 0,
-                                s"a live peer must not reclaim on expiry; closeHandle=${driver.closeHandleCalls.get()}"
+                                driver.releaseCalls.get() == 0,
+                                s"a live peer must not reclaim on expiry; releases=${driver.releaseCalls.get()}"
                             )
                             driver.peerClosed = true // peer FIN now arrives
                             armedThenAdvance(
@@ -331,8 +349,8 @@ class ReadPumpBackpressureTest extends Test:
                                 100.millis
                             ).map { _ => // second expiry: isPeerClosed true -> reclaim
                                 assert(
-                                    driver.closeHandleCalls.get() == 1,
-                                    s"the re-armed timer must reclaim once the peer closes; closeHandle=${driver.closeHandleCalls.get()}"
+                                    driver.releaseCalls.get() == 1,
+                                    s"the re-armed timer must reclaim once the peer closes; releases=${driver.releaseCalls.get()}"
                                 )
                             }
                     }

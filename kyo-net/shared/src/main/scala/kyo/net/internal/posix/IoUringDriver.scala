@@ -400,7 +400,7 @@ final private[net] class IoUringDriver private[posix] (
             // SOLE writer of both, runs to completion on the single reap carrier with no suspension point in between, and cannot be re-entered
             // while executing: no OTHER call on that same carrier can ever observe the intermediate state. If a future change lets some other
             // carrier read `hasInFlightRead` or `recvInFlight` directly (not just via another `submitRecv` call), that read MUST NOT assume the
-            // two become true together -- see IoUringDriverTest's "closeHandle defers..." leaf and IoUringExclusiveUseSqFullTest for the exact
+            // two become true together -- see IoUringDriverTest's "release defers..." leaf and IoUringExclusiveUseSqFullTest for the exact
             // test-side race this gap can expose under scheduling pressure (surfaces only under concurrency, never in isolation).
             register(key, PendingOp.Read(promise, handle, eintrRetries, handshakeOwned, armedPostUpgrade, armedForStaging))
             uring.kyo_uring_get_sqe(ring) match

@@ -12,6 +12,7 @@ import kyo.net.internal.posix.PosixTestSockets
 import kyo.net.internal.posix.RecordingIoUringBindings
 import kyo.net.internal.posix.SocketBindings
 import kyo.net.internal.posix.TestDrivers
+import kyo.net.internal.transport.ReleaseMode
 
 /** Deterministic mechanism test for the io_uring STARTTLS raw->TLS cross-tail send wire-order invariant.
   *
@@ -97,9 +98,9 @@ class IoUringDriverCrossTailSendOrderTest extends Test:
                         // FIFO barrier: submitted after the writeTls FIFO op, so it fires only after that op has fully run.
                         Abort.run[Timeout | Closed](Async.timeout(30.seconds)(fifoBarrier(drv).safe.get)).map { _ =>
                             val sendsAfter = recording.sendBufs.size()
-                            // Teardown: clear tls before closeHandle so the driver does not free the engine (withEngines owns the free).
+                            // Teardown: clear tls before release so the driver does not free the engine (withEngines owns the free).
                             handle.tls = Absent
-                            drv.closeHandle(handle)
+                            drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(peerFd))
                             assert(
                                 sendsAfter == sendsBefore,
@@ -151,7 +152,7 @@ class IoUringDriverCrossTailSendOrderTest extends Test:
                             Abort.run[Timeout | Closed](Async.timeout(30.seconds)(fifoBarrier(drv).safe.get)).map { _ =>
                                 val sendsAfter = recording.sendBufs.size()
                                 handle.tls = Absent
-                                drv.closeHandle(handle)
+                                drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(peerFd))
                                 assert(
                                     sendsAfter > sendsBefore,

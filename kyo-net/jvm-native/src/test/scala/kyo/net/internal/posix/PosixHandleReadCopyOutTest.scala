@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Read copy-out correctness. The read path delivers the bytes read off the socket to the consumer; the property under test is
@@ -57,7 +58,7 @@ class PosixHandleReadCopyOutTest extends Test:
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload   = Array.tabulate[Byte](300)(i => (i & 0xff).toByte)
                     send(driver, client, payload).andThen(readVia(driver, acceptedH)).map { got =>
-                        driver.closeHandle(acceptedH)
+                        driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(sock.close(client).poll())
                         assert(got.toArray.toList == payload.toList, "delivered bytes must equal the payload exactly")
                     }
@@ -79,7 +80,7 @@ class PosixHandleReadCopyOutTest extends Test:
                     send(driver, client, first).andThen(readVia(driver, acceptedH)).map { got1 =>
                         val snapshot1 = got1.toArray.toList
                         send(driver, client, second).andThen(readVia(driver, acceptedH)).map { got2 =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client).poll())
                             assert(got2.toArray.toList == second.toList, "second read must deliver the second payload")
                             // The first delivered span must still hold the first payload (not corrupted by the second recv).
@@ -113,7 +114,7 @@ class PosixHandleReadCopyOutTest extends Test:
                         partA
                     ).andThen(send(driver, client, partB)).andThen(drainAll(Nil, partA.length + partB.length)).map {
                         all =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client).poll())
                             assert(all == (partA.toList ++ partB.toList), "bytes across the chunk boundary must be in order and intact")
                     }

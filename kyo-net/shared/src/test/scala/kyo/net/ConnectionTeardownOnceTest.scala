@@ -2,11 +2,13 @@ package kyo.net
 
 import kyo.*
 import kyo.net.internal.transport.Connection
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
-/** Teardown (cancel + closeHandle) runs exactly once across concurrent close() calls.
+/** Teardown (cancel + release) runs exactly once across concurrent close() calls.
   *
   * The single CAS on Closing -> Closed is the structural guarantee: only the fiber that wins the CAS calls the teardown body; every other
   * concurrent close() call loses the CAS and is a no-op. No sleep; the latch drives the interleaving.
@@ -17,7 +19,7 @@ class ConnectionTeardownOnceTest extends Test:
     given Frame = Frame.internal
 
     final private class SpyDriver extends IoDriver[Unit]:
-        val closeHandleCount = AtomicInt.Unsafe.init(0)
+        val releaseCount = AtomicInt.Unsafe.init(0)
 
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
@@ -27,10 +29,15 @@ class ConnectionTeardownOnceTest extends Test:
         def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit    = ()
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = discard(closeHandleCount.incrementAndGet())
-        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
-        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit             = op()
-        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+        private val handleLife                                                                 = HandleLife.init()
+        def life(handle: Unit): HandleLife                                                     = handleLife
+        def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+            discard(releaseCount.incrementAndGet())
+            released.completeUnitDiscard()
+        end release
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
             try cancel(handle)
             finally releaseFd(handle, closeFd)
         def close()(using AllowUnsafe, Frame): Unit = ()
@@ -38,7 +45,7 @@ class ConnectionTeardownOnceTest extends Test:
         def handleLabel(handle: Unit): String       = "spy"
     end SpyDriver
 
-    "teardown-runs-exactly-once: two concurrent close() calls invoke closeHandle exactly once" in {
+    "teardown-runs-exactly-once: two concurrent close() calls invoke release exactly once" in {
         val spy  = new SpyDriver
         val conn = Connection.init[Unit]((), spy, 1)
         conn.start()
@@ -49,11 +56,11 @@ class ConnectionTeardownOnceTest extends Test:
             _      <- latch.release
             _      <- fiber1.get
             _      <- fiber2.get
-        yield assert(spy.closeHandleCount.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCount.get()}")
+        yield assert(spy.releaseCount.get() == 1, s"release must be called exactly once, got ${spy.releaseCount.get()}")
         end for
     }
 
-    "teardown-runs-exactly-once: three concurrent close() calls invoke closeHandle exactly once" in {
+    "teardown-runs-exactly-once: three concurrent close() calls invoke release exactly once" in {
         val spy  = new SpyDriver
         val conn = Connection.init[Unit]((), spy, 1)
         conn.start()
@@ -66,7 +73,7 @@ class ConnectionTeardownOnceTest extends Test:
             _      <- fiber1.get
             _      <- fiber2.get
             _      <- fiber3.get
-        yield assert(spy.closeHandleCount.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCount.get()}")
+        yield assert(spy.releaseCount.get() == 1, s"release must be called exactly once, got ${spy.releaseCount.get()}")
         end for
     }
 

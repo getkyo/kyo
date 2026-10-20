@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduce-first regression for the io_uring stale `shutdown(SHUT_RD)` on a recycled fd: issuing [[IoUringDriver.registerDeferredClose]]'s deferred
   * shutdown UNCONDITIONALLY whenever an in-flight recv races a close, with no check that `handle` still owns the fd
@@ -20,7 +21,7 @@ import kyo.net.internal.transport.ReadOutcome
   * the shutdown winner.
   *
   * Anti-flakiness: awaits `driver.hasInFlightRead(handle)` becoming true (the recv is genuinely kernel-owned) before simulating the race, and
-  * a FIFO-ordered marker op (submitted right after `closeHandle`, so it runs strictly after `registerDeferredClose` on the single reap
+  * a FIFO-ordered marker op (submitted right after `release`, so it runs strictly after `registerDeferredClose` on the single reap
   * carrier) before inspecting the spy, instead of a sleep. The "fd recycled" step drives a real second `socket()`/`connect()`/`accept()`
   * sequence and asserts Linux's lowest-free-fd allocator actually reused the closed fd number rather than assuming it; if a concurrently
   * running, unrelated test class raced that narrow window and stole the number first, the leaf cancels rather than reporting a false failure
@@ -69,9 +70,9 @@ class IoUringDriverDeferredCloseClaimTest extends Test:
                                     val peerFd   = if recycledToClient then accepted2 else client2
 
                                     val shutdownCallsBefore = spy.shutdownCalls.size()
-                                    driver.closeHandle(handle)
+                                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                     // FIFO-ordered barrier: submitEngineOp ops run strictly in submission order on the single reap carrier, so
-                                    // this one (submitted right after closeHandle's own submitEngineOp) only completes once
+                                    // this one (submitted right after release's own submitEngineOp) only completes once
                                     // registerDeferredClose has already run to completion -- a deterministic "the op under test has run" signal,
                                     // not a sleep.
                                     val barrier = Promise.Unsafe.init[Unit, Abort[Closed]]()

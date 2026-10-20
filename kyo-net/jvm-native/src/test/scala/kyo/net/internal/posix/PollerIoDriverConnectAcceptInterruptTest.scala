@@ -21,7 +21,7 @@ import scala.jdk.CollectionConverters.*
   * accept's read parks on a real listen fd with no client connecting (a listen fd is readable only on an incoming connection). Both are events
   * the kernel can produce only from an external action the setup denies, so the awaited op cannot complete and `fiber.interrupt` deterministically
   * interrupts the parked fiber and returns `true` regardless of timing (the same "the op cannot complete, so interrupt is deterministic" reasoning
-  * the take-interrupt and `closeHandle`-cancels-pending-read tests rely on). A loopback send-buffer flood is NOT used for the connect side: the
+  * the take-interrupt and `release`-cancels-pending-read tests rely on). A loopback send-buffer flood is NOT used for the connect side: the
   * kernel re-drains a loopback send buffer into the peer's recv buffer, briefly re-arming write-readiness, which can resolve the parked connect
   * before the interrupt and is the source of probabilistic interrupt-loss on single-OS-thread runtimes; the SYN-SENT black-hole park has no event.
   *

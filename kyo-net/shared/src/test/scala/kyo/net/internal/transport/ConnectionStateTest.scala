@@ -7,7 +7,7 @@ import kyo.net.Test
 /** Tests for the Connection.State machine fold: a single named-state enum held in one atomic cell, encoding the connection lifecycle rather than
   * separate lifecycle flags.
   *
-  * Each leaf builds a Connection[Unit] over a SpyDriver that counts cancel and closeHandle calls. The test then drives specific state
+  * Each leaf builds a Connection[Unit] over a SpyDriver that counts cancel and release calls. The test then drives specific state
   * transitions and asserts the structural invariants on the named state cell: teardown runs exactly once, a detach-for-upgrade bars
   * teardown, and a close-then-detach loses the CAS.
   */
@@ -16,13 +16,13 @@ class ConnectionStateTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    /** A spy IoDriver[Unit] that records cancel and closeHandle invocations for assertion. Uses AtomicInt.Unsafe for thread-safe counting
+    /** A spy IoDriver[Unit] that records cancel and release invocations for assertion. Uses AtomicInt.Unsafe for thread-safe counting
       * across concurrent fibers.
       */
     final private class SpyDriver extends IoDriver[Unit]:
-        val cancelCount      = AtomicInt.Unsafe.init(0)
-        val closeHandleCount = AtomicInt.Unsafe.init(0)
-        val awaitReadCount   = AtomicInt.Unsafe.init(0)
+        val cancelCount    = AtomicInt.Unsafe.init(0)
+        val releaseCount   = AtomicInt.Unsafe.init(0)
+        val awaitReadCount = AtomicInt.Unsafe.init(0)
 
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
@@ -33,10 +33,15 @@ class ConnectionStateTest extends Test:
         def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit    = ()
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = discard(cancelCount.incrementAndGet())
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = discard(closeHandleCount.incrementAndGet())
-        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
-        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit             = op()
-        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+        private val handleLife                                                                 = HandleLife.init()
+        def life(handle: Unit): HandleLife                                                     = handleLife
+        def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+            discard(releaseCount.incrementAndGet())
+            released.completeUnitDiscard()
+        end release
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
             try cancel(handle)
             finally releaseFd(handle, closeFd)
         def close()(using AllowUnsafe, Frame): Unit = ()
@@ -56,7 +61,7 @@ class ConnectionStateTest extends Test:
 
     "multi-carrier-close-fires-teardown-once" in {
         // Two fibers race to call close() via a latch: exactly one Closing -> Closed CAS wins,
-        // so closeHandle is invoked exactly once regardless of interleaving.
+        // so release is invoked exactly once regardless of interleaving.
         val spy  = new SpyDriver
         val conn = makeEstablished(spy)
         for
@@ -70,14 +75,14 @@ class ConnectionStateTest extends Test:
             _ <- latch.release
             _ <- fiber1.get
             _ <- fiber2.get
-        yield assert(spy.closeHandleCount.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCount.get()}")
+        yield assert(spy.releaseCount.get() == 1, s"release must be called exactly once, got ${spy.releaseCount.get()}")
         end for
     }
 
     "detach-on-established-is-inert-for-teardown" in {
         // detachForUpgrade CASes Established -> Upgrading and returns the staged bytes.
         // A subsequent close() sees state == Upgrading and neither CAS (Established -> Closing, Created -> Closing) wins,
-        // so teardownHandle is never reached: closeHandle count stays 0 and the fd is kept open for the TLS upgrade.
+        // so teardownHandle is never reached: release count stays 0 and the fd is kept open for the TLS upgrade.
         val spy  = new SpyDriver
         val conn = makeEstablished(spy)
         Sync.defer {
@@ -87,7 +92,7 @@ class ConnectionStateTest extends Test:
                 s"detachForUpgrade must settle synchronously when nothing is in flight (present or absent both OK for an empty channel), got $buffered"
             )
             conn.close()
-            assert(spy.closeHandleCount.get() == 0, s"closeHandle must NOT be called after a detach, got ${spy.closeHandleCount.get()}")
+            assert(spy.releaseCount.get() == 0, s"release must NOT be called after a detach, got ${spy.releaseCount.get()}")
         }
     }
 
@@ -105,8 +110,8 @@ class ConnectionStateTest extends Test:
                 result.exists { case Result.Success(v) => v.eval.isEmpty; case _ => false },
                 s"detachForUpgrade after close must report Absent, got $result"
             )
-            // No second teardown: closeHandle count is exactly 1 from the close() path.
-            assert(spy.closeHandleCount.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCount.get()}")
+            // No second teardown: release count is exactly 1 from the close() path.
+            assert(spy.releaseCount.get() == 1, s"release must be called exactly once, got ${spy.releaseCount.get()}")
         }
     }
 

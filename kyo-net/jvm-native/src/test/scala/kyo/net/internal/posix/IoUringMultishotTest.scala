@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Verifies that sequential single-shot accepts lose no completion, and that the fused submit-and-wait enter loses no completion.
@@ -91,13 +92,13 @@ class IoUringMultishotTest extends Test:
                             }
                         }
                     }.map { fds =>
-                        driver.closeHandle(serverH)
+                        driver.release(serverH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         fds.foreach { fd =>
                             if fd >= 0 then discard(sock.close(fd))
                         }
-                        // serverFd is already closed: closeHandle(serverH) -> closeNow closes the OS fd (readFd == writeFd) via claimFdClose. A
+                        // serverFd is already closed: release(serverH) -> closeNow closes the OS fd (readFd == writeFd) via claimFdClose. A
                         // raw sock.close(serverFd) here is a double-close: under concurrent cold load the freed number is recycled to another
-                        // test's fresh fd and the stale second close lands on it (EBADF). closeHandle already releases the number.
+                        // test's fresh fd and the stale second close lands on it (EBADF). release already releases the number.
                         assert(fds.forall(_ >= 0), s"all accepted fds must be >= 0: $fds")
                         assert(fds.distinct.size == C, s"all $C accepted fds must be distinct: $fds")
                     }
@@ -136,7 +137,7 @@ class IoUringMultishotTest extends Test:
                                 val got = outcome match
                                     case ReadOutcome.Bytes(span) => span
                                     case other                   => fail(s"round-trip $i: expected ReadOutcome.Bytes, got $other")
-                                driver.closeHandle(acceptedH)
+                                driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(client))
                                 assert(
                                     got.toArray.toList == payload.toArray.toList,

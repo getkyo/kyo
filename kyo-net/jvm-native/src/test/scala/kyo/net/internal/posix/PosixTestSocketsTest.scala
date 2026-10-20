@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Smoke tests for [[PosixTestSockets]].
@@ -33,12 +34,12 @@ class PosixTestSocketsTest extends Test:
                     driver.awaitRead(acceptedH, readP)
                     readP.safe.get.map {
                         case ReadOutcome.Bytes(got) =>
-                            driver.closeHandle(clientH)
-                            driver.closeHandle(acceptedH)
+                            driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             assert(got.toArray.toList == List[Byte](1, 2, 3, 4), s"got ${got.toArray.toList}")
                         case other =>
-                            driver.closeHandle(clientH)
-                            driver.closeHandle(acceptedH)
+                            driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             fail(s"expected Bytes, got $other")
                     }
                 }
@@ -62,15 +63,15 @@ class PosixTestSocketsTest extends Test:
                     driver.awaitRead(acceptedH, readP)
                     readP.safe.get.map {
                         case ReadOutcome.Bytes(got) =>
-                            driver.closeHandle(clientH)
-                            driver.closeHandle(acceptedH)
+                            driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             assert(
                                 got.toArray.sameElements(Array[Byte](10, 20, 30)),
                                 s"expected bytes [10,20,30] from real socket, got ${got.toArray.toList}"
                             )
                         case other =>
-                            driver.closeHandle(clientH)
-                            driver.closeHandle(acceptedH)
+                            driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             fail(s"expected Bytes, got $other")
                     }
                 }
@@ -95,8 +96,8 @@ class PosixTestSocketsTest extends Test:
                     val w         = driver.write(clientH, blob, 0)
                     assert(w == WriteResult.Done, s"1 KB write should fit in 2 KB sndbuf; got $w")
                     PosixTestSockets.drainPeer(driver, acceptedH, accepted, total).map { got =>
-                        driver.closeHandle(clientH)
-                        driver.closeHandle(acceptedH)
+                        driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                        driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         assert(got >= total, s"expected >= $total bytes drained via drainPeer, got $got")
                     }
                 }
@@ -120,7 +121,7 @@ class PosixTestSocketsTest extends Test:
                             result <- readP.safe.get
                         yield result)
                     ).map { result =>
-                        driver.closeHandle(acceptedH)
+                        driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         result match
                             case Result.Failure(_: Closed)                         => succeed
                             case Result.Success(ReadOutcome.Bytes(s)) if s.isEmpty => succeed
@@ -145,13 +146,13 @@ class PosixTestSocketsTest extends Test:
                     driver.awaitRead(acceptedH, readP)
                     readP.safe.get.map {
                         case ReadOutcome.Bytes(got) if got.isEmpty =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             succeed
                         case ReadOutcome.PeerFin | ReadOutcome.CleanClose =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             succeed
                         case other =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             fail(s"expected empty Span (EOF), got $other")
                     }
                 }
@@ -171,15 +172,15 @@ class PosixTestSocketsTest extends Test:
                     driver.awaitRead(acceptedH, readP)
                     readP.safe.get.map {
                         case ReadOutcome.Bytes(got) if got.isEmpty =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client))
                             succeed
                         case ReadOutcome.PeerFin | ReadOutcome.CleanClose =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client))
                             succeed
                         case other =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client))
                             fail(s"expected EOF (empty Span) after SHUT_WR, got $other")
                     }

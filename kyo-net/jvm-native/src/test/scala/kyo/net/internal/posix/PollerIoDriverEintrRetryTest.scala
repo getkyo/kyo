@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Reproduction + regression guard for POSIX recv/send EINTR handling (CWE-252 mishandled return value) in [[PollerIoDriver]].
@@ -89,7 +90,7 @@ class PollerIoDriverEintrRetryTest extends Test:
                     // Bounded so the test fails fast rather than hanging if the read is never delivered.
                     outcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
                     _       <- Sync.defer {
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         driver.close()
                         PosixTestSockets.closePeerForEof(spy, clientFd)
                     }
@@ -144,7 +145,7 @@ class PollerIoDriverEintrRetryTest extends Test:
                     // Confirm the bytes actually reached the peer: a true retry resent the full payload.
                     got = recvAll(acceptedFd, payload.length)
                     _ <- Sync.defer {
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         driver.close()
                         PosixTestSockets.closePeerForEof(spy, acceptedFd)
                     }

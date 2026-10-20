@@ -6,6 +6,7 @@ import kyo.net.Test
 import kyo.net.internal.TlsEngine
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Deterministic guard for the `flushReArmPending` double-arm coalescing in [[PollerIoDriver.armWritableForFlush]]: while a
@@ -102,8 +103,8 @@ class FlushReArmPendingCoalesceTest extends Test:
                     yield
                         // Coalescing assertion: the second write while armed must NOT arm a second awaitWritable.
                         val count = backend.registerWriteCount.get()
-                        // Free the client engine on the FIFO worker (closeHandle routes the engine free through submitEngineOp) and close the fds.
-                        driver.closeHandle(handle)
+                        // Free the client engine on the FIFO worker (release routes the engine free through submitEngineOp) and close the fds.
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         driver.close()
                         PosixTestSockets.closePeerForEof(spy, peerFd)
                         assert(

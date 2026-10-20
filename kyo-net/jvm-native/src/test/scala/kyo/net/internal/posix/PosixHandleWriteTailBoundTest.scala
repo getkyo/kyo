@@ -8,6 +8,7 @@ import kyo.net.internal.TlsEngine
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Per-connection write-backpressure tail must stay BOUNDED against a peer that never reads (CWE-400 slow-read DoS).
@@ -103,7 +104,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                             case WriteResult.Done              => loop(k + 1, newPeak)
                             case WriteResult.Partial(_, _)     => (true, newPeak)
                             case WriteResult.TailPartial(_, _) => (true, newPeak)
-                            case WriteResult.Error             => (false, newPeak)
+                            case WriteResult.Error(_)          => (false, newPeak)
                         end match
                     }
                 }
@@ -168,7 +169,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                 // The driver is never started, so the handshake runs here: this carrier is the engines' only owner.
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "the in-memory handshake must complete before the writes")
                 val (accepted, result) = acceptedWhileQueued(driver, handle)
-                driver.closeHandle(handle)
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 driver.close()
                 serverEngine.free()
                 PosixTestSockets.closePeerForEof(sock, peerFd)
@@ -192,7 +193,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                 val driver             = TestDrivers.forBindings(realUring, realRing)
                 val handle             = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val (accepted, result) = acceptedWhileQueued(driver, handle)
-                driver.closeHandle(handle)
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 driver.close()
                 PosixTestSockets.closePeerForEof(sock, peerFd)
                 assertBoundedWhileQueued(accepted, result)
@@ -223,7 +224,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                 // The driver is never started, so the handshake runs here: this carrier is the engines' only owner.
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "the in-memory handshake must complete before the writes")
                 val (accepted, result) = acceptedWhileQueued(driver, handle)
-                driver.closeHandle(handle)
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 driver.close()
                 serverEngine.free()
                 PosixTestSockets.closePeerForEof(sock, peerFd)
@@ -257,7 +258,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                         result <- issueUntilBoundedOrGrown(driver, handle)
                     yield
                         driver.submitEngineOp(() => serverEngine.free())
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         driver.close()
                         PosixTestSockets.closePeerForEof(spy, peerFd)
                         assertBounded(result._1, result._2)
@@ -286,7 +287,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                     for
                         result <- issueUntilBoundedOrGrown(driver, handle)
                     yield
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         driver.close()
                         PosixTestSockets.closePeerForEof(sock, peerFd)
                         assertBounded(result._1, result._2)
@@ -324,7 +325,7 @@ class PosixHandleWriteTailBoundTest extends Test:
                         result <- issueUntilBoundedOrGrown(driver, handle)
                     yield
                         driver.submitEngineOp(() => serverEngine.free())
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         driver.close()
                         PosixTestSockets.closePeerForEof(sock, peerFd)
                         assertBounded(result._1, result._2)

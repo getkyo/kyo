@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduction + regression guard: [[IoUringDriver]]'s reap loop under-classified a transient `io_uring_enter` errno as a fatal ring fault.
   *
@@ -15,8 +16,8 @@ import kyo.net.internal.transport.ReadOutcome
   * (`io_uring_queue_exit`), tearing down every connection it carried, including one with a genuinely in-flight, kernel-owned recv SQE that
   * would otherwise have completed normally moments later.
   *
-  * This is the mechanism behind `IoUringDriverTest`'s "closeHandle defers..." leaf flaking under concurrent load (its own comment already
-  * documents the symptom without naming the cause): once the ring exits, `closeHandle`'s `ringExited` fast path frees a handle's read buffer
+  * This is the mechanism behind `IoUringDriverTest`'s "release defers..." leaf flaking under concurrent load (its own comment already
+  * documents the symptom without naming the cause): once the ring exits, `release`'s `ringExited` fast path frees a handle's read buffer
   * immediately, bypassing the in-flight defer discipline entirely. It is also the likely source of a companion `CLOSE_WAIT` leak:
   * a connection that was simply OPEN (not yet closing) when the ring self-destructs has its fd abandoned, with no
   * owner left alive to ever close it once the peer eventually does.
@@ -97,7 +98,7 @@ class IoUringDriverReapTransientErrnoTest extends Test:
                     val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     drv.awaitRead(acceptedH, promise)
                     Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
-                        drv.closeHandle(acceptedH)
+                        drv.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(sock.close(client))
                         outcome match
                             case Result.Success(ReadOutcome.Bytes(got)) =>
@@ -110,7 +111,7 @@ class IoUringDriverReapTransientErrnoTest extends Test:
                             case Result.Failure(c: Closed) =>
                                 fail(
                                     s"the recv was failed Closed (\"$c\") instead of completing: a transient -ENOMEM tore the whole ring " +
-                                        "down (reapRcContinues did not recognize it), exactly the mechanism behind the closeHandle-defers " +
+                                        "down (reapRcContinues did not recognize it), exactly the mechanism behind the release-defers " +
                                         "flake and its companion CLOSE_WAIT leak under concurrent load"
                                 )
                             case other => fail(s"unexpected read outcome: $other")

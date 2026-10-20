@@ -10,8 +10,10 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.NetException
 import kyo.net.internal.TlsEngine
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Spy decorator over a real [[SocketBindings]].
@@ -983,7 +985,7 @@ end RecordingTlsEngine
   * injection is the only way to exercise the pool's start-resilience path (`IoDriverPool.start` continues past one driver that fails to
   * start).
   *
-  * The `onCancel` / `onCloseHandle` / `onClose` hooks let a test observe call order across drivers without a non-delegating subclass: each
+  * The `onCancel` / `onRelease` / `onClose` hooks let a test observe call order across drivers without a non-delegating subclass: each
   * fires after the call is recorded and before delegating to the real driver, so the decorator stays final and delegating.
   */
 final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[PosixHandle]:
@@ -1010,17 +1012,17 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
     // Count of cancel() calls.
     val cancelCalls: AtomicInteger = new AtomicInteger(0)
 
-    // Count of closeHandle() calls.
-    val closeHandleCalls: AtomicInteger = new AtomicInteger(0)
+    // Count of release() calls.
+    val releaseCalls: AtomicInteger = new AtomicInteger(0)
 
-    // Count of close() calls (the driver's own shutdown, not closeHandle).
+    // Count of close() calls (the driver's own shutdown, not release).
     val closeCalls: AtomicInteger = new AtomicInteger(0)
 
     // Callbacks fired after the corresponding call is recorded and before delegating to the real driver. They let a test record the order
-    // of cancel/closeHandle/close (within a connection or across pool drivers) without a non-delegating subclass. null means none set.
-    @volatile var onCancel: () => Unit      = null
-    @volatile var onCloseHandle: () => Unit = null
-    @volatile var onClose: () => Unit       = null
+    // of cancel/release/close (within a connection or across pool drivers) without a non-delegating subclass. null means none set.
+    @volatile var onCancel: () => Unit  = null
+    @volatile var onRelease: () => Unit = null
+    @volatile var onClose: () => Unit   = null
 
     // When true, the next start() call throws instead of delegating. The single authorized injection (see class scaladoc).
     @volatile var throwOnStart: Boolean = false
@@ -1120,12 +1122,14 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         real.cancel(handle)
     end cancel
 
-    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        discard(closeHandleCalls.getAndIncrement())
-        val hook = onCloseHandle
+    def life(handle: PosixHandle): HandleLife = real.life(handle)
+
+    def release(handle: PosixHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        discard(releaseCalls.getAndIncrement())
+        val hook = onRelease
         if hook != null then hook()
-        real.closeHandle(handle)
-    end closeHandle
+        real.release(handle, mode, released)
+    end release
 
     def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         real.releaseFd(handle, closeFd)

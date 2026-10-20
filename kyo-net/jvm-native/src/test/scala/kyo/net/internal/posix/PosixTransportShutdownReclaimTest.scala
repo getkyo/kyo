@@ -12,6 +12,7 @@ import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.TlsTestCert
 import kyo.net.internal.transport.Connection as InternalConnection
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Regression coverage for [[PosixTransport]]'s handshake-obligation reclaim paths: the exactly-once `disarm` gate a registered handshake shares
   * with whatever can reclaim it early, so a race between the handshake's own outcome and an early reclaim never double-frees the fd/engine and
@@ -87,7 +88,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                 // Mirrors handleAccepted's own teardown shape: reap through the driver, then the raw fd shutdown and engine free.
                 def teardown(): Unit =
                     reaped.set(true)
-                    driver.closeHandle(handle)
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     if handle.claimFdClose() then discard(spy.shutdown(accepted, PosixConstants.SHUT_RDWR))
                     engine.free()
                 end teardown

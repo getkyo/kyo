@@ -8,6 +8,7 @@ import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.scheduler.IOPromise
 
 /** Inbound-ciphertext BIO bound on the [[PollerIoDriver]] TLS read path (CWE-400 / TLS record amplification).
@@ -190,8 +191,8 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                                             val feedLens = recordingServer.feedLens.iterator().asScala.toList
                                             val maxIn    = recordingServer.maxInFlight.get()
                                             driver.submitEngineOp(() => clientEngine.free())
-                                            driver.closeHandle(acceptedH)
-                                            driver.closeHandle(clientH)
+                                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                            driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                             outcome match
                                                 case Result.Success(()) =>
                                                     // Byte-exact, in-order plaintext: the bound did not cost correctness.

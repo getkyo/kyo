@@ -7,7 +7,7 @@ import kyo.net.Test
 /** Tests for the Connection.Teardown machine: the connection teardown handoff is one named cell (Live -> ReleaseRequested -> Released), the
   * exactly-once release is the single CAS into Released, and the release waits on the WRITE-side drain only, never the inbound read-side drain.
   *
-  * Each leaf builds a Connection[Unit] over a SpyDriver that counts closeHandle calls.
+  * Each leaf builds a Connection[Unit] over a SpyDriver that counts release calls.
   */
 class TeardownTest extends Test:
 
@@ -15,7 +15,7 @@ class TeardownTest extends Test:
     given Frame = Frame.internal
 
     final private class SpyDriver extends IoDriver[Unit]:
-        val closeHandleCount = AtomicInt.Unsafe.init(0)
+        val releaseCount = AtomicInt.Unsafe.init(0)
 
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
@@ -25,10 +25,15 @@ class TeardownTest extends Test:
         def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit    = ()
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = discard(closeHandleCount.incrementAndGet())
-        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
-        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit             = op()
-        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+        private val handleLife                                                                 = HandleLife.init()
+        def life(handle: Unit): HandleLife                                                     = handleLife
+        def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+            discard(releaseCount.incrementAndGet())
+            released.completeUnitDiscard()
+        end release
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
             try cancel(handle)
             finally releaseFd(handle, closeFd)
         def close()(using AllowUnsafe, Frame): Unit = ()
@@ -37,7 +42,7 @@ class TeardownTest extends Test:
     end SpyDriver
 
     "released-fires-exactly-once-under-concurrent-closes" in {
-        // Several carriers close at once, each reaching the release: exactly one CAS into Released wins, so closeHandle runs exactly once.
+        // Several carriers close at once, each reaching the release: exactly one CAS into Released wins, so release runs exactly once.
         val spy  = new SpyDriver
         val conn = Connection.init[Unit]((), spy, 1)
         conn.start()
@@ -46,7 +51,7 @@ class TeardownTest extends Test:
             closers <- Kyo.foreach(Chunk.from(0 until 4))(_ => Fiber.init(latch.await.map(_ => Sync.defer(conn.close()))))
             _       <- latch.release
             _       <- Kyo.foreach(closers)(_.get)
-        yield assert(spy.closeHandleCount.get() == 1, s"exactly one Released transition, got ${spy.closeHandleCount.get()}")
+        yield assert(spy.releaseCount.get() == 1, s"exactly one Released transition, got ${spy.releaseCount.get()}")
         end for
     }
 
@@ -63,8 +68,8 @@ class TeardownTest extends Test:
             // Close: the fd teardown must NOT wait on the undrained inbound channel.
             conn.close()
             assert(
-                spy.closeHandleCount.get() == 1,
-                s"the fd is closed even with buffered inbound and no reader (no CLOSE_WAIT), got ${spy.closeHandleCount.get()}"
+                spy.releaseCount.get() == 1,
+                s"the fd is closed even with buffered inbound and no reader (no CLOSE_WAIT), got ${spy.releaseCount.get()}"
             )
             // The buffered bytes remain available to a later live consumer (closeAwaitEmpty keeps them for takers, not a close-drop).
             conn.inbound.poll() match

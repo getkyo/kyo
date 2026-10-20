@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.TlsEngine
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** SQ-full backpressure for a TLS write on an [[IoUringDriver]] handle, over a REAL io_uring ring: the TLS twin of
@@ -122,9 +123,9 @@ class IoUringTlsWriteSqFullTest extends Test:
                             assert(w == WriteResult.Done, "writeTls encrypts and returns Done; the send runs on the reap carrier")
                             Abort.run[Closed](peerP.safe.get).map { result =>
                                 writeH.tls = Absent
-                                drv.closeHandle(fillerH)
-                                drv.closeHandle(writeH)
-                                drv.closeHandle(peerH)
+                                drv.release(fillerH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                drv.release(writeH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                drv.release(peerH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(fillerClient))
                                 result match
                                     case Result.Success(ReadOutcome.Bytes(got)) =>

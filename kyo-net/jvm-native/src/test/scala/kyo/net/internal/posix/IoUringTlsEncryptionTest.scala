@@ -7,6 +7,7 @@ import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Guards the TLS-over-io_uring parity invariant on a REAL io_uring ring with a REAL BoringSSL engine: a TLS handle served by the
@@ -93,8 +94,8 @@ class IoUringTlsEncryptionTest extends Test:
                         fifoBarrier(drv).safe.get.andThen(reaped.safe.get).map { _ =>
                             val onWire = recvAvailable(peerFd)
                             handle.tls =
-                                Absent // detach so closeHandle frees the per-handle buffers but not the engine (withEngines frees it)
-                            drv.closeHandle(handle)
+                                Absent // detach so release frees the per-handle buffers but not the engine (withEngines frees it)
+                            drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(peerFd))
                             // (1) The engine was driven: writePlain ran at least once.
                             assert(
@@ -143,7 +144,7 @@ class IoUringTlsEncryptionTest extends Test:
                         promise.safe.get.map {
                             case ReadOutcome.Bytes(got) =>
                                 handle.tls = Absent
-                                drv.closeHandle(handle)
+                                drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(peerFd))
                                 // (1) The engine was fed the ciphertext (feedCiphertext ran).
                                 assert(

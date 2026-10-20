@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Reproduction + regression guard for the io_uring counterpart of the POSIX recv/send EINTR handling issue (CWE-252 mishandled
@@ -156,7 +157,7 @@ class IoUringDriverEintrRetryTest extends Test:
                     recording.eintrFired.safe.get.flatMap { _ =>
                         assert(sock.sendNow(client, Buffer.fromArray[Byte](payload), payload.length.toLong, 0).value == 16L)
                         Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
-                            drv.closeHandle(acceptedH)
+                            drv.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client))
                             outcome match
                                 case Result.Success(ReadOutcome.Bytes(got)) =>
@@ -198,7 +199,7 @@ class IoUringDriverEintrRetryTest extends Test:
                             // read is bounded by a deadline so the test fails fast rather than hanging if the bytes were dropped.
                             fifoBarrier(drv).safe.get.flatMap { _ =>
                                 Abort.run[Timeout](Async.timeout(5.seconds)(Sync.defer(recvAll(accepted, payload.length)))).map { got =>
-                                    drv.closeHandle(clientH)
+                                    drv.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                     discard(sock.close(accepted))
                                     got match
                                         case Result.Success(bytes) =>

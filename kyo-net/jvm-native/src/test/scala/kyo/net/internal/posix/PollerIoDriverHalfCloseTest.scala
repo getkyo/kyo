@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.scheduler.IOPromise
 
 /** Correctness guard for the orderly half-close (peer `shutdown(SHUT_WR)`) path of [[PollerIoDriver]] on a real epoll / kqueue poller.
@@ -113,7 +114,7 @@ class PollerIoDriverHalfCloseTest extends Test:
                         val r    = new HalfCloseReader(driver, acceptedH, acc, done)
                         r.start()
                         Abort.run[Timeout](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client))
                             outcome match
                                 case Result.Success(HalfCloseReader.EofSeen) =>

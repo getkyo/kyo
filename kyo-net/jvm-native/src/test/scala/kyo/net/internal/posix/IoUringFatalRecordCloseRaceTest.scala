@@ -8,6 +8,7 @@ import kyo.net.internal.TlsEngine
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduce-first regression guard for the io_uring fatal-TLS-record teardown race.
   *
@@ -20,7 +21,7 @@ import kyo.net.internal.transport.ReadOutcome
   * UNCONDITIONALLY -- including while ANOTHER kernel-owned op for the SAME handle is still genuinely in flight (the STARTTLS upgrade-handoff
   * design deliberately allows more than one recv in flight per handle across a handshake). A second op that already captured a reference to
   * those buffers before the free would then touch freed off-heap memory when it runs, surfacing as a native "Already closed" failure far from
-  * the actual defect. `IoUringDriver`'s real call site routes `onFatal` through `closeHandle(handle)` instead, which defers the actual free
+  * the actual defect. `IoUringDriver`'s real call site routes `onFatal` through `release(handle)` instead, which defers the actual free
   * until every op still in flight for the handle (including whichever read hit the fatal record) has drained via the driver's own bookkeeping.
   *
   * This test drives the exact mechanism directly (no `Connection`/`Transport`, no STARTTLS, no timing dependence): a REAL in-flight recv is
@@ -32,7 +33,7 @@ import kyo.net.internal.transport.ReadOutcome
   *
   * The `onFatal` callback the test itself supplies distinguishes the two: `requestClose()` (the shape a bare,
   * guard-only teardown would take on io_uring) reproduces the bug (buffers freed immediately, out from under the still-in-flight recv);
-  * `closeHandle(handle)` is the actual production wiring at [[IoUringDriver]]'s real call site. Both leaves exercise the identical
+  * `release(handle)` is the actual production wiring at [[IoUringDriver]]'s real call site. Both leaves exercise the identical
   * shared `feedAndDecrypt` fatal-record path; only the `onFatal` hook differs, isolating exactly the teardown mechanism.
   *
   * Engine ownership (avoiding a SEPARATE double-free hazard in the test itself, not the production defect under test): the server engine is
@@ -156,7 +157,7 @@ class IoUringFatalRecordCloseRaceTest extends Test:
             }
         }
 
-        "closeHandle(handle) onFatal (the real IoUringDriver wiring) defers the free until the in-flight recv is accounted for" in {
+        "release(handle) onFatal (the real IoUringDriver wiring) defers the free until the in-flight recv is accounted for" in {
             PosixTestSockets.assumeUring()
             TlsRealEngines.assumeTlsReady()
             given Frame = Frame.internal
@@ -171,9 +172,9 @@ class IoUringFatalRecordCloseRaceTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val serverEngine = TlsRealEngines.singleEngine(isServer = true)
                     val clientEngine = TlsRealEngines.singleEngine(isServer = false)
-                    // The driver's OWN closeHandle machinery (triggered inside the test body below) asynchronously touches serverEngine on the
+                    // The driver's OWN release machinery (triggered inside the test body below) asynchronously touches serverEngine on the
                     // reap carrier (shutdownTls's engine.shutdownStep(), a native SSL_shutdown call) well AFTER this test body's result value
-                    // completes: closeHandle only ENQUEUES its cancel/shutdown/registerDeferredClose work. A plain Sync.ensure cleanup racing
+                    // completes: release only ENQUEUES its cancel/shutdown/registerDeferredClose work. A plain Sync.ensure cleanup racing
                     // that async work with its own serverEngine.free() is a genuine native use-after-free (SSL_shutdown on an already-freed
                     // session) -- a hazard in THIS TEST's construction, not the production defect under test. The body therefore waits for
                     // acceptedH.tls to actually go Absent (the driver's own close fully settled: cancel -> shutdownTls -> the SHUT_RD-forced
@@ -187,11 +188,17 @@ class IoUringFatalRecordCloseRaceTest extends Test:
                         driver.awaitRead(acceptedH, recvPromise)
                         val corrupted = corruptedApplicationRecord(clientEngine)
                         // The real production onFatal (IoUringDriver.scala's actual read-completion call site).
-                        val observed = feedFatalAndObserve(driver, serverEngine, acceptedH, corrupted, () => driver.closeHandle(acceptedH))
+                        val observed = feedFatalAndObserve(
+                            driver,
+                            serverEngine,
+                            acceptedH,
+                            corrupted,
+                            () => driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                        )
                         observed.safe.get.map { tlsSurvived =>
                             assert(
                                 tlsSurvived,
-                                "closeHandle(handle) must defer the free while the armed recv is still in flight (handle.tls must still be " +
+                                "release(handle) must defer the free while the armed recv is still in flight (handle.tls must still be " +
                                     "Present); freeing here would UAF the still-outstanding recv's eventual CQE processing"
                             )
                             discard(sock.close(client))

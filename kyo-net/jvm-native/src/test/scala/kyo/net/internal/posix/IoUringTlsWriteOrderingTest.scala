@@ -7,6 +7,7 @@ import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 import kyo.test.AssertScope
 
@@ -149,8 +150,8 @@ class IoUringTlsWriteOrderingTest extends Test:
                             // first so the invariant below reads settled state instead of racing the reap carrier.
                             awaitQuiesced(drv, recording, handle).map { _ =>
                                 handle.tls = Absent
-                                drv.closeHandle(handle)
-                                drv.closeHandle(peerHandle)
+                                drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                drv.release(peerHandle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 assert(
                                     got.toList == expected,
                                     s"conservation: decrypted wire bytes must equal p1 ++ p2 once each in order.\n  expected (${expected.size}): $expected\n  got (${got.length}): ${got.toList}"
@@ -191,8 +192,8 @@ class IoUringTlsWriteOrderingTest extends Test:
                             // Barrier first: see the conservation leaf's comment above.
                             awaitQuiesced(drv, recording, handle).map { _ =>
                                 handle.tls = Absent
-                                drv.closeHandle(handle)
-                                drv.closeHandle(peerHandle)
+                                drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                drv.release(peerHandle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 assert(
                                     got.toList == expected,
                                     s"partial conservation: decrypted wire bytes must equal p1 ++ p2 once each in order (got ${got.length} of ${expected.size})"
@@ -233,8 +234,8 @@ class IoUringTlsWriteOrderingTest extends Test:
                             // Barrier first: see the conservation leaf's comment above.
                             awaitQuiesced(drv, recording, handle).map { _ =>
                                 handle.tls = Absent
-                                drv.closeHandle(handle)
-                                drv.closeHandle(peerHandle)
+                                drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                drv.release(peerHandle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 assert(
                                     got.toList == expected,
                                     s"three-write conservation: decrypted wire bytes must equal the three plaintexts concatenated in order (got ${got.length} of ${expected.size})"

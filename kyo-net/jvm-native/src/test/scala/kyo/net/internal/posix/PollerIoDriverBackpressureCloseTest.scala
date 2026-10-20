@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.NetException
 import kyo.net.Test
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.util.GrowableByteBuffer
 
 /** Reproduction + regression guard: a write-backpressure waiter parked on a handle while it is being closed must be FAILED with Closed, never
@@ -119,9 +120,9 @@ class PollerIoDriverBackpressureCloseTest extends Test:
                         assert(!byCancel.done() && !byRelease.done(), "both waiters must be parked on their high-water tails")
                         driver.cancel(cancelled)
                         failedClosed("the waiter after cancel", byCancel)
-                        driver.closeHandle(released)
+                        driver.release(released, ReleaseMode.Graceful, Promise.Unsafe.init())
                         failedClosed("the waiter after the release", byRelease)
-                        driver.closeHandle(cancelled)
+                        driver.release(cancelled, ReleaseMode.Graceful, Promise.Unsafe.init())
                         driver.close()
                         discard(sock.close(cancelPeer))
                         discard(sock.close(releasePeer))

@@ -8,6 +8,7 @@ import kyo.net.Test
 import kyo.net.internal.TlsEngine
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Close racing a BACKPRESSURED TLS flush in [[PollerIoDriver]]: a use-after-free / double-free / hang probe for the write-backpressure path.
@@ -25,7 +26,7 @@ import kyo.net.internal.transport.WriteResult
   *   - close while the flush is PARKED on writability (the peer never reads, so the real socket never becomes writable and the flush stays
   *     parked deterministically);
   *   - close fired from INSIDE an in-flight re-submitted flush (the peer is drained so the real socket becomes writable and the re-flush runs;
-  *     `RecordingSocketBindings.onSend` fires `closeHandle` re-entrantly while `beginWrite` is held);
+  *     `RecordingSocketBindings.onSend` fires `release` re-entrantly while `beginWrite` is held);
   *   - a looped genuinely-concurrent close vs the real writable-event re-flush race.
   *
   * Coherence: the backend is a [[RecordingPollerBackend]] over the real epoll/kqueue, the socket is a real `smallBufferedPair`, and the engine is
@@ -48,7 +49,7 @@ class CloseDuringBackpressuredFlushTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    /** Allocate a real BoringSSL client engine the DRIVER owns (freed once via `closeHandle`, so `singleEngine` not `withEngines` to avoid a
+    /** Allocate a real BoringSSL client engine the DRIVER owns (freed once via `release`, so `singleEngine` not `withEngines` to avoid a
       * double-free of the native session). The engine is NOT handshaked here: it is handshaked on the driver's engine FIFO worker via
       * [[handshakeOnDriver]] so the session is created, handshaked, and later written on one carrier (a cross-carrier real BoringSSL session
       * corrupts).
@@ -141,7 +142,7 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         _ = assert(handle.pendingCipher.exists(_.size > handle.pendingCipherSent), "pendingCipher must hold unsent bytes")
                         // Close while the flush is parked. requestClose defers the free to endWrite; two fifoBarriers prove it ran (the close
                         // submits the deferred free op, which a barrier behind it completes after).
-                        _ = driver.closeHandle(handle)
+                        _ = driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         _ <- fifoBarrier(driver).safe.get
                         _ <- fifoBarrier(driver).safe.get
                         // freeResources runs the real close(fd) last, on whichever carrier releases the last guard holder, after it
@@ -159,10 +160,17 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         discard(assert(handle.pendingCipher.isEmpty, "pendingCipher must be cleared by the close"))
                         discard(assert(handle.pendingCipherSent == 0, "pendingCipherSent must be reset by the close"))
                         discard(assert(handle.tls.isEmpty, "the engine slot must be cleared once freed"))
-                        discard(assert(after == WriteResult.Error, s"a write on a closed handle must bail Error, got $after"))
+                        discard(assert(
+                            after match
+                                case WriteResult.Error(_) => true
+                                case _                    =>
+                                    false
+                            ,
+                            s"a write on a closed handle must bail Error, got $after"
+                        ))
                         discard(assert(
                             spy.closeCounts.getOrDefault(writeFd, 0) == 1,
-                            s"closeHandle must have closed writeFd=$writeFd exactly once, counts=${spy.closeCounts}"
+                            s"release must have closed writeFd=$writeFd exactly once, counts=${spy.closeCounts}"
                         ))
                         assert(engine.freeCount.get() == freedBefore, "the post-close write must not re-free the engine")
                     end for
@@ -182,7 +190,7 @@ class CloseDuringBackpressuredFlushTest extends Test:
                 // The close hook is installed only AFTER the initial write's flush has EAGAINed and armed writability, so the initial flush's
                 // sends do not fire it. The spy's onSend fires BEFORE the real send delegate (while beginWrite is held) on the first send of the
                 // RE-SUBMITTED flush after the peer is drained. The drain makes the real socket writable, so the real backend fires a real write
-                // event the poll loop turns into the re-flush; the hook fires closeHandle re-entrantly with the free deferred to endWrite.
+                // event the poll loop turns into the re-flush; the hook fires release re-entrantly with the free deferred to endWrite.
                 PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (writeFd, peerFd) =>
                     val payload    = Array.fill[Byte](600000)(43.toByte)
                     val closeFired = new AtomicBoolean(false)
@@ -218,10 +226,10 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         // Install the close hook NOW (the initial flush has armed): it fires on the first send of the re-flush.
                         _ = spy.onSend = () =>
                             if closeFired.compareAndSet(false, true) then
-                                driverBox.get().closeHandle(handleBox.get())
+                                driverBox.get().release(handleBox.get(), ReleaseMode.Graceful, Promise.Unsafe.init())
                                 hookFired.completeDiscard(Result.succeed(()))
                         // Drain the peer fully: the real socket becomes writable, the real backend fires the write event, and the poll loop
-                        // re-submits the flush. The flush acquires beginWrite, calls sockets.send -> onSend fires closeHandle re-entrantly.
+                        // re-submits the flush. The flush acquires beginWrite, calls sockets.send -> onSend fires release re-entrantly.
                         _ = drainAll(peerFd)
                         // Latch on the close hook actually firing inside the re-flush (a real Promise.Unsafe completed by the onSend hook).
                         _ <- hookFired.safe.get
@@ -244,9 +252,16 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         discard(assert(handle.tls.isEmpty, "the engine slot must be cleared once freed"))
                         discard(assert(
                             spy.closeCounts.getOrDefault(writeFd, 0) == 1,
-                            s"closeHandle must have closed writeFd=$writeFd exactly once, counts=${spy.closeCounts}"
+                            s"release must have closed writeFd=$writeFd exactly once, counts=${spy.closeCounts}"
                         ))
-                        assert(after == WriteResult.Error, s"a write on the closed handle must bail Error, got $after")
+                        assert(
+                            after match
+                                case WriteResult.Error(_) => true
+                                case _                    =>
+                                    false
+                            ,
+                            s"a write on the closed handle must bail Error, got $after"
+                        )
                     end for
                 }
         }
@@ -292,13 +307,14 @@ class CloseDuringBackpressuredFlushTest extends Test:
                             _ = assert(w == WriteResult.Done, s"iter $i: backpressured write should return Done, got $w")
                             _ <- backend.registeredWrite(writeFd).safe.get
                             // Race: close on one fiber, draining the peer (which fires the real writable event and re-submits a flush) on another.
-                            closeFiber <- Fiber.initUnscoped(Sync.defer(driver.closeHandle(handle)))
-                            fireFiber  <- Fiber.initUnscoped(Sync.defer(drainAll(peerFd)))
-                            _          <- closeFiber.get
-                            _          <- fireFiber.get
-                            _          <- fifoBarrier(driver).safe.get
-                            _          <- fifoBarrier(driver).safe.get
-                            after      <- Sync.defer(driver.write(handle, Span.fromUnsafe(Array[Byte](9)), 0))
+                            closeFiber <-
+                                Fiber.initUnscoped(Sync.defer(driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())))
+                            fireFiber <- Fiber.initUnscoped(Sync.defer(drainAll(peerFd)))
+                            _         <- closeFiber.get
+                            _         <- fireFiber.get
+                            _         <- fifoBarrier(driver).safe.get
+                            _         <- fifoBarrier(driver).safe.get
+                            after     <- Sync.defer(driver.write(handle, Span.fromUnsafe(Array[Byte](9)), 0))
                         yield
                             driver.close()
                             PosixTestSockets.closePeerForEof(spy, peerFd)
@@ -310,7 +326,14 @@ class CloseDuringBackpressuredFlushTest extends Test:
                             discard(assert(handle.pendingCipher.isEmpty, s"iter $i: pendingCipher must be cleared"))
                             discard(assert(handle.pendingCipherSent == 0, s"iter $i: pendingCipherSent must be reset"))
                             discard(assert(handle.tls.isEmpty, s"iter $i: engine slot must be cleared"))
-                            discard(assert(after == WriteResult.Error, s"iter $i: write on closed handle must be Error, got $after"))
+                            discard(assert(
+                                after match
+                                    case WriteResult.Error(_) => true
+                                    case _                    =>
+                                        false
+                                ,
+                                s"iter $i: write on closed handle must be Error, got $after"
+                            ))
                         end for
                     }
                 end oneRace

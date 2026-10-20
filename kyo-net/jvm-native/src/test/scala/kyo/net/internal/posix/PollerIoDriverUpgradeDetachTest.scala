@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Reproduce-first coverage for the STARTTLS detach-vs-read strands on the poller backends: a pump read promise the upgrade detach cannot
@@ -60,7 +61,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 Sync.ensure(Sync.defer {
-                    driver.closeHandle(handle)
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     discard(sock.close(client).poll())
                 }) {
                     // The transport order: flags, then the detach sweep, then the durable marker. The stray pump re-arm lands strictly
@@ -97,7 +98,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                 val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val flight  = Array[Byte](22, 33, 44)
                 Sync.ensure(Sync.defer {
-                    driver.closeHandle(handle)
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     discard(sock.close(client).poll())
                 }) {
                     // A legitimately armed pump read, then the upgrade window opens and the peer's first flight arrives BEFORE the detach
@@ -115,7 +116,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                         driver.awaitRead(bHandle, bp)
                         assert(driver.write(bClientH, Span.fromUnsafe(Array[Byte](1)), 0) == WriteResult.Done)
                         bp.safe.get.map { barrier =>
-                            driver.closeHandle(bHandle)
+                            driver.release(bHandle, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(bClient).poll())
                             assert(barrier.isInstanceOf[ReadOutcome.Bytes], s"barrier round-trip got $barrier")
                         }
@@ -169,7 +170,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 Sync.ensure(Sync.defer {
-                    driver.closeHandle(handle)
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     discard(sock.close(client).poll())
                 }) {
                     // The stray deposit lands after the sweep but BEFORE the isUpgraded write: the self-re-check cannot see the marker yet,
@@ -210,7 +211,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 Sync.ensure(Sync.defer {
-                    driver.closeHandle(handle)
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     discard(sock.close(client).poll())
                 }) {
                     handle.upgradeActive = true

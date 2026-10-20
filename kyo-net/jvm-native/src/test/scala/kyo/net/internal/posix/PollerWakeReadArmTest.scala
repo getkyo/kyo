@@ -11,7 +11,7 @@ import kyo.net.Test
   * Background: [[PollerWakeEngineOpTest]] pins the identical gap on `submitEngineOp`, which fires an UNCONDITIONAL wake for this reason: a
   * `wakePending.compareAndSet(false, true)` guard can observe a STALE `true` -- one left over from an EARLIER wake whose
   * underlying OS-level signal the poll loop already consumed this cycle, not one still in flight -- and skip its own wake entirely.
-  * `submitChange` (the read-registration and cancel/deregister path: `awaitRead`, `cancel`, `closeHandle`) would carry the identical
+  * `submitChange` (the read-registration and cancel/deregister path: `awaitRead`, `cancel`, `release`) would carry the identical
   * stale-coalescing window on the read side if it gated its wake behind `wakePending` instead of firing
   * unconditionally.
   *

@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Byte CONSERVATION for a single large raw (plaintext) write on a [[IoUringDriver]] handle, over a REAL io_uring ring.
@@ -95,8 +96,8 @@ class IoUringRawWritePartialSendTest extends Test:
                     // Async.timeout is ONLY the deadlock ceiling: a conserving drain finishes far inside it; the dropped-tail defect stalls the
                     // drain, so the Timeout fires and is converted to a failure (the drop manifests as the drain never reaching the payload length).
                     Abort.run[Timeout](Async.timeout(10.seconds)(drainPeer(drv, peerHandle, payload.length))).map { outcome =>
-                        drv.closeHandle(handle)
-                        drv.closeHandle(peerHandle)
+                        drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
+                        drv.release(peerHandle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         outcome match
                             case Result.Failure(_: Timeout) =>
                                 fail(s"conservation: the drain stalled; the peer never received all ${payload.length} bytes (tail dropped)")

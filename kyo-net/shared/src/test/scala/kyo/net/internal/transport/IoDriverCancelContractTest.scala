@@ -177,8 +177,8 @@ class IoDriverCancelContractTest extends Test:
             val result = s.write(Span.fromUnsafe(Array.fill[Byte](64)(1)))
             assert(
                 result match
-                    case WriteResult.Error => true
-                    case _                 => false
+                    case WriteResult.Error(_) => true
+                    case _                    => false
                 ,
                 s"a write on a released handle must report Error, got $result"
             )

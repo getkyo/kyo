@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.internal.transport.CancelCell
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReleaseMode
 
 /** The posix drivers' [[CancelCell]]s: the readiness poller, io_uring, and the blocking-reader fallback. Every driver closes descriptors
   * through a [[RecordingSocketBindings]], so each cell counts closes. Real sockets and real kernel interfaces throughout.
@@ -63,7 +64,7 @@ object PosixCancelCells:
                     // Once closeListener took the claim the driver owns the close, which it may still be deferring behind the fd's
                     // withdrawal. Closing here as well would close the number again after another leaf has reused it.
                     case Kind.Listening => if handle.life.armable then discard(sock.close(fd))
-                    case _              => if !handle.isClosing() then driver.closeHandle(handle)
+                    case _              => if !handle.isClosing() then driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 end match
                 peer.foreach(p => discard(sock.close(p)))
                 // The driver marshals the target when it preps the connect on its own carrier, so the buffer is freed behind that prep.
@@ -166,7 +167,7 @@ object PosixCancelCells:
                     // The peer is closed first: a read(2) still blocked on the handle returns on its FIN, so the release can complete.
                     Scope.ensure(Sync.defer {
                         discard(sock.close(peer))
-                        if !handle.isClosing() then driver.closeHandle(handle)
+                        if !handle.isClosing() then driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     }).andThen(new CancelCell.DriverSubject[PosixHandle](driver, handle):
                         def peerSend(bytes: Array[Byte])(using AllowUnsafe, Frame): Unit < Async =
                             val buf = Buffer.fromArray[Byte](bytes)

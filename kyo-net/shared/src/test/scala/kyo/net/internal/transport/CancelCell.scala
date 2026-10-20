@@ -95,8 +95,8 @@ object CancelCell:
             val chunk = Span.fromUnsafe(new Array[Byte](64 * 1024))
             Loop(0) { written =>
                 driver.write(handle, chunk, 0) match
-                    case WriteResult.Done  => Loop.continue(written + chunk.size)
-                    case WriteResult.Error =>
+                    case WriteResult.Done     => Loop.continue(written + chunk.size)
+                    case WriteResult.Error(_) =>
                         throw new IllegalStateException(s"a write failed after $written bytes while filling the send buffer")
                     case _ => Loop.done(())
             }
@@ -106,7 +106,7 @@ object CancelCell:
 
         def cancel()(using AllowUnsafe, Frame): Unit           = driver.cancel(handle)
         def detachForUpgrade()(using AllowUnsafe, Frame): Unit = driver.detachForUpgrade(handle)
-        def release()(using AllowUnsafe, Frame): Unit          = driver.closeHandle(handle)
+        def release()(using AllowUnsafe, Frame): Unit          = driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
     end DriverSubject
 
 end CancelCell

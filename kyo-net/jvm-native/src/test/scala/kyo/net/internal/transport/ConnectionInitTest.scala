@@ -11,7 +11,7 @@ import kyo.net.internal.posix.SocketBindings
 
 /** Unit tests for the driver-backed Connection.init wiring.
   *
-  * Tests unique to the driver wiring path (idempotent close, cancel-before-closeHandle ordering, inbound backpressure) over a real
+  * Tests unique to the driver wiring path (idempotent close, cancel-before-release ordering, inbound backpressure) over a real
   * PollerIoDriver wrapped in a RecordingIoDriver. Duplicate tests (init creates channels and handle, isOpen, start registers first read)
   * are removed: they are covered by ConnectionTest and TransportUnsafeTest respectively.
   *
@@ -79,9 +79,9 @@ class ConnectionInitTest extends Test:
             conn.close()
             conn.close()
             ownerPass(spy, handle).andThen {
-                // The Released CAS in Connection.release ensures cancel and closeHandle run exactly once.
+                // The Released CAS in Connection.release ensures cancel and release run exactly once.
                 assert(spy.cancelCalls.get() == 1, s"cancel must be called exactly once, got ${spy.cancelCalls.get()}")
-                assert(spy.closeHandleCalls.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCalls.get()}")
+                assert(spy.releaseCalls.get() == 1, s"release must be called exactly once, got ${spy.releaseCalls.get()}")
                 spy.close()
                 discard(sock.close(peerFd))
                 succeed
@@ -89,14 +89,14 @@ class ConnectionInitTest extends Test:
         }
     }
 
-    // The onCancel/onCloseHandle hooks record the order into a ListBuffer from the one owner op that releases the handle.
-    "close closes channels and calls driver cancel before closeHandle" in {
+    // The onCancel/onRelease hooks record the order into a ListBuffer from the one owner op that releases the handle.
+    "close closes channels and calls driver cancel before release" in {
         assumePoller()
         val real       = PollerIoDriver.init()
         val closeOrder = scala.collection.mutable.ListBuffer[String]()
         val spy        = new RecordingIoDriver(real)
         spy.onCancel = () => closeOrder += "cancel"
-        spy.onCloseHandle = () => closeOrder += "closeHandle"
+        spy.onRelease = () => closeOrder += "release"
 
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -109,8 +109,8 @@ class ConnectionInitTest extends Test:
             assert(conn.outbound.closed(), "outbound channel must be closed")
             ownerPass(spy, handle).andThen {
                 assert(spy.cancelCalls.get() == 1, "cancel must be called exactly once")
-                assert(spy.closeHandleCalls.get() == 1, "closeHandle must be called exactly once")
-                assert(closeOrder.toList == List("cancel", "closeHandle"), s"cancel must precede closeHandle, got $closeOrder")
+                assert(spy.releaseCalls.get() == 1, "release must be called exactly once")
+                assert(closeOrder.toList == List("cancel", "release"), s"cancel must precede release, got $closeOrder")
                 spy.close()
                 discard(sock.close(peerFd))
                 succeed

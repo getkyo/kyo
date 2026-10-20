@@ -5,6 +5,7 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 import kyo.scheduler.IOPromise
 
@@ -117,7 +118,7 @@ class PollerIoDriverPromiseReuseTest extends Test:
                         afterReused.arm()
                         assert(driver.write(clientH, Span.fromUnsafe(payload), 0) == WriteResult.Done)
                         afterReused.awaitOne().map { got =>
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client).poll())
                             val ReadOutcome.Bytes(span) = got.runtimeChecked
                             assert(span.toArray.toList == payload.toList, "the handle must re-arm and deliver cleanly after an interrupt")

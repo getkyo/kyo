@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Adaptive receive-buffer predictor. The per-handle predictor grows [[PosixHandle.readBuffer]] when reads keep filling it, via
@@ -141,7 +142,7 @@ class PosixHandleAdaptiveBufferTest extends Test:
                         val tag = 99
                         sendFull(tag).andThen(readOne(fullPayload(tag))).map { _ =>
                             assert(acceptedH.readBufferSize > seed, "the buffer should have grown during the run")
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(client).poll())
                         }
                     }

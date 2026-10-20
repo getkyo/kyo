@@ -8,6 +8,7 @@ import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Tests the completion-native [[IoUringDriver]] over a REAL io_uring ring.
@@ -24,7 +25,7 @@ import kyo.net.internal.transport.WriteResult
   *
   * Covers: the completion contract (echo bytes equal, res==0 EOF, res<0 Closed naming the real errno, an SQ-full recv parked then re-armed to
   * deliver); the conditional park (indefinite when wake-armed with NODROP confirmed and no stalled ops; bounded ReapTimeoutNs as fallback for
-  * older kernels, unarmed wake, or stalled ops); the close ordering (an in-flight buffer is never freed until its CQE is reaped; closeHandle
+  * older kernels, unarmed wake, or stalled ops); the close ordering (an in-flight buffer is never freed until its CQE is reaped; release
   * cancels then defers PosixHandle.close until the handle drains; per-write buffer closed only on reap; shared arena); and the accept contract
   * (positive CQE yields the accepted fd; a failed accept yields Closed naming the errno; an SQ-full accept parked then re-armed to complete;
   * re-arm across two accepts).
@@ -93,8 +94,8 @@ class IoUringDriverTest extends Test:
                     val w         = driver.write(clientH, payload, 0)
                     assert(w == WriteResult.Done, s"write result=$w")
                     readVia(driver, acceptedH).map { got =>
-                        driver.closeHandle(clientH)
-                        driver.closeHandle(acceptedH)
+                        driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                        driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         val ReadOutcome.Bytes(span) = got.runtimeChecked
                         assert(span.toArray.toList == payload.toArray.toList)
                     }
@@ -114,7 +115,7 @@ class IoUringDriverTest extends Test:
                             val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             driver.awaitRead(acceptedH, promise)
                             // Close the handle while the recv SQE is in flight: cancel fails the promise, the buffer is freed only on reap.
-                            driver.closeHandle(acceptedH)
+                            driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             Abort.run[Closed](promise.safe.get).map { result =>
                                 discard(sock.close(client))
                                 result match
@@ -289,7 +290,7 @@ class IoUringDriverTest extends Test:
                     // The peer sends exactly 16 bytes; the real recv CQE carries res=16 and the driver delivers exactly those bytes.
                     assert(sock.sendNow(client, Buffer.fromArray[Byte](payload), payload.length.toLong, 0).value == 16L)
                     readVia(drv, acceptedH).map { got =>
-                        drv.closeHandle(acceptedH)
+                        drv.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(sock.close(client))
                         val ReadOutcome.Bytes(span) = got.runtimeChecked
                         assert(span.toArray.toList == payload.toList, s"got ${span.toArray.toList}")
@@ -306,7 +307,7 @@ class IoUringDriverTest extends Test:
                     // Closing the peer cleanly makes the real recv CQE arrive with res=0 (EOF).
                     PosixTestSockets.closePeerForEof(sock, client)
                     readVia(drv, acceptedH).map { got =>
-                        drv.closeHandle(acceptedH)
+                        drv.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         assert(got == ReadOutcome.PeerFin, s"expected EOF (PeerFin), got $got")
                     }
                 }
@@ -326,7 +327,7 @@ class IoUringDriverTest extends Test:
                     val econnreset = 104
                     PosixTestSockets.resetPeer(sock, client)
                     Abort.run[Closed](promise.safe.get).map { result =>
-                        drv.closeHandle(acceptedH)
+                        drv.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         result match
                             case Result.Success(ReadOutcome.Failed(cause)) =>
                                 assert(cause.getMessage.contains(s"errno=$econnreset"), s"message=${cause.getMessage}")
@@ -369,8 +370,8 @@ class IoUringDriverTest extends Test:
                             gate.countDown()
                             assert(sent == 8L, s"peer send must deliver the full payload, sent $sent")
                             Abort.run[Closed](pB.safe.get).map { result =>
-                                drv.closeHandle(accAH)
-                                drv.closeHandle(accBH)
+                                drv.release(accAH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                drv.release(accBH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(clientA))
                                 discard(sock.close(clientB))
                                 result match
@@ -478,7 +479,7 @@ class IoUringDriverTest extends Test:
                             // The driver closes the per-write buffer in complete() (releaseBuffer) BEFORE cqe_seen, so awaiting the reap latch is
                             // the deterministic "send CQE reaped, buffer lifecycle ran" signal. The buffer must be closed by then, not before.
                             reaped.safe.get.map { _ =>
-                                drv.closeHandle(clientH)
+                                drv.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(accepted))
                                 assert(
                                     before.exists(_.isClosed),
@@ -491,7 +492,7 @@ class IoUringDriverTest extends Test:
             }.map(_ => succeed)
         }
 
-        "closeHandle defers PosixHandle.close until the in-flight read CQE is reaped" in {
+        "release defers PosixHandle.close until the in-flight read CQE is reaped" in {
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
@@ -501,26 +502,26 @@ class IoUringDriverTest extends Test:
                     drv.awaitRead(acceptedH, promise) // recv SQE with no data: stays in flight
                     // awaitRead only ENQUEUES the arm onto the engine FIFO (submitDeferredRecv); the actual submitRecv -- and the register()
                     // call that increments the handle's in-flight count -- runs later, on the reap carrier. Wait for handle.recvInFlight
-                    // directly (the exact field closeHandle's deferral decision reads), not recording.submittedKeys: kyo_uring_sqe_set_data64
+                    // directly (the exact field release's deferral decision reads), not recording.submittedKeys: kyo_uring_sqe_set_data64
                     // (which keys submittedKeys) runs a few lines BEFORE `handle.recvInFlight = true` in submitRecv's successful branch, so
-                    // submittedKeys.nonEmpty can be true while recvInFlight is still false -- a narrower but real race in which closeHandle
+                    // submittedKeys.nonEmpty can be true while recvInFlight is still false -- a narrower but real race in which release
                     // would free the buffer immediately in that window (it surfaces only under concurrency, not in isolation).
                     // A separate failure mode of this same assertion has a different cause: reapRcContinues can under-classify a
                     // transient `-ENOMEM` from kyo_uring_submit_and_wait_timeout (plausible under many concurrently-running rings) as a fatal
-                    // ring rc, self-destructing the whole ring mid-test; closeHandle's ringExited fast path then frees the buffer immediately
+                    // ring rc, self-destructing the whole ring mid-test; release's ringExited fast path then frees the buffer immediately
                     // regardless of recvInFlight. See IoUringDriverReapTransientErrnoTest for the deterministic reproduction.
                     awaitCondition(5.seconds)(acceptedH.recvInFlight).map { armed =>
                         assert(armed, "recv's submitRecv never ran (a hang, not the close-ordering hazard under test)")
-                        // closeHandle while the recv SQE is in flight: it must NOT free the read buffer while the kernel still owns it.
-                        // closeHandle only ENQUEUES the close onto the engine FIFO, and registerDeferredClose itself forces the pending
-                        // recv to EOF via shutdown(SHUT_RD) (the deferral never waits on the peer), so a direct assert after closeHandle
+                        // release while the recv SQE is in flight: it must NOT free the read buffer while the kernel still owns it.
+                        // release only ENQUEUES the close onto the engine FIFO, and registerDeferredClose itself forces the pending
+                        // recv to EOF via shutdown(SHUT_RD) (the deferral never waits on the peer), so a direct assert after release
                         // returns races the reap carrier and can observe the post-discharge state (the forced EOF reaps and the deferred
                         // close runs in between). Probe the deferred window from inside the FIFO instead: the close op runs first, the
                         // probe op runs immediately after it in the same drainEngineOps pass, strictly before that turn's drainReady can
                         // reap the forced-EOF CQE, so the probe deterministically observes the registered-but-undischarged window.
                         val probed = Promise.Unsafe.init[Boolean, Abort[Closed]]()
                         drv.submitEngineOp { () =>
-                            drv.closeHandle(acceptedH)
+                            drv.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             drv.submitEngineOp { () =>
                                 probed.completeDiscard(Result.succeed(acceptedH.readBuffer.isClosed))
                             }
@@ -556,7 +557,7 @@ class IoUringDriverTest extends Test:
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     assert(sock.sendNow(client, Buffer.fromArray[Byte](Array[Byte](42)), 1L, 0).value == 1L)
                     readVia(drv, acceptedH).map { got =>
-                        drv.closeHandle(acceptedH)
+                        drv.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(sock.close(client))
                         val ReadOutcome.Bytes(span) = got.runtimeChecked
                         assert(span.toArray.toList == List[Byte](42), s"got ${span.toArray.toList}")
@@ -573,7 +574,7 @@ class IoUringDriverTest extends Test:
                     val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
                     drv.awaitAccept(serverH, promise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
                     promise.safe.get.map { fd =>
-                        drv.closeHandle(serverH)
+                        drv.release(serverH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(sock.close(clientFd))
                         if fd >= 0 then discard(sock.close(fd))
                         assert(fd >= 0, s"expected a valid accepted fd, got $fd")
@@ -592,7 +593,7 @@ class IoUringDriverTest extends Test:
                     val promise    = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
                     drv.awaitAccept(connectedH, promise)
                     promise.safe.getResult.map { result =>
-                        drv.closeHandle(connectedH)
+                        drv.release(connectedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(sock.close(client))
                         result match
                             case Result.Failure(cause) =>
@@ -634,8 +635,8 @@ class IoUringDriverTest extends Test:
                             gate.countDown()
                             connectTo(serverFd).map { clientFd =>
                                 Abort.run[Closed](ap.safe.get).map { result =>
-                                    drv.closeHandle(readH)
-                                    drv.closeHandle(listenH)
+                                    drv.release(readH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                    drv.release(listenH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                     discard(sock.close(clientR))
                                     discard(sock.close(clientFd))
                                     result match
@@ -667,7 +668,7 @@ class IoUringDriverTest extends Test:
                                 val p2 = Promise.Unsafe.init[Int, Abort[Closed]]()
                                 drv.awaitAccept(serverH, p2.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
                                 p2.safe.get.map { fd2 =>
-                                    drv.closeHandle(serverH)
+                                    drv.release(serverH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                     discard(sock.close(c1)); discard(sock.close(c2))
                                     if fd1 >= 0 then discard(sock.close(fd1))
                                     if fd2 >= 0 then discard(sock.close(fd2))
@@ -700,7 +701,7 @@ class IoUringDriverTest extends Test:
                         }
                         owed.safe.get.map { (atDecision, inTail) =>
                             handle.tls = Absent
-                            driver.closeHandle(handle)
+                            driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(peerFd))
                             assert(atDecision == inTail, s"owed at the decision: $atDecision, of which ${atDecision - inTail} still queued")
                         }
@@ -724,7 +725,7 @@ class IoUringDriverTest extends Test:
                     // The peer sends one byte so the recv SQE completes and the reap loop runs wait_cqe then peek_cqe in one drain cycle.
                     assert(sock.sendNow(client, Buffer.fromArray[Byte](Array[Byte](7)), 1L, 0).value == 1L)
                     reaped.safe.get.map { _ =>
-                        drv.closeHandle(acceptedH)
+                        drv.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(sock.close(client))
                         import scala.jdk.CollectionConverters.*
                         val waitPtrs = recording.waitCqePtrs.iterator().asScala.toList
@@ -765,9 +766,9 @@ class IoUringDriverTest extends Test:
                         ).value == partial.length.toLong)
                         reaped.safe.get.flatMap { _ =>
                             fifoBarrier(drv).safe.get.map { _ =>
-                                // Assert BEFORE closeHandle: once the recv CQE reaps and the decrypt engine op runs, the zero-plaintext recv must
+                                // Assert BEFORE release: once the recv CQE reaps and the decrypt engine op runs, the zero-plaintext recv must
                                 // have re-armed, so the promise is still pending (NOT completed with an empty Span) and a second recv SQE was
-                                // submitted. closeHandle -> cancel fails every pending op's promise as normal teardown, so a post-close promise.done()
+                                // submitted. release -> cancel fails every pending op's promise as normal teardown, so a post-close promise.done()
                                 // would be true for ANY correct driver and proves nothing about the recv path; the check only means something here.
                                 val keysBefore = recording.submittedKeys.size
                                 assert(!promise.done(), "the read promise must NOT be completed on a zero-plaintext recv (no empty Span)")
@@ -776,7 +777,7 @@ class IoUringDriverTest extends Test:
                                     s"a re-arm recv SQE must have been submitted after the zero-plaintext recv, keys=$keysBefore"
                                 )
                                 handle.tls = Absent
-                                drv.closeHandle(handle)
+                                drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(peerFd))
                             }
                         }
@@ -817,7 +818,7 @@ class IoUringDriverTest extends Test:
                             reaped.safe.get.flatMap { _ =>
                                 fifoBarrier(driver).safe.get.map { _ =>
                                     handle.tls = Absent
-                                    driver.closeHandle(handle)
+                                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                     discard(sock.close(peerFd))
                                     assert(!handle.sendInFlight, "sendInFlight must be cleared after a res<0 send CQE")
                                     val pendingSize = handle.pendingCipher.map(_.size).getOrElse(0)
@@ -868,11 +869,11 @@ class IoUringDriverTest extends Test:
 
                         readEach(msgs.toList).map { _ =>
                             import scala.jdk.CollectionConverters.*
-                            // Capture the feed buffers and recvStaging BEFORE closeHandle frees the per-handle buffers.
+                            // Capture the feed buffers and recvStaging BEFORE release frees the per-handle buffers.
                             val feedBufs = recordingServer.feedBufs.iterator().asScala.toList
                             val staging  = handle.recvStaging.getOrElse(fail("recvStaging must be Present after TLS reads on the ring"))
                             handle.tls = Absent
-                            drv.closeHandle(handle)
+                            drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(peerFd))
                             assert(feedBufs.size >= 2, s"expected at least 2 feedCiphertext calls (one per read), got ${feedBufs.size}")
                             feedBufs.foreach(buf =>
@@ -920,12 +921,12 @@ class IoUringDriverTest extends Test:
 
                         writeEach(0).map { _ =>
                             import scala.jdk.CollectionConverters.*
-                            // Capture the send SQE buffers and flushMirror BEFORE closeHandle frees the per-handle buffers. flushMirror being
+                            // Capture the send SQE buffers and flushMirror BEFORE release frees the per-handle buffers. flushMirror being
                             // Present here proves it survived all the reaps (it is never closed on reap, only in freeResources).
                             val sendBufs     = recording.sendBufs.iterator().asScala.toList
                             val mirrorBefore = handle.flushMirror
                             handle.tls = Absent
-                            drv.closeHandle(handle)
+                            drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(peerFd))
                             assert(sendBufs.size >= N, s"expected at least $N send SQEs (one per write), got ${sendBufs.size}")
                             val mirror =

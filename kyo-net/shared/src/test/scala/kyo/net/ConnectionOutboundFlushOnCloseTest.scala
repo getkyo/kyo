@@ -2,16 +2,18 @@ package kyo.net
 
 import kyo.*
 import kyo.net.internal.transport.Connection
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.ScriptedPeerDriver
 import kyo.net.internal.transport.WriteResult
 
 /** The write-side half of the flush-before-close contract: the queued outbound is flushed to the driver BEFORE the fd is closed. The
   * release waits on the WRITE-side drain (the WritePump takes the closing outbound channel to empty and writes each span, then re-enters
-  * closeFn), so every queued span is written before closeHandle runs.
+  * closeFn), so every queued span is written before the driver's release runs.
   *
-  * The SpyDriver records whether any `write` lands AFTER `closeHandle` (an ordering violation) and counts the writes; the closeHandle promise is
+  * The SpyDriver records whether any `write` lands AFTER the release (an ordering violation) and counts the writes; the release promise is
   * the deterministic settle point (no sleep).
   */
 class ConnectionOutboundFlushOnCloseTest extends Test:
@@ -21,9 +23,9 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
 
     final private class SpyDriver extends IoDriver[Unit]:
         val writeCount      = AtomicInt.Unsafe.init(0)
-        val closeHandleSeen = AtomicBoolean.Unsafe.init(false)
+        val releaseSeen     = AtomicBoolean.Unsafe.init(false)
         val writeAfterClose = AtomicBoolean.Unsafe.init(false)
-        val closeHandleDone = Promise.Unsafe.init[Unit, Any]()
+        val releaseDone     = Promise.Unsafe.init[Unit, Any]()
 
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
@@ -32,14 +34,18 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
         def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit  = ()
         def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit    = ()
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                                       =
-            if closeHandleSeen.get() then writeAfterClose.set(true)
+            if releaseSeen.get() then writeAfterClose.set(true)
             discard(writeCount.incrementAndGet())
             WriteResult.Done
         end write
-        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit      = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit =
-            closeHandleSeen.set(true)
-            discard(closeHandleDone.complete(Result.succeed(())))
+        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit = ()
+        private val handleLife                                   = HandleLife.init()
+        def life(handle: Unit): HandleLife                       = handleLife
+        def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+            releaseSeen.set(true)
+            discard(releaseDone.complete(Result.succeed(())))
+            released.completeUnitDiscard()
+        end release
         def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
         def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
         def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
@@ -58,7 +64,7 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
         for
             _ <- Sync.defer(spans.foreach(s => discard(conn.outbound.offer(s))))
             _ <- Sync.defer(conn.close())
-            _ <- spy.closeHandleDone.safe.get
+            _ <- spy.releaseDone.safe.get
         yield
             assert(!spy.writeAfterClose.get(), "no outbound write may land after the fd close (the write-side drain gates the close)")
             assert(
@@ -77,15 +83,15 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
             discard(conn.outbound.offer(Span.fromUnsafe(Array.fill[Byte](3)(1))))
             conn.close()
             assert(
-                driver.closeHandleCalls.get() == 0,
-                s"close must wait for the parked span's tail; closeHandle=${driver.closeHandleCalls.get()}"
+                driver.releaseCalls.get() == 0,
+                s"close must wait for the parked span's tail; releases=${driver.releaseCalls.get()}"
             )
             driver.peerReads()
             driver.peerReads()
             assert(driver.written.get() == 3, s"every byte of the parked span must be written; writes=${driver.written.get()}")
             assert(
-                driver.closeHandleCalls.get() == 1,
-                s"the fd must close once the tail is written; closeHandle=${driver.closeHandleCalls.get()}"
+                driver.releaseCalls.get() == 1,
+                s"the fd must close once the tail is written; releases=${driver.releaseCalls.get()}"
             )
         }
 
@@ -99,13 +105,13 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
                     discard(conn.outbound.offer(Span.fromUnsafe(Array.fill[Byte](8)(2))))
                     conn.close()
                     assert(
-                        driver.closeHandleCalls.get() == 0,
-                        s"the flush must start out waiting; closeHandle=${driver.closeHandleCalls.get()}"
+                        driver.releaseCalls.get() == 0,
+                        s"the flush must start out waiting; releases=${driver.releaseCalls.get()}"
                     )
                     armedThenAdvance(tc, "close-flush grace", 1.second).map { _ =>
                         assert(
-                            driver.closeHandleCalls.get() == 1,
-                            s"a window with no write progress must release the fd; closeHandle=${driver.closeHandleCalls.get()}"
+                            driver.releaseCalls.get() == 1,
+                            s"a window with no write progress must release the fd; releases=${driver.releaseCalls.get()}"
                         )
                         assert(driver.written.get() == 1, s"nothing may be written after the release; writes=${driver.written.get()}")
                         assert(!conn.isOpen, "the released connection must read as closed")
@@ -128,14 +134,14 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
                         _      <- armedThenAdvance(tc, "close-flush grace", 1.second, by = 600.millis)
                         _      <- Sync.defer(driver.peerReads())
                         _      <- armedThenAdvance(tc, "re-armed close-flush grace", 1.second, by = 600.millis)
-                        midway <- Sync.defer(driver.closeHandleCalls.get())
+                        midway <- Sync.defer(driver.releaseCalls.get())
                         _      <- Sync.defer(driver.peerReads())
                     yield
-                        assert(midway == 0, s"a window with progress must not release the fd; closeHandle=$midway")
+                        assert(midway == 0, s"a window with progress must not release the fd; releases=$midway")
                         assert(driver.written.get() == 4, s"every byte must be written; writes=${driver.written.get()}")
                         assert(
-                            driver.closeHandleCalls.get() == 1,
-                            s"the fd must close once the flush completes; closeHandle=${driver.closeHandleCalls.get()}"
+                            driver.releaseCalls.get() == 1,
+                            s"the fd must close once the flush completes; releases=${driver.releaseCalls.get()}"
                         )
                     end for
                 }
@@ -153,8 +159,8 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
                     conn.close()
                     tc.advance(1.hour).map { _ =>
                         assert(
-                            driver.closeHandleCalls.get() == 0,
-                            s"an infinite grace must hold the fd for the peer; closeHandle=${driver.closeHandleCalls.get()}"
+                            driver.releaseCalls.get() == 0,
+                            s"an infinite grace must hold the fd for the peer; releases=${driver.releaseCalls.get()}"
                         )
                     }
                 }

@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.NetConfig
 import kyo.net.Test
+import kyo.net.internal.transport.ReleaseMode
 
 /** Reproduce-first regression for a STARTTLS upgrade-handoff drop on io_uring: without an `onInboundClosedDuringRead` override,
   * [[IoUringDriver]] would fall back to [[kyo.net.internal.transport.IoDriver]]'s no-op default, so a STARTTLS upgrade racing the plaintext
@@ -70,7 +71,9 @@ class IoUringUpgradeHandoffDropTest extends Test:
                         backendIsEpoll = false
                     )
                     val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    Sync.ensure(Sync.defer { discard(sock.close(client)); driver.closeHandle(handle) }) {
+                    Sync.ensure(Sync.defer {
+                        discard(sock.close(client)); driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
+                    }) {
                         val conn = transport.openWith(handle, driver, channelCapacity = 1)
                         conn.start()
 
@@ -144,7 +147,9 @@ class IoUringUpgradeHandoffDropTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.driver = driver
-                    Sync.ensure(Sync.defer { discard(sock.close(client)); driver.closeHandle(handle) }) {
+                    Sync.ensure(Sync.defer {
+                        discard(sock.close(client)); driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
+                    }) {
                         handle.upgrading = true
 
                         // Mirrors PosixTransport.driveUpgradeRead's own Waiter construction (PosixTransport.scala:1868-1883): a raw
@@ -193,7 +198,9 @@ class IoUringUpgradeHandoffDropTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     handle.driver = driver
-                    Sync.ensure(Sync.defer { discard(sock.close(client)); driver.closeHandle(handle) }) {
+                    Sync.ensure(Sync.defer {
+                        discard(sock.close(client)); driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
+                    }) {
                         // handle.upgrading stays false (the default): an ordinary close, not a STARTTLS upgrade window.
                         val bytes = Array[Byte](44, 55)
                         driver.onInboundClosedDuringRead(handle, Span.fromUnsafe(bytes))

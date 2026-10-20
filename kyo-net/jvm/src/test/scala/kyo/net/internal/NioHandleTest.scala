@@ -4,6 +4,7 @@ import java.nio.channels.SocketChannel
 import javax.net.ssl.SSLContext
 import kyo.*
 import kyo.net.Test
+import kyo.net.internal.transport.ReleaseMode
 
 class NioHandleTest extends Test:
 
@@ -89,7 +90,7 @@ class NioHandleTest extends Test:
     "close plain TCP handle closes the channel" in {
         val channel = SocketChannel.open()
         val handle  = NioHandle.init(channel, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
-        NioHandle.close(handle)
+        NioHandle.close(handle, ReleaseMode.Graceful)
         assert(!channel.isOpen)
         succeed
     }
@@ -100,7 +101,7 @@ class NioHandleTest extends Test:
         ctx.init(null, null, null)
         val engine = ctx.createSSLEngine()
         val handle = NioHandle.initTls(channel, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
-        NioHandle.close(handle)
+        NioHandle.close(handle, ReleaseMode.Graceful)
         assert(engine.isOutboundDone)
         assert(!channel.isOpen)
         succeed
@@ -109,8 +110,8 @@ class NioHandleTest extends Test:
     "close is idempotent: second close does not throw" in {
         val channel = SocketChannel.open()
         val handle  = NioHandle.init(channel, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
-        NioHandle.close(handle)
-        NioHandle.close(handle)
+        NioHandle.close(handle, ReleaseMode.Graceful)
+        NioHandle.close(handle, ReleaseMode.Graceful)
         assert(!channel.isOpen)
         succeed
     }

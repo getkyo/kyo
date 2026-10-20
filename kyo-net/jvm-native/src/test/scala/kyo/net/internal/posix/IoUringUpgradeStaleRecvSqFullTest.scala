@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** `hasInFlightRead` must count a recv parked on a full submission queue, over a REAL io_uring ring.
   *
@@ -83,8 +84,8 @@ class IoUringUpgradeStaleRecvSqFullTest extends Test:
                         // Release the gate BEFORE awaiting the probe: a parked reap carrier would otherwise wedge every later test.
                         gate.countDown()
                         probe.safe.get.map { inFlight =>
-                            drv.closeHandle(fillerH)
-                            drv.closeHandle(targetH)
+                            drv.release(fillerH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                            drv.release(targetH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(fillerClient))
                             discard(sock.close(targetClient))
                             assert(
@@ -141,8 +142,8 @@ class IoUringUpgradeStaleRecvSqFullTest extends Test:
                             assert(sock.sendNow(fillerClient, Buffer.fromArray[Byte](Array[Byte](0)), 1L, 0).value == 1L)
                             // A re-arm that drops the stalled recv leaves this wait pending until the leaf times out.
                             Sync.ensure(Sync.defer {
-                                drv.closeHandle(fillerH)
-                                drv.closeHandle(targetH)
+                                drv.release(fillerH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                drv.release(targetH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(fillerClient))
                                 discard(sock.close(targetClient))
                             })(Abort.run[kyo.net.NetException](waiter.safe.get)).map { got =>

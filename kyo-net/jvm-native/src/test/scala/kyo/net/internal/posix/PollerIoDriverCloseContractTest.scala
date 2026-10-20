@@ -9,6 +9,7 @@ import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** The connection close contract inside [[PollerIoDriver]], at the windows the public connection cannot reach: write completion and error
@@ -143,7 +144,7 @@ class PollerIoDriverCloseContractTest extends Test:
                 val closing   = h.isClosing()
                 val second    = driver.write(h, payload, 0)
                 drainAll(driver)
-                driver.closeHandle(h)
+                driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init())
                 drainAll(driver)
                 driver.close()
                 discard(sock.close(client))
@@ -151,28 +152,38 @@ class PollerIoDriverCloseContractTest extends Test:
                 serverEngine.free()
                 assert(first == WriteResult.Done, s"setup: the driver did not take the write: $first")
                 assert(
-                    closing || second == WriteResult.Error,
+                    closing ||
+                        (second match
+                            case WriteResult.Error(_) => true
+                            case _                    => false),
                     s"the engine encrypted none of the write, ${wire.length} bytes reached the peer, the handle is still open and the next " +
                         s"write returned $second"
                 )
             }
         }
 
-        "a TLS write after closeHandle reports Error, as a plaintext write does" in {
+        "a TLS write after release reports Error, as a plaintext write does" in {
             PosixTestSockets.assumePoller()
             TlsRealEngines.assumeBoringSslReady()
             val driver = PollerIoDriver.init()
             ensuringClosed(driver, PosixTestSockets.loopbackPair()) { case (client, accepted) =>
                 val (clientEngine, serverEngine) = engines()
                 val h                            = tlsHandle(accepted, serverEngine)
-                driver.closeHandle(h)
+                driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init())
                 val after = driver.write(h, Span.fromUnsafe(Array.fill[Byte](1024)(1)), 0)
                 drainAll(driver)
                 driver.close()
                 discard(sock.close(client))
                 clientEngine.free()
                 serverEngine.free()
-                assert(after == WriteResult.Error, s"a write on a closed TLS handle returned $after")
+                assert(
+                    after match
+                        case WriteResult.Error(_) => true
+                        case _                    =>
+                            false
+                    ,
+                    s"a write on a closed TLS handle returned $after"
+                )
             }
         }
 
@@ -190,14 +201,17 @@ class PollerIoDriverCloseContractTest extends Test:
                 val second = driver.write(h, payload, 0)
                 drainAll(driver)
                 val closing = h.isClosing()
-                driver.closeHandle(h)
+                driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init())
                 drainAll(driver)
                 driver.close()
                 clientEngine.free()
                 serverEngine.free()
                 assert(first == WriteResult.Done, s"setup: the driver did not take the write: $first")
                 assert(
-                    second == WriteResult.Error || closing,
+                    closing ||
+                        (second match
+                            case WriteResult.Error(_) => true
+                            case _                    => false),
                     s"the send after the peer's reset failed and its ciphertext was discarded, yet the next write returned $second " +
                         "and the handle is still open"
                 )
@@ -228,7 +242,7 @@ class PollerIoDriverCloseContractTest extends Test:
                     _       <- fifoSettled(driver)
                     (wire, _)  = recvAvailable(client)
                     (plain, _) = decryptAll(clientEngine, wire)
-                    _ <- Sync.defer(driver.closeHandle(h))
+                    _ <- Sync.defer(driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init()))
                     _ <- fifoSettled(driver)
                 yield
                     driver.close()
@@ -262,7 +276,7 @@ class PollerIoDriverCloseContractTest extends Test:
                 val tailPending = h.unsentTailBytes
                 val (sent, _)   = recvAvailable(peerFd)
                 val midRecord   = recordEnd(sent) != sent.length
-                driver.closeHandle(h)
+                driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init())
                 drainAll(driver)
                 val (rest, end)   = recvAvailable(peerFd)
                 val stream        = sent ++ rest
@@ -313,7 +327,7 @@ class PollerIoDriverCloseContractTest extends Test:
                 for
                     outcome <- Abort.run[Timeout | Closed](Async.timeout(10.seconds)(readToEnd(Array.emptyByteArray)))
                     atEnd = h.halfClose
-                    _ <- Sync.defer(driver.closeHandle(h))
+                    _ <- Sync.defer(driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init()))
                     _ <- fifoSettled(driver)
                 yield
                     driver.close()
@@ -364,7 +378,7 @@ class PollerIoDriverCloseContractTest extends Test:
                     end match
                 end fill
                 val written = fill(0L, 0)
-                driver.closeHandle(h)
+                driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init())
                 drainAll(driver)
                 val buf                                                                        = Buffer.alloc[Byte](chunk)
                 def readToEnd(received: Long, inOrder: Boolean): (Long, Boolean, Long) < Async =
@@ -424,7 +438,7 @@ class PollerIoDriverCloseContractTest extends Test:
                 // The fatal record ends the read; the connection's release then closes the descriptor.
                 for
                     outcome <- Abort.run[Closed](read.safe.get)
-                    _       <- Sync.defer(driver.closeHandle(h))
+                    _       <- Sync.defer(driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init()))
                     _       <- sockets.closed(accepted).safe.get
                     _       <- fifoSettled(driver)
                 yield
@@ -461,7 +475,7 @@ class PollerIoDriverCloseContractTest extends Test:
                     outcome <- Abort.run[Closed](read.safe.get)
                     _       <- fifoSettled(driver)
                     closesBeforeRelease = sockets.closeCounts.getOrDefault(accepted, 0)
-                    _ <- Sync.defer(driver.closeHandle(h))
+                    _ <- Sync.defer(driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init()))
                     _ <- sockets.closed(accepted).safe.get
                     _ <- fifoSettled(driver)
                 yield

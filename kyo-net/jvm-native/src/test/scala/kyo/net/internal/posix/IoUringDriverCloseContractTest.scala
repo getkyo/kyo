@@ -11,6 +11,7 @@ import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.Connection as InternalConnection
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** The connection close contract on [[IoUringDriver]], driven over a REAL io_uring ring and real loopback sockets.
@@ -144,8 +145,11 @@ class IoUringDriverCloseContractTest extends Test:
             discard(peer(fd))
             if claimPeer(fd) then handle(h) else h
 
-        def closeHandle(h: PosixHandle)(using AllowUnsafe, Frame): Unit =
-            handles.forEach(entry => if (entry._1 eq h) && entry._2.compareAndSet(false, true) then driver.closeHandle(h))
+        def release(h: PosixHandle)(using AllowUnsafe, Frame): Unit =
+            handles.forEach(entry =>
+                if (entry._1 eq h) && entry._2.compareAndSet(false, true) then
+                    driver.release(h, ReleaseMode.Graceful, Promise.Unsafe.init())
+            )
 
         def connection(conn: InternalConnection[PosixHandle]): InternalConnection[PosixHandle] =
             discard(conns.add(conn))
@@ -155,7 +159,7 @@ class IoUringDriverCloseContractTest extends Test:
         def releaseAll()(using AllowUnsafe, Frame): Unit =
             peers.keySet().forEach(fd => closePeer(fd))
             conns.forEach(_.close())
-            handles.forEach(entry => closeHandle(entry._1))
+            handles.forEach(entry => release(entry._1))
         end releaseAll
     end LeafResources
 
@@ -239,7 +243,7 @@ class IoUringDriverCloseContractTest extends Test:
                 case _                       => Loop.done(acc)
             }
         }.map { bytes =>
-            resources.closeHandle(peerH)
+            resources.release(peerH)
             bytes
         }
     end drainToEnd
@@ -357,7 +361,7 @@ class IoUringDriverCloseContractTest extends Test:
                     val handle = resources.handle(PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal))
                     val w      = driver.write(handle, Span.fromUnsafe(bytesOf(2 * 1024 * 1024, 2)), 0)
                     assert(w == WriteResult.Done, s"write result=$w")
-                    resources.closeHandle(handle)
+                    resources.release(handle)
                     fifoBarrier(driver).safe.get.map { _ =>
                         assert(
                             handle.unsentTailBytes >= PosixHandle.WriteTailLowWater,
@@ -395,7 +399,7 @@ class IoUringDriverCloseContractTest extends Test:
                         driver.awaitRead(handle, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
                         driver.submitEngineOp { () =>
                             written.completeDiscard(Result.succeed(driver.write(handle, Span.fromUnsafe(payload), 0)))
-                            resources.closeHandle(handle)
+                            resources.release(handle)
                         }
                     }.andThen(written.safe.get).map { w =>
                         assert(w == WriteResult.Done, s"write result=$w")
@@ -431,7 +435,7 @@ class IoUringDriverCloseContractTest extends Test:
                         // The recv arm drains ahead of the close, in the same pass, and takes the only SQE before the close claims the handle.
                         inOnePass(driver) {
                             driver.awaitRead(handle, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
-                            driver.submitEngineOp(() => resources.closeHandle(handle))
+                            driver.submitEngineOp(() => resources.release(handle))
                         }.andThen(within(hangBound)(drainToEnd(driver, resources, peerFd))).map { received =>
                             within(hangBound)(released.safe.get).map { _ =>
                                 received match
@@ -461,7 +465,7 @@ class IoUringDriverCloseContractTest extends Test:
                     // The close is enqueued ahead of a write that already passed beginWrite: the order a re-entrant closeFn produces when it
                     // runs between the WritePump's beginWrite and its engine-op enqueue.
                     driver.submitEngineOp { () =>
-                        resources.closeHandle(handle)
+                        resources.release(handle)
                         written.completeDiscard(Result.succeed(driver.write(handle, Span.fromUnsafe(bytesOf(64, 4)), 0)))
                     }
                     written.safe.get.map { _ =>
@@ -514,7 +518,7 @@ class IoUringDriverCloseContractTest extends Test:
                             }
                         }.map { result =>
                             val atEnd = handle.halfClose
-                            resources.closeHandle(handle)
+                            resources.release(handle)
                             resources.closePeer(peerFd)
                             within(hangBound)(released.safe.get).map { _ =>
                                 result match
@@ -564,7 +568,7 @@ class IoUringDriverCloseContractTest extends Test:
                                 }
                             }
                         }.map { result =>
-                            resources.closeHandle(handle)
+                            resources.release(handle)
                             within(hangBound)(released.safe.get).map { _ =>
                                 resources.closePeer(peerFd)
                                 result match
@@ -596,7 +600,7 @@ class IoUringDriverCloseContractTest extends Test:
                         val released = sockets.closed(fd)
                         within(hangBound)(readVia(driver, handle)).map { outcome =>
                             val atEnd = handle.halfClose
-                            resources.closeHandle(handle)
+                            resources.release(handle)
                             within(hangBound)(released.safe.get).map { _ =>
                                 outcome match
                                     case Present(ReadOutcome.Failed(_)) => ()
@@ -636,10 +640,14 @@ class IoUringDriverCloseContractTest extends Test:
                                 assert(reaped.nonEmpty, "the first write's send never reaped")
                                 fifoBarrier(driver).safe.get.map { _ =>
                                     val second = driver.write(handle, Span.fromUnsafe(bytesOf(32, 8)), 0)
-                                    resources.closeHandle(handle)
+                                    resources.release(handle)
                                     within(hangBound)(released.safe.get).map { _ =>
                                         assert(
-                                            second == WriteResult.Error,
+                                            second match
+                                                case WriteResult.Error(_) => true
+                                                case _                    =>
+                                                    false
+                                            ,
                                             s"a write after the connection's send failed returned $second; its bytes go nowhere"
                                         )
                                     }
@@ -668,10 +676,14 @@ class IoUringDriverCloseContractTest extends Test:
                             assert(reaped.nonEmpty, "the first write's send never reaped")
                             fifoBarrier(driver).safe.get.map { _ =>
                                 val second = driver.write(handle, Span.fromUnsafe(bytesOf(32, 10)), 0)
-                                resources.closeHandle(handle)
+                                resources.release(handle)
                                 within(hangBound)(released.safe.get).map { _ =>
                                     assert(
-                                        second == WriteResult.Error,
+                                        second match
+                                            case WriteResult.Error(_) => true
+                                            case _                    =>
+                                                false
+                                        ,
                                         s"a write after the connection's send failed returned $second; its bytes go nowhere"
                                     )
                                 }
@@ -706,7 +718,7 @@ class IoUringDriverCloseContractTest extends Test:
                             outcome <- Abort.run[Closed](readVia(driver, handle))
                             _       <- fifoBarrier(driver).safe.get
                             closesBeforeRelease = sockets.closeCounts.getOrDefault(fd, 0)
-                            _ <- Sync.defer(resources.closeHandle(handle))
+                            _ <- Sync.defer(resources.release(handle))
                             _ <- released.safe.get
                             _ <- fifoBarrier(driver).safe.get
                         yield

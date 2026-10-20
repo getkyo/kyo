@@ -2,16 +2,18 @@ package kyo.net
 
 import kyo.*
 import kyo.net.internal.transport.Connection
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** detachForUpgrade does NOT tear down the fd.
   *
   * When a STARTTLS upgrade detaches a connection (Established -> Upgrading), the underlying socket must stay open so the TLS engine can
-  * drive the handshake on it. The fd is the TLS upgrade's to manage; the Connection must not call closeHandle. A subsequent close() on the
+  * drive the handshake on it. The fd is the TLS upgrade's to manage; the Connection must not call release. A subsequent close() on the
   * detached connection arrives with state == Upgrading: neither CAS (Established -> Closing, Created -> Closing) wins, so teardownHandle is
-  * never reached and closeHandle stays at 0.
+  * never reached and release stays at 0.
   */
 class ConnectionDetachForUpgradeTest extends Test:
 
@@ -19,7 +21,7 @@ class ConnectionDetachForUpgradeTest extends Test:
     given Frame = Frame.internal
 
     final private class SpyDriver extends IoDriver[Unit]:
-        val closeHandleCount = AtomicInt.Unsafe.init(0)
+        val releaseCount = AtomicInt.Unsafe.init(0)
 
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
@@ -29,10 +31,15 @@ class ConnectionDetachForUpgradeTest extends Test:
         def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit    = ()
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = discard(closeHandleCount.incrementAndGet())
-        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
-        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit             = op()
-        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+        private val handleLife                                                                 = HandleLife.init()
+        def life(handle: Unit): HandleLife                                                     = handleLife
+        def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+            discard(releaseCount.incrementAndGet())
+            released.completeUnitDiscard()
+        end release
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
             try cancel(handle)
             finally releaseFd(handle, closeFd)
         def close()(using AllowUnsafe, Frame): Unit = ()
@@ -40,7 +47,7 @@ class ConnectionDetachForUpgradeTest extends Test:
         def handleLabel(handle: Unit): String       = "spy"
     end SpyDriver
 
-    "detach-for-upgrade-does-not-tear-down-fd: closeHandle is NOT called after detachForUpgrade" in {
+    "detach-for-upgrade-does-not-tear-down-fd: release is NOT called after detachForUpgrade" in {
         val spy  = new SpyDriver
         val conn = Connection.init[Unit]((), spy, 1)
         conn.start()
@@ -53,13 +60,13 @@ class ConnectionDetachForUpgradeTest extends Test:
                 s"detachForUpgrade on an Established connection must settle synchronously and report Present, got $result"
             )
             assert(
-                spy.closeHandleCount.get() == 0,
-                s"closeHandle must NOT be called after detachForUpgrade, got ${spy.closeHandleCount.get()}"
+                spy.releaseCount.get() == 0,
+                s"release must NOT be called after detachForUpgrade, got ${spy.releaseCount.get()}"
             )
         }
     }
 
-    "detach-for-upgrade-does-not-tear-down-fd: a close() after detach also does not call closeHandle" in {
+    "detach-for-upgrade-does-not-tear-down-fd: a close() after detach also does not call release" in {
         val spy  = new SpyDriver
         val conn = Connection.init[Unit]((), spy, 1)
         conn.start()
@@ -67,8 +74,8 @@ class ConnectionDetachForUpgradeTest extends Test:
             discard(conn.detachForUpgrade())
             conn.close()
             assert(
-                spy.closeHandleCount.get() == 0,
-                s"closeHandle must NOT be called even after detachForUpgrade + close(), got ${spy.closeHandleCount.get()}"
+                spy.releaseCount.get() == 0,
+                s"release must NOT be called even after detachForUpgrade + close(), got ${spy.releaseCount.get()}"
             )
         }
     }

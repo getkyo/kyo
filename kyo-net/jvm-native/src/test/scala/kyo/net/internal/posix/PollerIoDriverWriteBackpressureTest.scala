@@ -8,6 +8,7 @@ import kyo.net.internal.TlsEngine
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Reproduction + regression guard for the TLS write-path backpressure stall in [[PollerIoDriver]].
@@ -186,9 +187,9 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                             // (bytes dropped) so the 14s bound trips; here every byte arrives as the flush re-arms and re-submits.
                             got <- drainAndDecrypt(driver, acceptedH, serverEngine, plaintext.length)
                         yield
-                            // Free the engines on the FIFO worker (closeHandle routes the client free; the server free is submitted), then the fds.
+                            // Free the engines on the FIFO worker (release routes the client free; the server free is submitted), then the fds.
                             driver.submitEngineOp(() => serverEngine.free())
-                            driver.closeHandle(clientH)
+                            driver.release(clientH, ReleaseMode.Graceful, Promise.Unsafe.init())
                             discard(sock.close(accepted))
                             discard(assert(
                                 got.length == plaintext.length,
@@ -249,11 +250,11 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                                 // Only NOW drain peer 1, proving connection 2 progressed before connection 1's backpressure was relieved.
                                 got1 <- drainAndDecrypt(driver, accepted1H, serverEngine1, bigPlain.length)
                             yield
-                                // Free the engines on the FIFO worker (closeHandle routes each client free; the server frees are submitted), then fds.
+                                // Free the engines on the FIFO worker (release routes each client free; the server frees are submitted), then fds.
                                 driver.submitEngineOp(() => serverEngine1.free())
                                 driver.submitEngineOp(() => serverEngine2.free())
-                                driver.closeHandle(client1H)
-                                driver.closeHandle(client2H)
+                                driver.release(client1H, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                driver.release(client2H, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(accepted1))
                                 discard(sock.close(accepted2))
                                 assert(

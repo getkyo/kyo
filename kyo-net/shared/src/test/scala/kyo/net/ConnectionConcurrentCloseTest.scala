@@ -2,8 +2,10 @@ package kyo.net
 
 import kyo.*
 import kyo.net.internal.transport.Connection
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** The documented concurrent-use contract for close() and isOpen.
@@ -18,7 +20,7 @@ class ConnectionConcurrentCloseTest extends Test:
     given Frame = Frame.internal
 
     final private class SpyDriver extends IoDriver[Unit]:
-        val closeHandleCount = AtomicInt.Unsafe.init(0)
+        val releaseCount = AtomicInt.Unsafe.init(0)
 
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
@@ -28,10 +30,15 @@ class ConnectionConcurrentCloseTest extends Test:
         def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit    = ()
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = discard(closeHandleCount.incrementAndGet())
-        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
-        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit             = op()
-        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+        private val handleLife                                                                 = HandleLife.init()
+        def life(handle: Unit): HandleLife                                                     = handleLife
+        def release(handle: Unit, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+            discard(releaseCount.incrementAndGet())
+            released.completeUnitDiscard()
+        end release
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+        def runOwned(handle: Unit)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = op()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
             try cancel(handle)
             finally releaseFd(handle, closeFd)
         def close()(using AllowUnsafe, Frame): Unit = ()
@@ -39,7 +46,7 @@ class ConnectionConcurrentCloseTest extends Test:
         def handleLabel(handle: Unit): String       = "spy"
     end SpyDriver
 
-    "concurrent-close-idempotent: three concurrent close() calls settle to one closeHandle invocation" in {
+    "concurrent-close-idempotent: three concurrent close() calls settle to one release invocation" in {
         val spy  = new SpyDriver
         val conn = Connection.init[Unit]((), spy, 1)
         conn.start()
@@ -52,7 +59,7 @@ class ConnectionConcurrentCloseTest extends Test:
             _      <- fiber1.get
             _      <- fiber2.get
             _      <- fiber3.get
-        yield assert(spy.closeHandleCount.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCount.get()}")
+        yield assert(spy.releaseCount.get() == 1, s"release must be called exactly once, got ${spy.releaseCount.get()}")
         end for
     }
 
@@ -94,8 +101,8 @@ class ConnectionConcurrentCloseTest extends Test:
             // (Reads taken before the settle may have seen true; both are valid concurrent observations.)
             val finalOpen = conn.isOpen
             assert(!finalOpen, s"isOpen must be false after close() settled, got $finalOpen")
-            // The total count of closeHandle calls is exactly 1 (not 0, not more).
-            assert(spy.closeHandleCount.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCount.get()}")
+            // The total count of release calls is exactly 1 (not 0, not more).
+            assert(spy.releaseCount.get() == 1, s"release must be called exactly once, got ${spy.releaseCount.get()}")
             discard(reads) // reads observed during the race (valid true or false); the post-settle assertion above is the invariant
         end for
     }

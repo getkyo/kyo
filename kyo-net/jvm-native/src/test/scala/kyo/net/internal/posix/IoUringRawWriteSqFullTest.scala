@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** SQ-full backpressure for a raw (plaintext) write on a [[IoUringDriver]] handle, over a REAL io_uring ring.
@@ -86,11 +87,11 @@ class IoUringRawWriteSqFullTest extends Test:
                             gate.countDown()
                             assert(w == WriteResult.Done, "writeRaw appends and returns Done; the send runs on the reap carrier")
                             Abort.run[Closed](peerP.safe.get).map { result =>
-                                // closeHandle closes each handle's fd (fillerAccepted, client, accepted); only the raw filler-client fd has no
+                                // release closes each handle's fd (fillerAccepted, client, accepted); only the raw filler-client fd has no
                                 // handle, so close it directly. Closing `client` here too would double-close the fd writeH already closed.
-                                drv.closeHandle(fillerH)
-                                drv.closeHandle(writeH)
-                                drv.closeHandle(peerH)
+                                drv.release(fillerH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                drv.release(writeH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                drv.release(peerH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(fillerClient))
                                 result match
                                     case Result.Success(ReadOutcome.Bytes(got)) =>

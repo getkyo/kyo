@@ -6,6 +6,7 @@ import kyo.net.Connection
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.TlsTestCert
+import kyo.net.internal.transport.ReleaseMode
 
 /** NIO per-connection engine ownership: behavioral tests confirming the gate works through real TLS I/O.
   *
@@ -196,7 +197,7 @@ class NioEngineOwnershipTest extends Test:
                 val handle = NioHandle.initTls(client, 4096, engine, Duration.Infinity, Duration.Infinity, Frame.internal)
 
                 assert(!handle.gate.isHeld, "gate must start unowned")
-                NioHandle.close(handle)
+                NioHandle.close(handle, ReleaseMode.Graceful)
                 assert(!handle.gate.isHeld, "gate must be released after close (finally block ran)")
                 assert(!handle.channel.isOpen, "channel must be closed")
             finally client.close()

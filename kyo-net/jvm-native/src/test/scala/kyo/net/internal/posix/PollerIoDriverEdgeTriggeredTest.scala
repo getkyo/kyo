@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Behavioral pins for edge-triggered (ET) registration in [[PollerIoDriver]].
   *
@@ -34,7 +35,7 @@ import kyo.net.internal.transport.ReadOutcome
   *     Gated on kqueue: epoll EPOLLET fires the write edge only on write-buffer transitions; a loopback fd that is always writable fires
   *     once on ADD and not again without a not-writable->writable transition, making a second sequential awaitWritable incompatible with
   *     the epoll ET model.
-  *   - `lazyFdDelete`: confirms that `closeHandle` produces a deregister log entry with `fdClosing=true` (kqueue skips EV_DELETE; the OS
+  *   - `lazyFdDelete`: confirms that `release` produces a deregister log entry with `fdClosing=true` (kqueue skips EV_DELETE; the OS
   *     auto-removes filters on close), while a live-fd cancel would produce `fdClosing=false` (EV_DELETE executes to prevent stale events).
   *     Extends to a stale-event witness: a new socket reusing the old fd number receives no phantom readiness from the closed filter.
   *   - `droppedEdgeDuringBackpressurePause`: confirms that data arriving on an armed fd while no pending read is present is not stranded.
@@ -390,13 +391,13 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         }
     }
 
-    "lazyFdDelete: closeHandle path carries fdClosing=true; live cancel carries fdClosing=false; recycled fd receives no stale event" in {
+    "lazyFdDelete: release path carries fdClosing=true; live cancel carries fdClosing=false; recycled fd receives no stale event" in {
         PosixTestSockets.assumePoller()
-        // closeHandle calls deregisterFds(fdClosing=true) so kqueue skips EV_DELETE (the OS auto-removes filters on close,
+        // release calls deregisterFds(fdClosing=true) so kqueue skips EV_DELETE (the OS auto-removes filters on close,
         // and issuing EV_DELETE on a recycled fd number would hit the wrong fd). cancel() calls deregisterFds(fdClosing=false)
         // so the live-fd withdrawal explicitly removes the filter. The call log must reflect this distinction.
         //
-        // Stale-event witness: after closeHandle, the old fd is closed and the OS may recycle the number.
+        // Stale-event witness: after release, the old fd is closed and the OS may recycle the number.
         // A new socket at the same fd number must receive no stale readiness event from the old filter, confirming the OS
         // auto-removal of kqueue filters on close makes fdClosing=true safe for reuse.
         PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
@@ -413,27 +414,27 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
 
             // Wait until the read is registered, then close the handle (close path: fdClosing=true).
             backend.registeredRead(acceptedFd).safe.get.map { _ =>
-                driver.closeHandle(handle)
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 // Wait until the deregister is actually processed by the poll loop (the OpDeregister command is in the changeQueue;
                 // the poll loop drains it asynchronously). The deregisteredFd latch fires when deregister() executes on the backend.
                 Abort.run[Timeout](Async.timeout(5.seconds)(backend.deregisteredFd(acceptedFd).safe.get)).map { _ =>
                     driver.close()
                     PosixTestSockets.closePeerForEof(spy, clientFd)
-                    // acceptedFd is ALREADY closed: closeHandle above ran closeNow, which closes the OS fd (readFd == writeFd) through the
+                    // acceptedFd is ALREADY closed: release above ran closeNow, which closes the OS fd (readFd == writeFd) through the
                     // claimFdClose guard. A second close here is a double-close: under concurrent load the freed fd number is recycled to another
                     // connection between the two closes, and the stale second close lands on that new owner (EBADF / spurious teardown). The
-                    // stale-event witness below only needs the number to be free, which closeHandle already guarantees.
+                    // stale-event witness below only needs the number to be free, which release already guarantees.
                     val log = backend.callLog
                     // The close path must produce deregister(..., fdClosing=true).
                     assert(
                         log.exists(s => s == s"deregister($acceptedFd, fdClosing=true)"),
-                        s"closeHandle must log deregister with fdClosing=true for fd=$acceptedFd: $log"
+                        s"release must log deregister with fdClosing=true for fd=$acceptedFd: $log"
                     )
                     // The live-fd cancel path must produce deregister(..., fdClosing=false), not fdClosing=true.
                     // (No live cancel was issued here, so fdClosing=false must not appear for acceptedFd.)
                     assert(
                         !log.exists(s => s == s"deregister($acceptedFd, fdClosing=false)"),
-                        s"closeHandle must NOT log deregister with fdClosing=false for fd=$acceptedFd: $log"
+                        s"release must NOT log deregister with fdClosing=false for fd=$acceptedFd: $log"
                     )
                     assert(
                         !log.exists(_.startsWith("rearm(")),

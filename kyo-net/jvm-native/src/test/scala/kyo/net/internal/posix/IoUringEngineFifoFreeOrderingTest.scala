@@ -15,7 +15,7 @@ import kyo.net.internal.TlsRealEngines
   * single-owner invariant over both drivers; this drives it harder, over the io_uring driver specifically, with real read-decrypt /
   * write-encrypt engine ops AND the engine `free()` routed through `engineFreeSink`.
   *
-  * `IoUringDriver` carries no handle guard and never touches the TLS engine directly: the only engine wiring it has is `closeHandle`
+  * `IoUringDriver` carries no handle guard and never touches the TLS engine directly: the only engine wiring it has is `release`
   * installing `handle.engineFreeSink = op => submitEngineOp(op)`. So the io_uring engine-vs-free coordination is PURELY the FIFO ordering: the
   * free, enqueued through `engineFreeSink` from `PosixHandle.freeResources`, is FIFO-ordered behind every read/write engine op already submitted
   * for the connection, and the single worker runs them one at a time. The read/write engine ops are submitted exactly as `PosixTransport`
@@ -39,7 +39,7 @@ class IoUringEngineFifoFreeOrderingTest extends Test:
 
     /** Build a driver over a REAL io_uring ring at production depth and a fresh socket handle carrying a real post-handshake engine wrapped in
       * a [[RecordingTlsEngine]], plus a one-byte scratch buffer the engine ops read/write. The engine is attached to `handle.tls` so
-      * `PosixHandle.freeResources` (reached via `closeHandle` -> `requestClose`) routes its `free()` through `engineFreeSink`, exactly as a live
+      * `PosixHandle.freeResources` (reached via `release` -> `requestClose`) routes its `free()` through `engineFreeSink`, exactly as a live
       * TLS connection's teardown does. The driver owns the server engine's `free()` (it must run exactly once, the property under test); the
       * client peer is freed by the cleanup thunk, and the server is freed by the cleanup only if the driver did not (which would already fail
       * the freeCount assertion), so neither leaks nor double-frees.
@@ -80,8 +80,8 @@ class IoUringEngineFifoFreeOrderingTest extends Test:
 
     "IoUringDriver engine FIFO: concurrent mixed ops + FIFO-routed free" - {
         "re-entrant: read+write engine ops then a routed free never overlap; free runs once, last, on a live engine (all platforms)" in {
-            // Op A (read-decrypt), while RUNNING on the single worker, re-entrantly submits op B (write-encrypt) and then triggers closeHandle.
-            // closeHandle routes the engine free F through engineFreeSink onto the SAME FIFO. The worker is busy running A, so neither B nor F
+            // Op A (read-decrypt), while RUNNING on the single worker, re-entrantly submits op B (write-encrypt) and then triggers release.
+            // release routes the engine free F through engineFreeSink onto the SAME FIFO. The worker is busy running A, so neither B nor F
             // can start until A returns; the FIFO then runs B, then F. No sleep: the FIFO defers them behind A by construction.
             PosixTestSockets.assumeUring()
             TlsRealEngines.assumeTlsReady()
@@ -93,10 +93,10 @@ class IoUringEngineFifoFreeOrderingTest extends Test:
                 discard(engine.readPlain(scratch, 1))
                 // Submit B from INSIDE A (worker is busy with A): a correct FIFO defers B until A returns.
                 driver.submitEngineOp(opB)
-                // Route the engine free exactly as production does: install the engineFreeSink closeHandle installs, then drive
+                // Route the engine free exactly as production does: install the engineFreeSink release installs, then drive
                 // PosixHandle.freeResources (via close), which enqueues engine.free() onto the engine FIFO through the sink. The free is
                 // submitted SYNCHRONOUSLY here (holders == 0, so requestClose frees now), so it lands in the FIFO behind A and B and ahead of
-                // the marker below. closeHandle's full TLS-close path additionally emits close_notify and DEFERS this same freeResources call
+                // the marker below. release's full TLS-close path additionally emits close_notify and DEFERS this same freeResources call
                 // to the reap carrier (after the close_notify send CQE reaps); that deferral is a separate concern covered by the deferred-close
                 // leaf in IoUringDriverTest, so this leaf drives freeResources straight through PosixHandle.close to isolate the FIFO-ordering
                 // property. The routing under test (free serialized on the FIFO behind read/write engine ops) is identical either way.
@@ -125,7 +125,7 @@ class IoUringEngineFifoFreeOrderingTest extends Test:
         "concurrent: many read/write engine ops across fibers + routed free hold single-owner; free is exactly-once and strictly last (JVM)" in {
             // Genuine multi-fiber concurrency stressing the engineWorkerActive CAS: op P0 pins the single worker by blocking on a latch INSIDE
             // the op (a latch the test releases, NOT a sleep), while many separate fibers concurrently submit read/write engine ops. While P0
-            // holds the worker none of them may enter (single owner). The free is enqueued (via closeHandle) only after every read/write op has
+            // holds the worker none of them may enter (single owner). The free is enqueued (via release) only after every read/write op has
             // been submitted, so it is FIFO-ordered strictly last; releasing P0 lets the one worker drain them all in order, then the free.
             if !kyo.internal.Platform.isJVM then Sync.defer(succeed)
             else
@@ -162,9 +162,9 @@ class IoUringEngineFifoFreeOrderingTest extends Test:
                     inFlightUnderPin = engine.inFlight.get()
                     orderUnderPin    = engine.order
                     // Enqueue the routed free LAST (after every read/write op is already in the FIFO), then a completion marker after it. The
-                    // free is routed through the engineFreeSink closeHandle installs and driven via PosixHandle.freeResources synchronously
+                    // free is routed through the engineFreeSink release installs and driven via PosixHandle.freeResources synchronously
                     // (holders == 0), so it lands on the FIFO behind every read/write op and ahead of the marker; see the single-op leaf above
-                    // for why this drives freeResources directly rather than through closeHandle's reap-deferred close path.
+                    // for why this drives freeResources directly rather than through release's reap-deferred close path.
                     _ = (handle.engineFreeSink = op => driver.submitEngineOp(op))
                     _ = PosixHandle.close(handle)
                     _ = driver.submitEngineOp(() => freeRan.completeDiscard(Result.succeed(())))

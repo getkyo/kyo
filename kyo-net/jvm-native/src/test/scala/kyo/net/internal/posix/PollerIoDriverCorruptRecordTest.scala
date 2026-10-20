@@ -8,6 +8,7 @@ import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** Poller-path fatal-record parity guard, the epoll/kqueue sibling of [[IoUringDriverCorruptRecordTest]].
   *
@@ -89,9 +90,9 @@ class PollerIoDriverCorruptRecordTest extends Test:
                             val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             driver.awaitRead(acceptedH, promise)
                             Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
-                                // Captured before the closeHandle below, which stands in for the connection's release.
+                                // Captured before the release below, which stands in for the connection's release.
                                 val releasedByDriver = !acceptedH.life.armable || acceptedH.isClosing()
-                                driver.closeHandle(acceptedH)
+                                driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(client))
                                 // Let the driver's queued TLS teardown run its own engine free before withEngines frees the same engine out of band.
                                 awaitCondition(5.seconds)(!acceptedH.tls.isDefined).map { settled =>

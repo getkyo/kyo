@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** [[PosixHandle.recvInFlight]] (the always-on exclusive-use guard) must NOT false-positive when a recv parks on a full submission queue
   * and is later re-armed by [[IoUringDriver.reArmStalledSubmits]], over a REAL io_uring ring.
@@ -23,7 +24,7 @@ import kyo.net.internal.transport.ReadOutcome
   *
   * Asserts: (1) `recvInFlight` is `false` for the target handle while parked (the SQE is not yet live); (2) once the pinned batch drains
   * and the SQ is flushed, `reArmStalledSubmits` re-arms the target for real (its recv reaches `pending`, `recvInFlight` becomes `true`) --
-  * WITHOUT ever tripping the exclusive-use guard (no `Closed` failure, no spurious `closeHandle`); (3) real bytes sent after the re-arm
+  * WITHOUT ever tripping the exclusive-use guard (no `Closed` failure, no spurious `release`); (3) real bytes sent after the re-arm
   * are delivered correctly to the target's promise, proving the park-then-rearm cycle round-trips cleanly under the guard.
   *
   * Gated by [[PosixTestSockets.assumeUring]] (cancel off Linux / where the depth-1 ring cannot init). Anti-flakiness: the SQ-full
@@ -129,8 +130,8 @@ class IoUringExclusiveUseSqFullTest extends Test:
                                             )
                                         case other => fail(s"expected Success(Bytes), got $other")
                                     end match
-                                    drv.closeHandle(fillerH)
-                                    drv.closeHandle(targetH)
+                                    drv.release(fillerH, ReleaseMode.Graceful, Promise.Unsafe.init())
+                                    drv.release(targetH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                     discard(sock.close(fillerClient))
                                     discard(sock.close(targetClient))
                                     succeed

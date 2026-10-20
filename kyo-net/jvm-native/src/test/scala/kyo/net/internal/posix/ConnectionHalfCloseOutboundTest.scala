@@ -5,6 +5,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.Connection as InternalConnection
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 // This suite lives in jvm-native/src/test because the Connection pumps run over PosixTransport's PollerIoDriver on JVM-posix and Native;
 // JS uses the Node transport.
@@ -36,7 +37,7 @@ import kyo.net.internal.transport.ReadOutcome
   * the flush, the flush waits on the peer reading). macOS masks this with its large effective socket buffers; Linux does not.
   *
   * Anti-flakiness: no sleep. The WritePump's park is latched via the `RecordingIoDriver.onAwaitWritable` hook (fires after the real writable
-  * registration); the teardown is latched via the `onCloseHandle` hook (fires when `closeFn` runs `driver.closeHandle`); the peer drain is a
+  * registration); the teardown is latched via the `onRelease` hook (fires when `closeFn` runs `driver.release`); the peer drain is a
   * real-event `awaitRead` loop bounded by the teardown's EOF. Every wait is a real-event latch.
   */
 class ConnectionHalfCloseOutboundTest extends Test:
@@ -83,9 +84,9 @@ class ConnectionHalfCloseOutboundTest extends Test:
                     val writePumpParked = Promise.Unsafe.init[Unit, Any]()
                     spy.onAwaitWritable = _ => writePumpParked.completeDiscard(Result.succeed(()))
 
-                    // Latch fired when closeFn runs driver.closeHandle (the EOF teardown completed).
+                    // Latch fired when closeFn runs driver.release (the EOF teardown completed).
                     val tornDown = Promise.Unsafe.init[Unit, Any]()
-                    spy.onCloseHandle = () => tornDown.completeDiscard(Result.succeed(()))
+                    spy.onRelease = () => tornDown.completeDiscard(Result.succeed(()))
 
                     conn.start()
 
@@ -113,7 +114,7 @@ class ConnectionHalfCloseOutboundTest extends Test:
                         val peerH = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         Abort.run[Closed](drainPeer(driver, peerH)).map { drainResult =>
                             tornDown.safe.get.map { _ =>
-                                driver.closeHandle(peerH)
+                                driver.release(peerH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 val drained = drainResult match
                                     case Result.Success(bytes) => bytes
                                     case other                 => fail(s"peer drain must end with the teardown's EOF, got $other")

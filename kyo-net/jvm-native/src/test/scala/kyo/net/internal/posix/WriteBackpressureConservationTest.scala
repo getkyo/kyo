@@ -9,6 +9,7 @@ import kyo.net.internal.TlsEngine
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Write CONSERVATION under repeated backpressure plus writable-event interleaving for the TLS write path in [[PollerIoDriver]].
@@ -169,9 +170,9 @@ class WriteBackpressureConservationTest extends Test:
                         // Drain: latch on the peer's real read-readiness; each drain frees buffer space and the real backend re-flushes.
                         decrypted <- drainPeerPlaintext(driver, peerHandle, total, serverEngine)
                     yield
-                        // Free the engines on the FIFO worker (closeHandle routes the client free; the server free is submitted), then the driver.
+                        // Free the engines on the FIFO worker (release routes the client free; the server free is submitted), then the driver.
                         driver.submitEngineOp(() => serverEngine.free())
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         driver.close()
                         PosixTestSockets.closePeerForEof(spy, peerFd)
                         discard(assert(
@@ -260,7 +261,7 @@ class WriteBackpressureConservationTest extends Test:
                         _          <- drainFiber.get
                     yield
                         driver.submitEngineOp(() => serverEngine.free())
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         driver.close()
                         PosixTestSockets.closePeerForEof(spy, peerFd)
                         val got = recovered.toList

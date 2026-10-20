@@ -8,6 +8,7 @@ import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 
 /** io_uring-path parity guard for the fatal-record abort + read-produced-ciphertext drain (mirroring the poller's
   * [[TlsEngineIoCorruptRecordTest]] / [[TlsEngineIoReadDrainTest]]).
@@ -34,7 +35,7 @@ import kyo.net.internal.transport.ReadOutcome
   * Anti-flakiness: each leaf synchronizes on the read promise (completed only when the recv CQE reaps and the decrypt engine op runs) and a
   * FIFO barrier (the decrypt engine op has run), never a timer. `Async.timeout` is only the deadlock ceiling. The probe engines are freed in a
   * finally; the driver handle's `engineFreeSink` is set to a no-op so `withEngines` owns the single real free (no double-free of the native
-  * session when the test's own `closeHandle` tears the handle down). No sleep, no busy-spin.
+  * session when the test's own `release` tears the handle down). No sleep, no busy-spin.
   */
 class IoUringDriverCorruptRecordTest extends Test:
 
@@ -106,12 +107,12 @@ class IoUringDriverCorruptRecordTest extends Test:
                         val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         drv.awaitRead(handle, promise)
                         Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
-                            // The decrypt engine op has run once the FIFO barrier fires. Captured before the closeHandle below, which stands in
+                            // The decrypt engine op has run once the FIFO barrier fires. Captured before the release below, which stands in
                             // for the connection's release.
                             fifoBarrier(drv).safe.get.map { _ =>
                                 val releasedByDriver = !handle.life.armable || handle.isClosing()
                                 handle.tls = Absent
-                                drv.closeHandle(handle)
+                                drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(peerFd))
                                 outcome match
                                     case Result.Success(ReadOutcome.Failed(e: NetConnectionIoException)) =>
@@ -173,7 +174,7 @@ class IoUringDriverCorruptRecordTest extends Test:
                                 val drains = recordingServer.drainCalls.get()
                                 val feeds  = recordingServer.feedCalls.get()
                                 handle.tls = Absent
-                                drv.closeHandle(handle)
+                                drv.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(peerFd))
                                 // (1) The read CQE path decrypted the inbound record (it really ran the engine).
                                 assert(

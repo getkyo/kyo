@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.net.NetException
 import kyo.net.Test
+import kyo.net.internal.transport.ReleaseMode
 
 /** Ghost-connect regression guard for [[IoUringDriver]]: a connect arm belonging to a handle whose close has already run must never reach the
   * ring.
@@ -58,7 +59,7 @@ class IoUringDriverConnectCloseRaceTest extends Test:
                 // The connect-phase close in `PosixTransport.closeUnwiredHandle`, in its order: the driver release takes the release claim,
                 // then the fd close is claimed. It never calls `requestClose()` on the handle, so a gate keyed on the guard's closing bit
                 // would read false here while the fd number is already back with the kernel.
-                drv.closeHandle(closing)
+                drv.release(closing, ReleaseMode.Graceful, Promise.Unsafe.init())
                 assert(closing.claimFdClose(), "the leaf must be the one that claims the fd close")
                 drv.awaitConnect(healthy, healthyPromise)
                 gate.countDown()

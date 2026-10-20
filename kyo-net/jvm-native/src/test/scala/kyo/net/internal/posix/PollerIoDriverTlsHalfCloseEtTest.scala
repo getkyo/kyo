@@ -7,6 +7,7 @@ import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.scheduler.IOPromise
 
 /** Reproduce-first regression guard for the TLS read path ET half-close drain on epoll.
@@ -149,7 +150,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                             val r    = new TlsHalfCloseReader(driver, acceptedH, acc, done)
                             r.start()
                             Abort.run[Timeout](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
-                                driver.closeHandle(acceptedH)
+                                driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(client))
                                 // The driver's TLS teardown (dischargeClose -> shutdownTls -> freeResources) is queued, not inline: it clears
                                 // acceptedH.tls only once it actually runs on the poll thread. TlsRealEngines.withEngines' own `ensure` frees
@@ -229,7 +230,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                             assert(sendR.value.toInt > 0, s"send failed: errno=${sendR.errorCode}")
                             PosixTestSockets.halfClose(sock, client)
                             Abort.run[Timeout](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
-                                driver.closeHandle(acceptedH)
+                                driver.release(acceptedH, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 discard(sock.close(client))
                                 // See the sibling leaf above: wait for the queued TLS teardown to actually settle before returning, so
                                 // TlsRealEngines.withEngines' out-of-band free of serverEngine cannot race the driver's own SSL_shutdown.
