@@ -452,11 +452,17 @@ private[kyo] object TagMacro:
                                 params.size == variances.size,
                                 s"Found ${params.size} type parameters but ${variances.size} variances. TypeRepr: ${tpe.show}"
                             )
+                            // A TupleN's base type `A *: B *: EmptyTuple` is the TupleN itself once `canonicalTuple`
+                            // rewrites it, so as a parent it would make the tuple its own ancestor and a subtype
+                            // check would walk it without end; its own parents stand in its place.
+                            val parents = immediateParents(tpe).flatMap { parent =>
+                                if canonicalTuple(parent) =:= tpe then immediateParents(parent) else List(parent)
+                            }
                             ClassEntry(
                                 name,
                                 Span.from(variances),
                                 Span.from(params),
-                                Span.from(immediateParents(tpe).map(visit))
+                                Span.from(parents.map(visit))
                             )
 
                         case applied if applied.typeSymbol.flags.is(Flags.Opaque) && applied.typeSymbol.isTypeDef =>

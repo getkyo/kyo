@@ -1850,6 +1850,20 @@ class TagTest extends kyo.test.Test[Any]:
             assert(Tag[EmptyTuple] =:= Tag[EmptyTuple])
             assert(!(Tag[EmptyTuple] =:= Tag[Tuple1[String]]))
         }
+
+        "a tuple is not a subtype of a type it does not extend" in {
+            assert(!(Tag[(Int, Double)] <:< Tag[String]))
+            assert(!(Tag[Tuple1[String]] <:< Tag[Int]))
+            assert(!(Tag[Chunk[(Int, Double)]] <:< Tag[Chunk[String]]))
+        }
+
+        "a tuple is a subtype of its cons chain and of the chain's parents" in {
+            assert(Tag[(Int, Double)] <:< Tag[Int *: Double *: EmptyTuple])
+            assert(Tag[(Int, Double)] <:< Tag[NonEmptyTuple])
+            assert(Tag[(Int, Double)] <:< Tag[Tuple])
+            assert(Tag[(Int, Double)] <:< Tag[Product2[Int, Double]])
+            assert(Tag[Int *: Double *: EmptyTuple] <:< Tag[Tuple])
+        }
     }
 
     "wildcard arguments" - {
