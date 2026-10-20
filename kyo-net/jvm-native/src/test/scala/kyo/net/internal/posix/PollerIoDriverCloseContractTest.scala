@@ -127,9 +127,7 @@ class PollerIoDriverCloseContractTest extends Test:
 
     "TLS writes" - {
 
-        "a TLS write the engine refuses to encrypt fails the connection instead of completing as Done".pendingWhereTlsRuns(
-            "P3: encryptPlaintext's result is discarded, so a writePlain that encrypts nothing drops the plaintext after the pump saw Done"
-        ) in {
+        "a TLS write the engine refuses to encrypt fails the connection instead of completing as Done" in {
             PosixTestSockets.assumePoller()
             TlsRealEngines.assumeBoringSslReady()
             val driver = PollerIoDriver.init()
@@ -160,9 +158,7 @@ class PollerIoDriverCloseContractTest extends Test:
             }
         }
 
-        "a TLS write after closeHandle reports Error, as a plaintext write does".pendingWhereTlsRuns(
-            "P4: after closeHandle a TLS write is queued on the engine FIFO and returns Done, then dropped, where a plaintext write returns Error"
-        ) in {
+        "a TLS write after closeHandle reports Error, as a plaintext write does" in {
             PosixTestSockets.assumePoller()
             TlsRealEngines.assumeBoringSslReady()
             val driver = PollerIoDriver.init()
@@ -180,9 +176,7 @@ class PollerIoDriverCloseContractTest extends Test:
             }
         }
 
-        "a TLS write after a hard send error reports Error instead of Done".pendingWhereTlsRuns(
-            "P5: a hard send error discards the whole ciphertext tail with a debug log, and later TLS writes keep returning Done"
-        ) in {
+        "a TLS write after a hard send error reports Error instead of Done" in {
             PosixTestSockets.assumePoller()
             TlsRealEngines.assumeBoringSslReady()
             val driver = PollerIoDriver.init()
@@ -210,9 +204,7 @@ class PollerIoDriverCloseContractTest extends Test:
             }
         }
 
-        "ciphertext the engine produces while decrypting reaches the peer without a further application write".pendingWhereTlsRuns(
-            "P6: ciphertext a read produces is appended to pendingCipher and only flushed by the next application write"
-        ) in {
+        "ciphertext the engine produces while decrypting reaches the peer without a further application write" in {
             PosixTestSockets.assumePoller()
             TlsRealEngines.assumeBoringSslReady()
             val driver = PollerIoDriver.init()

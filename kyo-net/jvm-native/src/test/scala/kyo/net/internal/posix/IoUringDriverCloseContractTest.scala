@@ -270,10 +270,7 @@ class IoUringDriverCloseContractTest extends Test:
 
     "IoUringDriver close contract" - {
 
-        "C2: a close releases the fd within the close-flush grace while a send is parked on a peer that stopped reading"
-            .pendingWhereUringRuns(
-                "U1: a send SQE parked on a non-reading peer holds the deferred close forever; sends are never cancelled at close"
-            ) in {
+        "C2: a close releases the fd within the close-flush grace while a send is parked on a peer that stopped reading" in {
             PosixTestSockets.assumeUring()
             withDriver(productionDepth) { (driver, sockets, _, resources) =>
                 PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (fd, peerFd) =>
@@ -563,8 +560,7 @@ class IoUringDriverCloseContractTest extends Test:
             }.map(_ => succeed)
         }
 
-        "W1: a TLS write after a hard send error is refused rather than accepted into a discarded tail"
-            .pendingWhereUringTlsRuns("P5: a send CQE error discards the ciphertext tail and every later TLS write still returns Done") in {
+        "W1: a TLS write after a hard send error is refused rather than accepted into a discarded tail" in {
             PosixTestSockets.assumeUring()
             TlsRealEngines.assumeBoringSslReady()
             TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
@@ -601,8 +597,7 @@ class IoUringDriverCloseContractTest extends Test:
             }.map(_ => succeed)
         }
 
-        "W1: a plaintext write after a hard send error is refused rather than accepted into a discarded tail"
-            .pendingWhereUringRuns("P5: a send CQE error discards the plaintext tail and every later write still returns Done") in {
+        "W1: a plaintext write after a hard send error is refused rather than accepted into a discarded tail" in {
             PosixTestSockets.assumeUring()
             withDriver(productionDepth) { (driver, sockets, uring, resources) =>
                 PosixTestSockets.loopbackPair().map { case (peerFd, fd) =>
