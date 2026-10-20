@@ -42,4 +42,43 @@ class DragClientJsTest extends UITest:
         }
     }
 
+    /** Presses the pointer on the element with `id` and moves it far enough to lift it. */
+    private def press(id: String): String =
+        s"""(function(){
+           |function fire(el,t,x,y){el.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,pointerId:1}));}
+           |var el=document.getElementById("$id");var r=el.getBoundingClientRect();
+           |fire(el,"pointerdown",r.left+4,r.top+4);fire(el,"pointermove",r.left+4,r.top+24);fire(el,"pointermove",r.left+4,r.top+44);
+           |return true;})()""".stripMargin
+
+    /** The previews on the page while the element with `id` is lifted, or -1 while it is not. */
+    private def previews(id: String): String =
+        s"""(document.getElementById("$id").getAttribute("data-kyo-dragging")==="true")?
+           |document.querySelectorAll("[data-kyo-drag-preview]").length:-1""".stripMargin
+
+    /** Lets the pointer go over the element with `id`. */
+    private def release(id: String): String =
+        s"""(function(){var el=document.getElementById("$id");var r=el.getBoundingClientRect();
+           |el.dispatchEvent(new PointerEvent("pointerup",{bubbles:true,cancelable:true,clientX:r.left+4,clientY:r.top+44,pointerId:1}));
+           |return true;})()""".stripMargin
+
+    "a pointer drag draws a clone of its source as the preview, and none for a source whose preview is hidden" in {
+        val app: UI < Async = UI.div(
+            UI.span("cloned").id("cloned").dragSource(Drag.Source("cloned", Chunk.empty, activation = Drag.Activation.Sensors)),
+            UI.span("hidden").id("hidden")
+                .dragSource(Drag.Source("hidden", Chunk.empty, preview = Drag.Preview.Hidden, activation = Drag.Activation.Sensors))
+        )
+        withUI(app) {
+            for
+                _      <- Browser.evalBoolean(press("cloned"))
+                cloned <- Browser.evalInt(previews("cloned"))
+                _      <- Browser.evalBoolean(release("cloned"))
+                _      <- Browser.evalBoolean(press("hidden"))
+                hidden <- Browser.evalInt(previews("hidden"))
+                _      <- Browser.evalBoolean(release("hidden"))
+            yield
+                assert(cloned == 1)
+                assert(hidden == 0)
+        }
+    }
+
 end DragClientJsTest

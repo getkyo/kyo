@@ -63,7 +63,7 @@ private[kyo] object DragClientJs:
            |  ctx={id:sid("drag"),src:src,op:{Move:{}},keyboard:keyboard,pointerId:pointerId,last:at,target:null,anchor:null,after:false,slot:0,
            |       collection:scope?scope.key:null,keys:selection(src),region:live(),preview:null};
            |  src.el.setAttribute("data-kyo-dragging","true");
-           |  if(!keyboard){var cl=src.el.cloneNode(true);cl.setAttribute("data-kyo-drag-preview","true");cl.setAttribute("aria-hidden","true");
+           |  if(!keyboard&&!(src.cfg.preview&&src.cfg.preview.Hidden)){var cl=src.el.cloneNode(true);cl.setAttribute("data-kyo-drag-preview","true");cl.setAttribute("aria-hidden","true");
            |    var st=cl.style;st.position="fixed";st.pointerEvents="none";st.opacity="0.8";document.body.appendChild(cl);ctx.preview=cl;}
            |  if(keyboard&&scope){ctx.target=scope;scope.el.setAttribute("data-kyo-drop-valid","true");
            |    var its=items(scope);var before=0;for(var i=0;i<its.length;i++){var pos=src.el.compareDocumentPosition(its[i].el);if(pos&Node.DOCUMENT_POSITION_PRECEDING)before++;}ctx.slot=before;}
