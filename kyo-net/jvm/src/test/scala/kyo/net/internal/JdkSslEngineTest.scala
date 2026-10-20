@@ -140,4 +140,100 @@ class JdkSslEngineTest extends Test:
         }
     }
 
+    /** A handshaken client and server over `protocol`, each a [[JdkSslEngine]] over a JDK engine the leaf also holds, so it can start
+      * what no [[TlsEngine]] call starts: a renegotiation, a KeyUpdate.
+      */
+    private def handshakenPair(protocol: String)(using
+        Frame
+    ): (JdkSslEngine, javax.net.ssl.SSLEngine, JdkSslEngine, javax.net.ssl.SSLEngine) =
+        val rawClient = NioTransport.createSslContext(clientConfig, isServer = false).createSSLEngine("localhost", 443)
+        val rawServer = NioTransport.createSslContext(serverConfig, isServer = true).createSSLEngine()
+        rawClient.setUseClientMode(true)
+        rawServer.setUseClientMode(false)
+        rawClient.setEnabledProtocols(Array(protocol))
+        rawServer.setEnabledProtocols(Array(protocol))
+        val client = new JdkSslEngine(rawClient)
+        val server = new JdkSslEngine(rawServer)
+        if !TlsEngineLoopback.handshake(client, server) then throw new IllegalStateException(s"the $protocol handshake did not complete")
+        // A TLS 1.3 server's session tickets ride on its next output; deliver them so neither side has a record in flight.
+        val tickets = TlsEngineLoopback.drainAll(server)
+        if tickets.nonEmpty then
+            val in = Buffer.fromArray[Byte](tickets)
+            try discard(client.feedCiphertext(in, tickets.length))
+            finally in.close()
+            discard(decryptAll(client, 16 * 1024))
+        end if
+        (client, rawClient, server, rawServer)
+    end handshakenPair
+
+    private def feed(engine: TlsEngine, bytes: Array[Byte]): Unit =
+        val in = Buffer.fromArray[Byte](bytes)
+        try discard(engine.feedCiphertext(in, bytes.length))
+        finally in.close()
+    end feed
+
+    private def readOnce(engine: TlsEngine): Int =
+        val out = Buffer.alloc[Byte](16 * 1024)
+        try engine.readPlain(out, 16 * 1024)
+        finally out.close()
+    end readOnce
+
+    "a write after the engine closed its outbound side fails instead of looping" in {
+        Sync.defer {
+            val (client, _, server, _) = handshakenPair("TLSv1.2")
+            try
+                // TLS 1.2: the JDK engine answers the peer's close_notify by closing its own outbound side.
+                discard(server.shutdownStep())
+                feed(client, TlsEngineLoopback.drainAll(server))
+                assert(readOnce(client) == -3, "setup: the peer's close_notify must read as a clean close")
+                val plain = Buffer.fromArray[Byte](Array.fill[Byte](100)(1))
+                val wrote =
+                    try client.writePlain(plain, 100)
+                    finally plain.close()
+                assert(wrote == -2, s"a write the engine can no longer encrypt must fail, got $wrote")
+            finally
+                client.free()
+                server.free()
+            end try
+        }
+    }
+
+    "a record that needs a delegated task fails the read instead of waiting for bytes that never come" in {
+        Sync.defer {
+            val (client, rawClient, server, _) = handshakenPair("TLSv1.2")
+            try
+                // A TLS 1.2 renegotiation ClientHello: the server's unwrap consumes nothing and waits on a delegated task, so no further
+                // ciphertext can make the read progress.
+                rawClient.beginHandshake()
+                discard(client.handshakeStep())
+                feed(server, TlsEngineLoopback.drainAll(client))
+                val read = readOnce(server)
+                assert(read == -2, s"a renegotiation the transport does not run must fail the read, got $read")
+            finally
+                client.free()
+                server.free()
+            end try
+        }
+    }
+
+    "a KeyUpdate that requests one back is answered without an application write" in {
+        Sync.defer {
+            val (client, _, server, rawServer) = handshakenPair("TLSv1.3")
+            try
+                // A TLS 1.3 JDK engine's beginHandshake after the handshake issues a KeyUpdate that requests one back.
+                rawServer.beginHandshake()
+                discard(server.handshakeStep())
+                val update = TlsEngineLoopback.drainAll(server)
+                assert(update.nonEmpty, "setup: the server engine must produce a KeyUpdate")
+                feed(client, update)
+                assert(readOnce(client) == 0, "setup: a KeyUpdate carries no application data")
+                val answer = TlsEngineLoopback.drainAll(client)
+                assert(answer.nonEmpty, "the client read the KeyUpdate yet queued no answer for the next drain")
+            finally
+                client.free()
+                server.free()
+            end try
+        }
+    }
+
 end JdkSslEngineTest

@@ -35,6 +35,16 @@ abstract class Connection:
       */
     def close()(using AllowUnsafe, Frame): Unit
 
+    /** Completes once the OS has released this connection's handle, with what happened to the bytes accepted before the close.
+      *
+      * Pending until the connection closes, by [[close]], by a peer's end or by a failure; it completes exactly once and never fails. Every
+      * accepted byte reaching the kernel before the release is [[Connection.CloseOutcome.Flushed]]; a release that had to drop bytes, because
+      * the peer stopped reading for a whole [[NetConfig.closeFlushGrace]] or a write failed, is [[Connection.CloseOutcome.Dropped]] with the
+      * count and the cause. It completes on the driver's carrier, so await it as an `Async` suspension. An in-memory connection completes it
+      * with `Flushed` at `close()`: every span it accepted is already in the peer's channel.
+      */
+    def released(using AllowUnsafe): Fiber.Unsafe[Connection.CloseOutcome, Any]
+
     /** Fiber that completes when this connection begins closing: `close()` wins the close, or a peer FIN / read-error / write-error teardown
       * reaches the connection's internal close. Never consumes inbound/outbound bytes, so an observer built on it steals no buffered data, and
       * completes immediately if the connection is already closing. Does NOT fire on [[detachForUpgrade]] (a STARTTLS detach leaves the fd open
@@ -124,5 +134,25 @@ object Connection:
           */
         case Truncated
     end Status
+
+    /** What a connection's release did with the bytes accepted before it (see [[Connection.released]]).
+      *
+      * A byte is accepted once [[Connection.outbound]] took it. The release either handed every accepted byte to the kernel before it closed
+      * the handle, or it dropped the ones it still held and reset the connection. A dropped byte is one the kernel never received: bytes the
+      * kernel took before an abortive release may still be lost to the reset, which no transport can observe, so `unsentBytes` is a lower
+      * bound on what the peer missed.
+      *
+      * A caller that needs to know its last write left the process awaits `released` after `close()` and reads the outcome; a caller that
+      * needs to know the peer read it relies on its protocol's own acknowledgement.
+      */
+    enum CloseOutcome derives CanEqual:
+        /** Every accepted byte reached the kernel before the handle was released. */
+        case Flushed
+
+        /** The release dropped `unsentBytes` accepted bytes the kernel never received, and reset the connection, because of `cause`: the
+          * close-flush grace elapsed with no byte leaving, or a write failed.
+          */
+        case Dropped(unsentBytes: Long, cause: NetException)
+    end CloseOutcome
 
 end Connection

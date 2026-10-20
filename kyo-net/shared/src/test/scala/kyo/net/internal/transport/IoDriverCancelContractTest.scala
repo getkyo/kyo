@@ -172,6 +172,18 @@ class IoDriverCancelContractTest extends Test:
             }
         }
 
+        "a write after it returns Error" - contract(Op.Write)(Kind.Connected) { s =>
+            s.release()
+            val result = s.write(Span.fromUnsafe(Array.fill[Byte](64)(1)))
+            assert(
+                result match
+                    case WriteResult.Error => true
+                    case _                 => false
+                ,
+                s"a write on a released handle must report Error, got $result"
+            )
+        }
+
         "a connect parked after it fails Closed at once" - contract(Op.Connect)(Kind.Connecting) { s =>
             s.release()
             val connect = unitPromise()

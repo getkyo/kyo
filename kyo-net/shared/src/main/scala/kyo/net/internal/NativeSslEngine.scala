@@ -20,7 +20,7 @@ import kyo.internal.Diagnostics
   * [[free]] is likewise enqueued on the FIFO, so the SSL teardown is serialized behind every read/write op. Each method is a brief CPU-bound
   * shim call over in-memory BIO buffers with no socket I/O (the driver does all syscalls outside these calls).
   */
-final private[net] class NativeSslEngine[B <: SslLibBindings](lib: B, ssl: Long) extends TlsEngine:
+final private[net] class NativeSslEngine[B <: SslLibBindings](lib: B, private[net] val ssl: Long) extends TlsEngine:
 
     // Guards the native teardown so sslFree (SSL_free + free(st)) runs at most once. The engine has multiple teardown paths that are each
     // documented as mutually exclusive (handshake onFailed/onPanic, the server handshake-deadline teardown, the connect-failure path, and

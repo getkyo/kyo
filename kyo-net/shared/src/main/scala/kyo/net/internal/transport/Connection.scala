@@ -37,6 +37,7 @@ final private[kyo] class Connection[Handle] private (
     private val state: AtomicRef.Unsafe[Connection.State],
     private val closeFn: () => Unit,
     private val closingPromise: Promise.Unsafe[Unit, Any],
+    private val releasedPromise: Promise.Unsafe[kyo.net.Connection.CloseOutcome, Any],
     private val upgradeClaimed: AtomicBoolean.Unsafe,
     private val teardown: AtomicRef.Unsafe[Connection.Teardown],
     private val closeFlushGrace: Duration,
@@ -48,6 +49,8 @@ final private[kyo] class Connection[Handle] private (
 
     /** The connection's close signal (see [[kyo.net.Connection.onClosing]]). Completed once in `closeFn`'s win-the-close branch. */
     private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
+
+    def released(using AllowUnsafe): Fiber.Unsafe[kyo.net.Connection.CloseOutcome, Any] = releasedPromise
 
     /** Set after construction by the transport (the posix transport on JVM/Native, the Node transport on JS). Left uninitialized on platforms
       * without STARTTLS support.
@@ -430,6 +433,7 @@ private[kyo] object Connection:
             state,
             closeFn,
             closingPromise,
+            Promise.Unsafe.initUninterruptible[kyo.net.Connection.CloseOutcome, Any](),
             AtomicBoolean.Unsafe.init(false),
             teardown,
             closeFlushGrace,
@@ -455,12 +459,14 @@ private[kyo] object Connection:
         val out        = outbound
         val closedFlag = AtomicBoolean.Unsafe.init(false)
         // Uninterruptible for the same reason as the socket connection's signal: a waiter that gives up must not complete it.
-        val closingPromise = Promise.Unsafe.initUninterruptible[Unit, Any]()
+        val closingPromise  = Promise.Unsafe.initUninterruptible[Unit, Any]()
+        val releasedPromise = Promise.Unsafe.initUninterruptible[kyo.net.Connection.CloseOutcome, Any]()
         new kyo.net.Connection:
-            def inbound: Channel.Unsafe[Span[Byte]]     = in
-            def outbound: Channel.Unsafe[Span[Byte]]    = out
-            def isOpen(using AllowUnsafe): Boolean      = !closedFlag.get()
-            def close()(using AllowUnsafe, Frame): Unit =
+            def released(using AllowUnsafe): Fiber.Unsafe[kyo.net.Connection.CloseOutcome, Any] = releasedPromise
+            def inbound: Channel.Unsafe[Span[Byte]]                                             = in
+            def outbound: Channel.Unsafe[Span[Byte]]                                            = out
+            def isOpen(using AllowUnsafe): Boolean                                              = !closedFlag.get()
+            def close()(using AllowUnsafe, Frame): Unit                                         =
                 // There is no driver to cancel or handle to close. Idempotent via the CAS. Each channel is shared with the peer, so like a
                 // socket close both stop new writes while every span already written stays readable: the peer drains `out`, this side's
                 // reader drains `in`.

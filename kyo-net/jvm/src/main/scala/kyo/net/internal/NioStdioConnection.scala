@@ -38,6 +38,7 @@ private[kyo] object NioStdioConnection:
         val outboundCh        = Channel.Unsafe.init[Span[Byte]](channelCapacity)
         val closedFlag        = AtomicBoolean.Unsafe.init(false)
         val closingPromise    = Promise.Unsafe.init[Unit, Any]()
+        val releasedPromise   = Promise.Unsafe.initUninterruptible[NetConnection.CloseOutcome, Any]()
 
         def closeConnection()(using AllowUnsafe, Frame): Unit =
             // Close both channels; there is no driver to cancel, and fds 0/1 are never touched (the process owns them). Idempotent via the CAS.
@@ -86,11 +87,12 @@ private[kyo] object NioStdioConnection:
         })
 
         new NetConnection:
-            def inbound: Channel.Unsafe[Span[Byte]]             = inboundCh
-            def outbound: Channel.Unsafe[Span[Byte]]            = outboundCh
-            def isOpen(using AllowUnsafe): Boolean              = !closedFlag.get()
-            def close()(using AllowUnsafe, Frame): Unit         = closeConnection()
-            private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
+            def inbound: Channel.Unsafe[Span[Byte]]                                        = inboundCh
+            def outbound: Channel.Unsafe[Span[Byte]]                                       = outboundCh
+            def isOpen(using AllowUnsafe): Boolean                                         = !closedFlag.get()
+            def close()(using AllowUnsafe, Frame): Unit                                    = closeConnection()
+            private[kyo] def onClosing: Fiber.Unsafe[Unit, Any]                            = closingPromise
+            def released(using AllowUnsafe): Fiber.Unsafe[NetConnection.CloseOutcome, Any] = releasedPromise
             // not upgradable: no driver or socket, so the answer is known immediately
             def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] =
                 Fiber.Unsafe.fromResult(Result.succeed(Absent))

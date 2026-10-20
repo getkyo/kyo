@@ -149,3 +149,18 @@ int kyo_bssl_test_break_write_bio(long ssl_ptr) {
     st->write_bio = broken;
     return 0;
 }
+
+/*
+ * Put a TLS 1.3 KeyUpdate that requests one back (SSL_KEY_UPDATE_REQUESTED) on the session's write BIO, so a test
+ * peer can send the post-handshake record that obliges the receiver to answer with a record of its own while it
+ * reads. The zero-length SSL_write is BoringSSL's way to flush a queued KeyUpdate with no application data. Returns
+ * 0 on success, -1 when the session cannot send one (not TLS 1.3, or the write failed). Used only by the
+ * read-produced-record leaves; not part of the production binding.
+ */
+int kyo_bssl_test_key_update(long ssl_ptr) {
+    if (!ssl_ptr) return -1;
+    KYO_SSL_FN(ssl_state) *st = (KYO_SSL_FN(ssl_state) *)(intptr_t)ssl_ptr;
+    if (!st->ssl) return -1;
+    if (SSL_key_update(st->ssl, SSL_KEY_UPDATE_REQUESTED) != 1) return -1;
+    return SSL_write(st->ssl, "", 0) < 0 ? -1 : 0;
+}

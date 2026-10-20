@@ -56,6 +56,9 @@ object CancelCell:
         /** Writes until the driver reports the handle cannot take more, so the next writable wait parks. The peer never reads. */
         def fillSendBuffer()(using AllowUnsafe, Frame): Unit < Async
 
+        /** One write of `data` from its start, as the write pump makes it. */
+        def write(data: Span[Byte])(using AllowUnsafe): WriteResult
+
         /** Sends `bytes` from the peer end of a connected handle. */
         def peerSend(bytes: Array[Byte])(using AllowUnsafe, Frame): Unit < Async
 
@@ -98,6 +101,8 @@ object CancelCell:
                     case _ => Loop.done(())
             }
         end fillSendBuffer
+
+        def write(data: Span[Byte])(using AllowUnsafe): WriteResult = driver.write(handle, data, 0)
 
         def cancel()(using AllowUnsafe, Frame): Unit           = driver.cancel(handle)
         def detachForUpgrade()(using AllowUnsafe, Frame): Unit = driver.detachForUpgrade(handle)

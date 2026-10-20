@@ -166,3 +166,8 @@ int kyo_bssl_test_break_write_bio(long ssl_ptr) {
     (void)ssl_ptr;
     return -1;
 }
+
+int kyo_bssl_test_key_update(long ssl_ptr) {
+    (void)ssl_ptr;
+    return -1;
+}

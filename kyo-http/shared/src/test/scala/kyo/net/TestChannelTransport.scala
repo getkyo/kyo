@@ -90,6 +90,8 @@ final class RecordingConnection(underlying: Connection) extends Connection:
 
     private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = underlying.onClosing
 
+    def released(using AllowUnsafe): Fiber.Unsafe[Connection.CloseOutcome, Any] = underlying.released
+
     def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] = underlying.detachForUpgrade()
 
     private[net] def start()(using AllowUnsafe, Frame): Boolean = underlying.start()
@@ -110,6 +112,7 @@ final class TlsCloseConnection(underlying: Connection, reported: Connection.Stat
     def isOpen(using AllowUnsafe): Boolean                                                        = underlying.isOpen
     def close()(using AllowUnsafe, Frame): Unit                                                   = underlying.close()
     private[kyo] def onClosing: Fiber.Unsafe[Unit, Any]                                           = underlying.onClosing
+    def released(using AllowUnsafe): Fiber.Unsafe[Connection.CloseOutcome, Any]                   = underlying.released
     def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] = underlying.detachForUpgrade()
     private[net] def start()(using AllowUnsafe, Frame): Boolean                                   = underlying.start()
     def serverCertificateHash: Maybe[Span[Byte]]                                                  = underlying.serverCertificateHash

@@ -18,6 +18,7 @@ object StubConnection:
         val _inbound: Channel.Unsafe[Span[Byte]]  = Channel.Unsafe.init[Span[Byte]](capacity = 1024)
         val _outbound: Channel.Unsafe[Span[Byte]] = Channel.Unsafe.init[Span[Byte]](capacity = 1024)
         val closing                               = Promise.Unsafe.init[Unit, Any]()
+        val releasedOutcome                       = Promise.Unsafe.init[Connection.CloseOutcome, Any]()
         new Connection:
             def inbound: Channel.Unsafe[Span[Byte]]     = _inbound
             def outbound: Channel.Unsafe[Span[Byte]]    = _outbound
@@ -26,9 +27,12 @@ object StubConnection:
                 discard(_inbound.close())
                 discard(_outbound.close())
                 closing.completeDiscard(Result.succeed(()))
+                releasedOutcome.completeDiscard(Result.succeed(Connection.CloseOutcome.Flushed))
             end close
             private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] =
                 closing
+            def released(using AllowUnsafe): Fiber.Unsafe[Connection.CloseOutcome, Any] =
+                releasedOutcome
             def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] =
                 Fiber.Unsafe.fromResult(Result.succeed(Maybe.Absent))
             private[net] def start()(using AllowUnsafe, Frame): Boolean = true

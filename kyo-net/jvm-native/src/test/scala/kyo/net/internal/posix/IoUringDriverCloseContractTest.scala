@@ -272,24 +272,78 @@ class IoUringDriverCloseContractTest extends Test:
 
         "C2: a close releases the fd within the close-flush grace while a send is parked on a peer that stopped reading" in {
             PosixTestSockets.assumeUring()
-            withDriver(productionDepth) { (driver, sockets, _, resources) =>
+            Clock.withTimeControl { control =>
+                Clock.get.map { clock =>
+                    Clock.let(Clock.live) {
+                        withDriver(productionDepth) { (driver, sockets, _, resources) =>
+                            PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (fd, peerFd) =>
+                                discard(resources.peer(peerFd))
+                                val handle = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                                val conn   = resources.connection(
+                                    InternalConnection.init(handle, driver, 16, closeFlushGrace = closeFlushGrace, clock = clock)
+                                )
+                                val released = sockets.closed(fd)
+                                conn.start()
+                                conn.outbound.offer(Span.fromUnsafe(bytesOf(256 * 1024, 1))) match
+                                    case Result.Success(true) => ()
+                                    case other                => fail(s"the payload offer must be accepted, got $other")
+                                conn.close()
+                                // The peer never reads, so a window can see bytes leave only while the kernel still fills its buffers.
+                                Loop(0) { windows =>
+                                    if windows >= 32 then Loop.done(windows)
+                                    else
+                                        releasedOrArmed(
+                                            conn.isReleased,
+                                            control,
+                                            s"close-flush grace (window ${windows + 1})",
+                                            closeFlushGrace
+                                        )
+                                            .map { done =>
+                                                if done then Loop.done(windows)
+                                                else control.advance(closeFlushGrace).andThen(Loop.continue(windows + 1))
+                                            }
+                                }.map { windows =>
+                                    within(hangBound)(released.safe.get).map { closed =>
+                                        resources.resetPeer(peerFd)
+                                        assert(conn.isReleased, s"the close was still held after $windows close-flush windows")
+                                        assert(
+                                            closed.nonEmpty,
+                                            s"fd $fd was still open ${hangBound.show} after the grace released the connection: the deferred close " +
+                                                "waits on a send the non-reading peer never completes"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }.map(_ => succeed)
+        }
+
+        "C1: a send completion that empties the tail while the pump is backpressured never drops the held span" in {
+            PosixTestSockets.assumeUring()
+            withDriver(productionDepth) { (driver, _, _, resources) =>
                 PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (fd, peerFd) =>
                     discard(resources.peer(peerFd))
-                    val handle   = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    val conn     = resources.connection(InternalConnection.init(handle, driver, 16, closeFlushGrace = closeFlushGrace))
-                    val released = sockets.closed(fd)
+                    val handle  = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val conn    = resources.connection(InternalConnection.init(handle, driver, 64))
+                    val payload = (0 until 16).map(i => bytesOf(64 * 1024, i))
                     conn.start()
-                    conn.outbound.offer(Span.fromUnsafe(bytesOf(256 * 1024, 1))) match
-                        case Result.Success(true) => ()
-                        case other                => fail(s"the payload offer must be accepted, got $other")
-                    conn.close()
-                    within(closeFlushGrace + hangBound)(released.safe.get).map { closed =>
-                        resources.resetPeer(peerFd)
-                        assert(
-                            closed.nonEmpty,
-                            s"fd $fd was still open ${(closeFlushGrace + hangBound).show} after close(), past the ${closeFlushGrace.show} " +
-                                "close-flush grace: the deferred close waits on a send the non-reading peer never completes"
-                        )
+                    payload.foreach(span => discard(conn.outbound.offer(Span.fromUnsafe(span))))
+                    // Parked on the tail bound with a span held: the send completions that drain the tail below the bound release the pump,
+                    // and the close in progress must let it write the span it holds rather than release on an empty tail.
+                    Loop(0) { polls =>
+                        conn.writeState match
+                            case kyo.net.internal.transport.WriteState.Backpressured(_, _) => Loop.done(true)
+                            case _ if polls >= 10000                                       => Loop.done(false)
+                            case _ => Async.sleep(1.millis).andThen(Loop.continue(polls + 1))
+                    }.map { parked =>
+                        assert(parked, s"setup: the pump never parked on the tail bound, state ${conn.writeState}")
+                        conn.close()
+                        drainToEnd(driver, resources, peerFd).map { received =>
+                            val want = payload.toArray.flatten
+                            assert(received.sameElements(want), s"the peer received ${received.length} of ${want.length} accepted bytes")
+                        }
                     }
                 }
             }.map(_ => succeed)

@@ -23,6 +23,11 @@ private[net] trait BoringSslTestBindings extends Ffi:
       */
     def kyo_bssl_test_break_write_bio(ssl: Long)(using AllowUnsafe): Int
 
+    /** `kyo_bssl_test_key_update`: put a TLS 1.3 KeyUpdate that requests one back on the session's write BIO, so a test peer can send the
+      * record that obliges the receiver to answer while it reads. Returns `0` on success, `-1` when the session cannot send one.
+      */
+    def kyo_bssl_test_key_update(ssl: Long)(using AllowUnsafe): Int
+
 end BoringSslTestBindings
 
 private[net] object BoringSslTestBindings extends Ffi.Config(

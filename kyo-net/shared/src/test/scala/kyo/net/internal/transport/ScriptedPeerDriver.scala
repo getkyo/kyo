@@ -3,25 +3,40 @@ package kyo.net.internal.transport
 import kyo.*
 import kyo.net.NetException
 
-/** An [[IoDriver]] for one connection whose peer the test plays: every write takes one byte and parks the pump on writability, so the test
-  * decides when the peer reads, and the pump's read is held until the test delivers its outcome. A leaf of the shared connection layer
-  * spells out a close's interleaving with it: what is parked when `close()` runs, which teardown source arrives next, and when the tail
-  * drains.
+/** An [[IoDriver]] for one connection whose peer the test plays, so the test decides when bytes leave and the pump's read is held until
+  * the test delivers its outcome. A leaf of the shared connection layer spells out a close's interleaving with it: what is parked when
+  * `close()` runs, which teardown source arrives next, and when the tail drains.
+  *
+  * Writes follow one of two models. With no `tailBound`, every write puts one byte straight into the kernel and parks the pump on
+  * writability, the plaintext socket model. With a `tailBound`, a write is owned whole by the driver's tail, as the TLS and io_uring
+  * drivers own theirs: `Done` while the tail has room, `TailPartial` once it holds `tailBound` bytes, and the bytes are owed until
+  * [[peerReads]] hands them to the kernel.
   *
   * `cancel` fails a held writable and a held read `Closed`, as the real drivers do. Its counters are atomic because the grace timer fires
   * on the clock's carrier.
   */
-final class ScriptedPeerDriver extends IoDriver[Unit]:
+final class ScriptedPeerDriver(tailBound: Maybe[Int] = Absent) extends IoDriver[Unit]:
     import AllowUnsafe.embrace.danger
 
     val written          = AtomicInt.Unsafe.init(0)
     val closeHandleCalls = AtomicInt.Unsafe.init(0)
 
+    /** What the handle owes the kernel and what the kernel took. */
+    val ledger: OutboundLedger = OutboundLedger.init()
+
     @volatile private var parked: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
     @volatile private var read: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]]           = Absent
 
     /** The peer reads: the parked writable completes and the pump writes its next byte. */
-    def peerReads()(using AllowUnsafe): Unit =
+    def peerReads()(using AllowUnsafe): Unit = signalWritable()
+
+    /** The kernel takes `bytes` of the tail, which wakes a pump parked on it. */
+    def peerReads(bytes: Int)(using AllowUnsafe): Unit =
+        ledger.send(math.min(bytes.toLong, ledger.owed).toInt)
+        signalWritable()
+
+    /** The parked writable completes with no byte leaving, as a writable that finds the tail still full does. */
+    def signalWritable()(using AllowUnsafe): Unit =
         parked.foreach { p =>
             parked = Absent
             p.completeDiscard(Result.succeed(()))
@@ -49,7 +64,18 @@ final class ScriptedPeerDriver extends IoDriver[Unit]:
 
     def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
         discard(written.incrementAndGet())
-        if offset + 1 < data.size then WriteResult.Partial(data, offset + 1) else WriteResult.Done
+        tailBound match
+            case Absent =>
+                ledger.direct(1)
+                if offset + 1 < data.size then WriteResult.Partial(data, offset + 1) else WriteResult.Done
+            case Present(bound) =>
+                val taken = math.max(0L, math.min(bound - ledger.owed, (data.size - offset).toLong)).toInt
+                if taken > 0 then
+                    ledger.accept(taken)
+                    ledger.encode(taken, taken)
+                if offset + taken == data.size then WriteResult.Done else WriteResult.TailPartial(data, offset + taken)
+        end match
+    end write
 
     def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit =
         val closed = Closed("scripted peer", summon[Frame], "canceled")
