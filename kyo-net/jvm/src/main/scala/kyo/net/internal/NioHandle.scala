@@ -6,6 +6,7 @@ import javax.net.ssl.SSLEngine
 import kyo.*
 import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.util.HandleId
 
 /** One entry in the read-arm owner table. Each [[NioHandle.armRead]] call wraps the caller's promise in a freshly allocated `ReadArmCell`
@@ -148,9 +149,17 @@ private[kyo] object NioHandle:
     )(using AllowUnsafe): NioHandle =
         new NioHandle(channel, bufferSize, Present(NioTlsState.init(engine)), peerCloseGrace, closeFlushGrace, createdAt)
 
-    /** Close the handle: send TLS close_notify if TLS (best-effort, non-blocking), then close channel. */
-    def close(handle: NioHandle)(using AllowUnsafe): Unit =
-        handle.tls.foreach(tls => handle.gate.locked(tls.closeOutbound(handle.channel)))
+    /** Close the handle's channel. A graceful close first sends TLS close_notify (best-effort, non-blocking). An abortive close sends no
+      * close_notify and sets `SO_LINGER` to 0, so the close resets the connection: the alert or a FIN would tell the peer that the stream it
+      * truncated is complete.
+      */
+    def close(handle: NioHandle, mode: ReleaseMode)(using AllowUnsafe): Unit =
+        mode match
+            case ReleaseMode.Graceful    => handle.tls.foreach(tls => handle.gate.locked(tls.closeOutbound(handle.channel)))
+            case ReleaseMode.Abortive(_) =>
+                try discard(handle.channel.setOption(java.net.StandardSocketOptions.SO_LINGER, Integer.valueOf(0)))
+                catch case _: java.io.IOException => ()
+        end match
         try handle.channel.close()
         catch case _: java.io.IOException => ()
     end close

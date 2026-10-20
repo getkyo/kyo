@@ -6,6 +6,8 @@ import java.nio.channels.SocketChannel
 import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
 import kyo.*
+import kyo.net.NetConnectionClosedException
+import kyo.net.internal.transport.OutboundLedger
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
 import scala.annotation.tailrec
@@ -13,8 +15,10 @@ import scala.annotation.tailrec
 /** The TLS session of one JVM NIO connection: a JDK `SSLEngine` and the buffers JSSE needs to drive it non-blocking.
   *
   * Ciphertext accumulates in `netInBuf` and unwraps into `appInBuf`; `wrap` reads the caller's plaintext and writes ciphertext into
-  * `netOutBuf`. `decryptAcc` collects one unwrap pass's plaintext, and `pendingCiphertext` marks `netOutBuf` as holding a record a previous
-  * write could not flush.
+  * `netOutBuf`. `decryptAcc` collects one unwrap pass's plaintext, `pendingCiphertext` marks `netOutBuf` as holding a record a previous
+  * write or flush could not finish, and `answerDue` marks a handshake message a read consumed that the engine must answer (a TLS 1.3
+  * KeyUpdate that requested one back). Every wire byte put in `netOutBuf` and every byte the socket took is counted in the connection's
+  * [[OutboundLedger]].
   *
   * Every one of those is private, and every operation that touches them requires [[NioGate.Held]]: the engine and its buffers are not
   * thread-safe, and the selector carrier (reads), caller carriers (reads' pre-checks, writes, close) and the handshake all reach the same
@@ -37,6 +41,7 @@ final private[kyo] class NioTlsState private (
 
     private val decryptAcc: GrowableByteBuffer = new GrowableByteBuffer
     private var pendingCiphertext: Boolean     = false
+    private var answerDue: Boolean             = false
     // Set when an unwrap threw: the buffered ciphertext is no longer a record boundary the engine can resume from.
     private var broken: Boolean               = false
     @volatile private var cleanClose: Boolean = false
@@ -106,47 +111,86 @@ final private[kyo] class NioTlsState private (
 
     /** Encrypt and send `data` from `offset`, after flushing a record a previous write left in `netOutBuf`. Stops at the first short
       * socket write with [[WriteResult.Partial]] at the first plaintext byte not yet encrypted, which is `data.size` when the last record
-      * only partly fit: only a later call flushes that record's held ciphertext.
+      * only partly fit: only a later call flushes that record's held ciphertext. A wrap that cannot move fails the write.
       */
-    def write(channel: SocketChannel, data: Span[Byte], offset: Int)(using AllowUnsafe, NioGate.Held): WriteResult =
+    def write(channel: SocketChannel, data: Span[Byte], offset: Int, ledger: OutboundLedger)(using
+        AllowUnsafe,
+        Frame,
+        NioGate.Held
+    ): WriteResult =
         try
-            val flushed: Maybe[WriteResult] =
-                if !pendingCiphertext then Absent
-                else
-                    val n = channel.write(netOutBuf)
-                    if n < 0 then Present(WriteResult.Error)
-                    else if netOutBuf.hasRemaining then Present(WriteResult.Partial(data, offset))
+            if pendingCiphertext && !writeHeld(channel, ledger) then WriteResult.Partial(data, offset)
+            else
+                pendingCiphertext = false
+                val src = ByteBuffer.wrap(data.toArrayUnsafe, offset, data.size - offset)
+                // one TLS record per wrap call (~16KB), so a large payload takes several wrap and flush rounds
+                @tailrec def wrapLoop(): WriteResult =
+                    if !src.hasRemaining then WriteResult.Done
                     else
-                        pendingCiphertext = false
-                        Absent
-                    end if
-            flushed match
-                case Present(blocked) => blocked
-                case Absent           =>
-                    val src = ByteBuffer.wrap(data.toArrayUnsafe, offset, data.size - offset)
-                    // one TLS record per wrap call (~16KB), so a large payload takes several wrap and flush rounds
-                    @tailrec def wrapLoop(): WriteResult =
-                        if !src.hasRemaining then WriteResult.Done
-                        else
-                            netOutBuf.clear()
-                            val result = engine.wrap(src, netOutBuf)
-                            netOutBuf.flip()
-                            if result.getStatus eq SSLEngineResult.Status.BUFFER_OVERFLOW then WriteResult.Error
-                            else
-                                val n = channel.write(netOutBuf)
-                                if n < 0 then WriteResult.Error
-                                else if netOutBuf.hasRemaining then
+                        netOutBuf.clear()
+                        val result = engine.wrap(src, netOutBuf)
+                        netOutBuf.flip()
+                        SslEngineStep.of(result) match
+                            case SslEngineStep.Progress =>
+                                ledger.accept(result.bytesConsumed())
+                                ledger.encode(result.bytesConsumed(), result.bytesProduced())
+                                if writeHeld(channel, ledger) then wrapLoop()
+                                else
                                     // src wraps data's whole array, so its position is the absolute offset of the first unencrypted byte
                                     pendingCiphertext = true
                                     WriteResult.Partial(data, src.position())
-                                else wrapLoop()
                                 end if
-                            end if
-                    wrapLoop()
-            end match
+                            case SslEngineStep.Closed =>
+                                WriteResult.Error(
+                                    NetConnectionClosedException(
+                                        NetConnectionClosedException.Operation.Send,
+                                        "the TLS engine's outbound side is closed"
+                                    )
+                                )
+                            case step =>
+                                WriteResult.Error(NetConnectionClosedException(
+                                    NetConnectionClosedException.Operation.Send,
+                                    s"the TLS engine could not encrypt the write ($step)"
+                                ))
+                        end match
+                wrapLoop()
+            end if
         catch
-            case _: IOException => WriteResult.Error
+            case e: IOException => WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, e))
     end write
+
+    /** Writes the record a previous write or flush left held in `netOutBuf`, then the engine's answer to a handshake message a read consumed
+      * (a TLS 1.3 KeyUpdate that requested one back), counting both in `ledger`. True when bytes are still held, so the driver flushes again
+      * once the socket is writable; a socket failure is recorded in `ledger` and holds nothing.
+      */
+    def flushTail(channel: SocketChannel, ledger: OutboundLedger)(using AllowUnsafe, Frame, NioGate.Held): Boolean =
+        @tailrec def loop(): Boolean =
+            if pendingCiphertext then
+                if writeHeld(channel, ledger) then
+                    pendingCiphertext = false
+                    loop()
+                else true
+            else if answerDue then
+                netOutBuf.clear()
+                val result = engine.wrap(ByteBuffer.allocate(0), netOutBuf)
+                netOutBuf.flip()
+                answerDue = result.getHandshakeStatus eq SSLEngineResult.HandshakeStatus.NEED_WRAP
+                if SslEngineStep.of(result) == SslEngineStep.Progress then
+                    ledger.generate(result.bytesProduced())
+                    pendingCiphertext = true
+                    loop()
+                else
+                    answerDue = false
+                    false
+                end if
+            else false
+        try loop()
+        catch
+            case e: IOException =>
+                discard(ledger.fail(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, e)))
+                false
+        end try
+    end flushTail
 
     /** Close the outbound side and send close_notify (RFC 8446 6.1), best-effort and non-blocking: with the kernel send buffer full the
       * alert is dropped and the peer sees a bare FIN. Never throws.
@@ -268,6 +312,13 @@ final private[kyo] class NioTlsState private (
         Inbound.PeerFin
     end fail
 
+    /** Writes what `netOutBuf` holds, counting what the socket took; true when nothing is left. */
+    private def writeHeld(channel: SocketChannel, ledger: OutboundLedger)(using AllowUnsafe): Boolean =
+        val n = channel.write(netOutBuf)
+        if n > 0 then ledger.send(n)
+        !netOutBuf.hasRemaining
+    end writeHeld
+
     private def feedStaging(staging: AtomicRef.Unsafe[Chunk[Array[Byte]]])(using AllowUnsafe): Unit =
         val taken = staging.getAndSet(Chunk.empty)
         taken.foreach(bytes => append(ByteBuffer.wrap(bytes)))
@@ -291,10 +342,14 @@ final private[kyo] class NioTlsState private (
             if cleanClose then Inbound.CleanClose else Inbound.Pending
         else
             decryptAcc.reset()
-            @tailrec def unwrapLoop(): Unit =
+            @tailrec def unwrapLoop(): SslEngineStep =
                 appInBuf.clear()
-                val status = engine.unwrap(netInBuf, appInBuf).getStatus
-                if status eq SSLEngineResult.Status.OK then
+                val result = engine.unwrap(netInBuf, appInBuf)
+                val step   = SslEngineStep.of(result)
+                // A close_notify the engine wants to answer is left to the close; only a handshake message is answered on the read.
+                if step != SslEngineStep.Closed && (result.getHandshakeStatus eq SSLEngineResult.HandshakeStatus.NEED_WRAP) then
+                    answerDue = true
+                if step == SslEngineStep.Progress then
                     appInBuf.flip()
                     val n = appInBuf.remaining()
                     if n > 0 then
@@ -303,19 +358,26 @@ final private[kyo] class NioTlsState private (
                         decryptAcc.advance(n)
                     end if
                     unwrapLoop()
-                else if status eq SSLEngineResult.Status.CLOSED then cleanClose = true
+                else step
                 end if
             end unwrapLoop
-            unwrapLoop()
+            val last = unwrapLoop()
             // close_notify coalesced behind the last application record can be consumed by an unwrap that reports OK
-            if engine.isInboundDone then cleanClose = true
+            if last == SslEngineStep.Closed || engine.isInboundDone then cleanClose = true
             discard(netInBuf.compact())
-            if decryptAcc.size > 0 then
-                carry(decryptAcc.toByteArray)
-                Inbound.Decrypted
-            else if cleanClose then Inbound.CleanClose
-            else Inbound.Pending
-            end if
+            if decryptAcc.size > 0 then carry(decryptAcc.toByteArray)
+            last match
+                case SslEngineStep.NeedTask =>
+                    broken = true
+                    Inbound.Failed("the peer started a renegotiation, which the transport does not run")
+                case SslEngineStep.NoProgress =>
+                    broken = true
+                    Inbound.Failed("the TLS engine made no progress on buffered ciphertext")
+                case _ =>
+                    if decryptAcc.size > 0 then Inbound.Decrypted
+                    else if cleanClose then Inbound.CleanClose
+                    else Inbound.Pending
+            end match
         end if
     end decrypt
 
@@ -367,6 +429,9 @@ private[kyo] object NioTlsState:
 
         /** Nothing decrypted yet: more ciphertext is needed. */
         case Pending
+
+        /** The engine cannot go on with the inbound stream, for `reason`. */
+        case Failed(reason: String)
     end Inbound
 
     /** The outcome of one handshake unwrap. */

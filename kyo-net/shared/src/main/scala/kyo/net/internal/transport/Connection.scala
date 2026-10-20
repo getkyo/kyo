@@ -237,7 +237,7 @@ final private[kyo] class Connection[Handle] private (
             val ledger = driver.life(handle).ledger
             ledger.failure match
                 case Present(cause) => discard(abort(cause))
-                case Absent =>
+                case Absent         =>
                     if writePump.current == WriteState.TornDown then
                         // The waiter fires inside the send that drains the ledger, on the owner and possibly under the owner's gate, so
                         // its body re-enters through runOwned rather than acting inline.
@@ -259,7 +259,7 @@ final private[kyo] class Connection[Handle] private (
     private def graceExpired(windowStart: Long)(using AllowUnsafe, Frame): Unit =
         advance()
         if teardown.get() == Connection.Teardown.ReleaseRequested then
-            val sent = driver.life(handle).ledger.sentTotal
+            val sent  = driver.life(handle).ledger.sentTotal
             val cause = kyo.net.NetConnectionClosedException(
                 kyo.net.NetConnectionClosedException.Operation.Close,
                 s"close flush grace (${closeFlushGrace.show}) elapsed with no byte reaching the kernel"
@@ -274,7 +274,7 @@ final private[kyo] class Connection[Handle] private (
       */
     private def abort(cause: kyo.net.NetException)(using AllowUnsafe, Frame): Boolean =
         val parked = writePump.current
-        val ended = parked match
+        val ended  = parked match
             case WriteState.TornDown                                                => true
             case WriteState.AwaitingWritable(_, _) | WriteState.Backpressured(_, _) => writePump.abandon(parked)
             case _                                                                  => false
@@ -296,12 +296,12 @@ final private[kyo] class Connection[Handle] private (
             osClosed.onComplete { _ =>
                 residue.onComplete { held =>
                     import AllowUnsafe.embrace.danger
-                    val left   = held.map(_.eval).toMaybe.flatten.fold(0L)(_.foldLeft(0L)(_ + _.size))
-                    val unsent = owed + writePump.droppedBytes + left
+                    val left    = held.map(_.eval).toMaybe.flatten.fold(0L)(_.foldLeft(0L)(_ + _.size))
+                    val unsent  = owed + writePump.droppedBytes + left
                     val outcome = mode match
-                        case ReleaseMode.Abortive(cause)  => kyo.net.Connection.CloseOutcome.Dropped(unsent, cause)
+                        case ReleaseMode.Abortive(cause)         => kyo.net.Connection.CloseOutcome.Dropped(unsent, cause)
                         case ReleaseMode.Graceful if unsent == 0 => kyo.net.Connection.CloseOutcome.Flushed
-                        case ReleaseMode.Graceful =>
+                        case ReleaseMode.Graceful                =>
                             kyo.net.Connection.CloseOutcome.Dropped(
                                 unsent,
                                 kyo.net.NetConnectionClosedException(

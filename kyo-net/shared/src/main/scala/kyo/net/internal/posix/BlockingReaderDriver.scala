@@ -6,8 +6,10 @@ import kyo.ffi.Ffi
 import kyo.net.NetConnectionIoException
 import kyo.net.NetErrno
 import kyo.net.NetException
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 
 /** Fallback driver for the one driver-selection cell the readiness poller cannot serve: an epoll backend reading a regular-file stdin (`S_ISREG`).
@@ -140,8 +142,10 @@ final private[net] class BlockingReaderDriver private[posix] (real: IoDriver[Pos
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         real.cancel(handle)
 
-    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        real.closeHandle(handle)
+    def life(handle: PosixHandle): HandleLife = real.life(handle)
+
+    def release(handle: PosixHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        real.release(handle, mode, released)
 
     def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         real.releaseFd(handle, closeFd)

@@ -579,18 +579,27 @@ final private[net] class PosixHandle private (
     /** Complete the pump's parked writable wait if what the handle owes has drained below [[PosixHandle.WriteTailLowWater]], so the WritePump
       * retries the write the high-water bound deferred. Called by the drain paths (poller `flushPending`, io_uring `onTlsSendComplete` /
       * `onRawSendComplete`) on the engine FIFO worker after they record the completed send. A wait parked for socket writability is completed
-      * too: with the tail below the mark the pump's retry either writes or parks again.
+      * too: with the tail below the mark the pump's retry either writes or parks again. A connection whose write already failed fails the wait
+      * instead: its owed bytes never drain, and the failure's own wake found no wait parked yet.
       */
     private[posix] def releaseBackpressureWaiter()(using AllowUnsafe): Unit =
-        if life.ledger.owed < PosixHandle.WriteTailLowWater then
-            life.writable.take().foreach(_.completeDiscard(Result.succeed(())))
+        life.ledger.failure match
+            case Present(cause) => life.writable.take().foreach(_.completeDiscard(Result.fail(cause)))
+            case Absent         =>
+                if life.ledger.owed < PosixHandle.WriteTailLowWater then
+                    life.writable.take().foreach(_.completeDiscard(Result.succeed(())))
     end releaseBackpressureWaiter
 
-    /** Fails the pump's parked writable wait with the connection's write failure, so a pump parked on the tail bound tears down instead of
-      * waiting for a drain that a failed send ended.
+    /** Records `cause` as the connection's write failure unless one is already recorded, and fails the pump's parked writable wait with the
+      * recorded one, so a pump parked on the tail bound tears down instead of waiting for a drain that a failed send ended. Returns the
+      * recorded failure, which every later write reports.
       */
-    private[posix] def failBackpressureWaiter(cause: NetException)(using AllowUnsafe): Unit =
-        life.writable.take().foreach(_.completeDiscard(Result.fail(cause)))
+    private[posix] def failWrite(cause: NetException)(using AllowUnsafe): NetException =
+        discard(life.ledger.fail(cause))
+        val failure = life.ledger.failure.getOrElse(cause)
+        life.writable.take().foreach(_.completeDiscard(Result.fail(failure)))
+        failure
+    end failWrite
 
     /** The promise the driver's [[IoDriver.release]] completes once the descriptor is closed, set by that release before it requests the close. */
     @volatile var releaseSignal: Maybe[Promise.Unsafe[Unit, Any]] = Absent
@@ -916,15 +925,15 @@ private[posix] object NoDriver extends IoDriver[PosixHandle]:
         unbound
     def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         unbound
-    def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = unbound
-    def life(handle: PosixHandle): HandleLife                                                     = handle.life
-    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                               = unbound
+    def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                            = unbound
+    def life(handle: PosixHandle): HandleLife                                                                                = handle.life
+    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                          = unbound
     def release(handle: PosixHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
         unbound
-    def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = unbound
-    def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   = unbound
-    def runOwned(handle: PosixHandle)(op: () => Unit)(using AllowUnsafe, Frame): Unit             = unbound
-    def close()(using AllowUnsafe, Frame): Unit                                                   = unbound
-    def label: String                                                                             = "NoDriver"
+    def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = unbound
+    def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = unbound
+    def runOwned(handle: PosixHandle)(op: () => Unit)(using AllowUnsafe, Frame): Unit           = unbound
+    def close()(using AllowUnsafe, Frame): Unit                                                 = unbound
+    def label: String                                                                           = "NoDriver"
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}(unbound)"
 end NoDriver

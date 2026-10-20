@@ -204,6 +204,8 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
                 // would strand the application record in netIn forever, deadlocking the connection. So loop: keep unwrapping while the
                 // engine makes progress (consumes bytes) but yields no application data, and only stop on real want-read (underflow / no
                 // ciphertext), a fatal status, or once application bytes have been decrypted.
+                // A record that needs an answer (a TLS 1.3 KeyUpdate that requested one back) is answered here, into netOut, so the
+                // driver's drain of read-produced ciphertext sends it without waiting for an application write.
                 @scala.annotation.tailrec
                 def loop(): Int =
                     if appIn.hasRemaining then copyAppIn(buf, len)
@@ -214,18 +216,32 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
                         val res = unwrapOneRecord(out)
                         out.flip()
                         if out.hasRemaining then appIn = appendRead(appIn, out)
-                        if isStatus(res, SSLEngineResult.Status.BUFFER_OVERFLOW) then -2
-                        else if appIn.hasRemaining then copyAppIn(buf, len)
-                        else if isStatus(res, SSLEngineResult.Status.CLOSED) then -3          // peer sent close_notify: orderly close
-                        else if isStatus(res, SSLEngineResult.Status.BUFFER_UNDERFLOW) then 0 // partial record: want more ciphertext
-                        else if res.bytesConsumed() > 0 then loop() // consumed a non-app record (e.g. NewSessionTicket); keep draining
-                        else 0                                      // OK with no progress: want-read
-                        end if
+                        SslEngineStep.of(res) match
+                            case SslEngineStep.Closed    => if appIn.hasRemaining then copyAppIn(buf, len) else -3
+                            case SslEngineStep.Underflow => if appIn.hasRemaining then copyAppIn(buf, len) else 0
+                            case SslEngineStep.Progress  =>
+                                if res.getHandshakeStatus eq SSLEngineResult.HandshakeStatus.NEED_WRAP then answerHandshake()
+                                // a non-app record (e.g. NewSessionTicket) produced nothing to return; keep draining
+                                if appIn.hasRemaining then copyAppIn(buf, len) else loop()
+                            // a renegotiation the transport does not run, or an unwrap that cannot move: no further ciphertext helps
+                            case SslEngineStep.NeedTask | SslEngineStep.NoProgress => -2
+                        end match
                     end if
                 end loop
                 loop()
             end if
     end readPlain
+
+    /** Wraps the engine's answer to a post-handshake message into `netOut`, for as long as the engine asks to wrap. */
+    @scala.annotation.tailrec
+    private def answerHandshake(): Unit =
+        val tmp = ByteBuffer.allocate(packetCap)
+        val res = engine.wrap(ByteBuffer.allocate(0), tmp)
+        tmp.flip()
+        if tmp.hasRemaining then netOut = appendRead(netOut, tmp)
+        if SslEngineStep.of(res) == SslEngineStep.Progress && (res.getHandshakeStatus eq SSLEngineResult.HandshakeStatus.NEED_WRAP) then
+            answerHandshake()
+    end answerHandshake
 
     private def copyAppIn(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int =
         val n   = Math.min(len, appIn.remaining())
@@ -241,12 +257,19 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
         else
             val arr = Buffer.copyToArray[Byte](buf, 0, len)
             val src = ByteBuffer.wrap(arr)
-            val tmp = ByteBuffer.allocate(packetCap + len)
-            val res = engine.wrap(src, tmp)
-            tmp.flip()
-            if tmp.hasRemaining then netOut = appendRead(netOut, tmp)
-            if isStatus(res, SSLEngineResult.Status.CLOSED) || isStatus(res, SSLEngineResult.Status.BUFFER_OVERFLOW) then -2
-            else src.position() // bytes consumed
+            // A wrap that produced only a handshake message (an answer the engine still owed) consumed no plaintext: wrap again.
+            @scala.annotation.tailrec
+            def loop(): Int =
+                val tmp = ByteBuffer.allocate(packetCap + len)
+                val res = engine.wrap(src, tmp)
+                tmp.flip()
+                if tmp.hasRemaining then netOut = appendRead(netOut, tmp)
+                SslEngineStep.of(res) match
+                    case SslEngineStep.Progress => if src.position() > 0 then src.position() else loop()
+                    case _                      => -2 // a closed outbound side, or a wrap that cannot move
+                end match
+            end loop
+            loop()
     end writePlain
 
     def hasBufferedPlaintext(using AllowUnsafe): Boolean = appIn.hasRemaining

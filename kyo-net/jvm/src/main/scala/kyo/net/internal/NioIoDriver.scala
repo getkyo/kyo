@@ -9,6 +9,7 @@ import java.nio.channels.Selector
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import kyo.*
+import kyo.net.NetConnectionClosedException
 import kyo.net.NetConnectionIoException
 import kyo.net.NetDriverUnsupportedException
 import kyo.net.NetException
@@ -64,13 +65,13 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     // Concurrent-collection audit: the four pending-op maps below are raw java.util.concurrent.ConcurrentHashMap. kyo has no
     // concurrent-map type, and its effect-based collections cannot back this driver's non-parking selector path (these maps are read/written on
     // the selector carrier when arming and on the caller's carrier on cancel/close, with no suspension). The raw type is retained as a documented
-    // no-equivalent exception; each map is a channel -> pending-state entry, removed by cleanupPending/closeHandle.
+    // no-equivalent exception; each map is a channel -> pending-state entry, removed by cleanupPending/release.
     // Pending read requests: channel -> handle (promise stored on handle.readArm)
     private val pendingReads =
         new java.util.concurrent.ConcurrentHashMap[SocketChannel, NioHandle]()
 
     /** Test-observability seam: whether a pending read is still registered for `handle`'s channel. A handshake teardown that reaps the handle
-      * through `closeHandle` removes this entry; a bare channel close leaves it stranded (a pendingReads leak). Read-only, no mutation.
+      * through `release` removes this entry; a bare channel close leaves it stranded (a pendingReads leak). Read-only, no mutation.
       */
     private[kyo] def hasPendingRead(handle: NioHandle)(using AllowUnsafe): Boolean =
         pendingReads.containsKey(handle.channel)
@@ -78,6 +79,11 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     // Pending writable requests: channel -> promise
     private val pendingWritables =
         new java.util.concurrent.ConcurrentHashMap[SocketChannel, Promise.Unsafe[Unit, Abort[Closed | NetException]]]()
+
+    // Pending tail flushes: channel -> handle whose TLS session holds bytes no write will send (a KeyUpdate answer a read produced); the
+    // flush's promise is parked in the handle's life.flush, apart from the pump's writable wait.
+    private val pendingFlushes =
+        new java.util.concurrent.ConcurrentHashMap[SocketChannel, NioHandle]()
 
     // Pending connect requests: channel -> (promise, handle). The handle is carried so a driver-side connect failure (dispatchConnect's
     // finishConnect IOException) can name the connection it belongs to and its creation frame, rather than the driver.
@@ -120,14 +126,14 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     private val pendingGateWork =
         new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
 
-    // Concurrent-collection audit: listener releases deferred to the selector's deregistration pass. releaseListener (any carrier) offers the
-    // closed server channel with its release promise; the poll carrier drains after each select(), the closing carrier drains once more after
-    // selector.close(), and a releasing carrier that observes the selector closed after its offer drains its own entry. More than one consumer,
-    // so entries are dequeued with poll() (never the peek-then-poll the single-consumer queues above use) and a still-registered entry is
-    // re-offered rather than left at the head: poll is atomic, so no entry is completed twice or dropped. Same raw-ConcurrentLinkedQueue
+    // Concurrent-collection audit: listener and connection releases deferred to the selector's deregistration pass. awaitDeregistration (any
+    // carrier) offers the closed channel with its release promise; the poll carrier drains after each select(), the closing carrier drains once
+    // more after selector.close(), and a releasing carrier that observes the selector closed after its offer drains its own entry. More than one
+    // consumer, so entries are dequeued with poll() (never the peek-then-poll the single-consumer queues above use) and a still-registered entry
+    // is re-offered rather than left at the head: poll is atomic, so no entry is completed twice or dropped. Same raw-ConcurrentLinkedQueue
     // no-equivalent exception as its siblings; offer is the happens-before barrier.
-    private val pendingListenerReleases =
-        new java.util.concurrent.ConcurrentLinkedQueue[(ServerSocketChannel, Promise.Unsafe[Unit, Any])]()
+    private val pendingReleases =
+        new java.util.concurrent.ConcurrentLinkedQueue[(java.nio.channels.SelectableChannel, Promise.Unsafe[Unit, Any])]()
 
     // Concurrent-collection audit: server-channel registrations for the poll carrier to apply (registerServerChannel). Same raw
     // ConcurrentLinkedQueue no-equivalent exception as its siblings; producers are listen callers, the consumer is the poll carrier, or the
@@ -171,7 +177,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 catch case _: Throwable => discard(chans.append("<keys unavailable>"))
                 end try
                 s"closed=${closedFlag.get()} selectorOpen=${selector.isOpen} pendingReads=${pendingReads.size()} " +
-                    s"pendingWritables=${pendingWritables.size()} pendingConnects=${pendingConnects.size()} " +
+                    s"pendingWritables=${pendingWritables.size()} pendingFlushes=${pendingFlushes.size()} pendingConnects=${pendingConnects.size()} " +
                     s"pendingAccepts=${pendingAccepts.size()} pendingRegistrations=${pendingRegistrations.size()} " +
                     s"registeredChannels=[$chans]"
             ,
@@ -181,7 +187,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 kyo.internal.Diagnostics.Probe(
                     closed = closedFlag.get(),
                     cycles = 0L,
-                    pending = pendingReads.size() > 0 || pendingWritables.size() > 0 ||
+                    pending = pendingReads.size() > 0 || pendingWritables.size() > 0 || pendingFlushes.size() > 0 ||
                         pendingConnects.size() > 0 || pendingAccepts.size() > 0
                 )
         )
@@ -338,7 +344,11 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 tls.takePlaintext() match
                     case Present(plaintext) => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(plaintext))))
                     case Absent             =>
-                        handle.gate.tryLocked(tls.unwrapBuffered(handle.graceStaging)) match
+                        handle.gate.tryLocked {
+                            val inbound = tls.unwrapBuffered(handle.graceStaging)
+                            flushTail(handle, tls)
+                            inbound
+                        } match
                             case Absent =>
                                 // Another section holds the engine, with ciphertext of this read possibly buffered: arm, and have the
                                 // selector carrier unwrap for it once the engine is free.
@@ -356,6 +366,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                                 promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
                             case Present(NioTlsState.Inbound.PeerFin) =>
                                 promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
+                            case Present(NioTlsState.Inbound.Failed(reason)) =>
+                                promise.completeDiscard(Result.succeed(decryptFailed(handle, reason)))
                             case Present(NioTlsState.Inbound.Pending) =>
                                 // A grace probe latched a bare FIN (truncation) while backpressured: surface it now rather than arming for
                                 // ciphertext the peer will never send (a live consumer must see the end promptly).
@@ -725,10 +737,13 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     case Absent       => claimStagedPlain(handle)
                     case Present(tls) =>
                         rearmDeferredRead(handle)
-                        tls.unwrapBuffered(handle.graceStaging) match
-                            case NioTlsState.Inbound.CleanClose => claimTls(handle, tls, Present(ReadOutcome.CleanClose))
-                            case NioTlsState.Inbound.PeerFin    => claimTls(handle, tls, Present(ReadOutcome.PeerFin))
-                            case _                              => claimTls(handle, tls, Absent)
+                        val inbound = tls.unwrapBuffered(handle.graceStaging)
+                        flushTail(handle, tls)
+                        inbound match
+                            case NioTlsState.Inbound.CleanClose     => claimTls(handle, tls, Present(ReadOutcome.CleanClose))
+                            case NioTlsState.Inbound.PeerFin        => claimTls(handle, tls, Present(ReadOutcome.PeerFin))
+                            case NioTlsState.Inbound.Failed(reason) => claimTls(handle, tls, Present(decryptFailed(handle, reason)))
+                            case _                                  => claimTls(handle, tls, Absent)
                         end match
                 end match
             end if
@@ -1007,31 +1022,94 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         discard(handle.gate.lockedOrDefer(handle.gate.runQueued()))
     end runOwned
 
-    def write(handle: NioHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
-        handle.tls match
-            // No early Done at the span's end: the TLS write returns Partial at offset == data.size when its last record only partly fit the
-            // socket, and only it flushes that record's held ciphertext on the retry.
-            case Present(tls) => handle.gate.locked(tls.write(handle.channel, data, offset))
-            case Absent       =>
-                if data.isEmpty || offset >= data.size then WriteResult.Done
-                else handle.gate.locked(writePlain(handle, data, offset))
+    def life(handle: NioHandle): HandleLife = handle.life
 
-    private def writePlain(handle: NioHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
+    def write(handle: NioHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
+        given Frame = Frame.internal
+        handle.life.ledger.failure match
+            case Present(cause) => WriteResult.Error(cause)
+            case Absent         =>
+                if !handle.life.armable then
+                    WriteResult.Error(NetConnectionClosedException(
+                        NetConnectionClosedException.Operation.Send,
+                        "the connection was released"
+                    ))
+                else
+                    handle.tls match
+                        // No early Done at the span's end: the TLS write returns Partial at offset == data.size when its last record only partly
+                        // fit the socket, and only it flushes that record's held ciphertext on the retry.
+                        case Present(tls) => handle.gate.locked(writeTls(handle, tls, data, offset))
+                        case Absent       =>
+                            if data.isEmpty || offset >= data.size then WriteResult.Done
+                            else handle.gate.locked(writePlain(handle, data, offset))
+        end match
+    end write
+
+    private def writePlain(handle: NioHandle, data: Span[Byte], offset: Int)(using AllowUnsafe, Frame): WriteResult =
         try
             val arr = data.toArrayUnsafe
             val len = arr.length - offset
             // Wrap with offset so no arr.drop(n) allocation is needed on partial writes.
             val buf = ByteBuffer.wrap(arr, offset, len)
             val n   = handle.channel.write(buf)
-            if n < 0 then
-                WriteResult.Error
-            else if n >= len then
-                WriteResult.Done
-            else
-                WriteResult.Partial(data, offset + n) // same span, advanced offset, no arr.drop
-            end if
+            handle.life.ledger.direct(n)
+            if n >= len then WriteResult.Done
+            else WriteResult.Partial(data, offset + n) // same span, advanced offset, no arr.drop
         catch
-            case _: IOException => WriteResult.Error
+            case e: IOException => WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, e))
+
+    // An engine exception other than an IOException fails this connection's write, never the writer's carrier.
+    private def writeTls(handle: NioHandle, tls: NioTlsState, data: Span[Byte], offset: Int)(using
+        AllowUnsafe,
+        Frame,
+        NioGate.Held
+    ): WriteResult =
+        try tls.write(handle.channel, data, offset, handle.life.ledger)
+        catch case e: Exception => WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, e))
+
+    /** Sends what `tls` holds that no write will send (a KeyUpdate answer a read produced), and parks a flush on writability for what the
+      * socket did not take.
+      */
+    private def flushTail(handle: NioHandle, tls: NioTlsState)(using AllowUnsafe, NioGate.Held): Unit =
+        given Frame = Frame.internal
+        if tls.flushTail(handle.channel, handle.life.ledger) then armFlush(handle)
+    end flushTail
+
+    /** Parks the tail flush in `life.flush` and arms `OP_WRITE` for it; its completion flushes again on the handle's owner. A flush already
+      * parked covers this one: both flush the same held bytes.
+      */
+    private def armFlush(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
+        if handle.life.flush.current.isEmpty then
+            val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
+            promise.onComplete { result =>
+                if result.isSuccess then
+                    runOwned(handle)(() =>
+                        handle.tls.foreach(tls => if handle.life.armable then handle.gate.locked(flushTail(handle, tls)))
+                    )
+            }
+            if handle.life.flush.park(promise, released(handle)) then
+                pendingFlushes.put(handle.channel, handle)
+                if !registerInterest(handle.channel, SelectionKey.OP_WRITE) then
+                    discard(pendingFlushes.remove(handle.channel))
+                    discard(handle.life.flush.clearIf(promise))
+                    promise.completeDiscard(Result.fail(Closed(
+                        s"connection ${handleLabel(handle)}",
+                        handle.createdAt,
+                        "registerWrite failed"
+                    )))
+                end if
+            end if
+        end if
+    end armFlush
+
+    private def decryptFailed(handle: NioHandle, reason: String): ReadOutcome =
+        ReadOutcome.Failed(NetConnectionIoException(
+            s"connection ${handleLabel(handle)}",
+            NetConnectionIoException.Operation.Decrypt,
+            reason
+        )(
+            using handle.createdAt
+        ))
 
     /** Remove pending operations for a channel and fail their promises with Closed. */
     private def cleanupPending(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
@@ -1060,6 +1138,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         Maybe(pendingWritables.remove(handle.channel)).foreach { promise =>
             promise.completeDiscard(Result.fail(closed))
         }
+        // The flush's promise is in life.flush, failed by the cancel below.
+        discard(pendingFlushes.remove(handle.channel))
         Maybe(pendingConnects.remove(handle.channel)).foreach { case (promise, _) =>
             promise.completeDiscard(Result.fail(closed))
         }
@@ -1115,23 +1195,21 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
 
     /** The handle's one release: takes the release claim before the sweep, so a repeat call is a no-op and no op is parked or re-armed after
       * it, then, on the handle's owner, cancels the key and closes the channel, so the close never lands inside a write or an engine
-      * operation in progress.
+      * operation in progress. `released` completes once a selector pass deregistered the channel, which is when the JDK closes the fd.
       */
-    def closeHandle(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
-        if handle.life.claimRelease() then runOwned(handle)(() => release(handle))
+    def release(handle: NioHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        if handle.life.claimRelease() then runOwned(handle)(() => releaseClaimed(handle, mode, released))
 
-    private def release(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
-        Log.live.unsafe.debug(s"$label closeHandle ${handleLabel(handle)}")
+    private def releaseClaimed(handle: NioHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        Log.live.unsafe.debug(s"$label release ${handleLabel(handle)}")
         cleanupPending(handle)
         cancelKey(handle)
-        NioHandle.close(handle)
-        // Wake the selector so the cancelled key is deregistered, and on JDK 11+ the channel's fd actually kill()ed, on the next select()
-        // pass. channel.close defers both to a selection operation, and the loop parks in an indefinite select() with no timeout, so on an
-        // otherwise-idle driver (the last connection closing, or a peer-FIN teardown with nothing else pending) this close would otherwise
-        // leave the fd stranded in CLOSE_WAIT until an unrelated event happened to wake the loop. Coalesced via wakeupPending, matching the
-        // transport and listener closes that wake the selector for the identical deferred-kill() reason.
-        wakeup()
-    end release
+        NioHandle.close(handle, mode)
+        // channel.close defers the key's deregistration, and on JDK 11+ the fd's kill(), to a selection operation, and the loop parks in an
+        // indefinite select(): without the wake an otherwise idle driver (the last connection closing, or a peer-FIN teardown with nothing else
+        // pending) would leave the fd in CLOSE_WAIT until an unrelated event woke the loop.
+        awaitDeregistration(handle.channel, released)
+    end releaseClaimed
 
     /** Remove a pending accept entry for a server channel and fail its promise with Closed. */
     def cleanupAccept(serverChannel: ServerSocketChannel, createdAt: Frame)(using AllowUnsafe, Frame): Unit =
@@ -1151,45 +1229,52 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             discard(selector.wakeup())
     end wakeup
 
-    /** Arm the release of a closed listener's descriptor. `serverChannel.close()` has already cancelled the channel's SelectionKey, but the fd is
-      * closed (`kill()`ed) only inside a later selector pass that deregisters the cancelled key. The entry is queued for the poll carrier and the
-      * selector is woken unconditionally rather than through the coalescing `wakeup()`: a wakeup coalesced into a pass that began before the
-      * cancel landed would leave an idle driver parked with the descriptor open. The promise completes once a pass has observed the channel
-      * deregistered, or at once when the driver is already closed, since `implCloseSelector` killed every channel. On a driver whose loop has
-      * not started it completes on the loop's first pass or in `close()`, whichever comes first, and never earlier.
-      */
+    /** Arm the release of a closed listener's descriptor: [[awaitDeregistration]] of `serverChannel`. */
     def releaseListener(serverChannel: ServerSocketChannel, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe): Unit =
-        discard(pendingListenerReleases.offer((serverChannel, released)))
-        discard(selector.wakeup())
-        if selectorClosed.get() then drainListenerReleases()
-    end releaseListener
+        awaitDeregistration(serverChannel, released)
 
-    /** Complete every queued listener release whose channel the selector has deregistered, re-queuing the rest for the next pass.
+    /** Complete `released` once the closed `channel`'s descriptor is closed. `channel.close()` has already cancelled the channel's
+      * SelectionKey, but the fd is closed (`kill()`ed) only inside a later selector pass that deregisters the cancelled key. The entry is queued
+      * for the poll carrier and the selector is woken unconditionally rather than through the coalescing `wakeup()`: a wakeup coalesced into a
+      * pass that began before the cancel landed would leave an idle driver parked with the descriptor open. The promise completes once a pass
+      * has observed the channel deregistered, or at once when the driver is already closed, since `implCloseSelector` killed every channel. On
+      * a driver whose loop has not started it completes on the loop's first pass or in `close()`, whichever comes first, and never earlier.
+      */
+    private def awaitDeregistration(channel: java.nio.channels.SelectableChannel, released: Promise.Unsafe[Unit, Any])(using
+        AllowUnsafe
+    ): Unit =
+        discard(pendingReleases.offer((channel, released)))
+        discard(selector.wakeup())
+        if selectorClosed.get() then drainReleases()
+    end awaitDeregistration
+
+    /** Complete every queued release whose channel the selector has deregistered, re-queuing the rest for the next pass.
       *
       * `isRegistered()` is the observation: `SelectorImpl.processDeregisterQueue` decrements the channel's key count one statement before it
       * calls `kill()`, so a false read after `select()` returned means the fd is closed. A channel still registered cancelled its key after that
       * pass's deregistration ran; the wakeup armed here makes the next pass run its deregistration before parking and return at once. An entry
-      * is re-queued at most twice: once per selector, the second time only when a rebuild re-registers a listener that is closed while the
+      * is re-queued at most twice: once per selector, the second time only when a rebuild re-registers a channel that is closed while the
       * rebuild runs, so its key is cancelled on the new selector after that selector's first pass. The extra zero-key returns therefore cannot
-      * accumulate toward the rebuild threshold. Bounded by the size snapshot so a re-queued entry is not revisited within the pass. After a re-queue the closed flag is re-read: a `close()` that ran between
-      * the registration check and the re-offer drained a queue this entry was absent from, and this carrier then completes it itself.
+      * accumulate toward the rebuild threshold. Bounded by the size snapshot so a re-queued entry is not revisited within the pass. After a
+      * re-queue the closed flag is re-read: a `close()` that ran between the registration check and the re-offer drained a queue this entry was
+      * absent from, and this carrier then completes it itself.
       */
-    private def drainListenerReleases()(using AllowUnsafe): Unit =
-        var remaining = pendingListenerReleases.size()
+    private def drainReleases()(using AllowUnsafe): Unit =
+        var remaining = pendingReleases.size()
         var requeued  = false
         while remaining > 0 do
             remaining -= 1
-            val entry = pendingListenerReleases.poll()
+            val entry = pendingReleases.poll()
             if entry ne null then
                 if selectorClosed.get() || !entry._1.isRegistered() then entry._2.completeUnitDiscard()
                 else
-                    discard(pendingListenerReleases.offer(entry))
+                    discard(pendingReleases.offer(entry))
                     discard(selector.wakeup())
                     requeued = true
             end if
         end while
-        if requeued && selectorClosed.get() then drainListenerReleases()
-    end drainListenerReleases
+        if requeued && selectorClosed.get() then drainReleases()
+    end drainReleases
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
@@ -1204,7 +1289,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 try selector.close()
                 catch case _: IOException => ()
                 selectorClosed.set(true)
-                drainListenerReleases()
+                drainReleases()
                 drainServerRegistrations()
                 // owned ops a gate release handed back run once more here, since no selector cycle follows (see offerGateWork)
                 drainGateWork()
@@ -1228,6 +1313,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             promise.completeDiscard(Result.fail(closed))
         }
         pendingWritables.clear()
+        pendingFlushes.forEach((_, h) => h.life.flush.fail(closed))
+        pendingFlushes.clear()
         pendingConnects.forEach { (_, entry) =>
             entry._1.completeDiscard(Result.fail(closed))
         }
@@ -1444,6 +1531,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     private def reassertPendingInterest()(using AllowUnsafe): Unit =
         reassertOp(pendingReads.keySet().iterator(), SelectionKey.OP_READ)
         reassertOp(pendingWritables.keySet().iterator(), SelectionKey.OP_WRITE)
+        reassertOp(pendingFlushes.keySet().iterator(), SelectionKey.OP_WRITE)
         reassertOp(pendingConnects.keySet().iterator(), SelectionKey.OP_CONNECT)
     end reassertPendingInterest
 
@@ -1487,9 +1575,9 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             drainPendingRegistrations()
             // Listener registrations apply here, on the carrier that rebuilds the selector, so none can land on a selector being replaced.
             drainServerRegistrations()
-            // Complete the releases of listeners closed since the previous pass: the select() that just returned ran the deregistration that
-            // kills a cancelled listener channel. Before dispatch, so a continuation awaiting a release runs among this cycle's completions.
-            drainListenerReleases()
+            // Complete the releases of channels closed since the previous pass: the select() that just returned ran the deregistration that
+            // kills a cancelled channel. Before dispatch, so a continuation awaiting a release runs among this cycle's completions.
+            drainReleases()
             // Apply any deferred STARTTLS demand-driven upgrade arm on this (poll) carrier, so its OP_READ registration is selector-confined and
             // never a cross-carrier interestOps read-modify-write. Done after drainPendingRegistrations (the channel's key already
             // exists, kept live by detachForUpgrade) and before reassert so the freshly armed read is reasserted on this same cycle if needed.
@@ -1551,7 +1639,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     val sc  = handle.channel
                     var ops = 0
                     if pendingReads.containsKey(sc) then ops = ops | SelectionKey.OP_READ
-                    if pendingWritables.containsKey(sc) then ops = ops | SelectionKey.OP_WRITE
+                    if pendingWritables.containsKey(sc) || pendingFlushes.containsKey(sc) then ops = ops | SelectionKey.OP_WRITE
                     if pendingConnects.containsKey(sc) then ops = ops | SelectionKey.OP_CONNECT
                     discard(sc.register(selector, ops))
                     // Registration succeeded (the key now exists): only now remove the handle from the queue.
@@ -1775,7 +1863,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                             case sc: SocketChannel =>
                                 var ops = 0
                                 if pendingReads.containsKey(sc) then ops = ops | SelectionKey.OP_READ
-                                if pendingWritables.containsKey(sc) then ops = ops | SelectionKey.OP_WRITE
+                                if pendingWritables.containsKey(sc) || pendingFlushes.containsKey(sc) then ops = ops | SelectionKey.OP_WRITE
                                 if pendingConnects.containsKey(sc) then ops = ops | SelectionKey.OP_CONNECT
                                 discard(sc.register(newSelector, ops))
                             case ssc: ServerSocketChannel =>
@@ -1969,11 +2057,13 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 // carried plaintext precedes anything this dispatch would decrypt; the socket is read on the next arm
                 if tls.hasPlaintext then NioTlsState.Inbound.Decrypted
                 else tls.unwrapFromSocket(handle.graceStaging, channel, handle.readBuffer)
+            flushTail(handle, tls)
             inbound match
-                case NioTlsState.Inbound.Pending    => rearmTlsRead(channel, cell, promise, handle)
-                case NioTlsState.Inbound.Decrypted  => claimTls(handle, tls, Absent)
-                case NioTlsState.Inbound.CleanClose => claimTls(handle, tls, Present(ReadOutcome.CleanClose))
-                case NioTlsState.Inbound.PeerFin    => claimTls(handle, tls, Present(ReadOutcome.PeerFin))
+                case NioTlsState.Inbound.Pending        => rearmTlsRead(channel, cell, promise, handle)
+                case NioTlsState.Inbound.Decrypted      => claimTls(handle, tls, Absent)
+                case NioTlsState.Inbound.CleanClose     => claimTls(handle, tls, Present(ReadOutcome.CleanClose))
+                case NioTlsState.Inbound.PeerFin        => claimTls(handle, tls, Present(ReadOutcome.PeerFin))
+                case NioTlsState.Inbound.Failed(reason) => claimTls(handle, tls, Present(decryptFailed(handle, reason)))
             end match
         }.flatten.foreach(_.complete())
     end dispatchReadTls
@@ -2004,6 +2094,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             case Absent =>
                 () // No pending promise - may have been completed by race condition fix
         end match
+        Maybe(pendingFlushes.remove(channel)).foreach(_.life.flush.take().foreach(_.completeDiscard(Result.succeed(()))))
     end dispatchWritable
 
     private def dispatchConnect(channel: SocketChannel)(using AllowUnsafe): Unit =

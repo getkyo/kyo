@@ -32,6 +32,7 @@ import kyo.net.internal.transport.Connection as InternalConnection
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.IoDriverPool
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.TransportImpl
 import kyo.net.internal.transport.WriteResult
 import kyo.scheduler.IOPromise
@@ -1236,11 +1237,11 @@ final private[net] class PosixTransport private[posix] (
                     //     and runs LAST, inside that same freeResources, instead of here directly. The recv SQE references the original file, not the
                     //     fd number, so closing the fd there does not affect the pending recv's completion.
                     // engine.free() runs AFTER the cancel and after the reap flag is set: the handshake engine was never attached to handle.tls
-                    // (onFinished did not run), so closeHandle does not free it, and with reaped set + the read promise cancelled no feed can follow,
-                    // so it frees the engine exactly once.
+                    // (onFinished did not run), so the release does not free it, and with reaped set + the read promise cancelled no feed can
+                    // follow, so it frees the engine exactly once.
                     def teardown(): Unit =
                         reaped.set(true)
-                        handle.driver.closeHandle(handle)
+                        handle.driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         if handle.claimFdClose() then
                             discard(sockets.shutdown(clientFd, PosixConstants.SHUT_RDWR))
                             handle.fdCloseSink = Present(() => closeRawFd(clientFd))
@@ -1531,7 +1532,7 @@ final private[net] class PosixTransport private[posix] (
         Frame
     ): Unit =
         if connectPhase then
-            driver.closeHandle(handle)
+            driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
             driver.releaseFd(
                 handle,
                 () =>
@@ -1539,8 +1540,8 @@ final private[net] class PosixTransport private[posix] (
                     closeRawFd(handle.writeFd)
             )
         else
-            // Hold the handle's guard across the claim + shutdown + credit install AND driver.closeHandle, mirroring
-            // IoUringDriver.registerDeferredClose. On the poller, driver.closeHandle's own shutdown wakes the poll carrier into a reentrant
+            // Hold the handle's guard across the claim + shutdown + credit install AND driver.release, mirroring
+            // IoUringDriver.registerDeferredClose. On the poller, driver.release's own shutdown wakes the poll carrier into a reentrant
             // releaseFailedUpgrade that reaches PosixHandle.close; without the hold that concurrent close can drive the handle's HandleGuard
             // terminal in the window between winning the claim and installing the credit, running freeResources while fdCloseSink is still Absent
             // so the real close(fd) never runs (a stranded credit, a CLOSE_WAIT leak). The hold keeps a read holder active across the window, so
@@ -1552,7 +1553,7 @@ final private[net] class PosixTransport private[posix] (
                 discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
                 handle.fdCloseSink = Present(() => closeRawFd(handle.writeFd))
             end if
-            driver.closeHandle(handle)
+            driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
             if held then discard(handle.endDeferredClose())
         end if
     end closeUnwiredHandle
@@ -2230,7 +2231,7 @@ final private[net] class PosixTransport private[posix] (
         try
             handle.driver.write(handle, data, offset) match
                 case WriteResult.Done                    => cont()
-                case WriteResult.Error                   => onFailed(NetConnectionClosedException(Operation.Send))
+                case WriteResult.Error(cause)            => onFailed(cause)
                 case WriteResult.Partial(rem, newOffset) =>
                     awaitWritable(handle, cont = () => sendAll(handle, rem, newOffset, cont, onFailed, onPanic), onFailed, onPanic)
                 case WriteResult.TailPartial(rem, newOffset) =>

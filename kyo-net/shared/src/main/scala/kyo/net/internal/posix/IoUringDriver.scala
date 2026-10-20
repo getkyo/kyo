@@ -13,8 +13,10 @@ import kyo.net.NetDriverUnsupportedException
 import kyo.net.NetErrno
 import kyo.net.NetException
 import kyo.net.internal.TlsEngine
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
 import kyo.net.internal.util.writeFromBuffer
@@ -42,14 +44,14 @@ import kyo.scheduler.Task
   * #### UAF-safe close
   *
   * A buffer submitted to io_uring is kernel-owned until its CQE arrives: the kernel may write into a read buffer or read from a send
-  * buffer at any time before completion. So `cancel`/`closeHandle` must NOT free that memory while an SQE is in flight. The handshake:
+  * buffer at any time before completion. So `cancel`/`release` must NOT free that memory while an SQE is in flight. The handshake:
   *
   *   - Every in-flight op increments a per-handle in-flight count; reaping its CQE decrements it and releases the op's pinned memory
   *     (`PendingOp.releaseBuffer`).
   *   - `cancel(h)` fails every pending promise for `h` immediately (the caller stops waiting), but does NOT remove the pending entries
   *     and does NOT free any buffer: the kernel still owns them. The entries stay so their CQEs are still reaped and their memory
   *     released in order.
-  *   - `closeHandle(h)` calls `cancel(h)`, then defers `PosixHandle.close(h)` (which frees the handle's `readBuffer`) until the
+  *   - `release(h, ...)` calls `cancel(h)`, then defers `PosixHandle.close(h)` (which frees the handle's `readBuffer`) until the
   *     handle's in-flight count reaches zero. If there is nothing in flight it closes immediately; otherwise the close runs when the
   *     last CQE for the handle is reaped.
   *
@@ -70,12 +72,12 @@ final private[net] class IoUringDriver private[posix] (
     //
     // `teardownDone` is a CLAIM, not a completion signal: its CAS succeeding means teardownRing's body has STARTED, not that
     // io_uring_queue_exit / cqePtr.close() have actually run. [[ringExited]] is the true completion flag (set after cqePtr.close()); the
-    // two are deliberately different fields: closeHandle's post-teardown self-close and closeNow's fd/buffer reclaim are only
+    // two are deliberately different fields: release's post-teardown self-close and closeNow's fd/buffer reclaim are only
     // UAF-safe once queue_exit has released the kernel's hold on every recv buffer, which `teardownDone` alone does not prove.
     started: AtomicBoolean.Unsafe,
     teardownDone: AtomicBoolean.Unsafe,
     // Set AFTER cqePtr.close() at the tail of teardownRing: the true "the ring is gone and every kernel-held buffer is released" signal,
-    // distinct from `teardownDone` (which is set as teardownRing's FIRST step, a claim, not a completion). closeHandle's inline self-close
+    // distinct from `teardownDone` (which is set as teardownRing's FIRST step, a claim, not a completion). release's inline self-close
     // and engineFreeSink's inline-vs-submit decision gate on THIS flag, not `teardownDone`: closeNow's unconditional fd close + buffer free
     // (no in-flight check) is UAF-safe only once the kernel has released its hold on the handle's recv buffer, which happens at
     // io_uring_queue_exit, strictly after `teardownDone`'s CAS but strictly before this flag is set.
@@ -143,11 +145,11 @@ final private[net] class IoUringDriver private[posix] (
     // then the kernel has released its hold on every buffer/SQE regardless of what inFlight still reads.
     private[posix] val inFlight = new ConcurrentHashMap[Long, Long]()
     private val closeAfterDrain = new ConcurrentHashMap[Long, PosixHandle]()
-    // Every handle whose close has been REQUESTED (closeHandle entered) but not yet completed (closeNow run). At ring teardown any still-pending
+    // Every handle whose close has been REQUESTED (release entered) but not yet completed (closeNow run). At ring teardown any still-pending
     // requested close is force-completed so its fd is reclaimed: a connection close is async (engine FIFO / closeAfterDrain), and the last in-flight
     // closes lose the race against a per-driver teardown, leaking the fd (an idle peer leaves it ESTABLISHED, a peer-FIN'd one CLOSE_WAIT). Only
     // close-REQUESTED handles are tracked here, so teardown never force-closes a live connection or a STARTTLS-detached fd (those never enter
-    // closeHandle), which is what made the unconditional teardown-close break TLS round-trips.
+    // release); an unconditional teardown-close breaks TLS round-trips.
     private val pendingCloses = new ConcurrentHashMap[Long, PosixHandle]()
 
     // Handles whose pending SEND tail could not flush because the SUBMISSION queue was full (the flush's get_sqe returned Absent), so the remainder
@@ -468,7 +470,7 @@ final private[net] class IoUringDriver private[posix] (
 
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         if handle.life.writable.park(promise, released(handle)) then
-            if handle.unsentTailBytes >= PosixHandle.WriteTailLowWater then
+            if handle.life.ledger.owed >= PosixHandle.WriteTailLowWater then
                 // Tail-bound park (CWE-400): the pump suspended because the write tail reached the high-water mark, not because of a kernel
                 // send-buffer limit (io_uring's send is async and self-drains via the in-flight SQE's CQE re-flush). Completing the promise now
                 // would busy-loop: the pump would retry, hit the high-water bound again, get Partial, and await again with no progress. Instead
@@ -620,13 +622,25 @@ final private[net] class IoUringDriver private[posix] (
 
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
         given Frame = Frame.internal
-        // Reject a write once the driver is closing: flushRaw/flushTls would get_sqe on a ring the reap carrier is tearing down.
-        // beginWrite() guards the per-HANDLE lifecycle but not the driver's; the pump treats Error as teardown, which is correct here. A
-        // released handle refuses the write too: the release's own engine op may already have queued the close behind it.
-        if handle.life.ledger.failure.nonEmpty then WriteResult.Error(handle.life.ledger.failure.getOrElse(released(handle, "failed")))
-        else if closedFlag.get() then WriteResult.Error(released(handle, "the driver closed"))
-        else if !handle.life.armable then WriteResult.Error(released(handle, "the connection was released"))
-        else if data.isEmpty || offset >= data.size then WriteResult.Done
+        handle.life.ledger.failure match
+            case Present(cause) => WriteResult.Error(cause)
+            case Absent         =>
+                // Reject a write once the driver is closing: flushRaw/flushTls would get_sqe on a ring the reap carrier is tearing down.
+                // beginWrite() guards the per-HANDLE lifecycle but not the driver's. A released handle refuses the write too: the release's
+                // own engine op may already have queued the close behind it.
+                if closedFlag.get() then
+                    WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "the driver closed"))
+                else if !handle.life.armable then
+                    WriteResult.Error(NetConnectionClosedException(
+                        NetConnectionClosedException.Operation.Send,
+                        "the connection was released"
+                    ))
+                else writeOpen(handle, data, offset)
+        end match
+    end write
+
+    private def writeOpen(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe, Frame): WriteResult =
+        if data.isEmpty || offset >= data.size then WriteResult.Done
         else if handle.tailFull then
             // Write-backpressure bound (CWE-400): the write tail (pendingCipher for TLS, rawPending for raw) has reached the high-water mark because
             // the in-flight send is not draining it fast enough (a slow- or no-read peer). io_uring's write is async and always returns Done after
@@ -636,30 +650,22 @@ final private[net] class IoUringDriver private[posix] (
             // the tail below the low-water mark (releaseBackpressureWaiter). Checked before beginWrite so an over-bound write touches no guard.
             WriteResult.TailPartial(data, offset)
         else
-            handle.tls match
-                case Present(engine) =>
-                    if !handle.beginWrite() then
-                        // The handle was closed (resources freed) before this write acquired them; bail without touching the engine. The pump
-                        // treats Error as teardown, which is correct for a write on a closed handle (the write twin of the recv's !beginDispatch
-                        // guard on the poller).
-                        WriteResult.Error(released(handle, "the connection was released"))
-                    else writeTls(handle, data, engine)
-                case Absent =>
-                    if !handle.beginWrite() then WriteResult.Error(released(handle, "the connection was released"))
-                    else writeRaw(handle, data, offset)
+            if !handle.beginWrite() then
+                // The handle was closed (resources freed) before this write acquired them; bail without touching the engine or the tail (the
+                // write twin of the recv's !beginDispatch guard on the poller).
+                WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "the connection was released"))
+            else
+                handle.tls match
+                    case Present(engine) => writeTls(handle, data, engine)
+                    case Absent          => writeRaw(handle, data, offset)
         end if
-    end write
-
-    private def released(handle: PosixHandle, detail: String)(using Frame): NetException =
-        NetConnectionClosedException(NetConnectionClosedException.Operation.Send, detail)
+    end writeOpen
 
     /** A send completion that failed with `errno`: the connection's write failure, recorded once, which wakes a pump parked on the tail bound
-      * with it so the connection releases abortively instead of waiting on bytes that went nowhere.
+      * so the connection releases abortively instead of waiting on bytes that went nowhere.
       */
     private def sendFailed(handle: PosixHandle, errno: Int)(using AllowUnsafe, Frame): Unit =
-        discard(handle.life.ledger.fail(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, NetErrno(errno))))
-        handle.life.ledger.failure.foreach(handle.failBackpressureWaiter)
-    end sendFailed
+        discard(handle.failWrite(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, NetErrno(errno))))
 
     /** Plaintext send on io_uring, held SINGLE-IN-FLIGHT per handle with reflush-on-partial: the raw twin of [[writeTls]], with identity
       * "encryption" (the plaintext IS the wire bytes). Submits the append-then-flush on the serial engine worker and returns Done immediately,
@@ -723,6 +729,8 @@ final private[net] class IoUringDriver private[posix] (
         // Driver closing: never get_sqe on a ring the teardown is reclaiming (mirrors flushTls). A raw flush is normally unreachable during
         // close (writes are rejected at `write` and the reap loop's stalled re-flush has exited), so this is the defensive boundary.
         if closedFlag.get() then ()
+        else if handle.life.ledger.failure.nonEmpty || handle.releaseMode != ReleaseMode.Graceful then
+            () // a failed or abortively released connection sends nothing more
         else if handle.rawSendInFlight then
             () // a send SQE is already outstanding; its onRawSendComplete re-flushes any bytes appended meanwhile
         else
@@ -802,8 +810,10 @@ final private[net] class IoUringDriver private[posix] (
                     if encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)) then flushTls(handle)
                     else
                         // The engine encrypted only part of a write it accepted: those bytes can never reach the peer.
-                        discard(handle.life.ledger.fail(released(handle, "the TLS engine refused to encrypt an accepted write")))
-                        handle.life.ledger.failure.foreach(handle.failBackpressureWaiter)
+                        discard(handle.failWrite(NetConnectionClosedException(
+                            NetConnectionClosedException.Operation.Send,
+                            "the TLS engine refused to encrypt an accepted write"
+                        )))
             finally discard(handle.endWrite())
             end try
         }
@@ -858,6 +868,8 @@ final private[net] class IoUringDriver private[posix] (
         // reap loop would never deliver (which would strand the deferred close and leak the engine). Skipping it lets registerDeferredClose
         // see nothing in flight and free the connection now (force-close on shutdown; the peer sees a reset instead of a graceful close_notify).
         if closedFlag.get() then ()
+        else if handle.life.ledger.failure.nonEmpty || handle.releaseMode != ReleaseMode.Graceful then
+            () // a failed or abortively released connection sends nothing more
         else if handle.sendInFlight then
             () // a send SQE is already outstanding; its onTlsSendComplete re-flushes any bytes appended meanwhile
         else if handle.rawSendInFlight || rawTailHasUnsent(handle) then
@@ -937,7 +949,8 @@ final private[net] class IoUringDriver private[posix] (
       * On a positive `res` it advances `pendingCipherSent` by `res`. If the tail is fully drained it resets. Otherwise bytes remain, either a
       * partial send (`res < submitted len`) OR ciphertext a coalesced back-to-back `writeTls` appended while this send was in flight; either way
       * [[flushTls]] re-submits a send SQE for the new unsent region (which now starts at the advanced `pendingCipherSent` and spans every appended
-      * byte). A negative `res` (hard send error / peer reset) discards the tail; the recv side surfaces Closed through the normal teardown path.
+      * byte). Each byte the kernel took is recorded in the ledger as sent. A negative `res` (hard send error / peer reset) discards the tail and
+      * records the connection's write failure, which the connection turns into its abortive release.
       */
     private def onTlsSendComplete(handle: PosixHandle, res: Int)(using AllowUnsafe, Frame): Unit =
         // The one outstanding send has reaped: clear the guard FIRST so the re-flush below (or a later write's flush) can submit the next SQE.
@@ -998,7 +1011,7 @@ final private[net] class IoUringDriver private[posix] (
       * send (`res < submitted len`) OR plaintext a coalesced back-to-back `writeRaw` appended while this send was in flight; either way
       * [[flushRaw]] re-submits a send SQE for the new unsent region (which starts at the advanced `rawPendingSent` and spans every appended byte),
       * so no byte is dropped and the wire order is preserved (a single send is ever in flight). A negative `res` (hard send error / peer reset)
-      * discards the tail; the recv side surfaces Closed through the normal teardown path, exactly as the TLS path does.
+      * discards the tail and records the connection's write failure, exactly as the TLS path does.
       */
     private def onRawSendComplete(handle: PosixHandle, res: Int)(using AllowUnsafe, Frame): Unit =
         // The one outstanding send has reaped: clear the guard FIRST so the re-flush below can submit the next SQE.
@@ -1073,7 +1086,7 @@ final private[net] class IoUringDriver private[posix] (
       *     unsubmitted SQE can resolve the number after `closeFd` releases it. The shutdown inside `closeFd` then completes the in-kernel
       *     accept, whose CQE reaps the pending entry onto the already-failed promise.
       *
-      * A bare `requestClose` is correct HERE specifically, unlike on a connection handle, where the read path routes through `closeHandle`
+      * A bare `requestClose` is correct HERE specifically, unlike on a connection handle, where the read path routes through `release`
       * instead because a kernel-owned recv can already hold a reference to the buffers `requestClose` frees. An accept SQE captures none of
       * that state: it names the listen fd and its own completion, never the handle's read buffer, staging buffers, or TLS engine. So freeing
       * those here cannot be observed by an accept still in the kernel, and the accept's own ordering is handled by the three steps above.
@@ -1140,12 +1153,17 @@ final private[net] class IoUringDriver private[posix] (
         !handle.isClosing() && uring.kyo_uring_poll_peer_closed(handle.readFd) == 1
 
     /** The handle's one release: takes the release claim on the calling carrier, so a repeat call is a no-op and a park or a write after it
-      * is refused at once, then runs the close on the reap carrier, the one that preps every SQE.
+      * is refused at once, then runs the close on the reap carrier, the one that preps every SQE. `released` completes after the descriptor's
+      * close returned.
       */
-    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        if handle.life.claimRelease() then release(handle)
+    def release(handle: PosixHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        if handle.life.claimRelease() then
+            handle.releaseMode = mode
+            handle.releaseSignal = Present(released)
+            releaseClaimed(handle)
+    end release
 
-    private def release(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+    private def releaseClaimed(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         // Fail every parked op now, on the releasing carrier: the engine op below runs later, and a park after the claim already fails at once.
         handle.life.cancel(Closed(handleLabel(handle), handle.createdAt, "closed"))
         // Mark the close as requested NOW (synchronously, before the deferred engine-FIFO close machinery), so a teardown that races the deferred
@@ -1159,7 +1177,7 @@ final private[net] class IoUringDriver private[posix] (
         // [[ringExited]], not `teardownDone`: `teardownDone` only proves teardownRing's body has STARTED, not that
         // io_uring_queue_exit has actually run.
         handle.engineFreeSink = op => if ringExited.get() then op() else submitEngineOp(op)
-        // Put-then-recheck (the close-vs-reap idiom registerDeferredClose already uses below): a closeHandle call that races OR FOLLOWS
+        // Put-then-recheck (the close-vs-reap idiom registerDeferredClose already uses below): a release call that races OR FOLLOWS
         // teardownRing's orphan sweep registers an obligation nothing will ever look at again (the ring has already exited) and, if it
         // fell through to submitEngineOp, an op nothing will ever drain (the reap carrier is gone) -- a residual leak. Discharging
         // directly via closeNow is the same UAF-safe post-io_uring_queue_exit path teardownRing's own orphan sweep uses (NEVER the
@@ -1184,54 +1202,61 @@ final private[net] class IoUringDriver private[posix] (
                 // cancel fails the handle's pending promises now; the actual fd/buffer close is deferred until the in-flight count drops to 0.
                 handle.sendsSealed = true
                 cancel(handle)
-                handle.tls match
-                    case Present(engine) =>
-                        // TLS close: emit this side's close_notify (RFC 8446 6.1 / RFC 5246 7.2.1) and submit the alert as a TLS send SQE BEFORE the fd
-                        // is closed. The send SQE counts as an in-flight op, so closeNow (which runs only once in-flight reaches 0) waits for the alert's
-                        // CQE to reap before closing the fd: the close_notify reaches the peer ahead of the FIN, no thread blocked, no wait for the peer's.
+                // TLS close: emit this side's close_notify (RFC 8446 6.1 / RFC 5246 7.2.1) and submit the alert as a TLS send SQE BEFORE the fd is
+                // closed. The send SQE counts as an in-flight op, so closeNow (which runs only once in-flight reaches 0) waits for the alert's CQE
+                // to reap before closing the fd: the close_notify reaches the peer ahead of the FIN, no thread blocked, no wait for the peer's. An
+                // abortive release sends no close_notify: the alert would tell the peer the stream it truncated is complete.
+                if handle.releaseMode == ReleaseMode.Graceful then
+                    handle.tls.foreach { engine =>
                         if handle.beginWrite() then
                             try shutdownTls(handle, engine)
                             finally discard(handle.endWrite())
                             end try
-                        end if
-                        registerDeferredClose(handle)
-                    case Absent =>
-                        registerDeferredClose(handle)
-                end match
+                    }
+                end if
+                registerDeferredClose(handle)
             }
         end if
-    end release
+    end releaseClaimed
 
-    /** Submit an `IORING_OP_ASYNC_CANCEL` for every connect this handle still has in flight, so the kernel completes it and the handle's
-      * in-flight count can reach zero. Without this a connect against a peer that never answers pins its deferred close forever.
+    /** Submit an `IORING_OP_ASYNC_CANCEL` for every op of this handle that only the kernel can end, so it completes and the handle's in-flight
+      * count can reach zero: a connect, and on an abortive release every send and recv. Without this a connect against a peer that never
+      * answers, or a send to a peer that stopped reading, pins the deferred close forever: the SQE holds its own reference to the file, so
+      * `close(fd)` does not complete it, and `shutdown(SHUT_RD)` ends only a recv, and only when this release won the fd claim. A graceful
+      * release leaves its sends in flight, since they carry the bytes it flushes.
       *
-      * Runs on the reap carrier: every caller reaches it through [[closeHandle]]'s `submitEngineOp`, which is the single `get_sqe`
+      * Runs on the reap carrier: every caller reaches it through [[release]]'s `submitEngineOp`, which is the single `get_sqe`
       * producer. A full SQ is left alone rather than parked in [[stalledSubmits]]: the entry there is keyed by the op it re-arms, and a
       * cancel has no op of its own to re-arm, so the TARGET's key is parked in [[stalledCancels]] and retried on the next reap turn once
       * submit has freed a slot. Dropping it instead is not good enough: a loaded leg owed 66 deferred closes at once, the SQ filled, and the
       * connects that never received a cancel never reaped, stranding a descriptor until teardown.
       */
-    private def forceInFlightConnects(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        val id = handle.id.packed
+    private def forceInFlightOps(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        val id       = handle.id.packed
+        val abortive = handle.releaseMode != ReleaseMode.Graceful
         pending.forEach { (key, op) =>
-            op match
-                case PendingOp.Connect(_, h) if h.id.packed == id =>
-                    uring.kyo_uring_get_sqe(ring) match
-                        case Present(sqe) =>
-                            val cancelKey = cancelKeyGen.getAndDecrement()
-                            discard(cancelTargets.put(java.lang.Long.valueOf(cancelKey), java.lang.Long.valueOf(key)))
-                            uring.kyo_uring_prep_cancel64(sqe, key, 0)
-                            uring.kyo_uring_sqe_set_data64(sqe, cancelKey)
-                            discard(diagCancelSubmitted.incrementAndGet())
-                            submitBatched()
-                        case Absent =>
-                            discard(diagCancelParked.incrementAndGet())
-                            discard(stalledCancels.add(key))
-                    end match
-                case _ => ()
-            end match
+            val forced = op match
+                case PendingOp.Connect(_, h)          => h.id.packed == id
+                case PendingOp.Write(h, _, _, _)      => abortive && h.id.packed == id
+                case PendingOp.TlsWrite(h, _, _)      => abortive && h.id.packed == id
+                case PendingOp.Read(_, h, _, _, _, _) => abortive && h.id.packed == id
+                case _                                => false
+            if forced then
+                uring.kyo_uring_get_sqe(ring) match
+                    case Present(sqe) =>
+                        val cancelKey = cancelKeyGen.getAndDecrement()
+                        discard(cancelTargets.put(java.lang.Long.valueOf(cancelKey), java.lang.Long.valueOf(key)))
+                        uring.kyo_uring_prep_cancel64(sqe, key, 0)
+                        uring.kyo_uring_sqe_set_data64(sqe, cancelKey)
+                        discard(diagCancelSubmitted.incrementAndGet())
+                        submitBatched()
+                    case Absent =>
+                        discard(diagCancelParked.incrementAndGet())
+                        discard(stalledCancels.add(key))
+                end match
+            end if
         }
-    end forceInFlightConnects
+    end forceInFlightOps
 
     /** Retry the cancels that could not reach a full submission queue, once per reap turn from [[reArmStalledSubmits]], after submit has freed
       * SQ slots. A key whose target has since completed on its own is dropped rather than re-submitted: `pending` no longer holds it, so there
@@ -1293,6 +1318,8 @@ final private[net] class IoUringDriver private[posix] (
                 val claimedHere = handle.readFd == handle.writeFd && handle.claimFdClose()
                 if claimedHere then
                     handle.markDeferredFdClose()
+                    // An abortive release arms the reset now, so the deferred close(fd) sends it whichever path ends up running it.
+                    if handle.releaseMode != ReleaseMode.Graceful then PosixHandle.resetOnClose(sockets, handle.readFd)
                     discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RD))
                 end if
                 // The SHUT_RD above forces an in-flight RECV to reap, but it does nothing for an in-flight CONNECT: shutdown(2) has no
@@ -1304,13 +1331,12 @@ final private[net] class IoUringDriver private[posix] (
                 // Deliberately NOT gated on `claimedHere`: a cancel names the op by its user_data, never by a descriptor, so it is
                 // correct even when a racing transport-path closer owns the fd and even if that fd number has already been recycled. The
                 // target is either still in flight (reaped as -ECANCELED) or already complete (-ENOENT), and neither outcome touches a
-                // descriptor this driver no longer owns. Gating it on the claim is what left the previous attempt short.
-                forceInFlightConnects(handle)
+                // descriptor this driver no longer owns.
+                forceInFlightOps(handle)
                 // Register the deferred close, then re-check: if the reap loop drained the count between the read above and this put, it already
                 // ran (and removed) nothing, so claim the registration back and close here. This closes the close-vs-reap race either way.
-                // putIfAbsent, not put: a SECOND closeHandle for this same handle (production pair: an onFatal closeHandle plus the
-                // ReadPump-teardown closeHandle, both drained in one pass while an unrelated send SQE or the STARTTLS upgrade-window recv
-                // keeps inFlight above zero) reaches this branch with the handle ALREADY registered. Stacking a second beginDeferredClose
+                // putIfAbsent, not put: a second registration for this same handle, while an unrelated send SQE or the STARTTLS
+                // upgrade-window recv keeps inFlight above zero, reaches this branch with the handle ALREADY registered. Stacking a second beginDeferredClose
                 // hold behind the single map entry breaks the one-hold-per-entry pairing: the eventual discharge runs exactly one
                 // endDeferredClose, the guard never returns to zero holders, freeResources never runs, and the installed fdCloseSink credit
                 // strands so close(fd) never runs (the fd leaks with its buffers/engine). Release the redundant hold here to keep the pairing
@@ -1340,7 +1366,7 @@ final private[net] class IoUringDriver private[posix] (
     end dischargeDeferredClose
 
     /** Emit this side's TLS close_notify and submit it as a TLS send SQE (best-effort, one-directional). FIFO-worker-only (called from the
-      * closeHandle engine op under the write guard). Runs one [[TlsEngine.shutdownStep]] to emit this side's close_notify, drains the produced
+      * release's engine op under the write guard). Runs one [[TlsEngine.shutdownStep]] to emit this side's close_notify, drains the produced
       * alert onto the handle's pending-ciphertext tail ([[appendPending]]), then [[flushTls]] submits a send SQE for it. It does NOT wait for
       * the peer's close_notify; a `shutdownStep` fatal (`-2`) is ignored and the close proceeds.
       */
@@ -1382,7 +1408,7 @@ final private[net] class IoUringDriver private[posix] (
         // Drop the handle's send-EINTR retry count so the map does not retain an entry for a closed handle.
         discard(sendEintrRetries.remove(handle.id.packed))
         // Close the socket fd: io_uring has no prep_close and PosixHandle.close frees only the buffers, so the fd is closed here through
-        // SocketBindings (mirroring the poller's closeHandle). The real close(fd) is deferred to freeResources (via fdCloseSink) instead of
+        // SocketBindings (mirroring the poller's release). The real close(fd) is deferred to freeResources (via fdCloseSink) instead of
         // running here directly, so a synchronous write still mid-flight under a live beginWrite hold on this fd is never exposed to a fd
         // number the kernel has already recycled to an unrelated connection (the read side is already covered: closeNow only runs once
         // inFlight has drained, and the read CQE it drained is the only kernel-owned reader of this fd). One-shot via claimFdClose so a
@@ -1394,9 +1420,16 @@ final private[net] class IoUringDriver private[posix] (
         // one-shot claims: the latter is only ever set by a caller that just won the former), so the fd is still closed exactly once either way.
         // The claimFdClose branch shuts the fd down fully (SHUT_RDWR) here, since (unlike registerDeferredClose's SHUT_RD) nothing shut it down
         // yet; the consumeDeferredFdClose branch needs no extra shutdown (registerDeferredClose's SHUT_RD already ran when the credit was made).
+        // An abortive release shuts down only the read side: SHUT_WR would queue a FIN that tells the peer the truncated stream is complete,
+        // and SO_LINGER {1, 0} makes the close send the reset instead.
         if handle.readFd == handle.writeFd then
             if handle.claimFdClose() then
-                discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RDWR))
+                handle.releaseMode match
+                    case ReleaseMode.Abortive(_) =>
+                        PosixHandle.resetOnClose(sockets, handle.readFd)
+                        discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RD))
+                    case ReleaseMode.Graceful => discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RDWR))
+                end match
                 handle.fdCloseSink = Present(() => discard(takeNow(sockets.close(handle.readFd))))
             else if handle.consumeDeferredFdClose() then
                 handle.fdCloseSink = Present(() => discard(takeNow(sockets.close(handle.readFd))))
@@ -1463,7 +1496,7 @@ final private[net] class IoUringDriver private[posix] (
     private val lateDrainClaim = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     // The carrier thread currently holding lateDrainClaim, or null. Read by submitEngineOp's offer-then-recheck to detect a RE-ENTRANT
-    // offer: a drained op (a closeHandle thunk whose freeResources routes engineFreeSink through submitEngineOp while ringExited is still
+    // offer: a drained op (a release thunk whose freeResources routes engineFreeSink through submitEngineOp while ringExited is still
     // false) enqueues a follow-up op from INSIDE drainEngineOps, on the very carrier that holds the claim. That follow-up is already
     // picked up by the ongoing tail-recursive drainEngineOps in the same pass, so re-entering drainAfterReapExit for it would only spin
     // forever on the claim this carrier already holds. Skipping the recheck on the owning carrier avoids that self-deadlock.
@@ -1502,7 +1535,7 @@ final private[net] class IoUringDriver private[posix] (
                     if engineQueue.isEmpty then
                         tryTeardown()
                         // Recheck AGAIN after the teardown: teardownRing fails every pending promise inline, and a Read/Connect
-                        // promise-completion callback can synchronously route a Connection close back into closeHandle -> submitEngineOp
+                        // promise-completion callback can synchronously route a Connection close back into release -> submitEngineOp
                         // on THIS (owner) carrier, whose recheck is skipped by the owner guard. Draining that late op needs one more
                         // claimed pass (post-teardown execution is the safe inline-close path); the re-run tryTeardown is a teardownDone
                         // no-op. Bounded: those callbacks are finite, so the queue empties and settles.
@@ -1556,19 +1589,19 @@ final private[net] class IoUringDriver private[posix] (
             uring.io_uring_queue_exit(ring)
             cqePtr.close()
             // The true completion signal, set only now that io_uring_queue_exit has released the kernel's hold on every recv
-            // buffer: closeHandle's own inline self-close and engineFreeSink's inline-vs-submit decision gate on this flag, not
+            // buffer: release's own inline self-close and engineFreeSink's inline-vs-submit decision gate on this flag, not
             // `teardownDone` (which was already true from this method's own CAS above, well before this point).
             ringExited.set(true)
             // Force-complete every requested-but-now-orphaned close still registered in pendingCloses. Snapshotting the KEYS (not
             // iterating pendingCloses directly while removing) avoids relying on ConcurrentHashMap's weak-consistency guarantee under
             // concurrent structural modification; `remove` per key is the single-discharger claim, exactly the same pattern
-            // closeHandle's own inline recheck above uses, so a handle whose closeHandle call races THIS sweep (both observing
+            // release's own inline recheck above uses, so a handle whose release call races THIS sweep (both observing
             // `ringExited == true`) is discharged by exactly one of the two, never both. This is what makes it safe to run this sweep
             // over the LIVE map instead of a pre-exit snapshot: closeNow touches shared, non-thread-safe collections (`stalledSubmits`),
             // so two concurrent closeNow calls for different handles would otherwise race on those shared structures even though each is
             // individually idempotent per-handle.
             //
-            // Every entry here is close-REQUESTED (closeHandle ran), never a live or STARTTLS-detached connection, so reclaiming its fd
+            // Every entry here is close-REQUESTED (release ran), never a live or STARTTLS-detached connection, so reclaiming its fd
             // cannot disturb an in-use socket, and closeNow's own claimFdClose makes a racing close idempotent.
             val orphanedKeys = new java.util.ArrayList[Long](pendingCloses.keySet())
             orphanedKeys.forEach(key => Maybe(pendingCloses.remove(key)).foreach(closeNow))
@@ -1587,7 +1620,7 @@ final private[net] class IoUringDriver private[posix] (
             val drainedKeys = new java.util.ArrayList[Long](closeAfterDrain.keySet())
             drainedKeys.forEach(key => Maybe(closeAfterDrain.remove(key)).foreach(dischargeDeferredClose))
             // Mirrors the poller's own post-teardown gate: a pendingCloses entry surviving this point is a genuine invariant violation -- nothing
-            // will ever look at it again (the ring is gone and closeHandle's own recheck above already covers every legitimately timed
+            // will ever look at it again (the ring is gone and release's own recheck above already covers every legitimately timed
             // arrival). Reported directly to Diagnostics.reportViolation so it fails the kyo-test run even though this driver is closed
             // by then (StrandedOpCheck's probe-based classifier exempts a closed component by design).
             if !pendingCloses.isEmpty() then
@@ -2072,19 +2105,19 @@ final private[net] class IoUringDriver private[posix] (
 
     /** Re-issue the forcing cancel for handles whose deferred close has been owed for a long time.
       *
-      * [[forceInFlightConnects]] runs ONCE, when the close is first deferred. A cancel that never reaches the kernel at all leaves nothing to
+      * [[forceInFlightOps]] runs ONCE, when the close is first deferred. A cancel that never reaches the kernel at all leaves nothing to
       * judge and nothing to retry: [[retryStalledCancels]] only sees a cancel the submission queue rejected, and the result-based re-arm only
       * sees a cancel that actually reaped. Anything lost between those two, and any op that became stuck after the single forcing pass, is
       * owed until the ring tears down, which in a long-lived process never happens.
       *
       * Runs on the reap carrier, on a coarse interval so a busy ring pays a map scan rarely rather than every turn. Re-forcing a handle whose
-      * connects have since completed costs nothing: the scan finds no matching pending op and submits no cancel.
+      * forced ops have since completed costs nothing: the scan finds no matching pending op and submits no cancel.
       */
     private def reForceStaleDeferredCloses()(using AllowUnsafe, Frame): Unit =
         if !closeAfterDrain.isEmpty && (diagReapCycles % ReForceInterval) == 0L then
             val it = closeAfterDrain.values().iterator()
             while it.hasNext do
-                forceInFlightConnects(it.next())
+                forceInFlightOps(it.next())
         end if
     end reForceStaleDeferredCloses
 
@@ -2358,15 +2391,15 @@ final private[net] class IoUringDriver private[posix] (
                         else if res == 0 then
                             // Peer close via a bare TCP FIN (no close_notify, else the clean-close branch above delivered CleanClose first): record
                             // the peer-EOF half-close state, then deliver PeerFin.
-                            // GUARD: a res==0 here can also be OUR OWN closeHandle forcing this in-flight recv to complete (registerDeferredClose
+                            // GUARD: a res==0 here can also be OUR OWN release forcing this in-flight recv to complete (registerDeferredClose
                             // shuts down the read half with SHUT_RD because io_uring holds its own reference to the fd and close(fd) alone would
                             // never complete a kernel-owned recv). That self-induced completion reaps through this exact branch with no way to
                             // tell it apart from a genuine unprompted peer FIN by `res` alone, so unconditionally stamping PeerEof would make a
                             // locally-closed connection report Truncated instead of LocalClose. pendingCloses is set synchronously at the top of
-                            // closeHandle, strictly before the deferred SHUT_RD that produces this CQE, so its presence here reliably distinguishes
+                            // release, strictly before the deferred SHUT_RD that produces this CQE, so its presence here reliably distinguishes
                             // "we are the closer" from a real peer FIN; isClosing() cannot substitute (the plain close path never calls
                             // requestClose() until closeNow, which runs only after this branch returns). The promise itself is unaffected: cancel
-                            // (run synchronously inside closeHandle, before SHUT_RD) already failed it Closed, so completeDiscard below is a no-op
+                            // (run synchronously inside release, before SHUT_RD) already failed it Closed, so completeDiscard below is a no-op
                             // on the closing path and only resolves the promise for a genuine peer FIN.
                             if !pendingCloses.containsKey(h.id.packed) then h.halfClose = HalfCloseState.PeerEof
                             promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
@@ -2481,7 +2514,7 @@ final private[net] class IoUringDriver private[posix] (
             discard(uring.kyo_uring_eventfd_read(wakeFd))
             if !more then wakePollArmed = false
         else if cancelTargets.containsKey(java.lang.Long.valueOf(key)) then
-            // A cancel issued by [[forceInFlightConnects]] reaped. Its own result decides whether the forcing actually happened: 0 means the
+            // A cancel issued by [[forceInFlightOps]] reaped. Its own result decides whether the forcing actually happened: 0 means the
             // kernel cancelled the target and -ENOENT means the target had already completed, and in both the deferred close is discharged
             // by the TARGET's completion rather than this one. ANY OTHER RESULT MEANS THE FORCING DID NOT TAKE. -EALREADY is the case that
             // matters under load: the target was already executing (mid-issue, or punted to a worker), so the kernel declines to cancel it
@@ -2678,7 +2711,7 @@ final private[net] class IoUringDriver private[posix] (
         // unconditional (the kernel counter coalesces concurrent writes); a no-op when there is no wake eventfd (the loop then discovers the op via
         // its bounded fallback park).
         wakeReapLoop()
-        // Offer-then-recheck (mirrors closeHandle's pendingCloses put-then-recheck): once the reap loop has exited, its one-shot final
+        // Offer-then-recheck (mirrors release's pendingCloses put-then-recheck): once the reap loop has exited, its one-shot final
         // drain never runs again, so an op that landed after that drain has no executor: its promise never completes (a client connect
         // armed here hangs until the transport's connect deadline) and the never-empty queue blocks the ring teardown. reapExited is set
         // strictly before the final drain, so either that drain sees this op, or this recheck observes reapExited and drains it here.

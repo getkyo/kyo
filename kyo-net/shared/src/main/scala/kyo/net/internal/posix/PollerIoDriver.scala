@@ -997,10 +997,13 @@ final private[net] class PollerIoDriver private[posix] (
         inline given Frame = Frame.internal
         handle.life.ledger.failure match
             case Present(cause) => WriteResult.Error(cause)
-            case Absent =>
+            case Absent         =>
                 // A released handle takes no write on either path: a TLS write accepted here would queue an encrypt that never runs.
                 if !handle.life.armable then
-                    WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "the connection was released"))
+                    WriteResult.Error(NetConnectionClosedException(
+                        NetConnectionClosedException.Operation.Send,
+                        "the connection was released"
+                    ))
                 else writeOpen(handle, data, offset)
         end match
     end write
@@ -1028,7 +1031,10 @@ final private[net] class PollerIoDriver private[posix] (
                         // write twin of dispatchRead's !beginDispatch guard). The pump treats Error as teardown, which is correct for a
                         // write on a closed handle. Plaintext writeRaw runs synchronously on this same carrier (no engine FIFO hop), so
                         // acquiring here is safe: the guard is never held across a deferred/stranded op the way a submitted TLS op could.
-                        WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "the connection was released"))
+                        WriteResult.Error(NetConnectionClosedException(
+                            NetConnectionClosedException.Operation.Send,
+                            "the connection was released"
+                        ))
                     else
                         // For plaintext writes, endWrite is called here synchronously after writeRaw completes.
                         try writeRaw(handle, data, offset)
@@ -1041,10 +1047,7 @@ final private[net] class PollerIoDriver private[posix] (
 
     /** A send that failed with `errno`: the connection's write failure, recorded once so every later write reports it. */
     private def sendFailed(handle: PosixHandle, errno: Int)(using AllowUnsafe, Frame): WriteResult =
-        val cause = NetConnectionClosedException(NetConnectionClosedException.Operation.Send, NetErrno(errno))
-        discard(handle.life.ledger.fail(cause))
-        WriteResult.Error(handle.life.ledger.failure.getOrElse(cause))
-    end sendFailed
+        WriteResult.Error(handle.failWrite(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, NetErrno(errno))))
 
     /** Plaintext send: one `send` syscall on `writeFd`, returning Done / Partial / Error from the byte count and errno.
       *
@@ -1091,7 +1094,7 @@ final private[net] class PollerIoDriver private[posix] (
             val result: Maybe[Ffi.Outcome[Long]] = sendBlockingWithRetry(handle.writeFd, mirror, len.toLong, flags)
             result match
                 case Present(r) => sent(handle, data, offset, len, r)
-                case Absent =>
+                case Absent     =>
                     // Unreachable: the JVM/Native @Ffi.blocking send inline-completes. Treat a stray pending fiber as transient
                     // backpressure so the caller awaits writability rather than mis-reporting a completed write.
                     WriteResult.Partial(data, offset)
@@ -1179,11 +1182,9 @@ final private[net] class PollerIoDriver private[posix] (
       * parked on the tail bound learns it.
       */
     private def encryptRefused(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        discard(handle.life.ledger.fail(
+        discard(handle.failWrite(
             NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "the TLS engine refused to encrypt an accepted write")
         ))
-        handle.life.ledger.failure.foreach(handle.failBackpressureWaiter)
-    end encryptRefused
 
     /** Append freshly-encrypted ciphertext to the handle's pending tail. FIFO-worker-only: the engine FIFO is the single owner of every write
       * engine op for this connection, so this is never called concurrently. The [[GrowableByteBuffer]] is allocated lazily on the first
@@ -1220,9 +1221,9 @@ final private[net] class PollerIoDriver private[posix] (
       */
     private def flushPending(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         handle.pendingCipher match
-            case Absent                                       => () // nothing buffered (the common one-pass write never allocated a tail)
+            case Absent => () // nothing buffered (the common one-pass write never allocated a tail)
             case Present(_) if handle.life.ledger.failure.nonEmpty => () // a failed connection sends nothing more
-            case Present(buf) =>
+            case Present(buf)                                      =>
                 val flags    = PosixConstants.MSG_NOSIGNAL
                 var continue = true
                 while continue && handle.pendingCipherSent < buf.size do
@@ -1251,7 +1252,6 @@ final private[net] class PollerIoDriver private[posix] (
                             handle.pendingCipherSent = 0
                             continue = false
                             discard(sendFailed(handle, r.errorCode))
-                            handle.life.ledger.failure.foreach(handle.failBackpressureWaiter)
                         case Present(r) if r.value > 0 =>
                             // Strictly-positive progress; the loop terminates.
                             handle.pendingCipherSent += r.value.toInt
@@ -1417,6 +1417,7 @@ final private[net] class PollerIoDriver private[posix] (
                     PosixHandle.resetOnClose(sockets, handle.readFd)
                     discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RD))
                 case ReleaseMode.Graceful => discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RDWR))
+            end match
             handle.fdCloseSink = Present(() => discard(takeNow(sockets.close(handle.readFd))))
     end claimAndDeferFdClose
 

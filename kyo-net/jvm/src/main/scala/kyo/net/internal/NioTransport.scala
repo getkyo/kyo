@@ -376,7 +376,7 @@ final private[kyo] class NioTransport private (
         promise: IOPromise[NetException, Connection[NioHandle]],
         connectPromise: IOPromise[Closed | NetException, Unit]
     )(using AllowUnsafe, Frame): Unit =
-        promise.onComplete(_ => if !connectPromise.done() then driver.closeHandle(handle))
+        promise.onComplete(_ => if !connectPromise.done() then driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init()))
 
     private def completeConnect(
         handle: NioHandle,
@@ -1256,12 +1256,12 @@ final private[kyo] class NioTransport private (
                                 end match
                                 // Reap the handle through the driver first (removes the pendingReads entry + fails the parked read), the same seam
                                 // PosixTransport.teardown uses, then close the channel. Reached by both a handshake failure and the deadline arm.
-                                driver.closeHandle(handle)
+                                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 try clientChannel.close()
                                 catch case _: IOException => ()
                             case Result.Panic(e) =>
                                 Log.live.unsafe.error(s"TLS handshake panic", e)
-                                driver.closeHandle(handle)
+                                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                                 try clientChannel.close()
                                 catch case _: IOException => ()
                         end match
@@ -1537,7 +1537,7 @@ final private[kyo] class NioTransport private (
                         // arm never runs it. The release's slot-first sweep takes whatever cell is armed, so no read promise (or its
                         // pendingReads entry and buffer) outlives the aborted upgrade, and its claim refuses any arm that lands after it.
                         // Idempotent on the pre-detach abort orderings, where the close path that won the state CAS released already.
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 }
                 // `promise` owns the detached channel for the whole upgrade (the onComplete failure arm above is what releases it), so route a
                 // close() of the plaintext connection to it: settling `promise` runs the same release a handshake failure takes, and once the
