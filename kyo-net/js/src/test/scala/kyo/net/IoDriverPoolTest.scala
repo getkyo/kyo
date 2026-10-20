@@ -4,9 +4,11 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.net.internal.JsHandle
 import kyo.net.internal.JsIoDriver
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.IoDriverPool
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 import scala.collection.mutable
 
@@ -69,8 +71,10 @@ class IoDriverPoolTest extends Test:
         def cancel(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
             real.cancel(handle)
 
-        def closeHandle(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
-            real.closeHandle(handle)
+        def life(handle: JsHandle): HandleLife = real.life(handle)
+
+        def release(handle: JsHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+            real.release(handle, mode, released)
 
         def releaseFd(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
             real.releaseFd(handle, closeFd)

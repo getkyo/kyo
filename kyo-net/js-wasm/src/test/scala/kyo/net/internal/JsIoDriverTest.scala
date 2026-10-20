@@ -92,7 +92,7 @@ class JsIoDriverTest extends kyo.net.Test:
             untilPeerClosed(driver, handle).map { _ =>
                 val observed = driver.isPeerClosed(handle)
                 discard(clientSock.destroy())
-                driver.closeHandle(handle)
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 driver.close()
                 assert(observed, "isPeerClosed must observe the peer FIN after resuming the paused socket drains to the stream end")
             }
@@ -116,7 +116,7 @@ class JsIoDriverTest extends kyo.net.Test:
             read.safe.get.map { outcome =>
                 val delivered = probe()
                 discard(clientSock.destroy())
-                driver.closeHandle(handle)
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 driver.close()
                 val gotByte = outcome match
                     case ReadOutcome.Bytes(s) => s.toArray.toList == List[Byte](7)
@@ -165,7 +165,7 @@ class JsIoDriverTest extends kyo.net.Test:
                 untilPeerClosed(driver, handle).map { _ =>
                     val observed = driver.isPeerClosed(handle)
                     discard(clientSock.destroy())
-                    driver.closeHandle(handle)
+                    driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                     driver.close()
                     assert(observed, "the probe was not live: the peer FIN was never observed after the reads above")
                 }
@@ -186,7 +186,7 @@ class JsIoDriverTest extends kyo.net.Test:
                 handle.closeFlushGrace = 30.seconds
                 handle.clock = clock
                 discard(socket.write(buffer(Array[Byte](1))))
-                driver.closeHandle(handle)
+                driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                 def destroyed = socket.destroyed.asInstanceOf[Boolean]
                 val atClose   = destroyed
                 armedThenAdvance(tc, "close-flush grace", 30.seconds, by = (30.seconds.toMillis - 1).millis).map { _ =>

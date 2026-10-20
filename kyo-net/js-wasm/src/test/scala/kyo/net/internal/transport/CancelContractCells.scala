@@ -56,7 +56,7 @@ object CancelContractCells:
                 openPair().map { (socket, peer) =>
                     val handle = JsHandle.init(socket, driver, Frame.internal)
                     Scope.ensure(Sync.defer {
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         discard(peer.destroy())
                     }).andThen(new CancelCell.DriverSubject[JsHandle](driver, handle):
                         def peerSend(bytes: Array[Byte])(using AllowUnsafe, Frame): Unit < Async =

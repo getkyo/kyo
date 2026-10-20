@@ -71,7 +71,7 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
                 def cleanup: Unit < Sync =
                     Sync.defer {
                         discard(clientSock.destroy())
-                        driver.closeHandle(handle)
+                        driver.release(handle, ReleaseMode.Graceful, Promise.Unsafe.init())
                         driver.close()
                     }
 
