@@ -680,17 +680,79 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                             s"${params.mkString(":")}:${parents.mkString(":")}"
             end encodeEntry
 
-            val concreteFlag =
-                staticDB("0") match
-                    case ClassEntry(_, _, params, _) if params.isEmpty     => "*"
-                    case OpaqueEntry(_, _, _, _, params) if params.isEmpty => "*"
-                    case _                                                 => "."
-
-            concreteFlag +
+            concreteFlag(staticDB("0")) +
                 staticDB.map { (id, entry) =>
                     s"$id:${encodeEntry(entry)}"
                 }.mkString("\n")
         end encode
+
+        /** The tag as one encoding that holds every type it names. A dynamic tag's runtime parts are merged in: each part's root takes
+          * the id it fills and its other entries go under that id, so the encoding reads back through [[parse]] as the same type.
+          */
+        def encode(tag: Tag[Any]): String =
+            tag match
+                case tag: String  => tag
+                case tag: Dynamic => encode(flatten(tag))
+
+        private def flatten(dynamic: Dynamic): Map[Entry.Id, Entry] =
+            dynamic.tpe.dynamicDB.foldLeft(dynamic.tpe.staticDB) { case (entries, (slot, part)) =>
+                val inner = part match
+                    case part: String  => decode(part).staticDB
+                    case part: Dynamic => flatten(part)
+                def under(id: Entry.Id): Entry.Id = if id == "0" then slot else s"$slot.$id"
+                entries ++ inner.map((id, entry) => under(id) -> renamed(entry, under))
+            }
+
+        private def renamed(entry: Entry, f: Entry.Id => Entry.Id): Entry =
+            entry match
+                case AnyEntry | NothingEntry | NullEntry                => entry
+                case LiteralEntry(widened, value)                       => LiteralEntry(f(widened), value)
+                case BoundsEntry(lower, upper)                          => BoundsEntry(f(lower), f(upper))
+                case IntersectionEntry(set)                             => IntersectionEntry(set.map(f))
+                case UnionEntry(set)                                    => UnionEntry(set.map(f))
+                case LambdaEntry(params, lower, upper, body)            => LambdaEntry(params, lower.map(f), upper.map(f), f(body))
+                case OpaqueEntry(name, lower, upper, variances, params) => OpaqueEntry(name, f(lower), f(upper), variances, params.map(f))
+                case ClassEntry(name, variances, params, parents)       => ClassEntry(name, variances, params.map(f), parents.map(f))
+
+        // A concrete type, a class or opaque type without parameters, is flagged so that an equality check against it stops at its text.
+        private def concreteFlag(root: Entry): String =
+            root match
+                case ClassEntry(_, _, params, _) if params.isEmpty     => "*"
+                case OpaqueEntry(_, _, _, _, params) if params.isEmpty => "*"
+                case _                                                 => "."
+
+        /** The tag `encoded` holds, when it is a whole encoding: the flag its root is written with, then entries as [[encode]] writes
+          * them, the root `0` among them, and every id an entry names one of them. A text read back as a tag goes through it, so one that
+          * is not an encoding fails where it is read; [[decode]] trusts its text, which the compiler wrote.
+          */
+        def parse[A](encoded: String): Maybe[Tag[A]] =
+            val entries =
+                if encoded.isEmpty then Absent
+                else
+                    encoded.drop(1).linesIterator.foldLeft(Maybe(Map.empty[Entry.Id, Entry])) { (read, line) =>
+                        read.flatMap { entries =>
+                            line.split(":", -1).toList match
+                                case id :: fields if id.nonEmpty && !entries.contains(id) => readEntry(fields).map(entries.updated(id, _))
+                                case _                                                    => Absent
+                        }
+                    }
+            entries.filter { entries =>
+                entries.get("0").exists(root => concreteFlag(root) == encoded.take(1)) &&
+                entries.values.forall(references(_, entries.contains))
+            }.map(_ => encoded)
+        end parse
+
+        // Whether every id the entry names is one `known` holds.
+        private def references(entry: Entry, known: Entry.Id => Boolean): Boolean =
+            entry match
+                case AnyEntry | NothingEntry | NullEntry     => true
+                case LiteralEntry(widened, _)                => known(widened)
+                case BoundsEntry(lower, upper)               => known(lower) && known(upper)
+                case IntersectionEntry(set)                  => set.forall(known)
+                case UnionEntry(set)                         => set.forall(known)
+                case LambdaEntry(_, lower, upper, body)      => lower.forall(known) && upper.forall(known) && known(body)
+                case OpaqueEntry(_, lower, upper, _, params) => known(lower) && known(upper) && params.forall(known)
+                case ClassEntry(_, _, params, parents)       => params.forall(known) && parents.forall(known)
 
         /** Cache for decoded type structures. This cache ensures that each unique encoded type string is only deserialized once,
           * significantly improving performance for repeated operations on the same types. Unlike the subtype cache, this cache is fully
@@ -717,58 +779,70 @@ object Tag extends kyo.internal.TagPlatformSpecific:
             decodeCache.computeIfAbsent(encoded, decodeFunction)
 
         def decodeEntry(fields: List[String]): Entry =
+            readEntry(fields).getOrElse(bug("Invalid tag payload! " + fields.mkString(":")))
+
+        // An entry's fields as `encode` writes them. A parameterless class, lambda or opaque type writes its empty variances and
+        // parameters as one empty field each.
+        private def readEntry(fields: List[String]): Maybe[Entry] =
             fields match
-                case "A" :: Nil                     => AnyEntry
-                case "N" :: Nil                     => NothingEntry
-                case "U" :: Nil                     => NullEntry
-                case "L" :: widened :: value :: Nil => LiteralEntry(widened, value)
-                case "B" :: lower :: upper :: Nil   => BoundsEntry(lower, upper)
-                case "I" :: set                     => IntersectionEntry(Span.from(set))
-                case "U" :: set                     => UnionEntry(Span.from(set))
+                case "A" :: Nil                     => Present(AnyEntry)
+                case "N" :: Nil                     => Present(NothingEntry)
+                case "U" :: Nil                     => Present(NullEntry)
+                case "L" :: widened :: value :: Nil => Present(LiteralEntry(widened, value))
+                case "B" :: lower :: upper :: Nil   => Present(BoundsEntry(lower, upper))
+                case "I" :: set                     => Present(IntersectionEntry(Span.from(set)))
+                case "U" :: set                     => Present(UnionEntry(Span.from(set)))
 
                 case "M" :: body :: size :: rest =>
-                    val n  = size.toInt
-                    val it = rest.iterator
-                    LambdaEntry(
-                        body = body,
-                        params = Span.from(it.take(n)),
-                        lowerBounds = Span.from(it.take(n)),
-                        upperBounds = Span.from(it.take(n))
+                    count(size, rest, 3).map(n =>
+                        LambdaEntry(
+                            body = body,
+                            params = Span.from(rest.take(n)),
+                            lowerBounds = Span.from(rest.slice(n, 2 * n)),
+                            upperBounds = Span.from(rest.slice(2 * n, 3 * n))
+                        )
                     )
 
                 case "O" :: name :: lower :: upper :: size :: rest =>
-                    val n  = size.toInt
-                    val it = rest.iterator
-                    OpaqueEntry(
-                        name = name,
-                        lowerBound = lower,
-                        upperBound = upper,
-                        variances = Span.from(it.take(n).map(v => Variance.fromOrdinal(v.toInt))),
-                        params = Span.from(it.take(n))
+                    count(size, rest, 2).flatMap(n =>
+                        variances(rest.take(n)).map(variances =>
+                            OpaqueEntry(
+                                name = name,
+                                lowerBound = lower,
+                                upperBound = upper,
+                                variances = variances,
+                                params = Span.from(rest.slice(n, 2 * n))
+                            )
+                        )
                     )
 
                 case "C" :: name :: size :: rest =>
-                    size.toInt match
-                        case 0 =>
+                    count(size, rest, 2).flatMap(n =>
+                        variances(rest.take(n)).map(variances =>
                             ClassEntry(
                                 className = name,
-                                variances = Span.empty,
-                                params = Span.empty,
-                                parents = Span.from(rest.drop(2).filter(_.nonEmpty))
+                                variances = variances,
+                                params = Span.from(rest.slice(n, 2 * n)),
+                                parents = Span.from(rest.drop(if n == 0 then 2 else 2 * n).filter(_.nonEmpty))
                             )
-                        case size =>
-                            val it = rest.iterator
-                            ClassEntry(
-                                className = name,
-                                variances = Span.from(it.take(size).map(v => Variance.fromOrdinal(v.toInt))),
-                                params = Span.from(it.take(size)),
-                                parents = Span.from(it)
-                            )
+                        )
+                    )
 
-                case fields =>
-                    bug("Invalid tag payload! " + fields.mkString(":"))
+                case _ => Absent
             end match
-        end decodeEntry
+        end readEntry
+
+        // The `n` an entry's `size` field holds, when `rest` has the `sections` runs of `n` fields it promises.
+        private def count(size: String, rest: List[String], sections: Int): Maybe[Int] =
+            Maybe.fromOption(size.toIntOption).filter(n => n >= 0 && n.toLong * sections <= rest.size)
+
+        private def variances(fields: List[String]): Maybe[Span[Variance]] =
+            fields.foldLeft(Maybe(Chunk.empty[Variance])) { (read, field) =>
+                read.flatMap(kept =>
+                    Maybe.fromOption(field.toIntOption).filter(ordinal => ordinal >= 0 && ordinal < Variance.values.length)
+                        .map(ordinal => kept.append(Variance.fromOrdinal(ordinal)))
+                )
+            }.map(Span.from(_))
     end internal
 
 end Tag

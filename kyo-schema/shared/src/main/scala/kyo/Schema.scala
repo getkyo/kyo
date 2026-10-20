@@ -2941,14 +2941,15 @@ object Schema:
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Frame].asInstanceOf[Tag[Any]])
     )
 
-    /** Tag schema: serializes as the string representation. Tags are opaque types backed by String at runtime for static tags.
+    /** Tag schema: serializes as the tag's encoding, a dynamic tag's runtime parts merged in, and reads back only a whole encoding, so a
+      * text that is not one is a typed failure where it is read rather than a failure at the tag's first use.
       */
     given tagSchema[A](using tag: Tag[Tag[A]]): Schema[Tag[A]] = Schema.init[Tag[A]](
-        writeFn = (v, w) =>
-            v match
-                case s: String => w.string(s)
-                case _         => w.string(v.show),
-        readFn = reader => reader.string().asInstanceOf[Tag[A]],
+        writeFn = (v, w) => w.string(Tag.internal.encode(v.erased)),
+        readFn = reader =>
+            val value = reader.string()
+            Tag.internal.parse[A](value).getOrElse(throw TypeMismatchException(Seq.empty, "Tag", value)(using reader.frame))
+        ,
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, tag.erased)
     )
 

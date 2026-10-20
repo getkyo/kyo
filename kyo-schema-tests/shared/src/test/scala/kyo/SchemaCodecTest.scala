@@ -2423,22 +2423,12 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
                 assert(tag =:= back)
             }
 
-            "Tag dynamic round-trip: decoding the show-string fails (documented limitation)" in {
+            "Tag[List[Int]] round-trip (dynamic tag, written as one encoding)" in {
                 val tag    = dynamicListTagOf[Int]
                 val schema = Schema.tagSchema[List[Int]]
-                val w      = TestWriter()
-                schema.writeTo(tag.asInstanceOf[Tag[List[Int]]], w)
-                val encodedShow = w.resultTokens.collect { case Token.Str(s) => s }.headOption.getOrElse("")
-                assert(encodedShow == tag.show, "tagSchema must serialise dynamic tag as its show-string")
-                val r      = TestReader(w.resultTokens)
-                val back   = schema.readFrom(r)
-                val thrown = intercept[Exception] {
-                    back.show
-                }
-                assert(
-                    thrown.getMessage != null && thrown.getMessage.contains("Invalid tag payload"),
-                    s"Unexpected exception: $thrown"
-                )
+                val back   = auditRoundTrip(tag)(using schema)
+                assert(tag.show == back.show)
+                assert(tag =:= back)
             }
 
             "Dict[String, Int] empty round-trip (size 0)" in {

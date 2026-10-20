@@ -305,6 +305,57 @@ class TagTest extends kyo.test.Test[Any]:
         }
     }
 
+    "an encoding read back" - {
+        trait Higher[F[_]]
+        def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]]      = Tag.dynamic[Map[A, List[B]]]
+        def lambda[A: Tag]: Tag[Higher[[X] =>> Either[A, X]]] = Tag.dynamic[Higher[[X] =>> Either[A, X]]]
+        def deep[A: Tag]: Tag[Option[List[A]]]                =
+            given Tag[List[A]] = Tag.dynamic[List[A]]
+            Tag.dynamic[Option[List[A]]]
+
+        "parse reads back every encoding the compiler writes, as the same type" in {
+            val tags = Chunk(
+                Tag[Any].erased,
+                Tag[Nothing].erased,
+                Tag[Null].erased,
+                Tag[Int].erased,
+                Tag["text"].erased,
+                Tag[List[Int]].erased,
+                Tag[Map[String, List[Int]]].erased,
+                Tag[Int | String].erased,
+                Tag[Serializable & Product].erased,
+                Tag[List[? <: Number]].erased,
+                Tag[Higher[[X] =>> Either[Int, X]]].erased
+            )
+            assert(tags.map(tag => Tag.internal.parse[Any](Tag.internal.encode(tag)).map(_ =:= tag)) == tags.map(_ => Present(true)))
+        }
+
+        "a dynamic tag is encoded whole, its parts at every depth, and reads back as its type" in {
+            val tags = Chunk(nested[String, Int].erased, lambda[Int].erased, deep[Map[String, Int]].erased)
+            assert(tags.map(tag => Tag.internal.parse[Any](Tag.internal.encode(tag)).map(_ =:= tag)) == tags.map(_ => Present(true)))
+            assert(Tag.internal.parse[Any](Tag.internal.encode(nested[String, Int].erased)).map(_ <:< Tag[Map[String, Seq[Int]]]) ==
+                Present(true))
+        }
+
+        "parse refuses a text that is not a whole encoding" in {
+            // nothing, a flag alone, a class name, an unknown kind, a parameter and a parent naming no entry, a count that is not a
+            // number, no root, a variance past the three, an id given twice, a flag the root is not written with
+            val texts = Chunk(
+                "",
+                "*",
+                "ren.Message",
+                "*0:Q",
+                ".0:C:scala.Some:1:1:5:",
+                "*0:C:x:z:::",
+                "*1:A",
+                ".0:C:scala.List:1:7:1\n1:A",
+                ".0:A\n0:N",
+                "*0:A"
+            )
+            assert(texts.map(Tag.internal.parse[Any]) == texts.map(_ => Absent))
+        }
+    }
+
     "without variance" - {
         "equal tags" - {
             class Test[A]
