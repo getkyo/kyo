@@ -54,8 +54,14 @@ private[kyo] object Wire:
         user: Maybe[String] = Absent,
         text: Maybe[String] = Absent,
         ts: Maybe[String] = Absent,
-        thread_ts: Maybe[String] = Absent
+        thread_ts: Maybe[String] = Absent,
+        subtype: Maybe[String] = Absent
     ) derives Schema
+
+    /** The subtypes of a `message` event that are still a person's post: a reply sent to the channel too, a post with a file, a
+      * `/me` post. Every other subtype is Slack's notice (a join, a topic, a pin) or a change to a post.
+      */
+    private val postSubtypes: Set[String] = Set("thread_broadcast", "file_share", "me_message")
 
     final private[kyo] case class WireAppMention(
         channel: Maybe[String] = Absent,
@@ -344,15 +350,19 @@ private[kyo] object Wire:
             typedOr(s"$kind event", SlackEvent.Unknown(kind, eventJson))(decoded)
         kind match
             case "message" =>
-                event(read[WireMessage](tree, "payload", "event").flatMap { w =>
-                    for
-                        ch   <- id(w.channel)(SlackId.ChannelId(_))
-                        u    <- id(w.user)(SlackId.UserId(_))
-                        text <- w.text
-                        ts   <- id(w.ts)(SlackTs(_))
-                    yield SlackEvent.Message(ch, u, text, ts, id(w.thread_ts)(SlackTs(_)))
-                    end for
-                })
+                read[WireMessage](tree, "payload", "event") match
+                    // well formed, so no warn line: the module has no typed case for a notice or a change
+                    case Present(w) if w.subtype.exists(!postSubtypes.contains(_)) => SlackEvent.Unknown(kind, eventJson)
+                    case wire                                                      =>
+                        event(wire.flatMap { w =>
+                            for
+                                ch   <- id(w.channel)(SlackId.ChannelId(_))
+                                u    <- id(w.user)(SlackId.UserId(_))
+                                text <- w.text
+                                ts   <- id(w.ts)(SlackTs(_))
+                            yield SlackEvent.Message(ch, u, text, ts, id(w.thread_ts)(SlackTs(_)))
+                            end for
+                        })
             case "app_mention" =>
                 event(read[WireAppMention](tree, "payload", "event").flatMap { w =>
                     for

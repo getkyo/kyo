@@ -185,7 +185,7 @@ val byEvent = Slack.run(config)(Slack.receive([A] =>
 ))
 ```
 
-> **Note:** a `message` event missing any of `channel`, `user`, `text`, or `ts` (the `message_changed` and `message_deleted` subtypes, for example) arrives as `SlackEvent.Unknown("message", eventJson)`, with the event's raw JSON as a `SlackRawJson` and a warn log, not as `SlackEvent.Message`. Every other event and interaction kind follows the same rule. A field Slack may leave out is a `Maybe` instead: `AppHomeOpened.tab` is `Absent` when the person did not open a tab, and a submitted view's `state` when the modal sent no state.
+> **Note:** a `SlackEvent.Message` is a person's post: a `message` event with no `subtype`, or one of `thread_broadcast`, `file_share` and `me_message`. Any other subtype, Slack's notice of a join, a leave, a topic or a pin, or a change such as `message_changed` and `message_deleted`, arrives as `SlackEvent.Unknown("message", eventJson)` with the event's raw JSON as a `SlackRawJson`. A post missing any of `channel`, `user`, `text`, or `ts` arrives the same way, with a warn log. Every other event and interaction kind follows that rule. A field Slack may leave out is a `Maybe` instead: `AppHomeOpened.tab` is `Absent` when the person did not open a tab, and a submitted view's `state` when the modal sent no state.
 
 These types model what Slack sends, and only kyo-slack decodes them, from Slack's own frames. None of the inbound types (events, interactions, envelopes, commands, `Slack.Identity`) has a `Schema`; summoning one is a compile error that names the type. Log or store the fields you need.
 

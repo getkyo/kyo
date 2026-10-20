@@ -191,6 +191,45 @@ class WireTest extends kyo.test.Test[Any]:
         }
     }
 
+    Chunk(
+        "channel_join",
+        "channel_leave",
+        "channel_topic",
+        "channel_purpose",
+        "channel_name",
+        "pinned_item",
+        "message_changed",
+        "message_deleted",
+        "bot_message"
+    ).foreach { subtype =>
+        s"events_api message of subtype $subtype is not a person's post, though it carries a post's fields: SlackEvent.Unknown" in {
+            val event =
+                s"""{"type":"message","subtype":"$subtype","channel":"C1","user":"U1","text":"<@U1> did something","ts":"1.2"}"""
+            Wire.decode(eventsApi("E64", event)).map { d =>
+                assert(d == envelope(
+                    events(meta("E64"), SlackEvent.Unknown("message", SlackRawJsonTest.of(event)), eventId("E64")),
+                    ackable = true
+                ))
+            }
+        }
+    }
+
+    Chunk("thread_broadcast", "file_share", "me_message").foreach { subtype =>
+        s"events_api message of subtype $subtype is a person's post: a typed Message" in {
+            val event = s"""{"type":"message","subtype":"$subtype","channel":"C1","user":"U1","text":"hi","ts":"1.2"}"""
+            Wire.decode(eventsApi("E65", event)).map { d =>
+                assert(d == envelope(
+                    events(
+                        meta("E65"),
+                        SlackEvent.Message(SlackId.ChannelId("C1"), SlackId.UserId("U1"), "hi", SlackTs("1.2")),
+                        eventId("E65")
+                    ),
+                    ackable = true
+                ))
+            }
+        }
+    }
+
     // Real Slack shape: user and channel are objects; trigger_id and response_url sit at the payload top level.
     "interactive block_actions decodes the real object-shaped user/channel, the message ts and the response_url" in {
         val frame =
