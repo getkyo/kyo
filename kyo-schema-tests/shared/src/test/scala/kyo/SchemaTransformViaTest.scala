@@ -19,6 +19,21 @@ class SchemaTransformViaTest extends kyo.test.Test[Any]:
             assert(Json.decode[STVPort]("-1") == Result.fail(ConstructorRejectedException(Nil, "STVPort", "port out of range: -1")))
         }
 
+        "a text rejection is in the message once, and a failure rejection is kept as the cause" in {
+            Json.decode[STVPort]("-1") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.getMessage.split(java.util.regex.Pattern.quote("port out of range: -1"), -1).length == 2, e.getMessage)
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+            end match
+            Json.decode[STVCode]("\"\"") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    e.rejection match
+                        case leaf: STVInvalidCode => assert(e.getCause eq leaf)
+                        case other                => fail(s"expected the constructor's own failure, got $other")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+            end match
+        }
+
         "a rejection inside a record names the field" in {
             assert(
                 Json.decode[STVServer]("""{"port":-1}""") ==

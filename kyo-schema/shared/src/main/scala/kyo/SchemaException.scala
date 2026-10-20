@@ -246,7 +246,10 @@ case class ConstructorRejectedException(path: Seq[String], typeName: String, rej
         s"Constructor rejected the decoded value for '$typeName'" + SchemaException.pathSuffix(path) +
             s": ${String.valueOf(rejection)}. The fields decoded successfully; the smart constructor refused them. " +
             "Correct the input, or decode with a schema whose constructor accepts it.",
-        rejection
+        // A text cause is appended to the message, which already holds the rejection; a failure stays the cause, with its chain.
+        rejection match
+            case failure: Throwable => failure
+            case _: String          => ""
     )
     with DecodeException:
     private[kyo] def mapPath(f: Seq[String] => Seq[String]): ConstructorRejectedException = copy(path = f(path))(using frame)
