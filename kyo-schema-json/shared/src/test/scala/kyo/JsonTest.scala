@@ -885,6 +885,40 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
+        "a sealed trait's case is written as an object holding the case, and reads back as written" in {
+            val schema  = JsonSchema.from[JSShape]
+            val encoded = Json.encode(schema)
+            assert(encoded ==
+                """{"oneOf":[""" +
+                """{"type":"object","properties":{"JSCircle":{"type":"object","properties":{"radius":{"type":"number"}},"required":["radius"]}},"required":["JSCircle"]},""" +
+                """{"type":"object","properties":{"JSRect":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"}},"required":["width","height"]}},"required":["JSRect"]}""" +
+                """]}""")
+            assert(Json.decode[JsonSchema](encoded) == Result.succeed(schema))
+        }
+
+        "a generic product nested in itself with other type arguments is described in full" in {
+            case class JSPair[A, B](first: A, second: B)
+            JsonSchema.from[JSPair[Int, JSPair[String, Boolean]]] match
+                case outer: JsonSchema.Obj =>
+                    assert(outer.properties.find(_._1 == "second").map(_._2) == Some(JsonSchema.Obj(
+                        List("first" -> JsonSchema.Str(), "second" -> JsonSchema.Bool()),
+                        List("first", "second")
+                    )))
+                case other => fail(s"Expected Obj, got $other")
+            end match
+        }
+
+        "a product nested in itself stops at the first repetition" in {
+            JsonSchema.from[TreeNode] match
+                case node: JsonSchema.Obj =>
+                    assert(node.properties.find(_._1 == "children").map(_._2) == Some(JsonSchema.Arr(JsonSchema.Obj(
+                        List.empty,
+                        List.empty
+                    ))))
+                case other => fail(s"Expected Obj, got $other")
+            end match
+        }
+
         "summon[Schema[MTPerson]] still works" in {
             val schema = summon[Schema[MTPerson]]
             assert(schema != null)

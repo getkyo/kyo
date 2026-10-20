@@ -451,12 +451,9 @@ object Json:
                     discard(entries.addOne("oneOf" -> { () =>
                         writer.arrayStart(variants.size)
                         variants.foreach { (name, sub) =>
-                            // Variant schemas wrap each sub in a single-property object whose key is the variant name; this
-                            // matches MCP's discriminated-union convention for tool / prompt argument schemas.
-                            writer.objectStart("", 1)
-                            writer.fieldBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
-                            writeJsonSchema(sub, writer)
-                            writer.objectEnd()
+                            // A case is encoded as an object holding it under its name, so its schema is that object's. A bare
+                            // `{"name": schema}` has no `type` and is refused by the Anthropic and OpenAI tool APIs.
+                            writeJsonSchema(Obj(List(name -> sub), List(name)), writer)
                         }
                         writer.arrayEnd()
                     }))
@@ -625,8 +622,8 @@ object Json:
         /** Decodes a JSON Schema `oneOf` array into a `JsonSchema`.
           *
           * Three branches:
-          *   1. All elements are single-field named-variant wrappers (`{"VariantName": {inner}}`): emit `OneOf` with the original variant
-          *      names. This is the round-trip path for `JsonSchema` values produced by this codec's `writeJsonSchema`.
+          *   1. All elements are named cases: emit `OneOf` with the original case names. A case is an object schema with one property, the
+          *      case, which it requires, as `writeJsonSchema` writes it; the bare wrapper `{"CaseName": {inner}}` reads as the same case.
           *   2. Exactly two elements, one being `{"type":"null"}`: emit `Nullable(other)`.
           *   3. Otherwise: foreign-schema input whose `oneOf` elements are direct sub-schemas with no encapsulating name. The variant names
           *      do not exist in the source; synthesise `"variant0"`, `"variant1"`, ... so callers still receive `N` variants of the right
@@ -634,24 +631,29 @@ object Json:
           *      lands in branch 1).
           */
         private def fromOneOf(elems: Chunk[Structure.Value]): JsonSchema =
-            // Determine whether the elements are named-variant wrappers (MCP discriminated-union style) or direct
-            // sub-schemas (Nullable style: `[{inner}, {"type":"null"}]`).
-            // A named-variant wrapper has exactly one field whose value is itself a Record (another JSON Schema object).
-            // A direct sub-schema is a Record that carries a "type" or "oneOf" key as its own descriptor.
-            val isNamedVariantWrapper: Structure.Value => Boolean = {
-                case Structure.Value.Record(fields) if fields.size == 1 =>
-                    fields.head._2.isInstanceOf[Structure.Value.Record]
-                case _ => false
-            }
-            val allNamedVariants = elems.iterator.forall(isNamedVariantWrapper)
-            if allNamedVariants && elems.nonEmpty then
-                val variants = elems.iterator.map {
-                    case Structure.Value.Record(fields) =>
-                        val (name, sub) = fields.head
-                        name -> fromStructureValue(sub)
-                    case other => bug(s"JsonSchema.fromOneOf: unexpected variant wrapper node $other")
-                }.toList
-                OneOf(variants)
+            // An object schema carrying anything beyond the three keys a case is written with is a sub-schema of its own, so its
+            // other keys are not dropped.
+            def namedCase(element: Structure.Value): Maybe[(String, Structure.Value)] =
+                element match
+                    case Structure.Value.Record(fields) if fields.size == 3 =>
+                        val byName = fields.iterator.toMap
+                        (byName.get("type"), byName.get("properties"), byName.get("required")) match
+                            case (
+                                    Some(Structure.Value.Str("object")),
+                                    Some(Structure.Value.Record(properties)),
+                                    Some(Structure.Value.Sequence(required))
+                                ) if properties.size == 1 && required == Chunk(Structure.Value.Str(properties.head._1)) =>
+                                Maybe(properties.head)
+                            case _ => Maybe.empty
+                        end match
+                    case Structure.Value.Record(fields) if fields.size == 1 =>
+                        fields.head match
+                            case (name, sub: Structure.Value.Record) => Maybe((name, sub))
+                            case _                                   => Maybe.empty
+                    case _ => Maybe.empty
+            val named = elems.map(namedCase)
+            if elems.nonEmpty && named.forall(_.nonEmpty) then
+                OneOf(named.toList.flatMap(_.toList).map((name, sub) => name -> fromStructureValue(sub)))
             else
                 // Direct sub-schemas: detect the Nullable pattern (exactly 2 elements, one of which is the null type).
                 val isNullSchema: Structure.Value => Boolean = {
@@ -706,7 +708,9 @@ object Json:
         private[kyo] def fromStructure(rt: Structure.Type): JsonSchema =
             fromStructure(rt, Set.empty)
 
-        private def fromStructure(rt: Structure.Type, seen: Set[String]): JsonSchema =
+        // A type is entered once per name and tag: the name alone would stop at a generic type nested in itself with other type
+        // arguments, as `Pair[Int, Pair[String, Boolean]]`, and describe the inner one as an empty object.
+        private def fromStructure(rt: Structure.Type, seen: Set[(String, Tag[Any])]): JsonSchema =
             rt match
                 case p: Structure.Type.Primitive =>
                     p.kind match
@@ -730,10 +734,10 @@ object Json:
                 case Structure.Type.Collection(_, _, elem) =>
                     Arr(fromStructure(elem, seen))
 
-                case Structure.Type.Product(name, _, _, fields, _) =>
-                    if seen.contains(name) then Obj(List.empty, List.empty)
+                case Structure.Type.Product(name, tag, _, fields, _) =>
+                    if seen.contains((name, tag)) then Obj(List.empty, List.empty)
                     else
-                        val newSeen    = seen + name
+                        val newSeen    = seen + ((name, tag))
                         val properties = fields.toList.map { f =>
                             (f.name, withDescription(fromStructure(f.fieldType, newSeen), f.doc))
                         }
@@ -742,10 +746,10 @@ object Json:
                         }
                         Obj(properties, required)
 
-                case Structure.Type.Sum(name, _, _, variants, _, _) =>
-                    if seen.contains(name) then Obj(List.empty, List.empty)
+                case Structure.Type.Sum(name, tag, _, variants, _, _) =>
+                    if seen.contains((name, tag)) then Obj(List.empty, List.empty)
                     else
-                        val newSeen     = seen + name
+                        val newSeen     = seen + ((name, tag))
                         val variantList = variants.toList.map { v =>
                             (v.name, fromStructure(v.variantType, newSeen))
                         }
@@ -790,8 +794,8 @@ object Json:
           * required set, and per-property descriptions.
           *
           * Product and sum nodes are named by their path from the root, because [[fromStructure]] guards
-          * recursion by name: two sibling objects sharing one name would re-derive the second as an empty
-          * `{}`, silently erasing its properties.
+          * recursion by name and tag and every recovered node carries the same tag: two sibling objects
+          * sharing one name would re-derive the second as an empty `{}`, silently erasing its properties.
           */
         def toStructure(schema: JsonSchema): Structure.Type =
             toStructure(schema, "Root")
