@@ -708,8 +708,9 @@ object Json:
         private[kyo] def fromStructure(rt: Structure.Type): JsonSchema =
             fromStructure(rt, Set.empty)
 
-        // A type is entered once per name and tag: the name alone would stop at a generic type nested in itself with other type
-        // arguments, as `Pair[Int, Pair[String, Boolean]]`, and describe the inner one as an empty object.
+        // A type is entered once per name, type arguments and tag: the name alone would stop at a generic type nested in itself with
+        // other type arguments, as `Pair[Int, Pair[String, Boolean]]`, and describe the inner one as an empty object. The tag alone
+        // does not tell them apart where the schema was derived without the arguments' tags, which leaves the tag erased.
         private def fromStructure(rt: Structure.Type, seen: Set[(String, Tag[Any])]): JsonSchema =
             rt match
                 case p: Structure.Type.Primitive =>
@@ -734,10 +735,11 @@ object Json:
                 case Structure.Type.Collection(_, _, elem) =>
                     Arr(fromStructure(elem, seen))
 
-                case Structure.Type.Product(name, tag, _, fields, _) =>
-                    if seen.contains((name, tag)) then Obj(List.empty, List.empty)
+                case product @ Structure.Type.Product(_, tag, _, fields, _) =>
+                    val key = (applied(product), tag)
+                    if seen.contains(key) then Obj(List.empty, List.empty)
                     else
-                        val newSeen    = seen + ((name, tag))
+                        val newSeen    = seen + key
                         val properties = fields.toList.map { f =>
                             (f.name, withDescription(fromStructure(f.fieldType, newSeen), f.doc))
                         }
@@ -745,15 +747,18 @@ object Json:
                             case f if f.default.isEmpty && !f.optional => f.name
                         }
                         Obj(properties, required)
+                    end if
 
-                case Structure.Type.Sum(name, tag, _, variants, _, _) =>
-                    if seen.contains((name, tag)) then Obj(List.empty, List.empty)
+                case sum @ Structure.Type.Sum(_, tag, _, variants, _, _) =>
+                    val key = (applied(sum), tag)
+                    if seen.contains(key) then Obj(List.empty, List.empty)
                     else
-                        val newSeen     = seen + ((name, tag))
+                        val newSeen     = seen + key
                         val variantList = variants.toList.map { v =>
                             (v.name, fromStructure(v.variantType, newSeen))
                         }
                         OneOf(variantList)
+                    end if
 
                 case Structure.Type.Mapping(_, _, keyType, valueType, form) =>
                     form match
@@ -777,6 +782,21 @@ object Json:
                     // tree's variant, not via the wire bytes.
                     Obj(List.empty, List.empty)
         end fromStructure
+
+        // A type's name with its type arguments, as `Cases[Id,MindDef]`. It reads type arguments and never fields, so it ends on a
+        // recursive type: a type's arguments are a finite tree, while its fields may lead back to it.
+        private def applied(rt: Structure.Type): String =
+            def withArgs(name: String, args: Chunk[Structure.Type]): String =
+                if args.isEmpty then name else args.map(applied).mkString(s"$name[", ",", "]")
+            rt match
+                case Structure.Type.Product(name, _, typeParams, _, _)      => withArgs(name, typeParams)
+                case Structure.Type.Sum(name, _, typeParams, _, _, _)       => withArgs(name, typeParams)
+                case Structure.Type.Optional(name, _, inner)                => withArgs(name, Chunk(inner))
+                case Structure.Type.Collection(name, _, elem)               => withArgs(name, Chunk(elem))
+                case Structure.Type.Mapping(name, _, keyType, valueType, _) => withArgs(name, Chunk(keyType, valueType))
+                case other                                                  => other.name
+            end match
+        end applied
 
         /** Recovers a `Structure.Type` from a JsonSchema: the runtime inverse of [[fromStructure]].
           *

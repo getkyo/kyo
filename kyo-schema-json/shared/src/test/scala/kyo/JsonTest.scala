@@ -908,6 +908,31 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
+        "a generic product nested in itself is described in full when its schema is derived where its tag is not known" in {
+            import JsonTestGuardTypes.*
+            JsonSchema.from[JSOuterCell] match
+                case outer: JsonSchema.Obj =>
+                    val inner = JsonSchema.Obj(
+                        List(
+                            "name" -> JsonSchema.Str(),
+                            "cell" -> JsonSchema.Obj(
+                                List(
+                                    "declared" -> JsonSchema.Nullable(JsonSchema.Str()),
+                                    "written"  -> JsonSchema.Nullable(JsonSchema.Integer())
+                                ),
+                                List.empty
+                            )
+                        ),
+                        List("name", "cell")
+                    )
+                    assert(outer.properties == List("cell" -> JsonSchema.Obj(
+                        List("declared" -> JsonSchema.Nullable(JsonSchema.Str()), "written" -> JsonSchema.Nullable(inner)),
+                        List.empty
+                    )))
+                case other => fail(s"Expected Obj, got $other")
+            end match
+        }
+
         "a product nested in itself stops at the first repetition" in {
             JsonSchema.from[TreeNode] match
                 case node: JsonSchema.Obj =>
@@ -2326,3 +2351,12 @@ class JsonTest extends kyo.test.Test[Any]:
     }
 
 end JsonTest
+
+object JsonTestGuardTypes:
+    // Derived in a given generic in `A` with no Tag for it, so every cell's structure carries the same erased tag.
+    final case class JSCell[I, A](declared: Maybe[I], written: Maybe[A])
+    object JSCell:
+        given [A](using Schema[A]): Schema[JSCell[String, A]] = Schema.derived[JSCell[String, A]]
+    final case class JSInnerCell(name: String, cell: JSCell[String, Int]) derives Schema
+    final case class JSOuterCell(cell: JSCell[String, JSInnerCell]) derives Schema
+end JsonTestGuardTypes
