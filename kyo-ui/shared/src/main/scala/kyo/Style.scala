@@ -154,6 +154,15 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def accentColor(c: Color): Style               = appendProp(Prop.AccentColorProp(c))
     def accentColor(f: Color.type => Color): Style = accentColor(f(Color))
 
+    // Color scheme
+
+    /** Maps to the CSS `color-scheme` property: the scheme the element and its subtree are drawn in, which picks every
+      * [[kyo.Style.Color.lightDark]] color under it and the look of the browser's controls and scrollbars. Set on a page's root it switches
+      * the whole page between day and night.
+      */
+    def colorScheme(v: ColorScheme): Style                     = appendProp(Prop.ColorSchemeProp(v))
+    def colorScheme(f: ColorScheme.type => ColorScheme): Style = colorScheme(f(ColorScheme))
+
     // Padding: px, pct, or em (no auto)
 
     /** Sets padding. The 1-arg form applies to all four sides, the 2-arg form to vertical/horizontal, the 4-arg form to top/right/bottom/left.
@@ -273,6 +282,12 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def textAlign(v: TextAlign): Style                   = appendProp(Prop.TextAlignProp(v))
     def textAlign(f: TextAlign.type => TextAlign): Style = textAlign(f(TextAlign))
 
+    /** Maps to the CSS `vertical-align` property: where a table cell's content sits in its row, or an inline box on its line. A cell's
+      * content sits in the middle of its row unless this says otherwise.
+      */
+    def verticalAlign(v: VerticalAlign): Style                       = appendProp(Prop.VerticalAlignProp(v))
+    def verticalAlign(f: VerticalAlign.type => VerticalAlign): Style = verticalAlign(f(VerticalAlign))
+
     def textDecoration(v: TextDecoration): Style                        = appendProp(Prop.TextDecorationProp(v))
     def textDecoration(f: TextDecoration.type => TextDecoration): Style = textDecoration(f(TextDecoration))
     def underline: Style                                                = textDecoration(TextDecoration.underline)
@@ -297,6 +312,12 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
       */
     def whiteSpace(v: WhiteSpace): Style                    = appendProp(Prop.WhiteSpaceProp(v))
     def whiteSpace(f: WhiteSpace.type => WhiteSpace): Style = whiteSpace(f(WhiteSpace))
+
+    /** Cuts the text to at most `lines` lines, an ellipsis ending the last one: `-webkit-line-clamp`, which every current browser supports,
+      * with the `-webkit-box` display and the hidden overflow it needs, so it sets the element's display and overflow too. `lines` is
+      * clamped to at least 1.
+      */
+    def lineClamp(lines: Int): Style = appendProp(Prop.LineClampProp(math.max(1, lines)))
 
     // Borders: width is px only
 
@@ -398,6 +419,15 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     ): Style =
         appendProp(Prop.BorderRadiusProp(clampSize(topLeft), clampSize(topRight), clampSize(bottomRight), clampSize(bottomLeft)))
 
+    // Outline: px only
+
+    /** Maps to the CSS `outline`: a line drawn outside the border that takes no layout space, as the browser's focus ring is. A control that
+      * draws its own focus state removes the browser's ring with `outline(0.px, BorderStyle.none, Color.transparent)`, typically on its
+      * `focus` style. The width is clamped to non-negative.
+      */
+    def outline(width: Length.Px, style: BorderStyle, c: Color): Style = appendProp(Prop.OutlineProp(clampSize(width), style, c))
+    def outline(width: Length.Px, style: BorderStyle, f: Color.type => Color): Style = outline(width, style, f(Color))
+
     // Effects
 
     def shadow(
@@ -417,6 +447,14 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
 
     def cursor(v: Cursor): Style                = appendProp(Prop.CursorProp(v))
     def cursor(f: Cursor.type => Cursor): Style = cursor(f(Cursor))
+
+    /** Maps to the CSS `user-select` property: `none` keeps the element's text from being selected while it is dragged or clicked. */
+    def userSelect(v: UserSelect): Style                    = appendProp(Prop.UserSelectProp(v))
+    def userSelect(f: UserSelect.type => UserSelect): Style = userSelect(f(UserSelect))
+
+    /** Maps to the CSS `pointer-events` property: `none` lets a click through the element to what lies under it, `auto` restores it. */
+    def pointerEvents(v: PointerEvents): Style                       = appendProp(Prop.PointerEventsProp(v))
+    def pointerEvents(f: PointerEvents.type => PointerEvents): Style = pointerEvents(f(PointerEvents))
 
     // Transform: px or pct
 
@@ -643,6 +681,8 @@ object Style:
     def color(f: Color.type => Color): Style                            = empty.color(f)
     def accentColor(c: Color): Style                                    = empty.accentColor(c)
     def accentColor(f: Color.type => Color): Style                      = empty.accentColor(f)
+    def colorScheme(v: ColorScheme): Style                              = empty.colorScheme(v)
+    def colorScheme(f: ColorScheme.type => ColorScheme): Style          = empty.colorScheme(f)
     def padding(all: Length.Px | Length.Pct | Length.Em): Style         = empty.padding(all)
     def padding(vertical: Length.Px | Length.Pct | Length.Em, horizontal: Length.Px | Length.Pct | Length.Em): Style =
         empty.padding(vertical, horizontal)
@@ -697,6 +737,8 @@ object Style:
     def fontFamily(f: FontFamily.type => FontFamily): Style                         = empty.fontFamily(f)
     def textAlign(v: TextAlign): Style                                              = empty.textAlign(v)
     def textAlign(f: TextAlign.type => TextAlign): Style                            = empty.textAlign(f)
+    def verticalAlign(v: VerticalAlign): Style                                      = empty.verticalAlign(v)
+    def verticalAlign(f: VerticalAlign.type => VerticalAlign): Style                = empty.verticalAlign(f)
     def textDecoration(v: TextDecoration): Style                                    = empty.textDecoration(v)
     def textDecoration(f: TextDecoration.type => TextDecoration): Style             = empty.textDecoration(f)
     def underline: Style                                                            = empty.underline
@@ -711,6 +753,7 @@ object Style:
     def textWrap(f: TextWrap.type => TextWrap): Style                               = empty.textWrap(f)
     def whiteSpace(v: WhiteSpace): Style                                            = empty.whiteSpace(v)
     def whiteSpace(f: WhiteSpace.type => WhiteSpace): Style                         = empty.whiteSpace(f)
+    def lineClamp(lines: Int): Style                                                = empty.lineClamp(lines)
     def border(width: Length.Px, style: BorderStyle, c: Color): Style               = empty.border(width, style, c)
     def border(width: Length.Px, style: BorderStyle, f: Color.type => Color): Style = empty.border(width, style, f)
     def border(width: Length.Px, c: Color): Style                                   = empty.border(width, c)
@@ -737,7 +780,9 @@ object Style:
         topRight: Length.Px | Length.Pct,
         bottomRight: Length.Px | Length.Pct,
         bottomLeft: Length.Px | Length.Pct
-    ): Style = empty.rounded(topLeft, topRight, bottomRight, bottomLeft)
+    ): Style                                                           = empty.rounded(topLeft, topRight, bottomRight, bottomLeft)
+    def outline(width: Length.Px, style: BorderStyle, c: Color): Style = empty.outline(width, style, c)
+    def outline(width: Length.Px, style: BorderStyle, f: Color.type => Color): Style = empty.outline(width, style, f)
     def shadow(
         x: Length.Px = Length.zero,
         y: Length.Px = Length.zero,
@@ -750,6 +795,10 @@ object Style:
     def opacity(v: Double): Style                                              = empty.opacity(v)
     def cursor(v: Cursor): Style                                               = empty.cursor(v)
     def cursor(f: Cursor.type => Cursor): Style                                = empty.cursor(f)
+    def userSelect(v: UserSelect): Style                                       = empty.userSelect(v)
+    def userSelect(f: UserSelect.type => UserSelect): Style                    = empty.userSelect(f)
+    def pointerEvents(v: PointerEvents): Style                                 = empty.pointerEvents(v)
+    def pointerEvents(f: PointerEvents.type => PointerEvents): Style           = empty.pointerEvents(f)
     def translate(x: Length.Px | Length.Pct, y: Length.Px | Length.Pct): Style = empty.translate(x, y)
     def position(v: Position): Style                                           = empty.position(v)
     def position(f: Position.type => Position): Style                          = empty.position(f)
@@ -847,11 +896,13 @@ object Style:
     sealed abstract class Color derives CanEqual
 
     object Color:
-        final case class Hex private[kyo] (value: String)                      extends Color
-        final case class Rgb private[kyo] (r: Int, g: Int, b: Int)             extends Color
-        final case class Rgba private[kyo] (r: Int, g: Int, b: Int, a: Double) extends Color
-        case object Transparent                                                extends Color
-        final case class Var private[kyo] (name: String)                       extends Color
+        final case class Hex private[kyo] (value: String)                               extends Color
+        final case class Rgb private[kyo] (r: Int, g: Int, b: Int)                      extends Color
+        final case class Rgba private[kyo] (r: Int, g: Int, b: Int, a: Double)          extends Color
+        case object Transparent                                                         extends Color
+        final case class Var private[kyo] (name: String)                                extends Color
+        final case class Mix private[kyo] (color: Color, other: Color, percent: Double) extends Color
+        final case class LightDark private[kyo] (light: Color, dark: Color)             extends Color
 
         private def clamp255(v: Int): Int      = math.max(0, math.min(255, v))
         private def clamp01(v: Double): Double = math.max(0.0, math.min(1.0, v))
@@ -902,6 +953,18 @@ object Style:
           * [[kyo.Style.bg]] to reference it.
           */
         def variable(name: String): Color = Var(name)
+
+        /** `percent` of `color` mixed with `other` in sRGB, rendered as `color-mix(in srgb, <color> <percent>%, <other>)`. It tints a color
+          * only the page knows, a CSS variable or a [[lightDark]] pair: `Color.mix(Color.variable("accent"), Color.transparent, 7)` is the
+          * accent at 7% over whatever lies under it. `percent` is clamped to `[0, 100]`.
+          */
+        def mix(color: Color, other: Color, percent: Double): Color = Mix(color, other, math.max(0.0, math.min(100.0, percent)))
+
+        /** `light` where the element's color scheme is light and `dark` where it is dark, rendered as `light-dark(<light>, <dark>)`. The
+          * scheme is the one [[kyo.Style.colorScheme]] sets on the element or an ancestor, so a component written once follows the day and
+          * night of the page it is placed in. With no color scheme set, the scheme is light.
+          */
+        def lightDark(light: Color, dark: Color): Color = LightDark(light, dark)
     end Color
 
     // ---- Enums ----
@@ -960,6 +1023,10 @@ object Style:
     enum TextAlign derives CanEqual:
         case left, center, right, justify
 
+    /** Maps to the CSS `vertical-align` property. */
+    enum VerticalAlign derives CanEqual:
+        case baseline, top, middle, bottom
+
     /** Maps to the CSS `text-decoration` property. */
     enum TextDecoration derives CanEqual:
         case none, underline, strikethrough
@@ -1007,9 +1074,31 @@ object Style:
     enum BorderStyle derives CanEqual:
         case none, solid, dashed, dotted
 
-    /** Maps to the CSS `cursor` property (`wait_` renders as `wait`, `defaultCursor` as `default`). */
+    /** Maps to the CSS `cursor` property (`wait_` renders as `wait`, `defaultCursor` as `default`, `ewResize` as `ew-resize`, the
+      * horizontal resize arrows a handle that moves an edge left and right shows).
+      */
     enum Cursor derives CanEqual:
-        case defaultCursor, pointer, text, move, notAllowed, crosshair, help, wait_, grab, grabbing
+        case defaultCursor, pointer, text, move, notAllowed, crosshair, help, wait_, grab, grabbing, ewResize
+
+    /** Maps to the CSS `user-select` property: whether the element's text can be selected. `none` keeps a drag handle or a control's label
+      * from being selected while the pointer drags or clicks it; `text` allows a selection, `all` selects the element as one unit, and
+      * `auto` is the browser's default.
+      */
+    enum UserSelect derives CanEqual:
+        case auto, none, text, all
+
+    /** Maps to the CSS `pointer-events` property: `none` makes the element transparent to the pointer, so a click lands on what lies under
+      * it, as an overlay drawn over interactive content needs; `auto` makes it a target again, as a handle inside such an overlay needs.
+      */
+    enum PointerEvents derives CanEqual:
+        case auto, none
+
+    /** Maps to the CSS `color-scheme` property: the schemes the element and its subtree are drawn in. It picks the side of every
+      * [[kyo.Style.Color.lightDark]] color in the subtree and the look of the browser's own controls and scrollbars. `lightDark` follows
+      * the reader's preference, `light` and `dark` force one, and `normal` is the browser's default, which draws light.
+      */
+    enum ColorScheme derives CanEqual:
+        case normal, light, dark, lightDark
 
     /** Maps to the CSS `position` property.
       *
@@ -1127,6 +1216,7 @@ object Style:
         case BgColor(color: Color)
         case TextColor(color: Color)
         case AccentColorProp(color: Color)
+        case ColorSchemeProp(value: ColorScheme)
         // Layout
         case Padding(top: Length, right: Length, bottom: Length, left: Length)
         case Margin(top: Length, right: Length, bottom: Length, left: Length)
@@ -1156,6 +1246,7 @@ object Style:
         case FontVariantLigaturesProp(value: FontVariantLigatures)
         case FontFamilyProp(value: FontFamily)
         case TextAlignProp(value: TextAlign)
+        case VerticalAlignProp(value: VerticalAlign)
         case TextDecorationProp(value: TextDecoration)
         case LineHeightProp(value: Double)
         case LetterSpacingProp(value: Length)
@@ -1163,16 +1254,20 @@ object Style:
         case TextOverflowProp(value: TextOverflow)
         case TextWrapProp(value: TextWrap)
         case WhiteSpaceProp(value: WhiteSpace)
+        case LineClampProp(lines: Int)
         // Borders
         case BorderColorProp(top: Color, right: Color, bottom: Color, left: Color)
         case BorderWidthProp(top: Length, right: Length, bottom: Length, left: Length)
         case BorderStyleProp(value: BorderStyle)
         case BorderRadiusProp(topLeft: Length, topRight: Length, bottomRight: Length, bottomLeft: Length)
+        case OutlineProp(width: Length, style: BorderStyle, color: Color)
         // Effects
         case ShadowProp(x: Length, y: Length, blur: Length, spread: Length, color: Color)
         case OpacityProp(value: Double)
-        // Cursor
+        // Cursor and pointer
         case CursorProp(value: Cursor)
+        case UserSelectProp(value: UserSelect)
+        case PointerEventsProp(value: PointerEvents)
         // Transform
         case TranslateProp(x: Length, y: Length)
         // Position

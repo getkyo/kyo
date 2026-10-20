@@ -1494,8 +1494,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 Integer.parseInt(body.substring(2, 4), 16),
                 Integer.parseInt(body.substring(4, 6), 16)
             )
-        case Style.Color.Transparent => (128, 128, 128)
-        case Style.Color.Var(_)      => (128, 128, 128)
+        case Style.Color.Transparent     => (128, 128, 128)
+        case Style.Color.Var(_)          => (128, 128, 128)
+        case Style.Color.Mix(_, _, _)    => (128, 128, 128)
+        case Style.Color.LightDark(_, _) => (128, 128, 128)
 
     private val blueHi = Style.Color.hex("#0000ff").getOrElse(Style.Color.blue)
     private val redHi  = Style.Color.hex("#ff0000").getOrElse(Style.Color.red)

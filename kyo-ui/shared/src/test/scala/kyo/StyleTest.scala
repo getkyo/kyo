@@ -102,6 +102,26 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(Style.Color.blue.css == "#3b82f6")
         }
 
+        "mix renders color-mix in sRGB" in {
+            assert(Color.mix(Color.variable("accent"), Color.transparent, 7).css == "color-mix(in srgb, var(--accent) 7%, transparent)")
+            assert(Color.mix(Color.red, Color.white, 12.5).css == "color-mix(in srgb, #ef4444 12.5%, #ffffff)")
+        }
+
+        "mix clamps the percent to [0, 100]" in {
+            assert(Color.mix(Color.red, Color.white, -5).css == "color-mix(in srgb, #ef4444 0%, #ffffff)")
+            assert(Color.mix(Color.red, Color.white, 140).css == "color-mix(in srgb, #ef4444 100%, #ffffff)")
+        }
+
+        "lightDark renders light-dark with the light side first" in {
+            assert(Color.lightDark(Color.white, Color.black).css == "light-dark(#ffffff, #000000)")
+        }
+
+        "mix and lightDark nest" in {
+            val tint = Color.mix(Color.lightDark(Color.hex("#0f7b6c").get, Color.hex("#17786a").get), Color.transparent, 10)
+            assert(tint.css == "color-mix(in srgb, light-dark(#0f7b6c, #17786a) 10%, transparent)")
+            assert(Style.bg(tint).toCss == "background-color: color-mix(in srgb, light-dark(#0f7b6c, #17786a) 10%, transparent);")
+        }
+
         "strict hex parser" - {
             "3-digit #RGB returns Present" in {
                 assert(Color.hex("#abc") == Present(Color.Hex("#abc")))
@@ -414,6 +434,14 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(Style.textAlign(Style.TextAlign.justify).toCss == "text-align: justify;")
         }
 
+        "verticalAlign" in {
+            assert(Style.verticalAlign(VerticalAlign.baseline).toCss == "vertical-align: baseline;")
+            assert(Style.verticalAlign(VerticalAlign.top).toCss == "vertical-align: top;")
+            assert(Style.verticalAlign(VerticalAlign.middle).toCss == "vertical-align: middle;")
+            assert(Style.verticalAlign(VerticalAlign.bottom).toCss == "vertical-align: bottom;")
+            assert(Style.verticalAlign(_.top).props(0) == Style.empty.verticalAlign(VerticalAlign.top).props(0))
+        }
+
         "textDecoration" in {
             assert(Style.textDecoration(Style.TextDecoration.none).toCss == "text-decoration: none;")
             assert(Style.underline.toCss == "text-decoration: underline;")
@@ -455,6 +483,24 @@ class StyleTest extends kyo.test.Test[Any]:
         "textWrap selector overload builds the same prop as the direct form" in {
             assert(Style.textWrap(_.balance).props(0) == Style.textWrap(Style.TextWrap.balance).props(0))
             assert(Style.textWrap(_.pretty).toCss == "text-wrap: pretty;")
+        }
+
+        "lineClamp renders the webkit line clamp with the display and overflow it needs" in {
+            assert(
+                Style.lineClamp(3).toCss ==
+                    "display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;"
+            )
+        }
+
+        "lineClamp clamps to at least one line" in {
+            assert(Style.lineClamp(0).props(0) == Style.Prop.LineClampProp(1))
+            assert(Style.lineClamp(-2).props(0) == Style.Prop.LineClampProp(1))
+        }
+
+        "lineClamp keeps the last call" in {
+            val s = Style.lineClamp(2).lineClamp(4)
+            assert(s.props.size == 1)
+            assert(s.toCss.contains("-webkit-line-clamp: 4;"))
         }
     }
 
@@ -592,6 +638,42 @@ class StyleTest extends kyo.test.Test[Any]:
 
     }
 
+    "outline" - {
+        "renders width, style and color" in {
+            assert(Style.outline(2.px, BorderStyle.solid, Color.blue).toCss == "outline: 2px solid #3b82f6;")
+        }
+
+        "none removes the browser's ring" in {
+            assert(Style.outline(0.px, BorderStyle.none, Color.transparent).toCss == "outline: 0 none transparent;")
+        }
+
+        "a negative width is clamped to zero" in {
+            assert(Style.outline((-3).px, BorderStyle.dashed, Color.red).toCss == "outline: 0 dashed #ef4444;")
+        }
+
+        "the color selector builds the same prop" in {
+            assert(Style.outline(1.px, BorderStyle.dotted, _.red).props(0) == Style.outline(1.px, BorderStyle.dotted, Color.red).props(0))
+        }
+
+        "a focus style carries it" in {
+            val s = Style.focus(_.outline(0.px, BorderStyle.none, Color.transparent))
+            assert(focusOf(s).map(_.toCss) == Present("outline: 0 none transparent;"))
+        }
+    }
+
+    "color scheme" - {
+        "all schemes" in {
+            assert(Style.colorScheme(ColorScheme.normal).toCss == "color-scheme: normal;")
+            assert(Style.colorScheme(ColorScheme.light).toCss == "color-scheme: light;")
+            assert(Style.colorScheme(ColorScheme.dark).toCss == "color-scheme: dark;")
+            assert(Style.colorScheme(ColorScheme.lightDark).toCss == "color-scheme: light dark;")
+        }
+
+        "the selector overload builds the same prop" in {
+            assert(Style.colorScheme(_.dark).props(0) == Style.colorScheme(ColorScheme.dark).props(0))
+        }
+    }
+
     "effects" - {
         "shadow" in {
             val s = Style.shadow(y = 2.px, blur = 4.px)
@@ -615,6 +697,27 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(Style.cursor(Style.Cursor.wait_).toCss == "cursor: wait;")
             assert(Style.cursor(Style.Cursor.grab).toCss == "cursor: grab;")
             assert(Style.cursor(Style.Cursor.grabbing).toCss == "cursor: grabbing;")
+            assert(Style.cursor(Style.Cursor.ewResize).toCss == "cursor: ew-resize;")
+        }
+
+        "userSelect renders the property with its webkit form" in {
+            assert(Style.userSelect(UserSelect.none).toCss == "-webkit-user-select: none; user-select: none;")
+            assert(Style.userSelect(UserSelect.text).toCss == "-webkit-user-select: text; user-select: text;")
+            assert(Style.userSelect(UserSelect.all).toCss == "-webkit-user-select: all; user-select: all;")
+            assert(Style.userSelect(UserSelect.auto).toCss == "-webkit-user-select: auto; user-select: auto;")
+            assert(Style.userSelect(_.none).props(0) == Style.userSelect(UserSelect.none).props(0))
+        }
+
+        "pointerEvents" in {
+            assert(Style.pointerEvents(PointerEvents.none).toCss == "pointer-events: none;")
+            assert(Style.pointerEvents(PointerEvents.auto).toCss == "pointer-events: auto;")
+            assert(Style.pointerEvents(_.none).props(0) == Style.pointerEvents(PointerEvents.none).props(0))
+        }
+
+        "userSelect, pointerEvents and cursor are separate props" in {
+            val s = Style.cursor(Cursor.pointer).userSelect(UserSelect.none).pointerEvents(PointerEvents.auto)
+            assert(s.props.size == 3)
+            assert(s.toCss == "cursor: pointer; -webkit-user-select: none; user-select: none; pointer-events: auto;")
         }
 
     }
@@ -1440,6 +1543,22 @@ class StyleTest extends kyo.test.Test[Any]:
     }
 
     "companion factory methods for new props" - {
+        "colorScheme, lineClamp, outline, userSelect and pointerEvents" in {
+            assert(Style.colorScheme(ColorScheme.dark).props(0) == Style.empty.colorScheme(ColorScheme.dark).props(0))
+            assert(Style.colorScheme(_.light).props(0) == Style.empty.colorScheme(_.light).props(0))
+            assert(Style.lineClamp(2).props(0) == Style.empty.lineClamp(2).props(0))
+            assert(Style.outline(
+                1.px,
+                BorderStyle.solid,
+                Color.red
+            ).props(0) == Style.empty.outline(1.px, BorderStyle.solid, Color.red).props(0))
+            assert(Style.outline(1.px, BorderStyle.solid, _.red).props(0) == Style.empty.outline(1.px, BorderStyle.solid, _.red).props(0))
+            assert(Style.userSelect(UserSelect.none).props(0) == Style.empty.userSelect(UserSelect.none).props(0))
+            assert(Style.userSelect(_.text).props(0) == Style.empty.userSelect(_.text).props(0))
+            assert(Style.pointerEvents(PointerEvents.none).props(0) == Style.empty.pointerEvents(PointerEvents.none).props(0))
+            assert(Style.pointerEvents(_.auto).props(0) == Style.empty.pointerEvents(_.auto).props(0))
+        }
+
         "position" in {
             assert(Style.position(Position.flow).props(0) == Style.empty.position(Position.flow).props(0))
         }

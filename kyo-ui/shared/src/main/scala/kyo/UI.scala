@@ -198,6 +198,15 @@ object UI:
       */
     def rawHtml(html: String)(using Frame): UI = Ast.RawHtml(html)
 
+    /** A `<style>` element holding `sheet`, placed in the tree like any other child. A component whose look is a [[kyo.Stylesheet]]
+      * carries it with itself this way, so a page that places the component needs no head of its own for it: the rules apply to the
+      * whole document from where the element sits, so a component scopes them under a class its root carries.
+      *
+      * @see
+      *   [[kyo.UI.stylesheetCss]] for a stylesheet placed in the page head instead
+      */
+    def stylesheet(sheet: Stylesheet)(using Frame): Ast.StyleElement = Ast.StyleElement(sheet)
+
     /** Build a `<script type="...">` data island carrying a verbatim JSON body and an optional `id`.
       *
       * A data island is an inert structured-data block read back by a script (the JSON-LD
@@ -1218,6 +1227,11 @@ object UI:
           *   Trusted HTML string; rendered verbatim, no escaping applied.
           */
         case class RawHtml(value: String)(using val frame: Frame) extends UI
+
+        /** A `<style>` element holding a [[kyo.Stylesheet]]: the AST counterpart to [[kyo.UI.stylesheet]]. The renderer writes the sheet's
+          * CSS with every `</` escaped as `<\/`, so no text inside it can close the element.
+          */
+        case class StyleElement(sheet: Stylesheet)(using val frame: Frame) extends UI with HtmlContent
 
         /** A subtree driven by a `Signal[UI]`: re-renders the bound region whenever the signal emits a new value. The type parameter `C`
           * is a phantom bound that records the content type at the construction site; it erases to `UI` at runtime.

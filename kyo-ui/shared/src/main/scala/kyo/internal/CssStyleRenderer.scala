@@ -15,6 +15,8 @@ private[kyo] object CssStyleRenderer:
         case Color.Rgba(r, g, b, a) => s"rgba($r, $g, $b, ${fmt(a)})"
         case Color.Transparent      => "transparent"
         case Color.Var(name)        => s"var(--$name)"
+        case Color.Mix(c, other, p) => s"color-mix(in srgb, ${color(c)} ${fmt(p)}%, ${color(other)})"
+        case Color.LightDark(l, d)  => s"light-dark(${color(l)}, ${color(d)})"
 
     def size(s: Length): String = s match
         case Length.Px(v)   => if v == 0 then "0" else s"${fmt(v)}px"
@@ -162,6 +164,12 @@ private[kyo] object CssStyleRenderer:
         case TextAlign.right   => "right"
         case TextAlign.justify => "justify"
 
+    private def verticalAlign(v: VerticalAlign): String = v match
+        case VerticalAlign.baseline => "baseline"
+        case VerticalAlign.top      => "top"
+        case VerticalAlign.middle   => "middle"
+        case VerticalAlign.bottom   => "bottom"
+
     private def textDecoration(v: TextDecoration): String = v match
         case TextDecoration.none          => "none"
         case TextDecoration.underline     => "underline"
@@ -201,6 +209,23 @@ private[kyo] object CssStyleRenderer:
         case Cursor.wait_         => "wait"
         case Cursor.grab          => "grab"
         case Cursor.grabbing      => "grabbing"
+        case Cursor.ewResize      => "ew-resize"
+
+    private def userSelect(v: UserSelect): String = v match
+        case UserSelect.auto => "auto"
+        case UserSelect.none => "none"
+        case UserSelect.text => "text"
+        case UserSelect.all  => "all"
+
+    private def pointerEvents(v: PointerEvents): String = v match
+        case PointerEvents.auto => "auto"
+        case PointerEvents.none => "none"
+
+    private def colorScheme(v: ColorScheme): String = v match
+        case ColorScheme.normal    => "normal"
+        case ColorScheme.light     => "light"
+        case ColorScheme.dark      => "dark"
+        case ColorScheme.lightDark => "light dark"
 
     private def easing(v: Easing): String = v match
         case Easing.ease      => "ease"
@@ -222,6 +247,7 @@ private[kyo] object CssStyleRenderer:
         case BgColor(c)           => s"background-color: ${color(c)};"
         case TextColor(c)         => s"color: ${color(c)};"
         case AccentColorProp(c)   => s"accent-color: ${color(c)};"
+        case ColorSchemeProp(v)   => s"color-scheme: ${colorScheme(v)};"
         case Padding(t, r, b, l)  => s"padding: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
         case Margin(t, r, b, l)   => s"margin: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
         case Gap(v)               => s"gap: ${size(v)};"
@@ -260,6 +286,7 @@ private[kyo] object CssStyleRenderer:
                 case FontFamily.Custom(name) => name
             s"font-family: $cssValue;"
         case TextAlignProp(v)      => s"text-align: ${textAlign(v)};"
+        case VerticalAlignProp(v)  => s"vertical-align: ${verticalAlign(v)};"
         case TextDecorationProp(v) => s"text-decoration: ${textDecoration(v)};"
         case LineHeightProp(v)     => s"line-height: ${fmt(v)};"
         case LetterSpacingProp(v)  => s"letter-spacing: ${size(v)};"
@@ -271,17 +298,21 @@ private[kyo] object CssStyleRenderer:
                 case TextWrap.ellipsis => "overflow-wrap: normal; text-overflow: ellipsis;"
                 case TextWrap.balance  => "text-wrap: balance;"
                 case TextWrap.pretty   => "text-wrap: pretty;"
-        case WhiteSpaceProp(v)                 => s"white-space: ${whiteSpaceCss(v)};"
-        case BorderColorProp(t, r, b, l)       => s"border-color: ${color(t)} ${color(r)} ${color(b)} ${color(l)};"
-        case BorderWidthProp(t, r, b, l)       => s"border-width: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
-        case BorderStyleProp(v)                => s"border-style: ${borderStyle(v)};"
+        case WhiteSpaceProp(v)           => s"white-space: ${whiteSpaceCss(v)};"
+        case LineClampProp(n)            => s"display: -webkit-box; -webkit-line-clamp: $n; -webkit-box-orient: vertical; overflow: hidden;"
+        case BorderColorProp(t, r, b, l) => s"border-color: ${color(t)} ${color(r)} ${color(b)} ${color(l)};"
+        case BorderWidthProp(t, r, b, l) => s"border-width: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
+        case BorderStyleProp(v)          => s"border-style: ${borderStyle(v)};"
         case BorderRadiusProp(tl, tr, br, bl)  => s"border-radius: ${size(tl)} ${size(tr)} ${size(br)} ${size(bl)};"
+        case OutlineProp(w, s, c)              => s"outline: ${size(w)} ${borderStyle(s)} ${color(c)};"
         case ShadowProp(x, y, blur, spread, c) =>
             s"box-shadow: ${size(x)} ${size(y)} ${size(blur)} ${size(spread)} ${color(c)};"
-        case OpacityProp(v)      => s"opacity: ${fmt(v)};"
-        case CursorProp(v)       => s"cursor: ${cursor(v)};"
-        case TranslateProp(x, y) => s"transform: translate(${size(x)}, ${size(y)});"
-        case PositionProp(v)     => v match
+        case OpacityProp(v)       => s"opacity: ${fmt(v)};"
+        case CursorProp(v)        => s"cursor: ${cursor(v)};"
+        case UserSelectProp(v)    => s"-webkit-user-select: ${userSelect(v)}; user-select: ${userSelect(v)};"
+        case PointerEventsProp(v) => s"pointer-events: ${pointerEvents(v)};"
+        case TranslateProp(x, y)  => s"transform: translate(${size(x)}, ${size(y)});"
+        case PositionProp(v)      => v match
                 case Position.flow     => "position: static;"
                 case Position.overlay  => "position: fixed; top: 0; left: 0; width: 100%; height: 100%;"
                 case Position.relative => "position: relative;"

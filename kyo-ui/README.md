@@ -768,6 +768,9 @@ val sameButton: Style =
 - `Color.rgb(r, g, b)`: components clamped to `[0, 255]`.
 - `Color.rgba(r, g, b, a)`: components clamped to `[0, 255]`, alpha clamped to `[0, 1]`.
 - Named constants: `Color.white`, `black`, `transparent`, `red`, `orange`, `yellow`, `green`, `blue`, `indigo`, `purple`, `pink`, `gray`, `slate`.
+- `Color.variable(name)`: a CSS custom property, `var(--name)`.
+- `Color.mix(color, other, percent)`: `percent` of `color` over `other` in sRGB, `color-mix(...)`, with `percent` clamped to `[0, 100]`. It tints a color only the page resolves, a variable or a light-dark pair.
+- `Color.lightDark(light, dark)`: one color per scheme, `light-dark(...)`. The scheme is the one `.colorScheme(v: ColorScheme)` sets on the element or an ancestor (`light`, `dark`, `lightDark` to follow the reader's preference, `normal`), so a component written once follows the day and night of the page that places it.
 
 ```scala
 import UI.*
@@ -777,6 +780,10 @@ import kyo.Style.*
 val brand: Color           = Color.hex("#3b82f6").getOrElse(Color.blue)
 val translucent: Color     = Color.rgba(0, 0, 0, 0.5)
 val rejected: Maybe[Color] = Color.hex("not a color") // Absent
+
+val ink: Color   = Color.lightDark(Color.hex("#1d1c1d").getOrElse(Color.black), Color.hex("#e8e6e3").getOrElse(Color.white))
+val tint: Color  = Color.mix(Color.variable("accent"), Color.transparent, 8)
+val night: Style = Style.colorScheme(ColorScheme.dark).color(ink).bg(tint)
 ```
 
 ### Spacing, layout, sizing
@@ -803,8 +810,10 @@ val fullWidth: Style = Style.width(100.pct).maxWidth(960.px)
 - `.fontStyle(v: FontStyle)` with shorthand `.italic`.
 - `.fontFamily(v: FontFamily)`: enum (`SansSerif`, `Serif`, `Monospace`, `Cursive`, `Fantasy`, `SystemUi`) or `FontFamily.Custom("Inter")`.
 - `.textAlign(v)`, `.textDecoration(v)` with shorthands `.underline` and `.strikethrough`.
+- `.verticalAlign(v: VerticalAlign)`: where a table cell's content sits in its row (`top`, `middle`, `bottom`, `baseline`).
 - `.lineHeight(v: Double)`: clamped to `>= 0.1`.
 - `.letterSpacing(v: Px | Em)`, `.textTransform(v)`, `.textOverflow(v)`, `.textWrap(v)`.
+- `.lineClamp(lines: Int)`: at most `lines` lines, the last ending in an ellipsis. It sets the display and overflow the clamp needs; `lines` is clamped to at least 1.
 
 ### Borders, corners, shadows
 
@@ -815,6 +824,7 @@ val fullWidth: Style = Style.width(100.pct).maxWidth(960.px)
 - `.borderStyle(v: BorderStyle)`.
 - `.rounded(v: Px | Pct)` (1 corner) or 4-corner overload.
 - `.shadow(x: Px, y: Px, blur: Px, spread: Px, c: Color)`.
+- `.outline(width: Px, style: BorderStyle, c: Color)`: a line outside the border that takes no layout space, as the browser's focus ring is. A control drawing its own focus state removes the ring with `outline(0.px, BorderStyle.none, Color.transparent)`.
 
 ```scala
 import UI.*
@@ -823,12 +833,15 @@ import kyo.Style.*
 
 val pill: Style    = Style.bg(Color.blue).color(Color.white).padding(6.px, 12.px).rounded(999.px)
 val outline: Style = Style.border(1.px, Color.slate).rounded(4.px)
+val field: Style   = Style.border(1.px, Color.slate).focus(_.borderColor(Color.blue).outline(0.px, BorderStyle.none, Color.transparent))
 ```
 
 ### Effects, filters, gradients
 
 - `.opacity(v: Double)`: clamped to `[0, 1]`.
-- `.cursor(v: Cursor)`: enum includes `defaultCursor`, `pointer`, `text`, `move`, `notAllowed`, `crosshair`, `help`, `wait_` (the underscore is because `wait` is reserved), `grab`, `grabbing`.
+- `.cursor(v: Cursor)`: enum includes `defaultCursor`, `pointer`, `text`, `move`, `notAllowed`, `crosshair`, `help`, `wait_` (the underscore is because `wait` is reserved), `grab`, `grabbing`, `ewResize`.
+- `.userSelect(v: UserSelect)`: `none` keeps a handle's or a control's text from being selected while it is dragged or clicked; `text`, `all`, `auto`.
+- `.pointerEvents(v: PointerEvents)`: `none` lets a click through the element to what lies under it, as an overlay drawn over content needs; `auto` makes it a target again.
 - `.translate(x: Px | Pct, y: Px | Pct)`.
 - Filters: `.brightness`, `.contrast`, `.grayscale` (clamped `[0, 1]`), `.sepia` (clamped `[0, 1]`), `.invert` (clamped `[0, 1]`), `.saturate`, `.hueRotate`, `.blur(Px)`.
 - `.bgGradient(direction: GradientDirection, stop1: (Color, Double), stop2: (Color, Double), stops: (Color, Double)*)`: gradient stop positions are clamped to `[0, 100]`.
@@ -883,6 +896,20 @@ val css: String = sheet.render
 Selectors: `Selector.cls("btn")` (`.btn`), `Selector.id("hero")` (`#hero`), `Selector.data("open")` (`[data-open]`), `Selector.tag("body")`. Combine with `.descendant(child)` and `.pseudo("hover")`.
 
 Reference a `:root` variable in a declaration with `Color.variable("accent")`, which renders as `var(--accent)`.
+
+A component whose look is a `Stylesheet` carries it in its own tree with `UI.stylesheet(sheet)`, a `<style>` element placed like any other child, so whatever places the component needs no page head for it. Its rules apply to the whole document, so the component scopes them under a class its root carries:
+
+```scala
+import UI.*
+import kyo.*
+import kyo.Style.Color
+
+val look: Stylesheet =
+    Stylesheet.rule(Selector.cls("card"), Style.padding(12.px).rounded(8.px))
+        .rule(Selector.cls("card").descendant(Selector.cls("title")), Style.bold)
+
+val card: UI = div(UI.stylesheet(look), span("Revenue").cssClass("title")).cssClass("card")
+```
 
 ## Charts
 
