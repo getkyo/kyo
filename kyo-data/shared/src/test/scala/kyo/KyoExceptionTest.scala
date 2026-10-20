@@ -28,4 +28,19 @@ class KyoExceptionTest extends kyo.test.Test[Any]:
             assert(msg.contains("just the msg"), s"expected 'just the msg' in '$msg'")
         }
     }
+
+    "show" - {
+        "is the message and a String cause" in {
+            assert(new KyoException("outer", "hint text").show == "outer hint text")
+        }
+        "names a Throwable cause's class and message" in {
+            assert(new KyoException("outer", new java.io.IOException("inner")).show == "outer IOException: inner")
+        }
+        "is the message alone without a cause" in {
+            assert(new KyoException("just the msg").show == "just the msg")
+        }
+        "is the message alone with an empty String cause" in {
+            assert(new KyoException("just the msg", "").show == "just the msg")
+        }
+    }
 end KyoExceptionTest

@@ -38,27 +38,30 @@ class KyoException private[kyo] (
 
     /** Formats and returns the exception message.
       *
-      * In production mode, returns only the cause message if present, or null if no cause message was provided.
+      * In development mode, the message and the cause's detail framed by the source lines around [[frame]], in ANSI color; otherwise
+      * [[show]].
       *
       * @return
       *   The formatted exception message
       */
     override def getMessage(): String =
-        val detail =
-            cause match
-                case t: Throwable =>
-                    Maybe(s"${t.getClass.getSimpleName}: ${Maybe(t.getMessage).getOrElse("")}".take(maxMessageLength))
-                case cause: String @unchecked => Maybe(cause.take(maxMessageLength))
-
         if Environment.isDevelopment then
             val msg = frame.render(
                 ("⚠️ KyoException".red.bold :: message :: detail.toList)*
             )
             s"\n$msg\n"
-        else
-            message + detail.fold("")(" " + _)
+        else show
         end if
     end getMessage
+
+    /** The message and the cause's detail as plain text, the same whether or not `kyo.development` is set: no color, no frame. */
+    final def show: String = message + detail.fold("")(" " + _)
+
+    private def detail: Maybe[String] =
+        cause match
+            case t: Throwable =>
+                Maybe(s"${t.getClass.getSimpleName}: ${Maybe(t.getMessage).getOrElse("")}".take(maxMessageLength))
+            case cause: String @unchecked => Maybe(cause.take(maxMessageLength)).filter(_.nonEmpty)
 end KyoException
 
 object KyoException:
