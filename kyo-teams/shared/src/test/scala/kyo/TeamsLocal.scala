@@ -94,7 +94,7 @@ object TeamsLocal:
 
     val signedAt: Instant = Instant.Epoch + 1767225600.seconds
 
-    /** The service URL [[signed]]'s `serviceUrl` claim names. */
+    /** The service URL [[signed]]'s `serviceurl` claim names. */
     val signedServiceUrl = "https://smba.trafficmanager.net/amer/"
 
     private def label(method: String, path: String, body: String): String =
@@ -165,7 +165,7 @@ object TeamsLocal:
             nbf: String = "0",
             serviceUrl: String = s"\"${base.copy(path = "/amer/").full}\""
         ): String =
-            Chunk("iss" -> iss, "aud" -> aud, "exp" -> exp, "nbf" -> nbf, "serviceUrl" -> serviceUrl)
+            Chunk("iss" -> iss, "aud" -> aud, "exp" -> exp, "nbf" -> nbf, "serviceurl" -> serviceUrl)
                 .filter(_._2.nonEmpty).map((k, v) => s""""$k":$v""").mkString("{", ",", "}")
 
         /** The body of a delivery from Teams at this peer's service URL. */

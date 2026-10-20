@@ -600,7 +600,7 @@ object TeamsMalformedTokenException:
                 case Issuer     => "iss"
                 case Audience   => "aud"
                 case Expiry     => "exp"
-                case ServiceUrl => "serviceUrl"
+                case ServiceUrl => "serviceurl"
     end Claim
 end TeamsMalformedTokenException
 
@@ -654,9 +654,9 @@ final case class TeamsSignatureMismatchException()(using Frame)
 final case class TeamsMissingEndorsementException(channelId: String)(using Frame)
     extends TeamsAuthenticationException(s"Teams signing key does not endorse channel $channelId.")
 
-/** The token's `serviceUrl` claim is not the Activity's `serviceUrl`. */
+/** The token's `serviceurl` claim is not the Activity's `serviceUrl`. */
 final case class TeamsServiceUrlMismatchException()(using Frame)
-    extends TeamsAuthenticationException("Teams token's serviceUrl claim is not the Activity's serviceUrl.")
+    extends TeamsAuthenticationException("Teams token's serviceurl claim is not the Activity's serviceUrl.")
 
 /** The Activity's `channelId` is not `msteams`, the one channel the module accepts. `channelId` is at most 64 printable ASCII
   * characters.

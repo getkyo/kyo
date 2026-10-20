@@ -122,7 +122,7 @@ The 503 tells the Bot Connector that the delivery may be genuine, so it may send
 
 > **Note:** No option skips verification. Microsoft's guidance is that "Implementers shouldn't expose a way to disable validation". The server's `maxContentLength` bounds the body before verification runs.
 
-Verification reads the body as well as the `Authorization` header. The token binds two of the Activity's fields: its `channelId`, which the signing key must endorse and which must be `msteams`, and its `serviceUrl`, which must equal the token's `serviceUrl` claim exactly. A delivery from a Bot Framework channel other than Teams is refused with `TeamsUnsupportedChannelException`.
+Verification reads the body as well as the `Authorization` header. The token binds two of the Activity's fields: its `channelId`, which the signing key must endorse and which must be `msteams`, and its `serviceUrl`, which must equal the token's `serviceurl` claim exactly (lowercase, as the Bot Framework issues it). A delivery from a Bot Framework channel other than Teams is refused with `TeamsUnsupportedChannelException`.
 
 ### The Activity type and the answer it owes
 

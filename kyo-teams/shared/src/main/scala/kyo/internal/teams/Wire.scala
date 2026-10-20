@@ -77,14 +77,15 @@ private[kyo] object Wire:
     final case class JwtHeader(alg: String, kid: Maybe[String] = Absent) derives Schema
 
     /** A JSON Web Token's claims, each optional on the wire so a missing one is its own failure. `aud` is a string or an array of them
-      * (RFC 7519 section 4.1.3); `exp` and `nbf` are NumericDate seconds.
+      * (RFC 7519 section 4.1.3); `exp` and `nbf` are NumericDate seconds. The Bot Framework issues the service URL claim in lowercase,
+      * `serviceurl`, as its SDKs read it, though its documentation spells it `serviceUrl`.
       */
     final case class JwtClaims(
         iss: Maybe[String] = Absent,
         aud: Maybe[String | Chunk[String]] = Absent,
         exp: Maybe[Long] = Absent,
         nbf: Maybe[Long] = Absent,
-        serviceUrl: Maybe[String] = Absent
+        @rename("serviceurl") serviceUrl: Maybe[String] = Absent
     ) derives Schema
 
     /** The two fields of an Activity its token binds. */

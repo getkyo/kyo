@@ -189,7 +189,7 @@ class TeamsLiveTest extends kyo.test.Test[Any]:
                     val kid = Maybe.fromOption(Json.decode[TeamsLiveTest.KeySet](keys).getOrThrow.keys
                         .collectFirst { case key if key.endorsements.contains("msteams") => key.kid }).getOrElse("")
                     val claims =
-                        s"""{"iss":"https://api.botframework.com","aud":"$id","exp":253402300799,"serviceUrl":"https://smba.trafficmanager.net/amer/"}"""
+                        s"""{"iss":"https://api.botframework.com","aud":"$id","exp":253402300799,"serviceurl":"https://smba.trafficmanager.net/amer/"}"""
                     def segment(text: String) = Base64.encodeUrl(Utf8.encode(text))
                     val token                 = Chunk(
                         segment(s"""{"alg":"RS256","kid":"$kid"}"""),

@@ -263,7 +263,7 @@ object Teams:
 
         /** Verifies a delivery's `authorization` header against the Bot Framework's signing keys, fetching them when the key cache says
           * so, and checks the two fields of `body` the token binds: the Activity's `channelId`, which the signing key must endorse and
-          * which must be `msteams`, and its `serviceUrl`, which must be the token's `serviceUrl` claim.
+          * which must be `msteams`, and its `serviceUrl`, which must be the token's `serviceurl` claim.
           */
         def verify(authorization: Maybe[String], body: Span[Byte])(using
             Frame

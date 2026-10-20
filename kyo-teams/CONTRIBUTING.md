@@ -43,7 +43,7 @@ The module also owns the whole kyo-http configuration of a request that carries 
 6. `current`: the time is inside the skew window.
 7. `teams.keys.get(kid)`: the key, which may fetch.
 8. `signed`: the RS256 signature under that key.
-9. `bound`: the body's `channelId` is endorsed by the key and is `msteams`, and its `serviceUrl` equals the token's `serviceUrl` claim as an exact string (`Jwt.scala`, `Jwt.bound`).
+9. `bound`: the body's `channelId` is endorsed by the key and is `msteams`, and its `serviceUrl` equals the token's `serviceurl` claim as an exact string (`Jwt.scala`, `Jwt.bound`). The claim's name is lowercase on the wire, as the Bot Framework's SDKs read it (`AuthenticationConstants.ServiceUrlClaim` in botbuilder-dotnet), though Microsoft's authentication article spells it `serviceUrl`; JSON keys are case-sensitive, so `Wire.JwtClaims` renames it.
 
 The order is load-bearing in two ways. A forged token reaches a key fetch only with a plausible issuer, audience and lifetime, so moving `teams.keys.get` earlier lets an unauthenticated caller drive key-set fetches. The body is parsed only under a verified signature, so reading it before `signed` parses attacker-controlled bytes pre-authentication. The key cache's throttle on unknown key ids assumes the issuer, audience and lifetime filter already ran (`KeyCache.scala`, the `KeyCache` scaladoc).
 
