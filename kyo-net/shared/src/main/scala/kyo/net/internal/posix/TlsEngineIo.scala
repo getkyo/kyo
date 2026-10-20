@@ -24,9 +24,11 @@ private[posix] trait TlsEngineIo:
       *
       * A single `writePlain` does not necessarily consume the whole plaintext (the JDK SSLEngine.wrap arm encrypts one record per call), so this
       * loops `writePlain` until every byte is consumed, draining each call's ciphertext and handing it to `appendChunk`. The caller decides what
-      * to do with each chunk (the poller appends it to the pending tail, io_uring accumulates it for one send SQE). Returns `true` when every
-      * byte was encrypted, `false` when the engine could not make progress (a non-positive `writePlain`: a fatal error or no plaintext accepted,
-      * which post-handshake should not happen for application data).
+      * to do with each chunk (the poller appends it to the pending tail, io_uring accumulates it for one send SQE). Each round records in the
+      * handle's ledger the plaintext it consumed and the wire bytes it produced, so the ledger owes the record's overhead from here on. Returns
+      * `true` when every byte was encrypted, `false` when the engine could not make progress (a non-positive `writePlain`: a fatal error or no
+      * plaintext accepted, which post-handshake should not happen for application data); the caller fails the connection then, since the
+      * bytes it accepted can never reach the peer.
       *
       * Allocation notes: the per-handle [[PosixHandle.plaintextStaging]] buffer is reused across records (one off-heap alloc for the driver
       * lifetime, not per-record). The per-handle [[PosixHandle.encryptDrain]] buffer is reused across records (one off-heap alloc for the
@@ -62,12 +64,17 @@ private[posix] trait TlsEngineIo:
                 ok = false
             else
                 offset += consumed
+                var wire = 0
                 var more = true
                 while more do
                     val n = engine.drainCiphertext(drain, handle.readBufferSize)
                     if n <= 0 then more = false
-                    else appendChunk(drain, n) // pass drain + len directly; no intermediate heap Array
+                    else
+                        wire += n
+                        appendChunk(drain, n) // pass drain + len directly; no intermediate heap Array
+                    end if
                 end while
+                handle.life.ledger.encode(consumed, wire)
             end if
         end while
         ok
@@ -196,7 +203,8 @@ private[posix] trait TlsEngineIo:
       * sits in the engine and is never sent, so the peer stalls. This mirrors the write path's drain loop ([[encryptPlaintext]]): it loops
       * `drainCiphertext` into the reused [[encryptDrain]] buffer and appends each chunk onto [[PosixHandle.pendingCipher]] (the same backpressure
       * tail the write path's append uses), extending the unsent region the driver's next flush sends. The common case (a read that produces no
-      * outbound ciphertext) drains nothing on the first call and allocates no tail.
+      * outbound ciphertext) drains nothing on the first call and allocates no tail. Each chunk is counted as a driver-generated record in the
+      * handle's ledger, so a close waits for it as it waits for data.
       */
     private def drainReadProducedCiphertext(engine: TlsEngine, handle: PosixHandle)(using AllowUnsafe): Unit =
         val drain = encryptDrainFor(handle)
@@ -204,7 +212,10 @@ private[posix] trait TlsEngineIo:
         while more do
             val n = engine.drainCiphertext(drain, handle.readBufferSize)
             if n <= 0 then more = false
-            else appendReadProducedCiphertext(handle, drain, n)
+            else
+                appendReadProducedCiphertext(handle, drain, n)
+                handle.life.ledger.generate(n)
+            end if
         end while
     end drainReadProducedCiphertext
 

@@ -54,6 +54,7 @@ private[net] object PosixConstants:
     val SO_REUSEADDR: Int = if isMacOrBsd then 0x0004 else 2
     val SO_ERROR: Int     = if isMacOrBsd then 0x1007 else 4
     val TCP_NODELAY: Int  = if isMacOrBsd then 0x0001 else 1
+    val SO_LINGER: Int    = if isMacOrBsd then 0x0080 else 13
     // Linux-only (TCP_QUICKACK has no macOS/BSD equivalent); used only behind an isLinux gate. The macOS slot is unused (0).
     val TCP_QUICKACK: Int = if isMacOrBsd then 0 else 12
     // Send / receive buffer sizes. Used by the write-backpressure regression test to shrink the kernel buffers so a large send hits EAGAIN

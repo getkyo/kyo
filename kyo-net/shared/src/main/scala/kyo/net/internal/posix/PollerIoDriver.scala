@@ -11,8 +11,10 @@ import kyo.net.NetConnectionIoException
 import kyo.net.NetErrno
 import kyo.net.NetException
 import kyo.net.internal.TlsEngine
+import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
 import kyo.net.internal.util.HandleId
@@ -892,7 +894,7 @@ final private[net] class PollerIoDriver private[posix] (
 
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         if handle.life.writable.park(promise, released(handle)) then
-            if handle.unsentTailBytes >= PosixHandle.WriteTailLowWater then
+            if handle.life.ledger.owed >= PosixHandle.WriteTailLowWater then
                 // Tail-bound park (CWE-400): the WritePump suspended because the TLS write tail hit the high-water mark, NOT because the kernel
                 // send buffer is full. Those are different signals: the socket may be writable while the tail is still large, so arming raw
                 // write-readiness would wake the pump too early and let it append again (re-growing the tail). Instead the promise stays parked;
@@ -989,10 +991,23 @@ final private[net] class PollerIoDriver private[posix] (
         end match
     end dispatchAccept
 
+    def life(handle: PosixHandle): HandleLife = handle.life
+
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
         inline given Frame = Frame.internal
+        handle.life.ledger.failure match
+            case Present(cause) => WriteResult.Error(cause)
+            case Absent =>
+                // A released handle takes no write on either path: a TLS write accepted here would queue an encrypt that never runs.
+                if !handle.life.armable then
+                    WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "the connection was released"))
+                else writeOpen(handle, data, offset)
+        end match
+    end write
+
+    private def writeOpen(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe, Frame): WriteResult =
         if data.isEmpty || offset >= data.size then WriteResult.Done
-        else if handle.unsentTailBytes >= PosixHandle.WriteTailHighWater then
+        else if handle.tailFull then
             // Write-backpressure bound (CWE-400): the TLS write tail (pendingCipher) has reached the high-water mark because the peer is not draining
             // it fast enough. Do NOT encrypt and append more (which would grow the tail without limit toward OOM); report TailPartial so the WritePump
             // parks on the tail-bound backpressure path (Backpressured state) rather than on socket writability. The data is not consumed, so it is
@@ -1013,7 +1028,7 @@ final private[net] class PollerIoDriver private[posix] (
                         // write twin of dispatchRead's !beginDispatch guard). The pump treats Error as teardown, which is correct for a
                         // write on a closed handle. Plaintext writeRaw runs synchronously on this same carrier (no engine FIFO hop), so
                         // acquiring here is safe: the guard is never held across a deferred/stranded op the way a submitted TLS op could.
-                        WriteResult.Error
+                        WriteResult.Error(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "the connection was released"))
                     else
                         // For plaintext writes, endWrite is called here synchronously after writeRaw completes.
                         try writeRaw(handle, data, offset)
@@ -1022,7 +1037,14 @@ final private[net] class PollerIoDriver private[posix] (
                     end if
             end match
         end if
-    end write
+    end writeOpen
+
+    /** A send that failed with `errno`: the connection's write failure, recorded once so every later write reports it. */
+    private def sendFailed(handle: PosixHandle, errno: Int)(using AllowUnsafe, Frame): WriteResult =
+        val cause = NetConnectionClosedException(NetConnectionClosedException.Operation.Send, NetErrno(errno))
+        discard(handle.life.ledger.fail(cause))
+        WriteResult.Error(handle.life.ledger.failure.getOrElse(cause))
+    end sendFailed
 
     /** Plaintext send: one `send` syscall on `writeFd`, returning Done / Partial / Error from the byte count and errno.
       *
@@ -1059,13 +1081,7 @@ final private[net] class PollerIoDriver private[posix] (
             // EINTR (a signal interrupted the send before any byte moved) is retried in place by sendNowWithRetry, bounded, so a signal does not
             // surface as Error and drop a healthy connection (POSIX send(2)); EAGAIN still parks via Partial, a genuine error still bails Error.
             val r = sendNowWithRetry(handle.writeFd, mirror, len.toLong, flags)
-            val n = r.value.toInt
-            if n < 0 then
-                if isWouldBlock(r.errorCode) then WriteResult.Partial(data, offset)
-                else WriteResult.Error
-            else if n >= len then WriteResult.Done
-            else WriteResult.Partial(data, offset + n)
-            end if
+            sent(handle, data, offset, len, r)
         else
             // JVM/Native: copy unsent region into the reused per-handle sendMirror, then send from it.
             val mirror = sendMirrorFor(handle, len)
@@ -1074,14 +1090,7 @@ final private[net] class PollerIoDriver private[posix] (
             // EINTR is retried in place by sendBlockingWithRetry (bounded), so a signal mid-send does not surface as Error (POSIX send(2)).
             val result: Maybe[Ffi.Outcome[Long]] = sendBlockingWithRetry(handle.writeFd, mirror, len.toLong, flags)
             result match
-                case Present(r) =>
-                    val n = r.value.toInt
-                    if n < 0 then
-                        if isWouldBlock(r.errorCode) then WriteResult.Partial(data, offset)
-                        else WriteResult.Error
-                    else if n >= len then WriteResult.Done
-                    else WriteResult.Partial(data, offset + n) // same span, advanced offset, no Span.drop
-                    end if
+                case Present(r) => sent(handle, data, offset, len, r)
                 case Absent =>
                     // Unreachable: the JVM/Native @Ffi.blocking send inline-completes. Treat a stray pending fiber as transient
                     // backpressure so the caller awaits writability rather than mis-reporting a completed write.
@@ -1090,6 +1099,24 @@ final private[net] class PollerIoDriver private[posix] (
         end if
         // mirror is NOT closed here: it is the per-handle reused buffer, freed only in freeResources.
     end writeRaw
+
+    /** The write result of one plaintext send of `len` bytes from `offset`. The bytes the kernel took are recorded in the ledger as sent at
+      * once: a synchronous send leaves the driver owing nothing.
+      */
+    private def sent(handle: PosixHandle, data: Span[Byte], offset: Int, len: Int, r: Ffi.Outcome[Long])(using
+        AllowUnsafe,
+        Frame
+    ): WriteResult =
+        val n = r.value.toInt
+        if n < 0 then
+            if isWouldBlock(r.errorCode) then WriteResult.Partial(data, offset)
+            else sendFailed(handle, r.errorCode)
+        else
+            handle.life.ledger.direct(n)
+            if n >= len then WriteResult.Done
+            else WriteResult.Partial(data, offset + n) // same span, advanced offset, no Span.drop
+        end if
+    end sent
 
     /** Return the per-handle sendMirror Buffer, grown to at least `size` bytes if needed. Pump-carrier-owned (writeRaw runs synchronously
       * under beginWrite/endWrite guard). Lazily allocated on the first writeRaw call; grown on demand, never shrunk. When growth is needed,
@@ -1127,27 +1154,36 @@ final private[net] class PollerIoDriver private[posix] (
       * queued after it runs.
       */
     private def writeTls(handle: PosixHandle, data: Span[Byte], engine: TlsEngine)(using AllowUnsafe, Frame): WriteResult =
-        handle.queueWrite(data.size)
+        handle.life.ledger.accept(data.size)
         submitEngineOp { () =>
             // A failed acquire means the handle was closed before this op got a turn (or this op was stranded and force-discharged by a
-            // terminal sweep): silently skip the write rather than touching the (possibly freed) engine/buffers. The caller already saw
-            // Done; there is no return path left to report this once the op is queued.
+            // terminal sweep): skip the write rather than touching the (possibly freed) engine/buffers. Its bytes stay owed, which is what a
+            // release that dropped them reports.
             if handle.beginWrite() then
                 try
                     // Encrypt the plaintext through the shared engine loop, appending each drained ciphertext chunk to the pending tail; then
                     // send as much of the tail as the socket accepts (the poller's inline-send flush). The engine loop is shared with the
                     // io_uring driver; the inline send + writability re-arm below are the poller's send mechanism.
-                    try discard(encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)))
-                    finally handle.landQueuedWrite(data.size)
+                    if !encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)) then
+                        encryptRefused(handle)
                     flushPending(handle)
                 finally discard(handle.endWrite())
                 end try
-            else handle.landQueuedWrite(data.size)
             end if
         }
-        // The pump always sees Done; the actual send runs on the FIFO worker carrier after engine ops complete.
+        // The pump sees Done: the driver owns the bytes, and the ledger counts them until the kernel takes them.
         WriteResult.Done
     end writeTls
+
+    /** The engine encrypted only part of a write it accepted: those bytes can never reach the peer, so the connection fails, and the pump
+      * parked on the tail bound learns it.
+      */
+    private def encryptRefused(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        discard(handle.life.ledger.fail(
+            NetConnectionClosedException(NetConnectionClosedException.Operation.Send, "the TLS engine refused to encrypt an accepted write")
+        ))
+        handle.life.ledger.failure.foreach(handle.failBackpressureWaiter)
+    end encryptRefused
 
     /** Append freshly-encrypted ciphertext to the handle's pending tail. FIFO-worker-only: the engine FIFO is the single owner of every write
       * engine op for this connection, so this is never called concurrently. The [[GrowableByteBuffer]] is allocated lazily on the first
@@ -1174,8 +1210,9 @@ final private[net] class PollerIoDriver private[posix] (
       * This is PROGRESS-BOUNDED, not a busy-spin: each loop iteration sends the unsent region `[pendingCipherSent, size)` once. On a positive
       * send count it advances `pendingCipherSent` (strictly-positive progress, so the loop terminates), the defining difference from a
       * busy-spin that would retry the same bytes up to 4096 times on EAGAIN. On EAGAIN (or a 0-count send) it BREAKS without
-      * retrying and leaves the remainder for the writable re-arm. On a hard send error it discards the tail and returns: the peer-reset
-      * surfaces to the ReadPump via the recv error through the normal teardown path, so this does NOT call closeHandle from inside the op.
+      * retrying and leaves the remainder for the writable re-arm. A hard send error discards the tail and records the connection's write
+      * failure, which the connection turns into its abortive release; this never releases from inside the op. Each byte the kernel takes is
+      * recorded in the ledger as sent.
       *
       * Allocation notes: the unsent region is copied element-wise into the per-handle reused [[PosixHandle.flushMirror]] buffer (no per-
       * syscall copyOfRange + fromArray allocation). The mirror is never closed between iterations; it persists for the handle's lifetime and
@@ -1183,7 +1220,8 @@ final private[net] class PollerIoDriver private[posix] (
       */
     private def flushPending(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         handle.pendingCipher match
-            case Absent       => () // nothing buffered (the common one-pass write never allocated a tail)
+            case Absent                                       => () // nothing buffered (the common one-pass write never allocated a tail)
+            case Present(_) if handle.life.ledger.failure.nonEmpty => () // a failed connection sends nothing more
             case Present(buf) =>
                 val flags    = PosixConstants.MSG_NOSIGNAL
                 var continue = true
@@ -1196,35 +1234,33 @@ final private[net] class PollerIoDriver private[posix] (
                         mirror.set(ci, buf.array(handle.pendingCipherSent + ci))
                         ci += 1
                     end while
-                    val sent =
-                        // EINTR is retried in place by the *WithRetry helpers (bounded), so a signal mid-send does not look like a hard error and
-                        // discard the tail; EAGAIN still parks the flush via the 0 (would-block) branch (POSIX send(2)).
-                        val result: Maybe[Ffi.Outcome[Long]] =
-                            if kyo.internal.Platform.isJS then
-                                Present(sendNowWithRetry(handle.writeFd, mirror, unsentLen.toLong, flags))
-                            else sendBlockingWithRetry(handle.writeFd, mirror, unsentLen.toLong, flags)
-                        result match
-                            case Present(r) =>
-                                val n = r.value.toInt
-                                if n < 0 then
-                                    if isWouldBlock(r.errorCode) then 0 else -1
-                                else n
-                            case Absent => 0 // stray pending fiber: treat as backpressure, park on writability
-                        end match
-                    end sent
+                    // EINTR is retried in place by the *WithRetry helpers (bounded), so a signal mid-send does not look like a hard error and
+                    // discard the tail; EAGAIN still parks the flush via the would-block branch (POSIX send(2)).
+                    val result: Maybe[Ffi.Outcome[Long]] =
+                        if kyo.internal.Platform.isJS then
+                            Present(sendNowWithRetry(handle.writeFd, mirror, unsentLen.toLong, flags))
+                        else sendBlockingWithRetry(handle.writeFd, mirror, unsentLen.toLong, flags)
                     // mirror is NOT closed here: it is the per-handle reused buffer, freed only in freeResources.
-                    if sent < 0 then
-                        // Hard send error (peer reset): discard the tail and stop. The recv side surfaces Closed through normal teardown; do
-                        // NOT closeHandle from inside the engine op.
-                        Log.live.unsafe.debug(s"flushPending hard send error fd=${handle.writeFd}; discarding pending ciphertext tail")
-                        buf.reset()
-                        handle.pendingCipherSent = 0
-                        continue = false
-                    else if sent == 0 then continue = false // EAGAIN / stray pending: stop, arm writability below
-                    else handle.pendingCipherSent += sent   // strictly-positive progress; the loop terminates
-                    end if
+                    result match
+                        case Present(r) if r.value < 0 && !isWouldBlock(r.errorCode) =>
+                            // Hard send error (peer reset): the tail can never be delivered. The failure is recorded for every later write and
+                            // wakes a pump parked on the tail bound, so the connection releases abortively with it rather than waiting on bytes
+                            // that went nowhere.
+                            Log.live.unsafe.debug(s"flushPending hard send error fd=${handle.writeFd} errno=${r.errorCode}")
+                            buf.reset()
+                            handle.pendingCipherSent = 0
+                            continue = false
+                            discard(sendFailed(handle, r.errorCode))
+                            handle.life.ledger.failure.foreach(handle.failBackpressureWaiter)
+                        case Present(r) if r.value > 0 =>
+                            // Strictly-positive progress; the loop terminates.
+                            handle.pendingCipherSent += r.value.toInt
+                            handle.life.ledger.send(r.value.toInt)
+                        case _ => continue = false // EAGAIN, a 0-count send or a stray pending fiber: stop, arm writability below
+                    end match
                 end while
-                if handle.pendingCipherSent >= buf.size then
+                if handle.life.ledger.failure.nonEmpty then ()
+                else if handle.pendingCipherSent >= buf.size then
                     // Fully drained (or the tail was discarded on a hard error, leaving size 0): reset so the next write starts clean and a
                     // later flush sees nothing pending.
                     buf.reset()
@@ -1370,10 +1406,17 @@ final private[net] class PollerIoDriver private[posix] (
       * Every caller MUST install this credit before its own call into `PosixHandle.close` / `requestClose` reaches the guard: `freeResources`
       * runs at most once per handle, so a `requestClose` that fires before this credit exists (e.g. a bare `handle.requestClose()` racing this
       * claim) permanently forfeits the fd close, since the terminal guard never runs `freeResources` a second time to pick the credit up later.
+      *
+      * An abortive release shuts down only the read side: `SHUT_WR` would queue a FIN that tells the peer the truncated stream is complete.
+      * `SO_LINGER {1, 0}` makes the deferred close send the reset instead.
       */
     private def claimAndDeferFdClose(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         if handle.readFd == handle.writeFd && handle.claimFdClose() then
-            discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RDWR))
+            handle.releaseMode match
+                case ReleaseMode.Abortive(_) =>
+                    PosixHandle.resetOnClose(sockets, handle.readFd)
+                    discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RD))
+                case ReleaseMode.Graceful => discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RDWR))
             handle.fdCloseSink = Present(() => discard(takeNow(sockets.close(handle.readFd))))
     end claimAndDeferFdClose
 
@@ -1414,12 +1457,15 @@ final private[net] class PollerIoDriver private[posix] (
       */
     private def dischargeClose(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         if pendingCloses.remove(handle) then
-            handle.tls.foreach { engine =>
-                if handle.beginWrite() then
-                    try shutdownTls(handle, engine)
-                    finally discard(handle.endWrite())
-                    end try
-            }
+            // An abortive release sends no close_notify: the alert would tell the peer the stream it truncated is complete.
+            if handle.releaseMode == ReleaseMode.Graceful then
+                handle.tls.foreach { engine =>
+                    if handle.beginWrite() then
+                        try shutdownTls(handle, engine)
+                        finally discard(handle.endWrite())
+                        end try
+                }
+            end if
             // Shut the fd down (not close it) right after the (attempted) alert flush, so the FIN follows the close_notify on the wire when
             // both run; see claimAndDeferFdClose for why the real close is deferred instead of run here. Both the fd shutdown/credit install and
             // the resource-free request run under the deferred-close guard hold so no concurrent carrier can terminalize the guard between the
@@ -1441,12 +1487,16 @@ final private[net] class PollerIoDriver private[posix] (
     end sweepPendingCloses
 
     /** The handle's one release: takes the release claim, so a repeat call is a no-op and a park after it fails at once, then withdraws the
-      * fds, fails every parked op, and closes the fd once no op holds the handle's resources.
+      * fds, fails every parked op, and closes the fd once no op holds the handle's resources. `released` completes after that close returned.
       */
-    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        if handle.life.claimRelease() then release(handle)
+    def release(handle: PosixHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        if handle.life.claimRelease() then
+            handle.releaseMode = mode
+            handle.releaseSignal = Present(released)
+            releaseClaimed(handle)
+    end release
 
-    private def release(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+    private def releaseClaimed(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         // Close path: the fd will be closed below. The OS auto-removes kqueue filters on close, so EV_DELETE is unnecessary and dangerous
         // (a recycled fd number would receive EV_DELETE intended for the old fd). Pass fdClosing=true to skip EV_DELETE on kqueue.
         deregisterFds(handle, fdClosing = true)
@@ -1482,9 +1532,9 @@ final private[net] class PollerIoDriver private[posix] (
                 // terminalizes the guard before the credit lands (see deferredPlaintextClose).
                 deferredPlaintextClose(handle)
         end match
-    end release
+    end releaseClaimed
 
-    /** Emit this side's TLS close_notify and flush it to the wire (best-effort, bounded). FIFO-worker-only (called from the closeHandle engine
+    /** Emit this side's TLS close_notify and flush it to the wire (best-effort, bounded). FIFO-worker-only (called from the release engine
       * op under the write guard), so it never races a concurrent read/write engine op on the same `ssl`.
       *
       * One-directional close (RFC 8446 6.1): run a single [[TlsEngine.shutdownStep]] to emit this side's close_notify, drain the produced alert
@@ -2188,6 +2238,11 @@ final private[net] class PollerIoDriver private[posix] (
                     // waiting for an EPOLLRDHUP edge that epoll ET will not re-fire.
                     handle.readMightHaveMore = (!drained && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose) ||
                         (handle.halfClose == HalfCloseState.PeerHalfClosePending)
+                    // A record the engine produced while decrypting (a KeyUpdate answer) leaves on this pass: the peer may be waiting for it
+                    // before it sends anything more, and no application write may come to carry it.
+                    if !fatalRecord && handle.beginWrite() then
+                        try flushPending(handle)
+                        finally discard(handle.endWrite())
                     if fatalRecord then
                         // A fatal record (RFC 5246 7.2.2) ends the read as the typed decrypt failure, identical to io_uring. First in the
                         // chain, so no re-arm re-deposits a read on a stream that is corrupt.

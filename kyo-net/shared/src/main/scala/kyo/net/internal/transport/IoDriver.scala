@@ -83,15 +83,25 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def awaitAccept(handle: Handle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit
 
-    /** Synchronous write attempt of `data` starting at `offset`. Done: all bytes from offset written. Partial(data, newOffset): socket buffer
-      * full, await writable and retry the same span from newOffset. Error: connection failed.
+    /** Synchronous write attempt of `data` starting at `offset`.
+      *
+      *   - `Done`: the driver owns every byte from `offset`. Owning is not sending: bytes the driver holds on its own tail, or that a
+      *     completion has yet to confirm, are counted by [[HandleLife.ledger]] until the kernel takes them, and a record the driver produces on
+      *     its own (a KeyUpdate answer, close_notify) is counted the same way.
+      *   - `Partial(data, k)`: the driver owns `data[offset, k)`; the caller awaits writable before presenting the span again from `k`.
+      *   - `TailPartial(data, k)`: as `Partial`, parked on the driver's tail bound.
+      *   - `Error(cause)`: the bytes were not taken and the connection has failed with `cause`. The first failure is sticky: the ledger
+      *     records it, and every later write reports it.
       */
     def write(handle: Handle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult
+
+    /** The handle's [[HandleLife]]: its parked promises, its release claim and its [[OutboundLedger]]. */
+    def life(handle: Handle): HandleLife
 
     /** Fail, with `Closed`, every promise parked on `handle` through any entry path: a read, a writable wait (socket or tail backpressure), the
       * driver's own tail-flush re-arm, a connect, an accept. It is the handle's [[HandleLife.cancel]], so no driver can fail only a subset. It
       * takes no release claim: an op parked after it is live, which is what lets the STARTTLS handshake park on the handle after
-      * [[detachForUpgrade]]. Only [[closeHandle]] and [[closeListener]] take the claim, after which a park fails at once.
+      * [[detachForUpgrade]]. Only [[release]] and [[closeListener]] take the claim, after which a park fails at once.
       */
     def cancel(handle: Handle)(using AllowUnsafe, Frame): Unit
 
@@ -186,9 +196,11 @@ abstract private[kyo] class IoDriver[Handle]:
 
     /** The handle's one release (fd, socket, channel). It takes the handle's release claim first, so a repeat call is a no-op and no op parked
       * after it stays parked, then fails every op parked before it and releases the OS resource once, ordered after the driver's own
-      * withdrawal of it.
+      * withdrawal of it. `Abortive` drops what the handle still owes and resets the connection, including sends the kernel still holds a
+      * request for, so the release never waits on a peer that stopped reading. `released` completes once the OS resource is closed; a
+      * repeat call leaves its `released` pending.
       */
-    def closeHandle(handle: Handle)(using AllowUnsafe, Frame): Unit
+    def release(handle: Handle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit
 
     /** Shutdown the driver. Closes the poll mechanism and completes the event loop fiber. Idempotent. */
     def close()(using AllowUnsafe, Frame): Unit

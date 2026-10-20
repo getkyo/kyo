@@ -50,20 +50,37 @@ final private[kyo] class WritePump[Handle](
     // observes the winner, so a stale completer is a structural no-op rather than depending on any
     // "no-waiters-so-flush-is-a-no-op" assumption.
 
+    // Unsafe: the counter is built with the pump, where no AllowUnsafe is in scope; every read and write of it takes the caller's.
+    private val dropped = AtomicLong.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+
     /** Start the pump. Registers a fresh taker on the channel for the first span. */
     def start()(using AllowUnsafe, Frame): Unit =
         log.info(s"WritePump starting on ${driver.handleLabel(handle)}")
         requestNextTake()
 
-    /** The pump's state. Every write attempt installs a new instance, and a parked pump attempts a write only once the socket reports room, so
-      * the same parked instance read twice means no byte reached the socket in between.
-      */
+    /** The pump's state. Every write attempt installs a new instance, so the same instance read twice means no write was attempted in between. */
     def current(using AllowUnsafe): WriteState = state.get()
 
-    /** Ends the pump on `parked`, the parked instance [[current]] returned, without resuming it. False when the pump moved on since, so a
-      * write in progress is never abandoned.
+    /** Ends the pump on `parked`, the parked instance [[current]] returned, without resuming it, counting the span bytes it held in
+      * [[droppedBytes]]. False when the pump moved on since, so a write in progress is never abandoned.
       */
-    def abandon(parked: WriteState)(using AllowUnsafe): Boolean = state.compareAndSet(parked, WriteState.TornDown)
+    def abandon(parked: WriteState)(using AllowUnsafe): Boolean =
+        val won = state.compareAndSet(parked, WriteState.TornDown)
+        if won then discard(dropped.addAndGet(held(parked)))
+        won
+    end abandon
+
+    /** Bytes of the spans the pump held when it ended without writing them: a span a failed write or writable wait left, or one [[abandon]]
+      * took. They are accepted bytes no driver ever owned, so a release that drops them counts them beside what the driver still owed.
+      */
+    def droppedBytes(using AllowUnsafe): Long = dropped.get()
+
+    private def held(state: WriteState): Long =
+        state match
+            case WriteState.Flushing(pending, offset)         => (pending.size - offset).toLong
+            case WriteState.AwaitingWritable(pending, offset) => (pending.size - offset).toLong
+            case WriteState.Backpressured(pending, offset)    => (pending.size - offset).toLong
+            case WriteState.Idle | WriteState.TornDown        => 0L
 
     /** Take callback: a span arrived (or the channel closed). Idle -> Flushing CAS, then write. */
     private def onTake(result: Result[Closed, Span[Byte]])(using AllowUnsafe, Frame): Unit =
@@ -102,6 +119,9 @@ final private[kyo] class WritePump[Handle](
                         if state.compareAndSet(s, flushing) then doWrite(flushing)
                     case _ => () // Idle/Flushing/TornDown: a stale writable, drop it.
                 end match
+            case Result.Failure(cause: NetException) =>
+                discard(driver.life(handle).ledger.fail(cause))
+                teardown()
             case Result.Failure(_) =>
                 teardown()
             case Result.Panic(_) =>
@@ -163,8 +183,9 @@ final private[kyo] class WritePump[Handle](
                     (
                 ) // teardown won (TornDown): the socket is unwritable; the captured tail in `next` is undeliverable, nothing to drop here.
                 end if
-            case WriteResult.Error =>
-                log.debug(s"WritePump write error on ${driver.handleLabel(handle)}")
+            case WriteResult.Error(cause) =>
+                log.debug(s"WritePump write error on ${driver.handleLabel(handle)}: $cause")
+                discard(driver.life(handle).ledger.fail(cause))
                 teardown()
         end match
     end doWrite
@@ -185,8 +206,11 @@ final private[kyo] class WritePump[Handle](
 
     private def teardown()(using AllowUnsafe, Frame): Unit =
         // Swing the state to TornDown so a racing take/writable completion loses its CAS and no-ops.
-        state.set(WriteState.TornDown)
-        discard(channel.close())
+        discard(dropped.addAndGet(held(state.getAndSet(WriteState.TornDown))))
+        channel.close().onComplete { residue =>
+            import AllowUnsafe.embrace.danger
+            residue.map(_.eval).foreach(_.foreach(spans => discard(dropped.addAndGet(spans.foldLeft(0L)(_ + _.size)))))
+        }
         closeFn()
     end teardown
 

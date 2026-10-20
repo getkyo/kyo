@@ -616,14 +616,18 @@ final private[net] class IoUringDriver private[posix] (
         end if
     end submitAccept
 
+    def life(handle: PosixHandle): HandleLife = handle.life
+
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
         given Frame = Frame.internal
         // Reject a write once the driver is closing: flushRaw/flushTls would get_sqe on a ring the reap carrier is tearing down.
         // beginWrite() guards the per-HANDLE lifecycle but not the driver's; the pump treats Error as teardown, which is correct here. A
         // released handle refuses the write too: the release's own engine op may already have queued the close behind it.
-        if closedFlag.get() || !handle.life.armable then WriteResult.Error
+        if handle.life.ledger.failure.nonEmpty then WriteResult.Error(handle.life.ledger.failure.getOrElse(released(handle, "failed")))
+        else if closedFlag.get() then WriteResult.Error(released(handle, "the driver closed"))
+        else if !handle.life.armable then WriteResult.Error(released(handle, "the connection was released"))
         else if data.isEmpty || offset >= data.size then WriteResult.Done
-        else if handle.unsentTailBytes >= PosixHandle.WriteTailHighWater then
+        else if handle.tailFull then
             // Write-backpressure bound (CWE-400): the write tail (pendingCipher for TLS, rawPending for raw) has reached the high-water mark because
             // the in-flight send is not draining it fast enough (a slow- or no-read peer). io_uring's write is async and always returns Done after
             // appending, so without this gate the WritePump would keep pulling spans and the tail would grow without limit toward OOM. Report
@@ -638,13 +642,24 @@ final private[net] class IoUringDriver private[posix] (
                         // The handle was closed (resources freed) before this write acquired them; bail without touching the engine. The pump
                         // treats Error as teardown, which is correct for a write on a closed handle (the write twin of the recv's !beginDispatch
                         // guard on the poller).
-                        WriteResult.Error
+                        WriteResult.Error(released(handle, "the connection was released"))
                     else writeTls(handle, data, engine)
                 case Absent =>
-                    if !handle.beginWrite() then WriteResult.Error // handle closed before this write acquired its resources
+                    if !handle.beginWrite() then WriteResult.Error(released(handle, "the connection was released"))
                     else writeRaw(handle, data, offset)
         end if
     end write
+
+    private def released(handle: PosixHandle, detail: String)(using Frame): NetException =
+        NetConnectionClosedException(NetConnectionClosedException.Operation.Send, detail)
+
+    /** A send completion that failed with `errno`: the connection's write failure, recorded once, which wakes a pump parked on the tail bound
+      * with it so the connection releases abortively instead of waiting on bytes that went nowhere.
+      */
+    private def sendFailed(handle: PosixHandle, errno: Int)(using AllowUnsafe, Frame): Unit =
+        discard(handle.life.ledger.fail(NetConnectionClosedException(NetConnectionClosedException.Operation.Send, NetErrno(errno))))
+        handle.life.ledger.failure.foreach(handle.failBackpressureWaiter)
+    end sendFailed
 
     /** Plaintext send on io_uring, held SINGLE-IN-FLIGHT per handle with reflush-on-partial: the raw twin of [[writeTls]], with identity
       * "encryption" (the plaintext IS the wire bytes). Submits the append-then-flush on the serial engine worker and returns Done immediately,
@@ -660,21 +675,22 @@ final private[net] class IoUringDriver private[posix] (
       */
     private def writeRaw(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe, Frame): WriteResult =
         val queued = data.size - offset
-        handle.queueWrite(queued)
+        handle.life.ledger.accept(queued)
         submitEngineOp { () =>
             // endWrite is called inside this FIFO thunk after the append+flush, keeping the write guard held until they finish: a concurrent
-            // closeHandle defers freeResources (which clears the pending tail) until this endWrite fires, so the tail is never cleared while
+            // release defers freeResources (which clears the pending tail) until this endWrite fires, so the tail is never cleared while
             // the flush reads it. The send SQE submitted below reaps asynchronously; its CQE re-flush runs as a SEPARATE later engine op. An
             // op the FIFO runs after the release's own op drops its bytes rather than prepping a send against a descriptor that release may
-            // close before the next submit; one queued ahead of it was accepted before the release and is sent.
+            // close before the next submit; one queued ahead of it was accepted before the release and is sent. Dropped bytes stay owed.
             try
-                try if !handle.sendsSealed then appendRaw(handle, data, offset)
-                finally handle.landQueuedWrite(queued)
-                if !handle.sendsSealed then flushRaw(handle)
+                if !handle.sendsSealed then
+                    appendRaw(handle, data, offset)
+                    handle.life.ledger.encode(queued, queued)
+                    flushRaw(handle)
             finally discard(handle.endWrite())
             end try
         }
-        // The pump always sees Done; the actual send runs on the FIFO worker carrier after the append+flush, then self-drains via reap re-flush.
+        // The pump sees Done: the driver owns the bytes, and the ledger counts them until their send completes.
         WriteResult.Done
     end writeRaw
 
@@ -774,22 +790,24 @@ final private[net] class IoUringDriver private[posix] (
       * worker (the reap enqueues the re-flush as an engine op), so the tail is touched by exactly one carrier.
       */
     private def writeTls(handle: PosixHandle, data: Span[Byte], engine: TlsEngine)(using AllowUnsafe, Frame): WriteResult =
-        handle.queueWrite(data.size)
+        handle.life.ledger.accept(data.size)
         submitEngineOp { () =>
             // endWrite is called inside this FIFO thunk after the engine ops, keeping the write guard held until the engine is done: a
-            // concurrent closeHandle defers the engine free until this endWrite fires, so the engine is never freed while writePlain /
+            // concurrent release defers the engine free until this endWrite fires, so the engine is never freed while writePlain /
             // drainCiphertext run. The send SQE submitted below reaps asynchronously; its CQE re-flush runs as a SEPARATE later engine op.
             // As in writeRaw, an op the FIFO runs after the release's own op drops its bytes: that op already queued the close_notify, and no
             // record may follow it.
             try
-                val ok =
-                    try !handle.sendsSealed && encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n))
-                    finally handle.landQueuedWrite(data.size)
-                if ok then flushTls(handle)
+                if !handle.sendsSealed then
+                    if encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)) then flushTls(handle)
+                    else
+                        // The engine encrypted only part of a write it accepted: those bytes can never reach the peer.
+                        discard(handle.life.ledger.fail(released(handle, "the TLS engine refused to encrypt an accepted write")))
+                        handle.life.ledger.failure.foreach(handle.failBackpressureWaiter)
             finally discard(handle.endWrite())
             end try
         }
-        // The pump always sees Done; the actual send runs on the FIFO worker carrier after the engine ops complete.
+        // The pump sees Done: the driver owns the bytes, and the ledger counts them until their send completes.
         WriteResult.Done
     end writeTls
 
@@ -939,11 +957,13 @@ final private[net] class IoUringDriver private[posix] (
                     clearSendEintr(handle)
                     buf.reset()
                     handle.pendingCipherSent = 0
+                    sendFailed(handle, -res)
                 else
                     // A non-EINTR send completed (a real partial or full send): reset the EINTR retry count so the bound counts only an uninterrupted
                     // EINTR run.
                     clearSendEintr(handle)
                     handle.pendingCipherSent += res
+                    handle.life.ledger.send(res)
                     if handle.pendingCipherSent >= buf.size then
                         buf.reset()
                         handle.pendingCipherSent = 0
@@ -998,11 +1018,13 @@ final private[net] class IoUringDriver private[posix] (
                     clearSendEintr(handle)
                     buf.reset()
                     handle.rawPendingSent = 0
+                    sendFailed(handle, -res)
                 else
                     // A non-EINTR send completed (a real partial or full send): reset the EINTR retry count so the bound counts only an uninterrupted
                     // EINTR run.
                     clearSendEintr(handle)
                     handle.rawPendingSent += res
+                    handle.life.ledger.send(res)
                     if handle.rawPendingSent >= buf.size then
                         buf.reset()
                         handle.rawPendingSent = 0

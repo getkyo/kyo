@@ -1,6 +1,7 @@
 package kyo.net.internal.transport
 
 import kyo.*
+import kyo.net.NetException
 
 /** Result of a synchronous (non-blocking) write attempt on a socket handle.
   *
@@ -8,7 +9,9 @@ import kyo.*
   * TailPartial -> park on write-tail backpressure bound then retry, Error -> teardown.
   */
 private[kyo] enum WriteResult derives CanEqual:
-    /** All bytes written successfully. */
+    /** The driver owns every byte from `offset`. Bytes it has not handed to the kernel yet are counted by the handle's
+      * [[OutboundLedger.owed]] until it has.
+      */
     case Done
 
     /** Partial write: socket send buffer was full. `remaining` is the FULL original span; `offset` is the count of head bytes already sent.
@@ -23,6 +26,6 @@ private[kyo] enum WriteResult derives CanEqual:
       */
     case TailPartial(remaining: Span[Byte], offset: Int)
 
-    /** Unrecoverable write error: connection should be closed. */
-    case Error
+    /** The bytes were not taken and the connection has failed with `cause`. Every later write reports the same cause. */
+    case Error(cause: NetException)
 end WriteResult

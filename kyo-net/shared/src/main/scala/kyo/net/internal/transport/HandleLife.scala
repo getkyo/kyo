@@ -20,9 +20,12 @@ import scala.annotation.tailrec
   *
   * [[carry]] queues what a read produced with no read armed (the blocking reader's cancelled `read(2)`, a failure io_uring decodes off any
   * read's own path), so the next read takes it in order before touching the descriptor.
+  *
+  * [[ledger]] is what the handle owes the kernel. A STARTTLS upgrade keeps the handle, so the upgraded connection reads the same one.
   */
 final private[kyo] class HandleLife private (
     val guard: HandleGuard,
+    val ledger: OutboundLedger,
     releaseClaim: AtomicBoolean.Unsafe,
     readCell: AtomicRef.Unsafe[ParkedSlot.State[ReadOutcome, Closed]],
     writableCell: AtomicRef.Unsafe[ParkedSlot.State[Unit, Closed | NetException]],
@@ -114,6 +117,7 @@ private[kyo] object HandleLife:
     def init()(using AllowUnsafe): HandleLife =
         new HandleLife(
             HandleGuard.init(),
+            OutboundLedger.init(),
             AtomicBoolean.Unsafe.init(false),
             AtomicRef.Unsafe.init(ParkedSlot.emptyState),
             AtomicRef.Unsafe.init(ParkedSlot.emptyState),

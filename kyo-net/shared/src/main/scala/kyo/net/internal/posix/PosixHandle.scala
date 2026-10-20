@@ -8,6 +8,7 @@ import kyo.net.internal.TlsEngine
 import kyo.net.internal.transport.HandleLife
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.ReleaseMode
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
 import kyo.net.internal.util.HandleId
@@ -58,10 +59,6 @@ final private[net] class PosixHandle private (
     // wins a `compareAndSet(Present(arr), Absent)` on this slot is the sole feeder for that chunk; the loser sees the winner's `Absent` and
     // skips.
     val lastPlaintextRead: AtomicRef.Unsafe[Maybe[Array[Byte]]],
-    // Bytes of writes already accepted with Done whose append to the tail still waits on the engine FIFO. The write-tail bound must count them:
-    // on single-threaded JS and Wasm the WritePump issues many writes before the FIFO runs any of their appends, so a bound over the appended
-    // tail alone never trips and the tail grows without limit. Incremented by the writing carrier, decremented by the FIFO op, hence atomic.
-    queuedWriteBytes: AtomicInt.Unsafe,
     val createdAt: Frame
 ):
     /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
@@ -556,16 +553,10 @@ final private[net] class PosixHandle private (
       */
     private[posix] def isClosing()(using AllowUnsafe): Boolean = life.guard.isClosing()
 
-    /** The number of bytes currently buffered but not yet sent across this handle's write-backpressure tail (the unsent region of whichever tail is
-      * active: [[pendingCipher]] for the TLS write path, [[rawPending]] for the io_uring raw write path). A handle is either TLS or raw, so at most
-      * one tail is ever non-empty; this returns the unsent size of the active one (0 when neither is allocated or both are fully drained).
-      *
-      * Read by the drivers' `write` path to decide whether the tail has reached [[PosixHandle.WriteTailHighWater]] (and the write must signal
-      * backpressure instead of appending), and by `awaitWritable` to decide whether the parked WritePump promise may complete now or must wait for the
-      * tail to drain below [[PosixHandle.WriteTailLowWater]]. The fields are mutated only on the engine FIFO worker and read here off `@volatile`s, so
-      * this is a coherent snapshot of the tail at the moment of the read (a coarse bound is sufficient: the high-water gate is hysteretic, not exact).
-      * It includes the bytes of accepted writes still queued on the engine FIFO ([[queueWrite]]), which are part of the tail the bound caps even
-      * though no append has run for them yet.
+    /** The number of bytes buffered on this handle's write-backpressure tail and not yet sent (the unsent region of whichever tail is active:
+      * [[pendingCipher]] for the TLS write path, [[rawPending]] for the io_uring raw write path). A handle is either TLS or raw, so at most one
+      * tail is ever non-empty. The tail bound is not read from here: it is [[HandleLife.ledger]]'s `owed`, which also counts accepted writes
+      * whose append still waits on the engine FIFO and sends a completion has yet to confirm.
       */
     private[posix] def unsentTailBytes(using AllowUnsafe): Int =
         val cipher = pendingCipher match
@@ -576,26 +567,38 @@ final private[net] class PosixHandle private (
             case Absent     => 0
         val cipherUnsent = if cipher > 0 then cipher else 0
         val rawUnsent    = if raw > 0 then raw else 0
-        cipherUnsent + rawUnsent + queuedWriteBytes.get()
+        cipherUnsent + rawUnsent
     end unsentTailBytes
 
-    /** Count `bytes` of a write accepted with Done before its append is submitted to the engine FIFO. The FIFO op MUST call [[landQueuedWrite]]
-      * with the same count exactly once, whether or not it appends, or the bound stays tripped for the handle's lifetime.
+    /** Whether the write tail is at its bound: the ledger owes the kernel [[PosixHandle.WriteTailHighWater]] bytes or more. On single-threaded
+      * JS and Wasm the WritePump issues many writes before the FIFO appends any of them, so the bound must count accepted bytes, not appended
+      * ones, or it never trips.
       */
-    private[posix] def queueWrite(bytes: Int)(using AllowUnsafe): Unit = discard(queuedWriteBytes.addAndGet(bytes))
+    private[posix] def tailFull(using AllowUnsafe): Boolean = life.ledger.owed >= PosixHandle.WriteTailHighWater
 
-    /** Uncount the bytes of a queued write once its FIFO op has appended them to the tail (or dropped them on a closed handle). */
-    private[posix] def landQueuedWrite(bytes: Int)(using AllowUnsafe): Unit = discard(queuedWriteBytes.addAndGet(-bytes))
-
-    /** Complete the pump's parked writable wait if the write tail has drained below [[PosixHandle.WriteTailLowWater]], so the WritePump retries
-      * the write the high-water bound deferred. Called by the drain paths (poller `flushPending`, io_uring `onTlsSendComplete` /
-      * `onRawSendComplete`) on the engine FIFO worker after they advance the sent pointer, so the tail size read here reflects the completed
-      * send. A wait parked for socket writability is completed too: with the tail below the mark the pump's retry either writes or parks again.
+    /** Complete the pump's parked writable wait if what the handle owes has drained below [[PosixHandle.WriteTailLowWater]], so the WritePump
+      * retries the write the high-water bound deferred. Called by the drain paths (poller `flushPending`, io_uring `onTlsSendComplete` /
+      * `onRawSendComplete`) on the engine FIFO worker after they record the completed send. A wait parked for socket writability is completed
+      * too: with the tail below the mark the pump's retry either writes or parks again.
       */
     private[posix] def releaseBackpressureWaiter()(using AllowUnsafe): Unit =
-        if unsentTailBytes < PosixHandle.WriteTailLowWater then
+        if life.ledger.owed < PosixHandle.WriteTailLowWater then
             life.writable.take().foreach(_.completeDiscard(Result.succeed(())))
     end releaseBackpressureWaiter
+
+    /** Fails the pump's parked writable wait with the connection's write failure, so a pump parked on the tail bound tears down instead of
+      * waiting for a drain that a failed send ended.
+      */
+    private[posix] def failBackpressureWaiter(cause: NetException)(using AllowUnsafe): Unit =
+        life.writable.take().foreach(_.completeDiscard(Result.fail(cause)))
+
+    /** The promise the driver's [[IoDriver.release]] completes once the descriptor is closed, set by that release before it requests the close. */
+    @volatile var releaseSignal: Maybe[Promise.Unsafe[Unit, Any]] = Absent
+
+    /** How the driver's [[IoDriver.release]] lets go of the descriptor, set by that release before any of its close steps run, so a step the
+      * driver's terminal sweep runs instead closes the same way.
+      */
+    @volatile var releaseMode: ReleaseMode = ReleaseMode.Graceful
 
     /** Parks the STARTTLS handshake's wait for the peer's next flight in [[upgradeHandoff]]. `false` when the slot is not Idle (the I/O
       * carrier staged a Carryover first).
@@ -723,7 +726,6 @@ private[net] object PosixHandle:
             life = HandleLife.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
-            queuedWriteBytes = AtomicInt.Unsafe.init(0),
             createdAt = createdAt
         )
     end socket
@@ -750,7 +752,6 @@ private[net] object PosixHandle:
             life = HandleLife.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
-            queuedWriteBytes = AtomicInt.Unsafe.init(0),
             createdAt = createdAt
         )
 
@@ -852,15 +853,41 @@ private[net] object PosixHandle:
         // active when the close was requested: "read"/"write" is a genuine concurrent I/O op that raced the close; "deferred-close" is
         // IoUringDriver.registerDeferredClose's own bookkeeping hold (see beginDeferredClose), not an I/O race, and is the routine steady
         // state for any io_uring connection with an armed recv.
-        h.fdCloseSink.foreach { closeFd =>
-            deferredHolder.foreach { holder =>
-                given Frame = Frame.internal
-                Log.live.unsafe.debug(s"fd=${h.readFd} handle=${h.id} close(fd) deferred past the $holder hold")
-            }
-            h.runAfterFdWithdrawal(closeFd)
-        }
+        // The release signal completes after the close(fd) returned, or here when this handle closes no descriptor of its own (split fds, or
+        // the loser of a claimFdClose race, whose winner closes it).
+        val signal = h.releaseSignal
+        h.releaseSignal = Absent
+        def signalReleased(): Unit = signal.foreach(_.completeDiscard(Result.succeed(())))
+        h.fdCloseSink match
+            case Present(closeFd) =>
+                deferredHolder.foreach { holder =>
+                    given Frame = Frame.internal
+                    Log.live.unsafe.debug(s"fd=${h.readFd} handle=${h.id} close(fd) deferred past the $holder hold")
+                }
+                h.runAfterFdWithdrawal { () =>
+                    try closeFd()
+                    finally signalReleased()
+                }
+            case Absent => signalReleased()
+        end match
         h.fdCloseSink = Absent
     end freeResources
+
+    /** Sets `SO_LINGER {1, 0}` on `fd`, so its close resets the connection and drops what the kernel still holds to send, rather than ending
+      * a truncated stream with a FIN. Best effort: a socket the peer already reset may refuse the option, and its close ends it anyway.
+      * `struct linger` is two ints, laid out little-endian (every supported target).
+      */
+    private[posix] def resetOnClose(sockets: SocketBindings, fd: Int)(using AllowUnsafe): Unit =
+        val linger = Buffer.alloc[Byte](8)
+        try
+            var i = 0
+            while i < 8 do
+                linger.set(i, (if i == 0 then 1 else 0).toByte)
+                i += 1
+            discard(sockets.setsockopt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_LINGER, linger, 8))
+        finally linger.close()
+        end try
+    end resetOnClose
 
     /** Release the resources the handle owns (the TLS engine and the reused read buffer), coordinated against any in-flight read dispatch OR
       * write via the handle's guard (see [[HandleLife.guard]]): if a read or write holds the resources the free is deferred to that op's
@@ -890,8 +917,10 @@ private[posix] object NoDriver extends IoDriver[PosixHandle]:
     def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         unbound
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = unbound
+    def life(handle: PosixHandle): HandleLife                                                     = handle.life
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                               = unbound
-    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                          = unbound
+    def release(handle: PosixHandle, mode: ReleaseMode, released: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        unbound
     def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = unbound
     def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   = unbound
     def runOwned(handle: PosixHandle)(op: () => Unit)(using AllowUnsafe, Frame): Unit             = unbound
