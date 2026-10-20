@@ -295,6 +295,26 @@ class ForeachTest extends UITest:
         }
     }
 
+    "foreachKeyed keeps a kept row's typed text when an item is added".pendingUntilFixed(
+        "the browser replaces every row of a keyed list when the list changes"
+    ) in {
+        val app: UI < Async =
+            for items <- Signal.initRef(Chunk.from(Seq("A", "B")))
+            yield UI.div(
+                items.foreachKeyed(identity)(s => UI.input.id(s"in-$s")),
+                UI.button("Add").id("add").onClick(items.getAndUpdate(_.appended("C")).unit)
+            )
+        withUI(app) {
+            for
+                _      <- Browser.fill(Selector.id("in-A"), "typed")
+                before <- Browser.evalJson[String]("document.getElementById('in-A').value")
+                _      <- Browser.click(Selector.id("add"))
+                _      <- Browser.assertExists(Selector.id("in-C"))
+                after  <- Browser.evalJson[String]("document.getElementById('in-A').value")
+            yield assert(before == "typed" && after == "typed", s"before the add: '$before', after: '$after'")
+        }
+    }
+
     "foreachKeyed add at beginning" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("B", "C")))
