@@ -130,22 +130,22 @@ final private[net] class PollerIoDriver private[posix] (
     // progressed. NOT safe to treat as "self-close now": reading `true` here means
     // only that the terminal exit has STARTED, not that it has FINISHED, so a self-close gated on this flag alone could run
     // concurrently with the terminal exit's own still-in-flight sweep of the SAME handle (both trying to drive `shutdownTls` on the
-    // same TLS engine at once). closeHandle's self-close instead gates on [[teardownComplete]], which is set only at the END of the
+    // same TLS engine at once). release's self-close instead gates on [[teardownComplete]], which is set only at the END of the
     // terminal exit, after every legitimate submission window has closed.
     terminal: AtomicBoolean.Unsafe,
     // Set true as the LAST step of the terminal exit's obligation handling (after the final drainFifos(), the first sweepPendingCloses(),
     // and the closeReason claim attempt), strictly BEFORE the terminal exit's own re-sweep. Distinguishes "the terminal exit has
     // STARTED" ([[terminal]]) from "the terminal exit's own submission window has FULLY CLOSED": once this is true, drainFifos() will
     // never run again, so no normally-queued engine op for ANY handle can still be pending, and dischargeClose's single-discharger claim
-    // (`pendingCloses.remove`) is the only thing left serializing the terminal exit's re-sweep against closeHandle's own self-close.
-    // closeHandle's TLS branch (put pendingCloses, submit the deferred close op, then re-check this flag) uses it to decide whether to
+    // (`pendingCloses.remove`) is the only thing left serializing the terminal exit's re-sweep against release's own self-close.
+    // release's TLS branch (put pendingCloses, submit the deferred close op, then re-check this flag) uses it to decide whether to
     // self-close inline instead of trusting the queued op: reading `false` here happens-before the eventual write of `true` (a plain
     // AtomicBoolean read/write pair), which happens-before the re-sweep in the terminal exit's own program order, so a pendingCloses put
     // that observed `false` is guaranteed visible to the still-upcoming re-sweep (the Dekker pairing terminalTeardown's scaladoc
     // details). close()'s own post-submit recheck uses the same flag, paired symmetrically against terminalTeardown's own post-flag
     // re-read of `closeReason`, to cover the panic-exit ordering (see close()'s doc).
     teardownComplete: AtomicBoolean.Unsafe,
-    // Exactly-once gate for closeTeardown: close()'s own teardown op can strand the same way a TLS closeHandle op can (e.g. the loop
+    // Exactly-once gate for closeTeardown: close()'s own teardown op can strand the same way a TLS release op can (e.g. the loop
     // observes closedFlag between close()'s CAS and its submitEngineOp call and runs its entire terminal exit before the op ever lands).
     // Attempted by the queued closure close() submits AND, unconditionally, by the terminal exit itself right after sweepPendingCloses:
     // whichever runs first wins the CAS: no waiting, no flag inference, both run on carriers where the map-confinement precondition
@@ -274,10 +274,10 @@ final private[net] class PollerIoDriver private[posix] (
     // would only spin against a claim this same carrier already holds.
     @volatile private var lateDrainOwner: Thread = null
 
-    // Registered fd-close obligations for TLS handles (mirrors IoUringDriver.pendingCloses): closeHandle's TLS branch defers the real
+    // Registered fd-close obligations for TLS handles (mirrors IoUringDriver.pendingCloses): release's TLS branch defers the real
     // sockets.close/PosixHandle.close behind an engine op (so the close_notify send is serialized behind any in-flight read/write for this
     // connection), which strands forever if the op lands in engineQueue after the poll loop's one-shot terminal drain has already run
-    // (a deferred-close obligation whose sole executor has a terminal point). Every TLS closeHandle call PUTs its handle here
+    // (a deferred-close obligation whose sole executor has a terminal point). Every TLS release call PUTs its handle here
     // BEFORE submitting the deferred op; the op's own discharge removes it (dischargeClose). The terminal exit's sweepPendingCloses force-
     // discharges (claim-guarded, exactly-once via PosixHandle's own fd/resource claims) whatever is still here after the final drain, so a
     // stranded obligation is always reclaimed regardless of submission timing. A plain ConcurrentHashMap-backed set: put/remove/iterate from
@@ -692,7 +692,7 @@ final private[net] class PollerIoDriver private[posix] (
     /** The single terminal exit, shared by the closed, defensive-arm and crash paths.
       *
       * Runs the exit teardown: terminalTeardown drains any close-teardown engine op that close() submitted concurrently
-      * with the closedFlag set and sweeps any fd-close obligation a TLS closeHandle registered too late for a normal drain; backend.close(pollerFd)
+      * with the closedFlag set and sweeps any fd-close obligation a TLS release registered too late for a normal drain; backend.close(pollerFd)
       * runs AFTER the last poll, so the poller fd is never closed under an in-flight epoll_wait/kevent; freeScratch is CAS-guarded against close()'s
       * never-started path. It runs on whichever carrier ran the final cycle, which is safe because exactly one activation is ever live, so the
       * maps stay confined to it.
@@ -723,18 +723,18 @@ final private[net] class PollerIoDriver private[posix] (
     end pollerLost
 
     /** The poll loop's terminal-exit teardown, shared by every exit path (JVM/Native's terminal `while`-exit and both JS onComplete terminal
-      * branches): set [[terminal]] before the final drain (the ordering [[closeHandle]]'s put-then-recheck relies on), drain once more
+      * branches): set [[terminal]] before the final drain (the ordering [[release]]'s put-then-recheck relies on), drain once more
       * (picks up anything already queued), sweep any fd-close obligation that missed the drain, set [[teardownComplete]], then RE-SWEEP
       * and re-read [[closeReason]] before checking for a genuine invariant violation.
       *
       * The re-sweep and re-read are the Dekker half of two independent races, both closed by pairing a write here with a recheck on the
       * OTHER carrier:
       *
-      *   - `pendingCloses` vs. closeHandle's self-close: closeHandle puts the handle in `pendingCloses`, submits the deferred op, THEN
+      *   - `pendingCloses` vs. release's self-close: release puts the handle in `pendingCloses`, submits the deferred op, THEN
       *     rechecks [[teardownComplete]] to decide whether to self-close. If that recheck reads `false`, the put happens-before this
-      *     re-sweep's iteration (both are on the SAME `pendingCloses` map; the put preceded the read in closeHandle's own program order,
+      *     re-sweep's iteration (both are on the SAME `pendingCloses` map; the put preceded the read in release's own program order,
       *     and the read preceded this re-sweep in real time by definition of reading `false`), so the re-sweep is guaranteed to observe
-      *     it. If the recheck instead reads `true`, closeHandle self-closes directly. Either way the obligation is discharged by
+      *     it. If the recheck instead reads `true`, release self-closes directly. Either way the obligation is discharged by
       *     someone; [[dischargeClose]]'s own `pendingCloses.remove` is what makes the two attempts (this re-sweep's and a concurrent
       *     self-close's) resolve to exactly one winner if both fire.
       *   - `closeReason` vs. close()'s post-submit recheck: this re-read happens strictly after `teardownComplete.set(true)` in this
@@ -750,7 +750,7 @@ final private[net] class PollerIoDriver private[posix] (
       * run, never a silent leak or corruption.
       *
       * A `pendingCloses` entry surviving THIS re-sweep is a genuine invariant violation, not a false-positive
-      * candidate the way a single pre-flag sweep would be (that could still race a closeHandle call that had not yet reached its own
+      * candidate the way a single pre-flag sweep would be (that could still race a release call that had not yet reached its own
       * recheck). It can never be serviced (nothing will ever call `drainFifos` again), so it is reported to
       * [[kyo.internal.Diagnostics.reportViolation]], which fails the kyo-test run even though the driver is closed by then (unlike the
       * probe-based stranded-op check, which exempts a closed component by design). `engineQueue`'s own size stays in the human-readable
@@ -1332,7 +1332,7 @@ final private[net] class PollerIoDriver private[posix] (
       *   kqueue filters on close, so EV_DELETE is unnecessary and targeting a recycled fd number by mistake is avoided).
       */
     private def deregisterFds(handle: PosixHandle, fdClosing: Boolean)(using AllowUnsafe, Frame): Unit =
-        // deregisterFds runs on an ARBITRARY carrier (cancel / closeHandle). The four map REMOVALS (activeFds, pendingReads, pendingWritables,
+        // deregisterFds runs on an ARBITRARY carrier (cancel / release). The four map REMOVALS (activeFds, pendingReads, pendingWritables,
         // pendingAccepts) and the missedReads clear move into the OpDeregister apply on the poll-loop carrier (single-writer): the
         // backend.deregister handler removes the map entries there. The PROMISE FAILS stay SYNCHRONOUS here so a cancel delivers Closed at once
         // rather than waiting up to one poll cycle (EC-1): every pending promise is parked in the handle's life, so failing them needs no map
@@ -1445,11 +1445,11 @@ final private[net] class PollerIoDriver private[posix] (
     /** Discharge one TLS handle's deferred close obligation: best-effort close_notify (RFC 8446 6.1 / RFC 5246 7.2.1), claim-guarded fd close,
       * and PosixHandle.close (which frees the engine + buffers). Single-discharger: `pendingCloses.remove(handle)` IS the claim, gating the
       * WHOLE body, not just the fd close. At most three carriers ever call this for the same handle (the normal queued engine op, the
-      * terminal exit's sweepPendingCloses / re-sweep, and closeHandle's own post-[[teardownComplete]] self-close), and exactly one of them
+      * terminal exit's sweepPendingCloses / re-sweep, and release's own post-[[teardownComplete]] self-close), and exactly one of them
       * ever observes `true` from the removal: `ConcurrentHashMap`'s remove is atomic, so only the winner's body runs, and every other
       * caller's call is a safe no-op.
       *
-      * Single-discharge leaves no overlap between closeHandle's self-close and the terminal sweep's own attempt on the SAME
+      * Single-discharge leaves no overlap between release's self-close and the terminal sweep's own attempt on the SAME
       * handle (the hazard being two carriers both driving `shutdownTls` on one TLS engine at once): whichever carrier wins
       * the claim is PROVABLY the only one inside this body for this handle, so it can always attempt the close_notify. The three
       * potential callers are also never live at once in practice: the normal queued op only runs during (or before) `drainFifos()`, which
@@ -1503,7 +1503,7 @@ final private[net] class PollerIoDriver private[posix] (
         deregisterFds(handle, fdClosing = true)
         // Route the engine free through the engine FIFO so it is serialized behind any read/write engine ops for this connection (no two
         // carriers touch one ssl). Installed before the engine op runs so freeResources sees the sink. Terminal-aware: once the poll loop's
-        // terminal exit has started, submitting here would strand the free the same way an unguarded closeHandle op would (the loop's own
+        // terminal exit has started, submitting here would strand the free the same way an unguarded release op would (the loop's own
         // per-cycle drain is gone), so free inline instead. Safe either way: freeResources only invokes this once the handle's own
         // HandleGuard confirms no read/write holder is active, so whichever carrier ends up running it is already the sole owner.
         handle.engineFreeSink = op => if terminal.get() then op() else submitEngineOp(op)
@@ -1526,7 +1526,7 @@ final private[net] class PollerIoDriver private[posix] (
             case Absent =>
                 // Plaintext close: no close_notify to emit. recv/send after this fail with 0/EPIPE, proving the close to any carrier still
                 // mid-syscall on it (see claimAndDeferFdClose). The claimFdClose CAS makes this one-shot: a STARTTLS upgrade failure racing
-                // this closeHandle targets the SAME fd, so without the claim the fd could be shut down/closed twice (and a recycled fd
+                // this release targets the SAME fd, so without the claim the fd could be shut down/closed twice (and a recycled fd
                 // belonging to another connection wrongly touched). Synchronous, on the calling carrier: never deferred via the engine FIFO,
                 // so it needs no pendingCloses registration (nothing here can be stranded by a driver terminal exit). The claim/shutdown/credit
                 // install and the requestClose run under a deferred-close guard hold so the shutdown's EOF cannot wake a reentrant closer that
@@ -1651,7 +1651,7 @@ final private[net] class PollerIoDriver private[posix] (
             else
                 // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch, and this carrier runs the
                 // terminal exit itself. Its final drain and pending-close sweeps are what discharge work queued before this close: a TLS
-                // closeHandle's fd close and the writes ahead of it sit on the engine FIFO, and no other consumer will ever run them.
+                // release's fd close and the writes ahead of it sit on the engine FIFO, and no other consumer will ever run them.
                 terminalTeardown()
                 backend.close(pollerFd)
                 freeScratch()
@@ -1833,7 +1833,7 @@ final private[net] class PollerIoDriver private[posix] (
                     ))))
                 else
                     // Ownership of the read buffer + engine is held until finishDispatch / rearmOwned releases it, so a concurrent
-                    // closeHandle defers its free and never races the in-flight recv / engine feed below.
+                    // release defers its free and never races the in-flight recv / engine feed below.
                     promise match
                         case Present(p) =>
                             handle.tls match
@@ -1869,7 +1869,7 @@ final private[net] class PollerIoDriver private[posix] (
         end match
     end dispatchRead
 
-    /** Release this dispatch's ownership of the handle's read resources, then deliver `result` to `promise`, UNLESS a `closeHandle` raced this
+    /** Release this dispatch's ownership of the handle's read resources, then deliver `result` to `promise`, UNLESS a `release` raced this
       * dispatch: in that case `endDispatch` performed the deferred resource free and `result` is discarded in favour of a stale `Closed`, so the
       * caller never observes data delivered from a closed handle (the dispatch-vs-close use-after-free fix). The completion is the single atomic
       * point at which deliver-or-bail is decided.
@@ -1891,7 +1891,7 @@ final private[net] class PollerIoDriver private[posix] (
     end finishDispatch
 
     /** Release this dispatch's ownership and re-deposit the handle into `pendingReads` to keep waiting (the EAGAIN close-race guard), UNLESS a
-      * `closeHandle` raced this dispatch, in which case the deferred free has happened and the read is failed `Closed` instead (a handle that
+      * `release` raced this dispatch, in which case the deferred free has happened and the read is failed `Closed` instead (a handle that
       * was closed during dispatch must not be re-deposited into pendingReads). Under edge-triggered (ET) registration the fd is persistently
       * armed at the kernel; this method does NOT submit a new RegisterRead command. The consumer calls `awaitRead` next, which submits an
       * OpRegisterRead; `dispatchCmd` then re-dispatches immediately if `readMightHaveMore` is set (residual bytes stranded on ET), or otherwise
@@ -2329,7 +2329,7 @@ final private[net] class PollerIoDriver private[posix] (
             if eofPending && handle.halfClose == HalfCloseState.Open then handle.halfClose = HalfCloseState.PeerHalfClosePending
             // Socket buffer empty: check for already-buffered plaintext first (via the engine FIFO), then check half-close, then re-arm.
             // Capture the half-close state here on the poll carrier so the engine FIFO closure sees it without racing a concurrent
-            // closeHandle or a future poll-carrier write (the field is poll-carrier-confined; capturing here is safe).
+            // release or a future poll-carrier write (the field is poll-carrier-confined; capturing here is safe).
             val halfCloseNow = handle.halfClose == HalfCloseState.PeerHalfClosePending
             submitEngineOp { () =>
                 try
@@ -2756,7 +2756,7 @@ final private[net] class PollerIoDriver private[posix] (
                             // The fd is being CLOSED, so any pending promise the handle carries must die. deregisterFds already fails them
                             // synchronously on the close carrier for low latency, but a dispatch's `rearmOwned` (also on THIS poll carrier) can
                             // re-deposit a read promise AFTER that synchronous read, leaving it orphaned: the STARTTLS upgrade read re-armed on a
-                            // recvNow EAGAIN while a concurrent closeHandle tears the handle down. This apply is serialized with rearmOwned on the
+                            // recvNow EAGAIN while a concurrent release tears the handle down. This apply is serialized with rearmOwned on the
                             // poll carrier, so failing the promise here catches the re-deposited one and the handshake aborts Closed instead of
                             // hanging. Gated on fdClosing: a live withdrawal (cancel / detachForUpgrade) keeps the fd open and the upgrade legitimately
                             // re-arms a read on it, which this must NOT kill; the synchronous fail already handled the read present at cancel time.
@@ -2857,7 +2857,7 @@ final private[net] class PollerIoDriver private[posix] (
     override def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit =
         discard(engineQueue.offer(op))
         triggerWake()
-        // Offer-then-recheck, the same shape closeHandle's put-then-recheck and IoUringDriver.submitEngineOp use. Once terminalTeardown has
+        // Offer-then-recheck, the same shape release's put-then-recheck and IoUringDriver.submitEngineOp use. Once terminalTeardown has
         // completed, drainFifos never runs again, so an op landing after it has no consumer at all: a listener-close discharge queued there
         // never frees its engine or closes its fd, and the wake above cannot help because there is no loop left to wake. teardownComplete is
         // set strictly before the terminal exit's own re-sweep, so either that pass observes this op or this recheck does. Skipped for a

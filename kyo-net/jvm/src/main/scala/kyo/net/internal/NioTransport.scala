@@ -1213,7 +1213,7 @@ final private[kyo] class NioTransport private (
                     )
 
                     // Create the handshake handle here (rather than inside startTlsHandshake) so the connPromise teardown arms below can route
-                    // through driver.closeHandle(handle). The handle owns the parked awaitRead and the driver's pendingReads[channel] -> handle
+                    // through driver.release(handle, ...). The handle owns the parked awaitRead and the driver's pendingReads[channel] -> handle
                     // entry; a bare clientChannel.close() on a failed/timed-out handshake strands that entry and the armed IOPromise. Passing the
                     // handle as existingHandle to startTlsHandshake reuses it (no double registerChannel).
                     val handle = NioHandle.init(

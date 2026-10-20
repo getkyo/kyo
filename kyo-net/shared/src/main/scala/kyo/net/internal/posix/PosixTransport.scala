@@ -84,7 +84,7 @@ final private[net] class PosixTransport private[posix] (
     // `representative` is one pool driver used ONLY for the transport-level, NON-per-handle paths that have no bound handle:
     //   - stdio (a single per-process handle; selectDriver bypasses the pool, so stdio rides the representative),
     //   - the backend-uniform label/capability queries (ioDriver.label is identical across all pool drivers).
-    // Every PER-HANDLE op (read/write/await/closeHandle/submitEngineOp) routes through handle.driver, the driver the handle was bound to at
+    // Every PER-HANDLE op (read/write/await/release/submitEngineOp) routes through handle.driver, the driver the handle was bound to at
     // openWith/pool.next() time, so a connection's engine FIFO and poll loop stay on its one owning driver for the connection's whole lifetime.
     private val ioDriver: IoDriver[PosixHandle] = representative
 
@@ -106,7 +106,7 @@ final private[net] class PosixTransport private[posix] (
 
     /** In-flight handshake fd/engine-teardown obligations (accept-side server TLS, connect-side client TLS, and STARTTLS upgrade), keyed by an
       * opaque per-handshake token. A handshake in flight has no [[Connection]] yet, so nothing else knows its fd and engine exist: the
-      * driver-level fd-close fix (`PollerIoDriver`/`IoUringDriver`'s terminal sweep) only guarantees a submitted `closeHandle` obligation is
+      * driver-level fd-close fix (`PollerIoDriver`/`IoUringDriver`'s terminal sweep) only guarantees a submitted `release` obligation is
       * discharged, it does not make a still-handshaking connection's OWN teardown thunk run. Entered by [[registerHandshake]] before
       * `driveHandshake` starts; each value is a thunk that races the handshake's own exactly-once outcome gate and discharges only if it wins,
       * so a listener-close discharge can never double-free a handshake that completes at the same moment. Removed by [[unregisterHandshake]]
@@ -239,7 +239,7 @@ final private[net] class PosixTransport private[posix] (
         else BlockingReaderDriver.init(ioDriver)
 
     /** Build an internal connection over `handle`/`driver`, returned as the public `Connection`. Binds `handle.driver` so every per-handle op
-      * (read/write/await/closeHandle/submitEngineOp) routes through the driver this handle was assigned to. The caller starts it.
+      * (read/write/await/release/submitEngineOp) routes through the driver this handle was assigned to. The caller starts it.
       */
     private[posix] def openWith(handle: PosixHandle, driver: IoDriver[PosixHandle], channelCapacity: Int)(using
         AllowUnsafe,
@@ -1221,16 +1221,17 @@ final private[net] class PosixTransport private[posix] (
                     // use-after-free: when handshakeTimeout reaps a handshake parked in awaitReadCiphertext, an io_uring recv SQE is in flight into
                     // handle.readBuffer. Freeing that buffer (PosixHandle.close) and the engine while the recv SQE is still kernel-owned would let
                     // the kernel write recv data into freed memory and a late recv-Success enqueue a feed on a freed engine. Routing
-                    // the buffer + engine teardown through the driver's UAF-safe ioDriver.closeHandle avoids that:
-                    //   - ioDriver.closeHandle -> cancel(handle) fails the parked read promise (so awaitReadCiphertext's Success feed cannot run
+                    // the buffer + engine teardown through the driver's UAF-safe release avoids that:
+                    //   - release -> cancel(handle) fails the parked read promise (so awaitReadCiphertext's Success feed cannot run
                     //     post-reap) and DEFERS PosixHandle.close (the readBuffer free) on io_uring until the in-flight recv CQE reaps, so the kernel
-                    //     never writes into freed memory. On the poller closeHandle frees inline (already safe: the poller never hands the kernel the
+                    //     never writes into freed memory. On the poller release frees inline (already safe: the poller never hands the kernel the
                     //     buffer) AND closes the fd itself through handle.claimFdClose (after the fatal-alert send drainAllDirect already flushed inline
                     //     on the failure path, so the peer still gets the alert before the FIN).
                     // The fd close is coordinated by handle.claimFdClose so it happens EXACTLY once across the two backends:
-                    //   - poller: closeHandle already claimed and closed the fd, so claimFdClose here returns false and this skips it (no double-close,
+                    //   - poller: release already claimed and closed the fd, so claimFdClose here returns false and this skips it (no double-close,
                     //     and the alert the poller's inline send already put on the wire is not truncated by a redundant close).
-                    //   - io_uring: closeHandle does NOT close the fd (it has no socket bindings), so claimFdClose here wins; shutdown(SHUT_RDWR) then
+                    //   - io_uring: release defers its fd close to the reap carrier (or, on an exited ring, has already closed it inline and won the
+                    //     claim), so claimFdClose here wins; shutdown(SHUT_RDWR) then
                     //     forces the kernel-owned recv to complete (EOF) so its CQE reaps, draining the in-flight count to zero and running the deferred
                     //     PosixHandle.close (io_uring's cancel submits no async-cancel SQE and a stalled client sends nothing, so without this the recv
                     //     CQE would never arrive and the buffer free would never run, a leak); the real closeRawFd is installed as handle.fdCloseSink
@@ -1496,7 +1497,7 @@ final private[net] class PosixTransport private[posix] (
     end closeRawFd
 
     /** Tear down a client-side handle whose connect or TLS handshake failed before any [[Connection]] was wired, mirroring the server-accept
-      * teardown. Routing through `driver.closeHandle` (rather than shutting the fd down and closing it directly) is what keeps the poller state
+      * teardown. Routing through `driver.release` (rather than shutting the fd down and closing it directly) is what keeps the poller state
       * consistent: it deregisters the handle's fds (removing the activeFds / pendingReads / pendingWritables entries and, on epoll, the
       * `epollDesired` mask) so a recycled fd number starts from a clean slate and a fresh arm re-publishes the owner-id cookie, and it frees
       * the handle's `readBuffer` via `PosixHandle.close` (the bare close path leaked it on the connect-failure paths). The fd close is
@@ -1516,16 +1517,16 @@ final private[net] class PosixTransport private[posix] (
       * fd close before the deferred-credit path existed, is correct rather than merely expedient.
       *
       * Ordering is per phase and load-bearing. The connect-phase arm closes the raw fd through `driver.releaseFd`, on the carrier that arms
-      * the handle's operations, and `driver.closeHandle` runs FIRST: the deregistration must precede the close or a recycled fd number could
+      * the handle's operations, and `driver.release` runs FIRST: the deregistration must precede the close or a recycled fd number could
       * collide with the driver's stale bookkeeping. The handshake arm
-      * instead installs the deferred `fdCloseSink` credit, and `driver.closeHandle` is what enables that credit's single consumer (on
+      * instead installs the deferred `fdCloseSink` credit, and `driver.release` is what enables that credit's single consumer (on
       * io_uring it enqueues the close op whose `closeNow` -> `PosixHandle.close` -> `freeResources` reads the sink exactly once, possibly
-      * concurrently with a caller on another carrier; on the poller `closeHandle` runs the same consumer inline), so the claim, the
+      * concurrently with a caller on another carrier; on the poller `release` runs the same consumer inline), so the claim, the
       * shutdown, and the credit install ALL run before it: installing the credit after enabling the consumer would let the one
       * `freeResources` run read the sink before the install lands (the handle can already have zero in-flight SQEs, so the close op takes
       * the immediate `closeNow` branch), permanently stranding the credit and leaking the fd. The shutdown itself cannot wake the consumer
       * early: a reaped EOF alone only decrements the in-flight count, and `freeResources` runs only via a `PosixHandle.close`, which nothing
-      * reaches for this handle before the `driver.closeHandle` call.
+      * reaches for this handle before the `driver.release` call.
       */
     private def closeUnwiredHandle(handle: PosixHandle, driver: IoDriver[PosixHandle], connectPhase: Boolean)(using
         AllowUnsafe,
@@ -1721,7 +1722,7 @@ final private[net] class PosixTransport private[posix] (
                             // i.e. no sniHostname), so a build failure must release the detached-but-open fd and fail the upgrade promise rather
                             // than escaping. No engine exists yet on this path, so only the fd is released (releaseFailedUpgrade also frees
                             // the engine, which is absent here). The release routes through closeUnwiredHandle, never a bare PosixHandle.close:
-                            // driver.closeHandle runs first, so on io_uring the read-buffer free is deferred until every kernel-owned SQE for
+                            // driver.release runs first, so on io_uring the read-buffer free is deferred until every kernel-owned SQE for
                             // this handle reaps. The stale plaintext recv the upgrade window leaves in flight is kernel-owned by construction
                             // here, with the buffer's address already captured; an inline free would return that off-heap memory to the
                             // process-wide allocator while the kernel can still complete the recv into it. The real close(fd) is deferred to
@@ -1990,11 +1991,11 @@ final private[net] class PosixTransport private[posix] (
       * be freed. It is routed through `handle.driver.submitEngineOp` rather than run inline: this can run on a promise-completion carrier (an
       * abandoned upgrade's discharge), which can race an in-flight feed thunk for this SAME engine still queued on the driver's engine FIFO
       * (the handshake's own next step, submitted before this failure/panic was observed); the FIFO serializes the free behind it instead of
-      * the two carriers touching the native `ssl` at once. A concurrent `closeHandle` cannot free it (it finds `handle.tls` Absent), so there is
+      * the two carriers touching the native `ssl` at once. A concurrent `release` cannot free it (it finds `handle.tls` Absent), so there is
       * no double-free either way.
       *
       * The fd and the handle's buffers release through [[closeUnwiredHandle]], exactly like a failed connect-side handshake and never via a
-      * bare `PosixHandle.close`: `driver.closeHandle` runs FIRST, so on io_uring the read-buffer free is deferred until every kernel-owned SQE
+      * bare `PosixHandle.close`: `driver.release` runs FIRST, so on io_uring the read-buffer free is deferred until every kernel-owned SQE
       * for this handle reaps. A failed upgrade routinely leaves such a SQE in flight (the stale plaintext pump recv the upgrade window cannot
       * cancel, or the handshake's own producer recv), and its SQE has already captured the buffer's address: an inline free would return that
       * off-heap memory (the read buffer, and the flush/send mirrors freeResources releases with it) to the process-wide allocator while the
@@ -2482,7 +2483,7 @@ final private[net] class PosixTransport private[posix] (
       *
       * This is the park point a stalled server handshake reaches: the io_uring `awaitRead` submits an in-flight recv SQE
       * into `handle.readBuffer`. If a finite `handshakeTimeout` reaps the handshake while this is parked, the reap routes through
-      * `ioDriver.closeHandle` (which `cancel`s `readPromise`, so the Success branch below cannot fire post-reap, and defers the buffer/fd
+      * `ioDriver.release` (which `cancel`s `readPromise`, so the Success branch below cannot fire post-reap, and defers the buffer/fd
       * free until the recv CQE drains). A recv CQE that delivered Success just before the reap may still have enqueued the feed thunk below;
       * the `isReaped` guard makes that thunk skip rather than feed a freed engine.
       */

@@ -204,7 +204,7 @@ class HttpServerResilienceTest extends BaseHttpTest:
     /** On nio, a per-connection dispatch failure must stay contained and never mark the shared driver closed, exercised
       * at the HTTP level with FIBERS.
       *
-      * The failure mode is a cross-carrier race (a cancelled request's caller-carrier `closeHandle` vs the poll carrier's
+      * The failure mode is a cross-carrier race (a cancelled request's caller-carrier `release` vs the poll carrier's
       * `dispatchReadyKeys` on the same fd) that only `NioIoDriver` is exposed to (its dispatch catch is
       * `CancelledKeyException`-only; `PollerIoDriver`'s dispatch is total), so it manifests on nio but not on
       * kqueue/epoll and this leaf targets nio directly. The race is probabilistic, so the leaf drives an aggressive load

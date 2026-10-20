@@ -21,7 +21,7 @@ import kyo.net.internal.transport.WriteResult
   * near-instantly, so the leaf fiber never busy-waits or starves the scheduler.
   *
   * A `read(2)` in flight cannot be withdrawn, so the read is owned like any other driver op. The promise is parked in the handle's
-  * `life.read`, where `cancel` and `closeHandle` fail it with [[Closed]] at once; the read then delivers to whichever promise occupies the
+  * `life.read`, where `cancel` and `release` fail it with [[Closed]] at once; the read then delivers to whichever promise occupies the
   * slot when it returns, so a read armed while a cancelled one is still blocked takes its bytes instead of issuing a second `read(2)` into
   * the same buffer. A result that returns with no promise parked is queued with `life.carry`, since its bytes are already consumed from the
   * fd, and the next [[awaitRead]] takes it before reading again. The read holds the handle's guard from arming until its bytes are copied

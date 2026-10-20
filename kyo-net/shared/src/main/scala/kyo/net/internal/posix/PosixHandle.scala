@@ -74,7 +74,7 @@ final private[net] class PosixHandle private (
     def readBufferSize: Int = readBufferSizeField
 
     /** The single I/O driver this handle is bound to for its lifetime (set once when the connection is opened via the transport's
-      * pool.next() / openWith). Every per-handle op (read/write/await/closeHandle/submitEngineOp) routes through this driver, so a
+      * pool.next() / openWith). Every per-handle op (read/write/await/release/submitEngineOp) routes through this driver, so a
       * connection's poll loop and TLS engine FIFO stay on one owning driver across the N-driver pool: each handle is bound to exactly one driver
       * for its whole lifetime, never re-routed mid-life. @volatile carries the bind-site write to the driver carriers that read it.
       *
@@ -174,9 +174,9 @@ final private[net] class PosixHandle private (
     @volatile var halfClose: HalfCloseState = HalfCloseState.Open
 
     /** One-shot claim of the socket-fd close, so the fd is closed EXACTLY once even when two teardown paths target the same handle. The plain
-      * close path (`PollerIoDriver.closeHandle`) is the sole closer for a normal connection and always wins the claim. A STARTTLS upgrade is the
+      * close path (`PollerIoDriver.release`) is the sole closer for a normal connection and always wins the claim. A STARTTLS upgrade is the
       * one case with two potential closers: the upgrade detached the plaintext connection (keeping the fd open) and on a handshake FAILURE both
-      * the upgrade-failure cleanup and a concurrent `closeHandle` would otherwise issue `close(fd)`. Routing both through this CAS closes the fd
+      * the upgrade-failure cleanup and a concurrent `release` would otherwise issue `close(fd)`. Routing both through this CAS closes the fd
       * once and never double-closes (which could close a recycled fd belonging to another connection).
       */
 
@@ -232,7 +232,7 @@ final private[net] class PosixHandle private (
             case _                                                    => ()
 
     /** How the TLS engine's `free()` is run when the handle's resources are released (see [[PosixHandle.freeResources]]). The driver installs
-      * its `submitEngineOp` here in `closeHandle` so the engine free is enqueued on the per-driver engine FIFO and therefore serialized AFTER
+      * its `submitEngineOp` here in `release` so the engine free is enqueued on the per-driver engine FIFO and therefore serialized AFTER
       * any read/write engine ops for this connection: no two carriers touch one native `ssl` at once, and the free never races an in-flight
       * shim call. The default runs the free inline (used by handles whose driver has no engine FIFO, e.g. a plaintext handle whose `tls` is
       * Absent, so the sink is never exercised). Set once, before the close path can fire.
@@ -481,7 +481,7 @@ final private[net] class PosixHandle private (
       * `PollerIoDriver.dispatchRead` removes the pending read, passes the `activeFds` id guard, then SUSPENDS on the `recv` syscall (which
       * writes into [[readBuffer]]) before, in its continuation, feeding the [[tls]] engine. Independently, `PollerIoDriver.write` reads the
       * [[tls]] engine and drives `writePlain` / `drainCiphertext` (allocating off [[readBufferSize]]) synchronously on the write fiber. A
-      * concurrent `closeHandle` runs `PosixHandle.close`, which frees the engine and closes [[readBuffer]]. The read pump and the write pump run
+      * concurrent `release` runs `PosixHandle.close`, which frees the engine and closes [[readBuffer]]. The read pump and the write pump run
       * on independent fibers/carriers, so EITHER a read dispatch OR a write can be touching those resources when close fires: without
       * coordination the close can free them while a `recv` is still writing the buffer, while a read continuation is feeding the engine, or while
       * a write is encrypting/draining through the engine, all use-after-free. The guard lets every in-flight op and the close hand ownership off
@@ -767,7 +767,7 @@ private[net] object PosixHandle:
     /** Actually release the resources the handle owns: the TLS engine (if any) and the reused read buffer. Called exactly once, under the
       * `guard` ownership protocol, by whichever of `requestClose` / `endDispatch` / `endWrite` wins the handoff (the last holder while closing,
       * or the close itself when no op is in flight). Never call this directly; go through [[close]] (which routes to `requestClose`). The bound
-      * socket fd is closed by the driver (`PollerIoDriver.closeHandle` issues the single `SocketBindings.close`); stdio fds 0/1 are owned by the
+      * socket fd is closed by the driver (`PollerIoDriver.release` issues the single `SocketBindings.close`); stdio fds 0/1 are owned by the
       * process and are never closed here.
       *
       * The engine's `free()` is run through [[engineFreeSink]] (the driver's `submitEngineOp`), so it is serialized on the per-driver engine

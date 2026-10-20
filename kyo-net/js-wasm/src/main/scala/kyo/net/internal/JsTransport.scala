@@ -1066,9 +1066,9 @@ final private[kyo] class JsTransport private (
         // `promise` owns the detached socket for the whole upgrade. detachForUpgrade gives up the plaintext connection's ownership WITHOUT
         // destroying the socket (the upgrade reuses it), and the TLSSocket below only takes ownership on a successful handshake, so every
         // non-success settlement must release it here or the socket is held forever: Node keeps the fd open, the peer never sees a FIN, and the
-        // connection sits in CLOSE_WAIT. Mirrors the NIO floor's closeQuietly(handle.channel) owner arm. destroy() is the same release
-        // JsIoDriver.closeHandle performs for an ordinary plaintext teardown, guarded identically so a socket Node already destroyed (the TLS
-        // "error" arm below, a peer reset) is not destroyed twice.
+        // connection sits in CLOSE_WAIT. Mirrors the NIO floor's closeQuietly(handle.channel) owner arm. destroy() is where JsIoDriver.release
+        // ends a graceful plaintext teardown, guarded identically so a socket Node already destroyed (the TLS "error" arm below, a peer reset)
+        // is not destroyed twice.
         promise.onComplete {
             case Result.Success(_) =>
                 // The upgraded connection's JsHandle owns the TLSSocket, which owns this socket: releasing it here would tear down a live

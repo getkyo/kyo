@@ -14,10 +14,10 @@
  * memory, so the Scala driver owns all socket I/O. Opaque SSL_CTX* / SSL* cross the FFI boundary as
  * pointers carried in a long; the caller never dereferences them, it only round-trips them back here.
  *
- * The two backends diverge in one spot, selected by OPENSSL_IS_BORINGSSL (defined only under BoringSSL's
+ * The two backends diverge in two spots, selected by OPENSSL_IS_BORINGSSL (defined only under BoringSSL's
  * headers): the peer-certificate accessor name (SSL_get_peer_certificate on BoringSSL vs
- * SSL_get1_peer_certificate on OpenSSL 3, both up-reffing). Each shim resolves that macro against its own
- * headers when it compiles this body.
+ * SSL_get1_peer_certificate on OpenSSL 3, both up-reffing), and the zero-length write flush_read_answer
+ * issues (see there). Each shim resolves that macro against its own headers when it compiles this body.
  *
  * ERR_clear_error() runs before each SSL op (do_handshake_step, read_plain, write_plain) on both backends so
  * SSL_get_error classifies only the current op: a stale entry left in the thread-local error queue by an
@@ -367,14 +367,35 @@ static int KYO_SSL_FN(drain_ciphertext)(long ssl_ptr, unsigned char *buf, int le
  * indistinguishable from a clean end-of-stream. The library already splits these two at the
  * SSL_ERROR level (ZERO_RETURN vs WANT_READ); this surfaces that split to the caller.
  */
+/*
+ * Put on the write BIO the records a read obliges this side to send. Neither library writes them during SSL_read: the answer to a TLS 1.3
+ * KeyUpdate that requests one stays queued until the next write (measured on BoringSSL d84317af and OpenSSL 3.6.2: 0 bytes on the write
+ * BIO after the SSL_read, 27 after a zero-length write), so a connection that only reads never answers and the peer waits on it. A
+ * zero-length write sends the queued flight and nothing else, no empty record. OpenSSL documents a zero length only for SSL_write_ex;
+ * BoringSSL has no SSL_write_ex and takes it through SSL_write. Skipped during the handshake, where a write would drive it, and once this
+ * side sent close_notify, where every write fails.
+ */
+static void KYO_SSL_FN(flush_read_answer)(KYO_SSL_FN(ssl_state) *st) {
+    if (!SSL_is_init_finished(st->ssl) || (SSL_get_shutdown(st->ssl) & SSL_SENT_SHUTDOWN)) return;
+#ifdef OPENSSL_IS_BORINGSSL
+    (void)SSL_write(st->ssl, "", 0);
+#else
+    size_t written = 0;
+    (void)SSL_write_ex(st->ssl, "", 0, &written);
+#endif
+    ERR_clear_error();
+}
+
 static int KYO_SSL_FN(read_plain)(long ssl_ptr, unsigned char *buf, int len) {
     if (!ssl_ptr || !buf || len < 0) return -2;
     KYO_SSL_FN(ssl_state) *st = (KYO_SSL_FN(ssl_state) *)(intptr_t)ssl_ptr;
     if (len == 0) return 0;
     ERR_clear_error();
     int ret = SSL_read(st->ssl, buf, len);
+    /* Classified before the flush: its write resets the state SSL_get_error reads. */
+    int err = ret > 0 ? SSL_ERROR_NONE : SSL_get_error(st->ssl, ret);
+    KYO_SSL_FN(flush_read_answer)(st);
     if (ret > 0) return ret;
-    int err = SSL_get_error(st->ssl, ret);
     switch (err) {
         case SSL_ERROR_WANT_READ:      return 0;
         case SSL_ERROR_ZERO_RETURN:    return -3; /* peer sent close_notify: orderly close */
