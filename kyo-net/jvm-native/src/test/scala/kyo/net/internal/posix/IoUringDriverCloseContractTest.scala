@@ -329,9 +329,10 @@ class IoUringDriverCloseContractTest extends Test:
             withDriver(productionDepth) { (driver, _, _, resources) =>
                 PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (fd, peerFd) =>
                     discard(resources.peer(peerFd))
-                    val handle  = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    val conn    = resources.connection(InternalConnection.init(handle, driver, 64))
-                    val payload = (0 until 16).map(i => bytesOf(64 * 1024, i))
+                    val handle = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val conn   = resources.connection(InternalConnection.init(handle, driver, 64))
+                    // Twice the tail bound, so a write meets the bound while the peer has taken next to nothing.
+                    val payload = (0 until 2 * PosixHandle.WriteTailHighWater / (64 * 1024)).map(i => bytesOf(64 * 1024, i))
                     conn.start()
                     payload.foreach(span => discard(conn.outbound.offer(Span.fromUnsafe(span))))
                     // Parked on the tail bound with a span held: the send completions that drain the tail below the bound release the pump,

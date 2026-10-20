@@ -1377,7 +1377,11 @@ final private[net] class IoUringDriver private[posix] (
             while more do
                 val n = engine.drainCiphertext(drain, handle.readBufferSize)
                 if n <= 0 then more = false
-                else appendPending(handle, drain, n)
+                else
+                    appendPending(handle, drain, n)
+                    // Its send completion counts it as sent, so it is produced here, or the ledger would owe less than nothing.
+                    handle.life.ledger.generate(n)
+                end if
             end while
             flushTls(handle)
         end if

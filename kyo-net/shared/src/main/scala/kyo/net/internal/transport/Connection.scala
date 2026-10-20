@@ -290,10 +290,12 @@ final private[kyo] class Connection[Handle] private (
             // Reflect the lifecycle terminal too, so isOpen reads Closed; the Released CAS above is the exactly-once gate, not this.
             discard(state.compareAndSet(Connection.State.Closing, Connection.State.Closed))
             closeTimer.disarm()
-            val owed     = driver.life(handle).ledger.owed
             val residue  = outbound.close()
             val osClosed = Promise.Unsafe.init[Unit, Any]()
             osClosed.onComplete { _ =>
+                // Read after the OS close: an io_uring send the kernel performed before an abortive cancel reaps only then, and counting
+                // its bytes as owed would report more dropped than the peer missed.
+                val owed = driver.life(handle).ledger.owed
                 residue.onComplete { held =>
                     import AllowUnsafe.embrace.danger
                     val left    = held.map(_.eval).toMaybe.flatten.fold(0L)(_.foldLeft(0L)(_ + _.size))
