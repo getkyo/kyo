@@ -151,6 +151,11 @@ class JsonDocTest extends kyo.test.Test[Any]:
         assert(nested.contains("\"description\":\"the unit square\""), nested)
     }
 
+    "a case's @doc built by concatenating literals is that case's description" in {
+        val encoded = Json.encode(Json.jsonSchema[JsonDocTest.Shape])
+        assert(encoded.contains("\"description\":\"an arc by its angle, in degrees\""), encoded)
+    }
+
     "a case with no @doc has no description" in {
         Json.jsonSchema[JsonDocTest.Shape] match
             case JsonSchema.OneOf(variants, _) =>
@@ -194,9 +199,10 @@ object JsonDocTest:
     case class Computed(@doc(computedDoc) x: Int)
 
     sealed trait Shape derives Schema
-    @doc("a circle by its radius") case class Circle(r: Int) extends Shape
-    @doc("the unit square") case object Square               extends Shape
-    case class Line(length: Int)                             extends Shape
+    @doc("a circle by its radius") case class Circle(r: Int)                extends Shape
+    @doc("the unit square") case object Square                              extends Shape
+    case class Line(length: Int)                                            extends Shape
+    @doc("an arc by its angle, " + "in degrees") case class Arc(angle: Int) extends Shape
 
     case class Drawing(shapes: Chunk[Shape]) derives Schema
 end JsonDocTest

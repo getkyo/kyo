@@ -647,6 +647,10 @@ import scala.util.control.NonFatal
             case Apply(Select(qual, _), args)
                 if t.tpe.widen.typeSymbol.flags.is(Flags.Case) && isConstantTerm(qual) && args.forall(isConstantTerm) =>
                 true
+            // A concatenation of constant strings, as a long `@doc("a " + "b")` is written: `+` is a method, so the general Apply
+            // case below rejects it through its function and the annotation would be dropped.
+            case Apply(Select(lhs, "+"), List(rhs)) if lhs.tpe.widen <:< TypeRepr.of[String] =>
+                isConstantTerm(lhs) && isConstantTerm(rhs)
             case Apply(fn, args)          => isConstantTerm(fn) && args.forall(isConstantTerm)
             case TypeApply(fn, _)         => isConstantTerm(fn)
             case Select(New(_), "<init>") => true
