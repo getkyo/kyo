@@ -374,7 +374,12 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         // After `Done`, which ends needsInterrupt: the thread interrupt sent for the body must not reach the releases below.
         if interruption.isDefined then Scheduler.get.notifyInterruptReleased(this)
         if !isNull(remainder) then
-            Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
+            // The releases are told the interrupt that ended the fiber, so a finalizer can tell it from a remainder
+            // dropped by a handler, which the bracket reports as a discard.
+            val ended = interruption match
+                case Present(Result.Panic(ex)) => ex
+                case _                         => new KyoException("fiber abandoned")(using Frame.internal)
+            Eval.release(remainder, ended, Tag[Async.Join]) {
                 // Invoking the input registers the link, and returns the promise this task's wakeup was registered on.
                 [C] => input => discard(input(this).remove(this))
             }

@@ -605,6 +605,40 @@ class SyncTest extends kyo.test.Test[Any]:
             }.andThen(assert(true))
         }
 
+        "the finalizer of an interrupted fiber is told the interrupt, and one of a remainder a handler drops the discard" in {
+            for
+                told    <- AtomicRef.init[Maybe[Maybe[Result.Error[Any]]]](Absent)
+                p       <- Promise.init[Int, Any]
+                fiber   <- Fiber.initUnscoped(Sync.ensure(outcome => told.set(Present(outcome)))(p.get))
+                _       <- fiber.interrupt
+                _       <- fiber.getResult
+                _       <- assertEventually(told.get.map(_.isDefined))
+                onFiber <- told.get
+                dropped <- AtomicRef.init[Maybe[Maybe[Result.Error[Any]]]](Absent)
+                first   <- Stream[Int, Sync] {
+                    Sync.ensure(outcome => dropped.set(Present(outcome)))(Emit.value(Chunk(1)).andThen(Emit.value(Chunk(2))))
+                }.take(1).run
+                onDrop <- dropped.get
+            yield
+                assert(first == Chunk(1))
+                assert(
+                    onFiber.flatten.exists {
+                        case Panic(_: Interrupted) => true
+                        case _                     => false
+                    },
+                    s"the interrupted fiber's finalizer was told $onFiber"
+                )
+                assert(
+                    onDrop.flatten.exists {
+                        case Panic(_: Interrupted)  => false
+                        case Panic(_: KyoException) => true
+                        case _                      => false
+                    },
+                    s"the dropped remainder's finalizer was told $onDrop"
+                )
+            end for
+        }
+
         // The finalizer runs as the region ends, and the step that raises the recorded abort applies as the value
         // arrives, so a stop delivered while the finalizer runs, here requested by the finalizer itself, cannot
         // separate the region's clean end from the caller's `ensureMap`.
