@@ -114,6 +114,7 @@ object TeamsLocal:
             case ("DELETE", Chunk("v3", "conversations", _, "activities", _))                           => "delete"
             case ("GET", Chunk("v3", "conversations", _, "pagedmembers"))                               => "members"
             case ("GET", Chunk("v3", "conversations", _, "members", _))                                 => "member"
+            case ("GET", Chunk("v3", "attachments", _, "views", _))                                     => "download"
             case _                                                                                      => "custom"
         end match
     end label

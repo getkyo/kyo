@@ -233,6 +233,13 @@ object Teams:
                 .map(answer => decoded[Out](route, if answer.trim.isEmpty then "null" else answer))
         }
 
+    /** The bytes of a file the Bot Connector holds, at the URL an attachment's `contentUrl` names, such as an image a person pasted into
+      * a message, read with the bot's token. The URL's origin must be one `TeamsConfig.serviceHosts` lists, as every call's is, and the
+      * file is a response body, so `TeamsConfig.maxResponseLength` bounds it.
+      */
+    def download(url: HttpUrl)(using Frame): Span[Byte] < (Async & Abort[TeamsDownloadFailure] & Env[Teams]) =
+        Env.use[Teams](Connector.download[TeamsDownloadFailure](_, Routes.Download, url))
+
     /** The HTTP methods `custom` sends. */
     enum Method derives CanEqual:
         case Get, Post, Put, Patch, Delete
@@ -345,6 +352,7 @@ object Teams:
         inline val CreateConversation = "POST /v3/conversations"
         inline val Members            = "GET /v3/conversations/{conversationId}/pagedmembers"
         inline val Member             = "GET /v3/conversations/{conversationId}/members/{memberId}"
+        inline val Download           = "GET /v3/attachments/{attachmentId}/views/{viewId}"
     end Routes
 
     // Teams assigns every id, so an id is refused only when it is empty or longer than any Teams issues; its characters are kept, and a

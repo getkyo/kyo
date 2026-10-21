@@ -38,7 +38,7 @@ def readWorkloadToken: String < Async = "eyJhbGciOiJSUzI1NiJ9.e30.c2ln"
 
 A Teams bot has two halves, and kyo-teams gives each one a single entry point. Inbound, the Bot Connector posts Activities (a message, an edit, a reaction, a member joining, a card button press) to a webhook on the bot's own kyo-http server. `Teams.Webhook.handler` mounts that route. Before your code runs, it verifies the caller's signed token against Microsoft's published keys and checks that the token was issued for the channel and service URL the body names. It then decodes the body into a `Teams.Activity` and passes it to your function. Verification cannot be turned off. The Activity's type parameter is the answer the bot owes, so if you forget to answer a card action, or return an answer for an Activity that takes none, the code does not compile.
 
-Outbound, the bot talks to Teams through verbs on the `Teams` companion: `send`, `reply`, `edit`, `delete`, `typing`, `createConversation`, `members`, plus `custom` for any route the module does not model. Each verb runs inside a region opened by `Teams.run(config)`, and the webhook is served inside one too, so both halves share one client and its cached token. The module gets the bot's access token, caches it, and attaches it to the request. It sends that token only to a service host on the config's allowlist.
+Outbound, the bot talks to Teams through verbs on the `Teams` companion: `send`, `reply`, `edit`, `delete`, `typing`, `createConversation`, `members`, `download` for a file the Bot Connector holds, plus `custom` for any route the module does not model. Each verb runs inside a region opened by `Teams.run(config)`, and the webhook is served inside one too, so both halves share one client and its cached token. The module gets the bot's access token, caches it, and attaches it to the request. It sends that token only to a service host on the config's allowlist.
 
 What joins the two halves is the `Teams.ConversationReference`. Every Activity you receive carries one (`activity.reference`), and so does every conversation you create. Its JSON is the Bot Framework's own `ConversationReference`, so you can store it and send to that conversation later, after a restart. That is how proactive messages work.
 
@@ -242,6 +242,13 @@ Once the resolution card has replaced it, the status message adds nothing, so th
 ```scala
 def clearStatus(incident: Incident, status: Teams.ActivityId): Unit < (Async & Abort[TeamsDeleteFailure] & Env[Teams]) =
     Teams.delete(incident.reference, status).unit
+```
+
+An image a person pastes into a message arrives as an attachment whose `contentUrl` is under the service URL, and only the bot's token reads it. `Teams.download(url)` reads its bytes with that token, under the same allowlist as every verb, so a URL on another host is refused before the token is attached. The bytes are a response body, so `TeamsConfig.maxResponseLength` bounds them. The incident bot reads a screenshot pasted into the incident thread:
+
+```scala
+def screenshot(image: HttpUrl): Span[Byte] < (Async & Abort[TeamsDownloadFailure] & Env[Teams]) =
+    Teams.download(image)
 ```
 
 ## Adaptive Cards and invokes

@@ -113,6 +113,9 @@ sealed trait TeamsMemberFailure extends TeamsException
 /** What `Teams.custom` can fail with: only the answers that mean the same on every route. */
 sealed trait TeamsCustomFailure extends TeamsException
 
+/** What `Teams.download` can fail with: the answers that mean the same on every route. */
+sealed trait TeamsDownloadFailure extends TeamsException
+
 /** What `Teams.Webhook.verify` can fail with: the request's token, the signing keys it is checked against, and the two fields of the
   * body the token binds.
   */
@@ -143,7 +146,7 @@ final case class TeamsTransportException(
     )
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
     with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
-    with TeamsWebhookVerifyFailure:
+    with TeamsDownloadFailure with TeamsWebhookVerifyFailure:
     // Not passed to `KyoException`'s constructor: it would embed the cause's message, formatted per environment, into this leaf's
     // `getMessage`, which states only what failed. `null` is `Throwable.getCause`'s contract for "no cause".
     override def getCause(): Throwable = cause.fold(null)(identity)
@@ -203,7 +206,7 @@ final case class TeamsRefusedUrlException(method: String)(using Frame)
     extends TeamsException(s"Teams $method refused to send to a URL outside the ones the module sends to.")
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
     with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
-    with TeamsWebhookVerifyFailure
+    with TeamsDownloadFailure with TeamsWebhookVerifyFailure
 
 /** A non-2xx answer whose body is none of the error bodies Microsoft documents for the request, such as an HTML page from a proxy.
   * No body text is kept.
@@ -212,7 +215,7 @@ final case class TeamsUnexpectedStatusException(method: String, status: HttpStat
     extends TeamsException(s"Teams $method answered HTTP ${status.code} without an error body the module reads.")
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
     with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
-    with TeamsWebhookVerifyFailure
+    with TeamsDownloadFailure with TeamsWebhookVerifyFailure
 
 /** An answer did not decode. `part` says which document failed, `failure` which of kyo-schema's decode failures it was, `path` where
   * in the value it happened, and `position` the offset in the body when kyo-schema gave one.
@@ -234,7 +237,7 @@ final case class TeamsDecodeException(
     )
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
     with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
-    with TeamsWebhookVerifyFailure
+    with TeamsDownloadFailure with TeamsWebhookVerifyFailure
 
 object TeamsDecodeException:
 
@@ -325,6 +328,7 @@ final case class TeamsRateLimitException(method: String, retryAfter: Maybe[Durat
     )
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
     with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
+    with TeamsDownloadFailure
 
 /** The identity platform refused the token request with its error object: `code` is its `error`, `errorCodes` its `error_codes`, and
   * `traceId` and `correlationId` the identifiers Microsoft support asks for. Its `error_description` is not kept, since it quotes the
@@ -342,6 +346,7 @@ final case class TeamsTokenRejectedException(
     )
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
     with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
+    with TeamsDownloadFailure
 
 object TeamsTokenRejectedException:
     /** The `error` of RFC 6749 section 5.2, or another code the identity platform sent. */
@@ -377,7 +382,8 @@ final case class TeamsCredentialException(cause: String | Throwable)(using Frame
                 case s: String    => TeamsException.bounded(s, 200)) + "."
     )
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
-    with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure:
+    with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
+    with TeamsDownloadFailure:
     // Not passed to `KyoException`'s constructor: it would embed the cause's message into this leaf's `getMessage`, which keeps no
     // unbounded caller text. `null` is `Throwable.getCause`'s contract for "no cause".
     override def getCause(): Throwable =
@@ -393,6 +399,7 @@ final case class TeamsUnsupportedTokenTypeException(tokenType: String)(using Fra
     extends TeamsException(s"The token endpoint issued a $tokenType token, not a bearer token.")
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
     with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
+    with TeamsDownloadFailure
 
 /** The Bot Connector answered a 4xx or 5xx with an `ErrorResponse` body. A leaf exists for each `(status, code)` Microsoft gives its
   * own remedy, on the operations that can receive it; any other answer is a [[kyo.TeamsOtherApiException]]. A named leaf stands for
@@ -426,7 +433,8 @@ end TeamsBadArgumentException
 final case class TeamsBotNotRegisteredException(method: String, description: String, operationId: Maybe[String])(using Frame)
     extends TeamsApiException(TeamsApiException.describe(method, 401, "BotNotRegistered", description))
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
-    with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure:
+    with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
+    with TeamsDownloadFailure:
     def status: HttpStatus = HttpStatus(401)
     def code: String       = "BotNotRegistered"
 end TeamsBotNotRegisteredException
@@ -469,7 +477,8 @@ end TeamsNotInstalledException
 final case class TeamsInvalidBotApiHostException(method: String, description: String, operationId: Maybe[String])(using Frame)
     extends TeamsApiException(TeamsApiException.describe(method, 403, "InvalidBotApiHost", description))
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
-    with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure:
+    with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
+    with TeamsDownloadFailure:
     def status: HttpStatus = HttpStatus(403)
     def code: String       = "InvalidBotApiHost"
 end TeamsInvalidBotApiHostException
@@ -478,7 +487,8 @@ end TeamsInvalidBotApiHostException
 final case class TeamsNotEnoughPermissionsException(method: String, description: String, operationId: Maybe[String])(using Frame)
     extends TeamsApiException(TeamsApiException.describe(method, 403, "NotEnoughPermissions", description))
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
-    with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure:
+    with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
+    with TeamsDownloadFailure:
     def status: HttpStatus = HttpStatus(403)
     def code: String       = "NotEnoughPermissions"
 end TeamsNotEnoughPermissionsException
@@ -530,6 +540,7 @@ final case class TeamsOtherApiException(method: String, status: HttpStatus, code
 ) extends TeamsApiException(TeamsApiException.describe(method, status.code, code, description))
     with TeamsSendFailure with TeamsReplyFailure with TeamsEditFailure with TeamsDeleteFailure with TeamsTypingFailure
     with TeamsCreateConversationFailure with TeamsMembersFailure with TeamsMemberFailure with TeamsCustomFailure
+    with TeamsDownloadFailure
 
 /** An inbound request whose `Authorization` token does not verify against the Bot Framework's OpenID signing keys, one leaf per
   * reason, in the order the checks run. The webhook answers each with 401, and [[kyo.TeamsMissingEndorsementException]] with 403.

@@ -1,6 +1,7 @@
 package kyo.internal.teams
 
 import kyo.*
+import kyo.charset.Charset
 import scala.reflect.TypeTest
 
 /** The one request path of the Bot Connector, on the config, HTTP client and token cache of a `Teams`.
@@ -30,32 +31,50 @@ private[kyo] object Connector:
         query: HttpQueryParams = HttpQueryParams.empty,
         body: Maybe[String] = Absent
     )(using Frame, TypeTest[TeamsException, F]): String < (Async & Abort[F]) =
+        val url = ServiceUrls.join(serviceUrl.url, segments)
+        authorized[F, String](teams, route, url, identity)(headers =>
+            send(method, url, headers.add("Content-Type", "application/json"), query, body)
+        )
+    end call
+
+    /** GETs `url`, under a service URL, and answers the 2xx body's bytes. `route` names the call in every failure. */
+    def download[F >: Common](teams: Teams, route: String, url: HttpUrl)(using
+        Frame,
+        TypeTest[TeamsException, F]
+    ): Span[Byte] < (Async & Abort[F]) =
+        authorized[F, Span[Byte]](teams, route, url, Charset.Utf8.decode)(headers =>
+            HttpClient.getBinaryResponse(url, headers, failOnError = false)
+        )
+
+    // `request` with the token in `Authorization`, once `url` is checked against `TeamsConfig.serviceHosts`, retried as Microsoft says;
+    // `text` reads an error answer's body.
+    private def authorized[F >: Common, B](teams: Teams, route: String, url: HttpUrl, text: B => String)(
+        request: HttpHeaders => HttpResponse["body" ~ B] < (Async & Abort[HttpException])
+    )(using Frame, TypeTest[TeamsException, F]): B < (Async & Abort[F]) =
         val config = teams.config
-        if !ServiceUrls.allowed(config.serviceHosts, serviceUrl.url) then Abort.fail(TeamsRefusedUrlException(route))
+        if !ServiceUrls.allowed(config.serviceHosts, url) then Abort.fail(TeamsRefusedUrlException(route))
         else
-            val url                                                             = ServiceUrls.join(serviceUrl.url, segments)
-            def attempt(schedule: Maybe[Schedule]): String < (Async & Abort[F]) =
+            def attempt(schedule: Maybe[Schedule]): B < (Async & Abort[F]) =
                 teams.tokens.get.map { token =>
-                    val headers = HttpHeaders.empty.add("Authorization", s"Bearer ${token.value}").add("Content-Type", "application/json")
-                    transport(config, teams.http, route, url, config.requestTimeout)(send(method, url, headers, query, body)).map {
-                        response =>
-                            val status     = response.status
-                            val retryAfter = response.headers.get("Retry-After").flatMap(parseRetryAfter)
-                            if status.isSuccess then response.fields.body
-                            else
-                                retry(schedule, config.retryMaxDelay, status, retryAfter).map {
-                                    case Present(next) => attempt(Present(next))
-                                    case Absent        =>
-                                        val operationId =
-                                            response.headers.get("X-Correlating-OperationId").map(TeamsException.bounded(_, 128))
-                                        Abort.fail(failure[F](teams, token, route, status, retryAfter, operationId, response.fields.body))
-                                }
-                            end if
+                    val headers = HttpHeaders.empty.add("Authorization", s"Bearer ${token.value}")
+                    transport(config, teams.http, route, url, config.requestTimeout)(request(headers)).map { response =>
+                        val status     = response.status
+                        val retryAfter = response.headers.get("Retry-After").flatMap(parseRetryAfter)
+                        if status.isSuccess then response.fields.body
+                        else
+                            retry(schedule, config.retryMaxDelay, status, retryAfter).map {
+                                case Present(next) => attempt(Present(next))
+                                case Absent        =>
+                                    val operationId =
+                                        response.headers.get("X-Correlating-OperationId").map(TeamsException.bounded(_, 128))
+                                    Abort.fail(failure[F](teams, token, route, status, retryAfter, operationId, text(response.fields.body)))
+                            }
+                        end if
                     }
                 }
             attempt(config.retry)
         end if
-    end call
+    end authorized
 
     /** Waits before the next attempt and answers its schedule, when `status` is one Microsoft says to retry, `schedule` has a step left,
       * and the answer asks for no wait beyond `maxDelay`. The wait is the schedule's delay or `Retry-After`, whichever is longer, and at

@@ -227,18 +227,56 @@ class TeamsTest extends kyo.test.Test[Any]:
             val otherPort =
                 local.reference.copy(serviceUrl = Teams.ServiceUrl.init(local.base.copy(port = 1, path = "/amer/").full).getOrThrow)
             local.api(
-                Abort.run[TeamsSendFailure](Teams.send(elsewhere, hello)).map(a =>
-                    Abort.run[TeamsCustomFailure](Teams.custom[Unit, Unit](
+                for
+                    send   <- Abort.run[TeamsSendFailure](Teams.send(elsewhere, hello))
+                    custom <- Abort.run[TeamsCustomFailure](Teams.custom[Unit, Unit](
                         otherPort.serviceUrl,
                         Teams.Method.Get,
                         Teams.Path.init("v3").getOrThrow
-                    )).map(a -> _)
-                )
-            ).map { (send, custom) =>
+                    ))
+                    download <-
+                        Abort.run[TeamsDownloadFailure](Teams.download(local.base.copy(
+                            port = 1,
+                            path = "/amer/v3/attachments/a/views/original"
+                        )))
+                yield (send, custom, download)
+            ).map { (send, custom, download) =>
                 local.seen.map { seen =>
                     assert(send == Result.fail(TeamsRefusedUrlException(Teams.Routes.Send)))
                     assert(custom == Result.fail(TeamsRefusedUrlException("GET custom")))
+                    assert(download.failure == Present(TeamsRefusedUrlException(Teams.Routes.Download)))
                     assert(seen == Chunk.empty)
+                }
+            }
+        }
+    }
+
+    "download reads the bytes at a URL under a service host, with the bearer token" in {
+        withLocal { local =>
+            local.reply("download", json("image bytes")).andThen {
+                local.api(Teams.download(local.base.copy(path = "/amer/v3/attachments/0-a1/views/original"))).map { bytes =>
+                    local.seen("download").map { seen =>
+                        assert(kyo.charset.Charset.Utf8.decode(bytes) == "image bytes")
+                        assert(seen.map(s => (s.method, s.path, s.authorization)) == Chunk(
+                            ("GET", "/amer/v3/attachments/0-a1/views/original", Present(s"Bearer $tokenText"))
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+    "a download's error answer is read from its bytes: an ErrorResponse is its leaf, any other body an unexpected status" in {
+        withLocal { local =>
+            val url = local.base.copy(path = "/amer/v3/attachments/0-a1/views/original")
+            local.reply("download", error(401, "BotNotRegistered", "d"), Reply(HttpStatus(404), "<html>Not Found</html>")).andThen {
+                local.api(
+                    Abort.run[TeamsDownloadFailure](Teams.download(url)).map(first =>
+                        Abort.run[TeamsDownloadFailure](Teams.download(url)).map(first -> _)
+                    )
+                ).map { (registered, missing) =>
+                    assert(registered.failure == Present(TeamsBotNotRegisteredException(Teams.Routes.Download, "d", Absent)))
+                    assert(missing.failure == Present(TeamsUnexpectedStatusException(Teams.Routes.Download, HttpStatus(404))))
                 }
             }
         }
