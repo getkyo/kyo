@@ -466,6 +466,14 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                                     isSubType(aOwner, bOwner, aElemId, bElemId)
                                 }
                             }
+                        // An intersection reaches a union through one of its members as a whole, `A & B <: (A & B) | C`, or through one
+                        // of its own members alone.
+                        case UnionEntry(bSet) =>
+                            bSet.exists { bElemId =>
+                                isSubType(aOwner, bOwner, aId, bElemId)
+                            } || aSet.exists { aElemId =>
+                                isSubType(aOwner, bOwner, aElemId, bId)
+                            }
                         case _ =>
                             aSet.exists { aElemId =>
                                 isSubType(aOwner, bOwner, aElemId, bId)
@@ -697,6 +705,34 @@ object Tag extends kyo.internal.TagPlatformSpecific:
           * as `String` does through `Comparable[String]`, still does.
           */
         private def normalized(entries: Map[Entry.Id, Entry]): Map[Entry.Id, Entry] =
+            val reduced = reduce(entries)
+            distributed(reduced).fold(reduced)(normalized)
+
+        // An intersection with a union among its members, written as the compiler writes it: a union of intersections, one per choice
+        // of a member from each union crossed with the other members, `(A | B) & C` as `(A & C) | (B & C)`. Absent when no
+        // intersection holds a union.
+        private def distributed(entries: Map[Entry.Id, Entry]): Maybe[Map[Entry.Id, Entry]] =
+            val holding = entries.collect {
+                case (id, IntersectionEntry(set)) if set.toArray.exists(member => entries(member).isInstanceOf[UnionEntry]) => (id, set)
+            }
+            if holding.isEmpty then Absent
+            else
+                Present(holding.foldLeft(entries) { case (acc, (id, set)) =>
+                    val choices = Chunk.from(set.toArray).map(member =>
+                        acc(member) match
+                            case UnionEntry(inner) => Chunk.from(inner.toArray)
+                            case _                 => Chunk(member)
+                    )
+                    val crossed = choices.foldLeft(Chunk(Chunk.empty[Entry.Id]))((prefixes, options) =>
+                        prefixes.flatMap(prefix => options.map(prefix.append))
+                    )
+                    val parts = crossed.zipWithIndex.map((members, i) => s"$id.$i" -> IntersectionEntry(Span.from(members)))
+                    acc ++ parts + (id -> UnionEntry(Span.from(parts.map(_._1))))
+                })
+            end if
+        end distributed
+
+        private def reduce(entries: Map[Entry.Id, Entry]): Map[Entry.Id, Entry] =
             val tpe                                                           = Type(entries)
             def spliced(set: Span[Entry.Id], union: Boolean): Chunk[Entry.Id] =
                 Chunk.from(set.toArray).flatMap(member =>
@@ -728,7 +764,7 @@ object Tag extends kyo.internal.TagPlatformSpecific:
                     case _ => id -> renamed(entry, resolved)
             }
             written(rewritten, resolved("0"))
-        end normalized
+        end reduce
 
         // `entries` written so that every encoding of one type is the same: entries that stand for one type merged, by the coarsest
         // grouping by kind that what each one names respects, so a type naming itself through a parent merges too; the members of each

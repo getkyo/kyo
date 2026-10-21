@@ -403,6 +403,14 @@ class TagTest extends kyo.test.Test[Any]:
             assert(collapsed.map((built, compiled) => (built.equals(compiled), built.hash == compiled.hash)) ==
                 collapsed.map(_ => (true, true)))
         }
+        "an intersection is a subtype of a union holding it, and of the same type built at another site" in {
+            assert(Tag[Message & Fact[String]] <:< Tag[(Message & Fact[String]) | Note])
+            val built    = intersection[Message | Fact[Nothing] | Relation[Nothing], Fact[String]]
+            val compiled = Tag[(Message | Fact[Nothing] | Relation[Nothing]) & Fact[String]]
+            assert(built <:< compiled)
+            assert(compiled <:< built)
+            assert(built =:= compiled)
+        }
         "stays apart from a different type" in {
             assert(!(union[Note, Message] =:= Tag[Message | Other]))
             assert(!(layer[Message, String, Int] =:= Tag[Message | Fact[Int] | Relation[Int]]))
