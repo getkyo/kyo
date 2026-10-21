@@ -92,6 +92,9 @@ object MediaType:
     /** `application/toml`. */
     val ApplicationToml: MediaType = new MediaType("application", "toml", Chunk.empty)
 
+    /** `application/octet-stream`, bytes of no known type (RFC 2046 section 4.5.1). */
+    val ApplicationOctetStream: MediaType = new MediaType("application", "octet-stream", Chunk.empty)
+
     /** A media type from its parts, or the violation: a part that is not a token, or a name given twice. */
     def init(mainType: String, subType: String, parameters: (String, String)*)(using
         Frame

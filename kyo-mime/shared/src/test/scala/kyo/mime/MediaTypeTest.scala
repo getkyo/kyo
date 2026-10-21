@@ -185,6 +185,10 @@ class MediaTypeTest extends kyo.test.Test[Any]:
             assert(texts.map(MediaType.parse(_)) == constants.map(Result.succeed(_)))
             assert(constants.map(_.render) == texts.map(Result.succeed(_)))
         }
+        "the octet-stream constant is the type its text reads as" in {
+            assert(MediaType.parse("application/octet-stream") == Result.succeed(MediaType.ApplicationOctetStream))
+            assert(MediaType.ApplicationOctetStream.render == Result.succeed("application/octet-stream"))
+        }
         "checks tokens and duplicate names, and lowercases the type, subtype and names" in {
             assert(MediaType.init("Text", "Plain", "Charset" -> "UTF-8").map(_.render) ==
                 Result.succeed(Result.succeed("text/plain; charset=UTF-8")))
