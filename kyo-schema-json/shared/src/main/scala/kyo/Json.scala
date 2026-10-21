@@ -753,9 +753,11 @@ object Json:
                     val key = (applied(sum), tag)
                     if seen.contains(key) then Obj(List.empty, List.empty)
                     else
-                        val newSeen     = seen + key
+                        val newSeen = seen + key
+                        // A case's @doc reaches the structure only as an annotation of its variant, which the field docs do not carry.
                         val variantList = variants.toList.map { v =>
-                            (v.name, fromStructure(v.variantType, newSeen))
+                            val doc = Maybe.fromOption(v.annotations.collectFirst { case d: kyo.schema.doc => d.text })
+                            (v.name, withDescription(fromStructure(v.variantType, newSeen), doc))
                         }
                         OneOf(variantList)
                     end if

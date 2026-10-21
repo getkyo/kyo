@@ -142,6 +142,26 @@ class JsonDocTest extends kyo.test.Test[Any]:
         assert(Json.decode[JsonSchema](Json.encode(nullable)).getOrThrow == nullable)
     }
 
+    "a @doc on a case of a sum is the description of that case's schema, wherever the sum sits" in {
+        val alone  = Json.encode(Json.jsonSchema[JsonDocTest.Shape])
+        val nested = Json.encode(Json.jsonSchema[JsonDocTest.Drawing])
+        assert(alone.contains("\"description\":\"a circle by its radius\""), alone)
+        assert(alone.contains("\"description\":\"the unit square\""), alone)
+        assert(nested.contains("\"description\":\"a circle by its radius\""), nested)
+        assert(nested.contains("\"description\":\"the unit square\""), nested)
+    }
+
+    "a case with no @doc has no description" in {
+        Json.jsonSchema[JsonDocTest.Shape] match
+            case JsonSchema.OneOf(variants, _) =>
+                assert(variants.toMap.get("Line").exists {
+                    case o: JsonSchema.Obj => o.description.isEmpty
+                    case _                 => false
+                })
+            case other => fail(s"expected OneOf schema, got $other")
+        end match
+    }
+
     case class Constant(@doc(JsonDocTest.constantDoc) x: Int) derives Schema
 
     "a @doc naming a constant final val is the field's description" in {
@@ -172,4 +192,11 @@ object JsonDocTest:
     def computedDoc: String = "computed at run time"
 
     case class Computed(@doc(computedDoc) x: Int)
+
+    sealed trait Shape derives Schema
+    @doc("a circle by its radius") case class Circle(r: Int) extends Shape
+    @doc("the unit square") case object Square               extends Shape
+    case class Line(length: Int)                             extends Shape
+
+    case class Drawing(shapes: Chunk[Shape]) derives Schema
 end JsonDocTest
