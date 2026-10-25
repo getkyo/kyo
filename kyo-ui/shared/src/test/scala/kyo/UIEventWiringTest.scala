@@ -1413,4 +1413,62 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             assert(evt == Present("foo"))
     }
 
+    /** Paints `ui`, applies `change` and waits for its repaint, then clicks each id at the path the client saw in the first
+      * paint, reading `count` after every click.
+      */
+    private def clicksAfterRepaint(ui: UI, change: Unit < Async, count: Int < Sync, ids: String*)(using
+        Frame
+    ): Chunk[Int] < (Async & Abort[Closed]) =
+        Scope.run {
+            for
+                html    <- HtmlRenderer.render(ui, Seq.empty)
+                painted <- Channel.init[Unit](8)
+                exchange = new UIExchange:
+                    def onChange(
+                        region: ReactiveRegion,
+                        path: Seq[String],
+                        context: ReactiveRegion.RegionIdentity,
+                        parentContext: ReactiveRegion.ParentContext,
+                        previous: Maybe[UI],
+                        changed: UI
+                    )(using Frame): Unit < Async = Abort.run[Closed](painted.put(())).unit
+                root   <- ReactiveUI.normalize(ui, Seq.empty)
+                sub    <- ReactiveUI.subscribe(root, exchange)
+                _      <- change
+                _      <- painted.take
+                counts <- Kyo.foreach(Chunk.from(ids)) { id =>
+                    val tag  = ("""<[^>]*\bid="""" + id + """"[^>]*>""").r.findFirstIn(html).get
+                    val path = """data-kyo-path="([^"]*)"""".r.findFirstMatchIn(tag).get.group(1).split('.').toSeq
+                    sub.handle(path, UIEvent.Click(path, MouseEventData(UI.Modifiers.none, Absent))).andThen(count)
+                }
+            yield counts
+        }
+
+    "a click on an element that has left the page reaches nothing, while one on an element without handlers still bubbles" in {
+        for
+            open    <- Signal.initRef(true)
+            toggles <- AtomicInt.init(0)
+            picks   <- AtomicInt.init(0)
+            ui = open.render { o =>
+                val field = div.onClick(toggles.incrementAndGet.unit)
+                if o then field(span("label").id("label"), button("pick").id("opt").onClick(picks.incrementAndGet.unit))
+                else field(span("label").id("label"))
+            }
+            counts <- clicksAfterRepaint(ui, open.set(false), toggles.get, "opt", "label")
+            p      <- picks.get
+        yield assert(
+            (counts, p) == (Chunk(0, 1), 0),
+            s"(toggles after a click on the closed option and then on the label, picks): ${(counts, p)}"
+        )
+    }
+
+    "a click on a foreach item that has left the page reaches nothing, while one on a remaining item still bubbles" in {
+        for
+            items   <- Signal.initRef(Chunk("a", "b"))
+            toggles <- AtomicInt.init(0)
+            ui = div.onClick(toggles.incrementAndGet.unit)(items.foreachKeyed(identity)(v => span(v).id(s"item-$v")))
+            counts <- clicksAfterRepaint(ui, items.set(Chunk("a")), toggles.get, "item-b", "item-a")
+        yield assert(counts == Chunk(0, 1), s"toggles after a click on the removed item and then on the remaining one: $counts")
+    }
+
 end UIEventWiringTest

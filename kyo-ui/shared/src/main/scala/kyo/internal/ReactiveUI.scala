@@ -261,7 +261,7 @@ private[kyo] object ReactiveUI:
                             val segment = targetPath(basePath.size)
                             val idx     = Maybe.fromOption(keyMap.get(segment)).orElse(Maybe.fromOption(segment.toIntOption))
                             idx.flatMap(i => Maybe.fromOption(allHandles.lift(i)).map(_._2))
-                                .fold(true: Boolean < Async)(h => h(targetPath, event))
+                                .fold(false: Boolean < Async)(h => h(targetPath, event))
                         else true
                     (allKids, handle)
 
@@ -324,7 +324,7 @@ private[kyo] object ReactiveUI:
                         safeDispatch(child.handle, targetPath, event).map(keep => if keep then bubble else false)
                     case Absent =>
                         Maybe.fromOption(childIdx).flatMap(i => Maybe.fromOption(staticHandlers.find(_._1 == i)).map(_._2))
-                            .fold(bubble)(childHandle =>
+                            .fold(Kyo.lift(false))(childHandle =>
                                 safeDispatch(childHandle, targetPath, event).map(keep => if keep then bubble else false)
                             )
             yield result
