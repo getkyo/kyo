@@ -142,7 +142,16 @@ private[kyo] object NodeError:
         Frame
     ): FileStructureException =
         if atomicity == Path.Atomicity.Required && codeOf(e) == "EXDEV" then FileAtomicMoveUnsupportedException(source, target)
-        else translateFs(source, FileSystemOperation.Move, e)
+        else translatePlacement(source, target, FileSystemOperation.Move, e)
+
+    /** Translates a move or copy failure, naming the target when the target is what refused it. */
+    def translatePlacement(source: Path, target: Path, operation: FileSystemOperation, e: js.JavaScriptException)(using
+        Frame
+    ): FileStructureException =
+        codeOf(e) match
+            case "EEXIST"    => FileAlreadyExistsException(target)
+            case "ENOTEMPTY" => FileDirectoryNotEmptyException(target)
+            case _           => translateFs(source, operation, e)
 
     def translateWrite(path: Path, e: js.JavaScriptException)(using Frame): FileWriteException =
         codeOf(e) match
@@ -750,63 +759,90 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
                     js.Dynamic.literal(code = "EEXIST", message = s"File already exists: $toStr")
                 )
             end if
+            refuseNonEmptyDirectory(toStr)
+            // A rename cannot put a file over a directory, so the empty one goes first, as the JVM host does. Not under
+            // required atomicity, where removing it first would split the replacement in two.
+            if options.replace == Path.Replace.Existing && options.atomicity != Path.Atomicity.Required &&
+                !NodeFs.lstatSync(pathStr).isDirectory()
+            then removeEmptyDirectory(toStr)
             NodeFs.renameSync(pathStr, toStr)
             Result.succeed(())
         catch
             case e: js.JavaScriptException => Result.fail(NodeError.translateMove(safe, to, options.atomicity, e))
             case e: Throwable              => Result.panic(e)
 
+    /** Refuses to replace a directory that still has entries, as the JVM host does, rather than leaving the answer to a rename
+      * or copy whose error for it differs between operating systems.
+      */
+    private def removeEmptyDirectory(toStr: String): Unit =
+        if existsNoFollow(toStr) && NodeFs.lstatSync(toStr).isDirectory() then NodeFs.rmdirSync(toStr)
+
+    private def refuseNonEmptyDirectory(toStr: String): Unit =
+        if existsNoFollow(toStr) && NodeFs.lstatSync(toStr).isDirectory() && NodeFs.readdirSync(toStr).length > 0 then
+            throw js.JavaScriptException(js.Dynamic.literal(code = "ENOTEMPTY", message = s"Directory not empty: $toStr"))
+
     def copy(to: Path, options: Path.CopyOptions)(using
         AllowUnsafe,
         Frame
     ): Result[FileStructureException, Unit] =
-        catchFs(FileSystemOperation.Copy) {
-            val toStr = to.unsafe.show
-            if options.createFolders then ensureParentOf(toStr)
-            val targetExists = existsNoFollow(toStr)
-            if targetExists && options.replace == Path.Replace.Never then
-                throw js.JavaScriptException(js.Dynamic.literal(code = "EEXIST", message = s"File already exists: $toStr"))
-            val linkStat   = NodeFs.lstatSync(pathStr)
-            val sourceStat = if options.followLinks then NodeFs.statSync(pathStr) else linkStat
-            if linkStat.isSymbolicLink() && !options.followLinks then
-                if targetExists then
-                    val targetStat = NodeFs.lstatSync(toStr)
-                    if targetStat.isDirectory() then NodeFs.rmdirSync(toStr)
-                    else NodeFs.unlinkSync(toStr)
-                end if
-                NodeFs.symlinkSync(NodeFs.readlinkSync(pathStr), toStr)
-                if options.copyAttributes then
-                    val epochSec = linkStat.mtimeMs / 1000.0
-                    NodeFs.lutimesSync(toStr, epochSec, epochSec)
-            else if sourceStat.isDirectory() then
-                if !targetExists then NodeFs.mkdirSync(toStr, js.Dynamic.literal(recursive = false))
-                else if !NodeFs.lstatSync(toStr).isDirectory() then
-                    NodeFs.unlinkSync(toStr)
-                    NodeFs.mkdirSync(toStr, js.Dynamic.literal(recursive = false))
+        try
+            copyUnchecked(to, options)
+            Result.unit
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translatePlacement(safe, to, FileSystemOperation.Copy, e))
+            case e: Throwable              => Result.panic(e)
+
+    private def copyUnchecked(to: Path, options: Path.CopyOptions)(using AllowUnsafe, Frame): Unit =
+        val toStr = to.unsafe.show
+        if options.createFolders then ensureParentOf(toStr)
+        val targetExists = existsNoFollow(toStr)
+        if targetExists && options.replace == Path.Replace.Never then
+            throw js.JavaScriptException(js.Dynamic.literal(code = "EEXIST", message = s"File already exists: $toStr"))
+        refuseNonEmptyDirectory(toStr)
+        val linkStat   = NodeFs.lstatSync(pathStr)
+        val sourceStat = if options.followLinks then NodeFs.statSync(pathStr) else linkStat
+        if linkStat.isSymbolicLink() && !options.followLinks then
+            if targetExists then
+                val targetStat = NodeFs.lstatSync(toStr)
+                if targetStat.isDirectory() then NodeFs.rmdirSync(toStr)
+                else NodeFs.unlinkSync(toStr)
+            end if
+            NodeFs.symlinkSync(NodeFs.readlinkSync(pathStr), toStr)
+            if options.copyAttributes then
+                val epochSec = linkStat.mtimeMs / 1000.0
+                NodeFs.lutimesSync(toStr, epochSec, epochSec)
+        else if sourceStat.isDirectory() then
+            if !targetExists then NodeFs.mkdirSync(toStr, js.Dynamic.literal(recursive = false))
+            else if !NodeFs.lstatSync(toStr).isDirectory() then
+                NodeFs.unlinkSync(toStr)
+                NodeFs.mkdirSync(toStr, js.Dynamic.literal(recursive = false))
+        else
+            // A file is not copied over a directory, so an empty one goes first, as the JVM host does. A target that
+            // exists here is one the caller asked to replace, and refuseNonEmptyDirectory has refused a populated one.
+            removeEmptyDirectory(toStr)
+            NodeFs.copyFileSync(pathStr, toStr, 0)
+            // Windows copies file times along with the bytes (copyFileSync goes through CopyFileExW), so the
+            // target keeps the source's mtime even when the caller asked not to preserve attributes. POSIX gives
+            // the new file the current time. Stamp `now` so `copyAttributes = false` means the same thing on
+            // every host; the copyAttributes = true branch below overwrites this with the source's mtime.
+            if !options.copyAttributes then
+                val nowSec = js.Date.now() / 1000.0
+                NodeFs.utimesSync(toStr, nowSec, nowSec)
+        end if
+        if !(linkStat.isSymbolicLink() && !options.followLinks) then
+            if options.copyAttributes then
+                val epochSec = sourceStat.mtimeMs / 1000.0
+                NodeFs.utimesSync(toStr, epochSec, epochSec)
             else
-                NodeFs.copyFileSync(pathStr, toStr, 0)
-                // Windows copies file times along with the bytes (copyFileSync goes through CopyFileExW), so the
-                // target keeps the source's mtime even when the caller asked not to preserve attributes. POSIX gives
-                // the new file the current time. Stamp `now` so `copyAttributes = false` means the same thing on
-                // every host; the copyAttributes = true branch below overwrites this with the source's mtime.
-                if !options.copyAttributes then
-                    val nowSec = js.Date.now() / 1000.0
-                    NodeFs.utimesSync(toStr, nowSec, nowSec)
+                // Node's copyFileSync inherits Win32 CopyFileEx timestamp preservation on Windows, so a
+                // copyAttributes=false copy keeps the source mtime there; POSIX copyFileSync already gives the
+                // destination a fresh mtime. Reset to the current time so the destination matches the
+                // JVM/Native contract (Files.copy without COPY_ATTRIBUTES) on every platform.
+                val nowSec = js.Date.now() / 1000.0
+                NodeFs.utimesSync(toStr, nowSec, nowSec)
             end if
-            if !(linkStat.isSymbolicLink() && !options.followLinks) then
-                if options.copyAttributes then
-                    val epochSec = sourceStat.mtimeMs / 1000.0
-                    NodeFs.utimesSync(toStr, epochSec, epochSec)
-                else
-                    // Node's copyFileSync inherits Win32 CopyFileEx timestamp preservation on Windows, so a
-                    // copyAttributes=false copy keeps the source mtime there; POSIX copyFileSync already gives the
-                    // destination a fresh mtime. Reset to the current time so the destination matches the
-                    // JVM/Native contract (Files.copy without COPY_ATTRIBUTES) on every platform.
-                    val nowSec = js.Date.now() / 1000.0
-                    NodeFs.utimesSync(toStr, nowSec, nowSec)
-                end if
-            end if
-        }
+        end if
+    end copyUnchecked
 
     def remove()(using AllowUnsafe, Frame): Result[FileStructureException, Boolean] =
         try

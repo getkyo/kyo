@@ -32,6 +32,144 @@ trait FileSystemWriteTest[S >: Async] extends kyo.test.Test[Any]:
             }
         }
 
+        "write suite refuses to create an entry beneath a regular file and keeps the file" in {
+            withFileSystem { (fileSystem, root) =>
+                val file = root / "file.txt"
+                fileSystem.write(file, "value", Path.WriteOptions()).andThen {
+                    Abort.run[FileWriteException](fileSystem.write(file / "child.txt", "child", Path.WriteOptions())).map { result =>
+                        // The host reports this as an I/O failure naming the entry, since the precise type is not in a write's row.
+                        assert(result.isFailure, s"a write beneath a regular file reported $result")
+                        fileSystem.read(file).map(value => assert(value == "value"))
+                    }
+                }
+            }
+        }
+
+        "write suite names the existing target a non-replacing move or copy refuses" in {
+            withFileSystem { (fileSystem, root) =>
+                val source = root / "source.txt"
+                val target = root / "target.txt"
+                fileSystem.write(
+                    source,
+                    "source",
+                    Path.WriteOptions()
+                ).andThen(fileSystem.write(target, "target", Path.WriteOptions())).andThen {
+                    Abort.run[FileSystemException](fileSystem.move(source, target, Path.MoveOptions())).map { moved =>
+                        Abort.run[FileSystemException](fileSystem.copy(source, target, Path.CopyOptions())).map { copied =>
+                            assert(moved == Result.fail(FileAlreadyExistsException(target)), s"move result: $moved")
+                            assert(copied == Result.fail(FileAlreadyExistsException(target)), s"copy result: $copied")
+                            fileSystem.read(target).map(value => assert(value == "target"))
+                        }
+                    }
+                }
+            }
+        }
+
+        "write suite replaces an empty directory with a replacing move or copy" in {
+            withFileSystem { (fileSystem, root) =>
+                val source = root / "source.txt"
+                val moved  = root / "moved"
+                val copied = root / "copied"
+                for
+                    _          <- fileSystem.write(source, "source", Path.WriteOptions())
+                    _          <- fileSystem.mkDir(moved)
+                    _          <- fileSystem.mkDir(copied)
+                    _          <- fileSystem.copy(source, copied, Path.CopyOptions(replace = Path.Replace.Existing))
+                    _          <- fileSystem.move(source, moved, Path.MoveOptions(replace = Path.Replace.Existing))
+                    copyValue  <- fileSystem.read(copied)
+                    moveValue  <- fileSystem.read(moved)
+                    sourceLeft <- fileSystem.exists(source)
+                yield
+                    assert(copyValue == "source")
+                    assert(moveValue == "source")
+                    assert(!sourceLeft)
+                end for
+            }
+        }
+
+        "write suite refuses a replacing move onto a non-empty directory and keeps it" in {
+            withFileSystem { (fileSystem, root) =>
+                val source    = root / "source.txt"
+                val directory = root / "directory"
+                val child     = directory / "child.txt"
+                fileSystem.write(
+                    source,
+                    "source",
+                    Path.WriteOptions()
+                ).andThen(fileSystem.write(child, "child", Path.WriteOptions())).andThen {
+                    Abort.run[FileSystemException](fileSystem.move(
+                        source,
+                        directory,
+                        Path.MoveOptions(replace = Path.Replace.Existing)
+                    )).map {
+                        result =>
+                            assert(result == Result.fail(FileDirectoryNotEmptyException(directory)), s"move result: $result")
+                            fileSystem.read(child).map(value => assert(value == "child"))
+                    }
+                }
+            }
+        }
+
+        "write suite refuses a replacing copy onto a non-empty directory and keeps it" in {
+            withFileSystem { (fileSystem, root) =>
+                val source    = root / "source.txt"
+                val directory = root / "directory"
+                val child     = directory / "child.txt"
+                fileSystem.write(
+                    source,
+                    "source",
+                    Path.WriteOptions()
+                ).andThen(fileSystem.write(child, "child", Path.WriteOptions())).andThen {
+                    Abort.run[FileSystemException](fileSystem.copy(
+                        source,
+                        directory,
+                        Path.CopyOptions(replace = Path.Replace.Existing)
+                    )).map {
+                        result =>
+                            assert(result == Result.fail(FileDirectoryNotEmptyException(directory)), s"copy result: $result")
+                            fileSystem.read(child).map(value => assert(value == "child"))
+                    }
+                }
+            }
+        }
+
+        "write suite never shows a required atomic move half done" in {
+            withFileSystem { (fileSystem, root) =>
+                val target  = root / "atomic.txt"
+                val options = Path.MoveOptions(replace = Path.Replace.Existing, atomicity = Path.Atomicity.Required)
+                // A reader racing each move must see the old content or the new, never an absent target. Repeated, since a backend
+                // that clears the target and then places the source leaves a window only some interleavings reach.
+                fileSystem.write(target, "0", Path.WriteOptions()).andThen {
+                    Kyo.foreachDiscard(Chunk.from(1 to 20)) { round =>
+                        val source = root / s"source-$round.txt"
+                        fileSystem.write(source, round.toString, Path.WriteOptions()).andThen {
+                            for
+                                moved  <- AtomicBoolean.init(false)
+                                reader <- Fiber.initUnscoped {
+                                    Loop(Chunk.empty[Result[FileReadException, String]]) { seen =>
+                                        moved.get.map { done =>
+                                            Abort.run[FileReadException](fileSystem.read(target)).map { read =>
+                                                if done then Loop.done(seen.append(read)) else Loop.continue(seen.append(read))
+                                            }
+                                        }
+                                    }
+                                }
+                                _     <- fileSystem.move(source, target, options)
+                                _     <- moved.set(true)
+                                reads <- reader.get
+                            yield
+                                val allowed = Set((round - 1).toString, round.toString)
+                                assert(
+                                    reads.forall(read => read.toMaybe.exists(allowed.contains)),
+                                    s"round $round observed ${reads.filterNot(read => read.toMaybe.exists(allowed.contains))}"
+                                )
+                            end for
+                        }
+                    }
+                }
+            }
+        }
+
         "write suite preserves concurrent sibling writes" in {
             withFileSystem { (fileSystem, root) =>
                 val first  = root / "first.txt"
