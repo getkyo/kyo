@@ -558,7 +558,7 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
                                 case e: js.JavaScriptException if NodeError.isMissing(e) => Absent
                         isDirectory match
                             case Present(value) => !value
-                            case Absent =>
+                            case Absent         =>
                                 val parent = NodePath.dirname(path)
                                 parent != path && hasFileAncestor(parent)
                         end match

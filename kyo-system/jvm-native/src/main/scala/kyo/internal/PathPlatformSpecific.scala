@@ -375,7 +375,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     private def openRawChannel(mode: Path.RawChannelAccess): Path.RawChannel =
         def writeOptions(open: FileSystem.WriteOpen): Array[StandardOpenOption] = open match
             case FileSystem.WriteOpen.Existing => Array(StandardOpenOption.WRITE)
-            case FileSystem.WriteOpen.Create =>
+            case FileSystem.WriteOpen.Create   =>
                 Array(StandardOpenOption.WRITE, StandardOpenOption.CREATE)
             case FileSystem.WriteOpen.CreateNew =>
                 // Exclusive creation is the platform's to guarantee: atomic in the JDK's CREATE_NEW, absent from
