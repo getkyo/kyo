@@ -1137,6 +1137,20 @@ def systemNodeTestSettings(wasm: Boolean): Seq[Def.Setting[?]] = Seq(
     }
 ) ++ ffiKoffiJsBootstrap(if (wasm) "kyo-system-wasm-test" else "kyo-system-js-test")
 
+// Node settings for a module whose tests run the host's durable replacement without building its library: the library
+// kyo-system's plugin compiled into ITS target, with koffi installed in this module's own.
+def systemDurableNodeTestSettings(wasm: Boolean, systemTarget: Def.Initialize[File], packageName: String): Seq[Def.Setting[?]] =
+    Seq(
+        Test / jsEnv := {
+            val args = List("--max_old_space_size=5120") ++ (if (wasm) List("--experimental-wasm-exnref") else Nil)
+            new NodeJSEnv(NodeJSEnv.Config().withArgs(args).withEnv(Map(
+                "NODE_PATH"                       -> (target.value / "node_modules").getAbsolutePath,
+                "KYO_FFI_KYO_SYSTEM_DURABLE_PATH" ->
+                    (systemTarget.value / "ffi" / ffiArtifactName("kyo_system_durable", ffiHostOsArch)).getAbsolutePath
+            )))
+        }
+    ) ++ ffiKoffiJsBootstrap(packageName)
+
 lazy val `kyo-system` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -1174,11 +1188,19 @@ lazy val `kyo-system-conformance` =
         .dependsOn(`kyo-test-api`)
         .withKyoTest
         .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
+        // The host's runs of the durability suite load kyo-system's native helper.
+        .jvmSettings(mimaCheck(false), Test / javaOptions += "--enable-native-access=ALL-UNNAMED")
         .jvmConfigure(_.settings(doctestSources := Seq.empty))
         .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)),
+            systemDurableNodeTestSettings(false, `kyo-system`.js / target, "kyo-system-conformance-js-test")
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            systemDurableNodeTestSettings(true, `kyo-system`.wasm / target, "kyo-system-conformance-wasm-test")
+        )
 
 lazy val `kyo-schema-json` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
