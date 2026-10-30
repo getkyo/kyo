@@ -44,6 +44,11 @@ case class FileInvalidPathException(input: String, operation: FileSystemOperatio
     with FileReadException with FileWriteException with FileStructureException with FileLockException with FileWatchException
     derives CanEqual
 
+case class FileOutsideRootException(root: Path, path: Path, operation: FileSystemOperation)(using Frame)
+    extends FileSystemException(s"Path $path is outside root $root for $operation")
+    with FileReadException with FileWriteException with FileStructureException with FileLockException with FileWatchException
+    derives CanEqual
+
 case class FileIOException(path: Path, operation: FileSystemOperation, diagnosticCause: Throwable)(using Frame)
     extends FileSystemException(s"I/O error during $operation on $path", diagnosticCause)
     with FileReadException with FileWriteException with FileStructureException with FileLockException with FileWatchException
