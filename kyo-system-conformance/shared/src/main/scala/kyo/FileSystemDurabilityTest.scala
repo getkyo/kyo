@@ -54,6 +54,22 @@ trait FileSystemDurabilityTest[S >: Async] extends kyo.test.Test[Any]:
             }
         }
 
+        "durability suite refuses to replace beneath a regular file and leaves it unchanged" in {
+            withFileSystem { (fileSystem, root) =>
+                val file = root / "file.txt"
+                fileSystem.write(file, "value", Path.WriteOptions()).andThen {
+                    Abort.run[FileSystemException](fileSystem.durableReplace(file / "durable.bin", Span(5.toByte))).map { result =>
+                        fileSystem.read(file).map { value =>
+                            assert(value == "value")
+                            result match
+                                case Result.Failure(FileNotADirectoryException(path)) => assert(path == file)
+                                case other => assert(false, s"expected FileNotADirectoryException, got $other")
+                        }
+                    }
+                }
+            }
+        }
+
         "durability suite rejects a regular file as a directory to synchronize" in {
             withFileSystem { (fileSystem, root) =>
                 val file = root / "file.txt"
