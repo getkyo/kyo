@@ -20,8 +20,8 @@ class PathDurabilityJvmTest extends kyo.test.Test[Any]:
                 val javaName       = if Platform.isWindows then "java.exe" else "java"
                 val javaBin        = Path(java.lang.System.getProperty("java.home").nn) / "bin" / javaName
                 for
-                    _ <- FileSystem.host.writeBytes(invalidLibrary, Span(1.toByte, 2.toByte), Path.WriteOptions())
-                    _ <- FileSystem.host.writeBytes(root / "target.bin", Span(7.toByte, 8.toByte), Path.WriteOptions())
+                    _      <- FileSystem.host.writeBytes(invalidLibrary, Span(1.toByte, 2.toByte), Path.WriteOptions())
+                    _      <- FileSystem.host.writeBytes(root / "target.bin", Span(7.toByte, 8.toByte), Path.WriteOptions())
                     result <- Command(
                         javaBin.toString,
                         "--enable-native-access=ALL-UNNAMED",

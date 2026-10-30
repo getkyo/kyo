@@ -11,7 +11,7 @@ class PathDurabilityPermissionTest extends kyo.test.Test[Any]:
     ): Unit <
         (Sync & Abort[FileSystemException]) =
         Abort.run[FileSystemException](FileSystem.host.durableReplace(target, bytes)).map {
-            case Result.Success(_) => ()
+            case Result.Success(_)                                                     => ()
             case Result.Failure(FileAccessDeniedException(path)) if Platform.isWindows =>
                 assert(path == target.parent.get)
                 ()

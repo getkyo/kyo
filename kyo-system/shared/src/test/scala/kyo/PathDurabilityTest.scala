@@ -76,7 +76,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         ): (Path.WriteChannel[Sync], () => Unit < Sync, Path.ChannelCloseHandle) <
             (Sync & Abort[FileWriteException | FileStructureException]) =
             Sync.defer {
-                val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+                val closed              = new java.util.concurrent.atomic.AtomicBoolean(false)
                 def recordClose(): Unit =
                     if closed.compareAndSet(false, true) then recorded += Event.Close(path)
                 def wrapClose(underlying: Path.ChannelCloseHandle): Path.ChannelCloseHandle =
@@ -112,8 +112,9 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
                                 recordClose()
                         interruptAfterOpen.foreach { error =>
                             // Unsafe: force cancellation precisely at the resource ownership handoff.
-                            discard(kyo.kernel.internal.Safepoint.get.getInterceptor()
-                                .asInstanceOf[kyo.scheduler.IOPromise[Any, Any]].interrupt(Result.Panic(error)))
+                            kyo.scheduler.IOTask.currentTask().foreach(task =>
+                                discard(task.asInstanceOf[kyo.scheduler.IOPromise[Any, Any]].interrupt(Result.Panic(error)))
+                            )
                         }
                         (
                             wrapped,
@@ -130,7 +131,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         override private[kyo] def tempFileHandle(temporary: Path)(using Frame): Path.TempFileHandle =
             val handle = base.tempFileHandle(temporary)
             new Path.TempFileHandle:
-                def path: Path = temporary
+                def path: Path                        = temporary
                 def remove()(using AllowUnsafe): Unit =
                     recorded += Event.Remove(temporary)
                     handle.remove()
@@ -151,8 +152,9 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
                     onAcquire(handle)
                     interruptAfterTransfer.foreach { error =>
                         // Unsafe: force cancellation after scope ownership transfers but before returning.
-                        discard(kyo.kernel.internal.Safepoint.get.getInterceptor()
-                            .asInstanceOf[kyo.scheduler.IOPromise[Any, Any]].interrupt(Result.Panic(error)))
+                        kyo.scheduler.IOTask.currentTask().foreach(task =>
+                            discard(task.asInstanceOf[kyo.scheduler.IOPromise[Any, Any]].interrupt(Result.Panic(error)))
+                        )
                     }
             )
 
@@ -200,7 +202,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         ): (Path.WriteChannel[Async], () => Unit < Async, Path.ChannelCloseHandle) <
             (Async & Abort[FileWriteException | FileStructureException]) =
             Sync.defer {
-                val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+                val closed                                       = new java.util.concurrent.atomic.AtomicBoolean(false)
                 def recordCloseUnsafe()(using AllowUnsafe): Unit =
                     if closed.compareAndSet(false, true) then Sync.Unsafe.evalOrThrow(closes.incrementAndGet.unit)
                 def recordClose: Unit < Sync =
@@ -230,7 +232,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         override private[kyo] def tempFileHandle(path: Path)(using Frame): Path.TempFileHandle =
             val handle = base.tempFileHandle(path)
             new Path.TempFileHandle:
-                def path: Path = handle.path
+                def path: Path                        = handle.path
                 def remove()(using AllowUnsafe): Unit =
                     handle.remove()
                     Sync.Unsafe.evalOrThrow(removals.incrementAndGet.unit.andThen(cleaned.release))
@@ -269,7 +271,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         override private[kyo] def tempFileHandle(path: Path)(using Frame): Path.TempFileHandle =
             val handle = base.tempFileHandle(path)
             new Path.TempFileHandle:
-                def path: Path = handle.path
+                def path: Path                        = handle.path
                 def remove()(using AllowUnsafe): Unit =
                     handle.remove()
                     Sync.Unsafe.evalOrThrow(removals.incrementAndGet.unit.andThen(cleaned.release))
@@ -330,7 +332,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         override private[kyo] def tempFileHandle(path: Path)(using Frame): Path.TempFileHandle =
             val handle = base.tempFileHandle(path)
             new Path.TempFileHandle:
-                def path: Path = handle.path
+                def path: Path                        = handle.path
                 def remove()(using AllowUnsafe): Unit =
                     handle.remove()
                     Sync.Unsafe.evalOrThrow(removals.incrementAndGet.unit.andThen(cleaned.release))
@@ -406,7 +408,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
                     file   = root / "file"
                     target = Path(file.toString + suffix) / "target.bin"
                     fs     = new Recording(base, maxOpens = Present(1))
-                    _ <- base.writeBytes(file, Span(9.toByte), Path.WriteOptions())
+                    _      <- base.writeBytes(file, Span(9.toByte), Path.WriteOptions())
                     result <- Abort.run[FileSystemException] {
                         if sibling then Scope.run(Path.runWith(fs)(target.siblingTemporary)).unit
                         else fs.durableReplace(target, Span(1.toByte))
@@ -433,7 +435,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
                     removeError = new RuntimeException("cleanup removal failure")
                     primary     = new RuntimeException("release failure")
                     logError    = new RuntimeException("logger failure")
-                    fs = new Recording(
+                    fs          = new Recording(
                         base,
                         failOn = if sibling then Absent else Present("write"),
                         cleanupCloseFailure = Present(closeError),
@@ -443,7 +445,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
                     sink = new Log.Unsafe:
                         private val underlying = Log.live.unsafe
                         export underlying.{error as _, *}
-                        def error(msg: => String)(using Frame, AllowUnsafe): Unit = underlying.error(msg)
+                        def error(msg: => String)(using Frame, AllowUnsafe): Unit                      = underlying.error(msg)
                         def error(msg: => String, error: => Throwable)(using Frame, AllowUnsafe): Unit =
                             // Unsafe: the test sink records cleanup reports synchronously.
                             discard(captured.unsafe.getAndUpdate(_ :+ error))
@@ -462,7 +464,9 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
                 yield
                     assert(errors == Chunk(closeError, removeError))
                     val failure = result.failureOrPanic.get
-                    assert(Chunk.from(failure.getSuppressed) == Chunk(closeError, removeError))
+                    // A panic also carries the kernel's effect trace as a suppressed diagnostic, which is not a cleanup report.
+                    val reported = Chunk.from(failure.getSuppressed).filterNot(_.isInstanceOf[kyo.kernel.internal.EffectTrace])
+                    assert(reported == Chunk(closeError, removeError))
                     if failLog then
                         assert(Chunk.from(closeError.getSuppressed) == Chunk(logError))
                         assert(Chunk.from(removeError.getSuppressed) == Chunk(logError))
@@ -498,8 +502,8 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         for
             handle <- Scope.acquireRelease(FileSystem.host.tempDir("kyo-temp-delete-failure"))(h => Sync.Unsafe.defer(h.remove()))
             directory = handle.path / "nonempty"
-            _ <- FileSystem.host.mkDir(directory)
-            _ <- FileSystem.host.mkFile(directory / "child")
+            _      <- FileSystem.host.mkDir(directory)
+            _      <- FileSystem.host.mkFile(directory / "child")
             result <- Sync.Unsafe.defer {
                 Result.catching[Throwable](FileSystem.host.tempFileHandle(directory).remove())
             }
@@ -533,7 +537,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
     "sibling temporary retries an exclusive-create collision without sharing the file" in {
         for
             (base, root) <- hostFileSystem("kyo-sibling-collision")
-            paths <- Scope.run {
+            paths        <- Scope.run {
                 for
                     first       <- Random.withSeed(17)(Path.runWith(base)((root / "first.bin").siblingTemporary))
                     second      <- Random.withSeed(17)(Path.runWith(base)((root / "second.bin").siblingTemporary))
@@ -603,7 +607,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
                 (base, root) <- hostFileSystem(s"kyo-durable-fail-$failedStep")
                 fs     = new Recording(base, Present(failedStep))
                 target = root / "durability" / s"$failedStep.bin"
-                _ <- base.writeBytes(target, Span.from(Array[Byte](9)), Path.WriteOptions())
+                _      <- base.writeBytes(target, Span.from(Array[Byte](9)), Path.WriteOptions())
                 result <- Abort.run[FileReadException | FileWriteException | FileStructureException](
                     fs.durableReplace(target, Span.from(Array[Byte](1, 2)))
                 )
@@ -635,7 +639,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
             (base, root) <- hostFileSystem("kyo-durable-sync-dir-fail")
             fs     = new Recording(base, Present("sync-directory"))
             target = root / "durability" / "uncertain.bin"
-            _ <- base.writeBytes(target, Span.from(Array[Byte](9)), Path.WriteOptions())
+            _      <- base.writeBytes(target, Span.from(Array[Byte](9)), Path.WriteOptions())
             result <- Abort.run[FileReadException | FileWriteException | FileStructureException](
                 fs.durableReplace(target, Span.from(Array[Byte](1, 2)))
             )
@@ -842,7 +846,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
     "sibling temporary is created beside the target and removed at scope exit" in {
         for
             (fs, root) <- hostFileSystem("kyo-durable-sibling-scoped")
-            observed <- Scope.run {
+            observed   <- Scope.run {
                 Path.runWith(fs) {
                     val target = root / "durability" / "scoped.bin"
                     target.siblingTemporary.map { temporary =>

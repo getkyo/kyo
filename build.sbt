@@ -1106,7 +1106,7 @@ lazy val `kyo-system-test-fixtures` =
             `kyo-settings`,
             publish / skip      := true,
             ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
-            ffiLibraries := Seq(FfiLibrary(
+            ffiLibraries        := Seq(FfiLibrary(
                 id = "kyo_system_permissions_test",
                 cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get,
                 linkLibsByOs = Map("windows" -> Seq("advapi32"))
@@ -1128,7 +1128,7 @@ def systemNodeTestSettings(wasm: Boolean): Seq[Def.Setting[?]] = Seq(
         val fixtureTarget = baseDirectory.value / ".." / "test-fixtures" / axis / "target"
         val args          = List("--max_old_space_size=5120") ++ (if (wasm) List("--experimental-wasm-exnref") else Nil)
         new NodeJSEnv(NodeJSEnv.Config().withArgs(args).withEnv(Map(
-            "NODE_PATH" -> (target.value / "node_modules").getAbsolutePath,
+            "NODE_PATH"                       -> (target.value / "node_modules").getAbsolutePath,
             "KYO_FFI_KYO_SYSTEM_DURABLE_PATH" ->
                 (target.value / "ffi" / ffiArtifactName("kyo_system_durable", ffiHostOsArch)).getAbsolutePath,
             "KYO_FFI_KYO_SYSTEM_PERMISSIONS_TEST_PATH" ->
@@ -1147,7 +1147,7 @@ lazy val `kyo-system` =
         .settings(
             `kyo-settings`,
             ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
-            ffiLibraries := Seq(FfiLibrary(
+            ffiLibraries        := Seq(FfiLibrary(
                 id = "kyo_system_durable",
                 cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get,
                 linkLibsByOs = Map("windows" -> Seq("advapi32", "ntdll"))

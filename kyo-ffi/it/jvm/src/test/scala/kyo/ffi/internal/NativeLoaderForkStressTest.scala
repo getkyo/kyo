@@ -50,8 +50,8 @@ class NativeLoaderForkStressTest extends kyo.test.Test[Any]:
         require(forkN > 0, "kyo.ffi.testForkN must be positive")
         Path.run {
             for
-                dir   <- Path.tempDir("kyo-ffi-fork-")
-                start <- Latch.init(forkN)
+                dir     <- Path.tempDir("kyo-ffi-fork-")
+                start   <- Latch.init(forkN)
                 results <- Async.foreach(0 until forkN, forkN) { _ =>
                     start.release.andThen(start.await).andThen {
                         Command(
@@ -66,7 +66,7 @@ class NativeLoaderForkStressTest extends kyo.test.Test[Any]:
                     }
                 }
                 reportedPaths = results.map(_._1.trim).toSet
-                _ =
+                _             =
                     assert(results.size == forkN)
                     assert(results.map(_._2).toSet == Set(ExitCode.Success))
                     assert(reportedPaths.size == 1)

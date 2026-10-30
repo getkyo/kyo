@@ -302,7 +302,7 @@ private[kyo] object HostFileSystem:
             preservePermissionsFrom match
                 case Present(target) =>
                     kyo.internal.DurableFileChannel.validatePaths(target, path).andThen {
-                        val parent = path.parent.getOrElse(Path())
+                        val parent                                                       = path.parent.getOrElse(Path())
                         val prepareParent: Unit < (Sync & Abort[FileStructureException]) =
                             if parent.parts.isEmpty then () else mkDir(parent)
                         Abort.run[FileStructureException](prepareParent).map {
