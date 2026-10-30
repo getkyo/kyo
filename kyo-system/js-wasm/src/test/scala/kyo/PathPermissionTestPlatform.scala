@@ -19,4 +19,7 @@ private[kyo] object PathPermissionTestPlatform:
         }.mkString
     end permissions
 
+    def symbolicLink(link: Path, target: Path): Unit =
+        NodeFs.symlinkSync(target.unsafe.hostPath.get, link.unsafe.hostPath.get)
+
 end PathPermissionTestPlatform

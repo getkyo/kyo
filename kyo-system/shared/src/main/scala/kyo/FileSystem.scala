@@ -247,10 +247,15 @@ object FileSystem:
 
         private[kyo] def tempFileHandle(temporary: Path)(using Frame): Path.TempFileHandle
 
-        /** Replaces `target` with `bytes` using a synchronized sibling file and a required atomic
-          * move. The file channel is released before the move and the containing directory is
-          * synchronized only after the move succeeds. Entries for newly created parent directories
-          * are synchronized through the first existing ancestor as well.
+        /** Replaces `target` with `bytes` so that a crash leaves either the previous content or
+          * `bytes`, never a partial file, creating missing parent directories. The target must be
+          * absent or a regular file: a directory fails with [[FileIsADirectoryException]], and a link
+          * or other entry fails before anything changes.
+          *
+          * The host uses a synchronized sibling file and a required atomic move. The file channel is
+          * released before the move and the containing directory is synchronized only after the move
+          * succeeds. Entries for newly created parent directories are synchronized through the first
+          * existing ancestor as well.
           *
           * Host replacement preserves the existing regular file's owner, group, permission mode,
           * and access ACLs, captured during temporary acquisition. The temporary is private until

@@ -53,14 +53,7 @@ private[kyo] object DurableFileChannel:
                             Buffer.use[Int, Result[FileWriteException | FileStructureException, Channel]](2) { error =>
                                 val handle = bindings.kyo_durable_open(targetPath, temporaryPath, error)
                                 if handle != 0L then Result.succeed(new Channel(temporary, bindings, handle))
-                                else
-                                    val failure: FileWriteException | FileStructureException = error.get(0) match
-                                        case 1 => FileAlreadyExistsException(temporary)
-                                        case 2 => FileAccessDeniedException(target)
-                                        case 3 => FileNotADirectoryException(temporary.parent.getOrElse(Path()))
-                                        case _ => nativeFailure(target, FileSystemOperation.Channel, error.get(1))
-                                    Result.fail(failure)
-                                end if
+                                else Result.fail(openFailure(target, temporary, error.get(0), error.get(1)))
                             }
                         catch
                             // A generated JVM binding can report an unloadable library through static initialization.
@@ -74,6 +67,30 @@ private[kyo] object DurableFileChannel:
             }
         }
 
+    /** The failure a native open reports through its failure `kind` and OS error `code`. */
+    private[kyo] def openFailure(target: Path, temporary: Path, kind: Int, code: Int)(using
+        Frame
+    ): FileWriteException | FileStructureException =
+        kind match
+            case 1 => FileAlreadyExistsException(temporary)
+            case 2 => FileAccessDeniedException(target)
+            case 3 => FileNotADirectoryException(temporary.parent.getOrElse(Path()))
+            case 5 => FileIsADirectoryException(target)
+            case 6 =>
+                FileIOException(
+                    target,
+                    FileSystemOperation.Channel,
+                    new IOException(s"Durable replacement needs an absent target or a regular file: $target")
+                )
+            case _ => nativeFailure(target, FileSystemOperation.Channel, code)
+
+    /** The outcome a native channel call reports through its return `code`. */
+    private[kyo] def outcome(path: Path, operation: FileSystemOperation, code: Int)(using Frame): Result[FileWriteException, Unit] =
+        if code == 0 then Result.unit
+        // A write that made no progress reports its unwritten count negated, so it reads apart from an OS error.
+        else if code < 0 then Result.fail(FileWriteStalledException(path, (-code.toLong).bytes))
+        else Result.fail(nativeFailure(path, operation, code))
+
     private def nativeFailure(path: Path, operation: FileSystemOperation, code: Int)(using Frame): FileIOException =
         FileIOException(path, operation, new IOException(s"Native durable file operation failed with OS error $code"))
 
@@ -81,14 +98,10 @@ private[kyo] object DurableFileChannel:
         extends Path.ChannelCloseHandle with Path.WriteChannel[Sync]:
         private val handle = new AtomicLong(initial)
 
-        private def invoke(f: Long => Int)(using Frame, AllowUnsafe): Result[FileWriteException, Unit] =
+        private def invoke(operation: FileSystemOperation)(f: Long => Int)(using Frame, AllowUnsafe): Result[FileWriteException, Unit] =
             val value = handle.get()
             if value == 0L then Result.fail(FileIOException(path, FileSystemOperation.Channel, new IOException("Channel is closed")))
-            else
-                val code = f(value)
-                if code == 0 then Result.unit
-                else Result.fail(nativeFailure(path, FileSystemOperation.Write, code))
-            end if
+            else outcome(path, operation, f(value))
         end invoke
 
         def writeAt(position: Long, bytes: Span[Byte])(using Frame): Unit < (Sync & Abort[FileWriteException]) =
@@ -98,19 +111,19 @@ private[kyo] object DurableFileChannel:
                     Abort.fail(FileIOException(path, FileSystemOperation.Write, new IOException("Negative write position")))
                 else
                     val buffer = Buffer.fromArray(bytes.toArray)
-                    try Abort.get(invoke(bindings.kyo_durable_write(_, position, buffer, bytes.size)))
+                    try Abort.get(invoke(FileSystemOperation.Write)(bindings.kyo_durable_write(_, position, buffer, bytes.size)))
                     finally buffer.close()
             }
 
         def sync(metadata: Boolean)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
             // Unsafe: permission restoration and verification precede the native data and metadata flush.
-            Sync.Unsafe.defer(Abort.get(invoke(bindings.kyo_durable_sync(_))))
+            Sync.Unsafe.defer(Abort.get(invoke(FileSystemOperation.Sync)(bindings.kyo_durable_sync(_))))
 
         def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
             // Unsafe: operates only on this session's exclusively acquired descriptor.
             Sync.Unsafe.defer {
                 if size < 0L then Abort.fail(FileIOException(path, FileSystemOperation.Write, new IOException("Negative truncate size")))
-                else Abort.get(invoke(bindings.kyo_durable_truncate(_, size)))
+                else Abort.get(invoke(FileSystemOperation.Write)(bindings.kyo_durable_truncate(_, size)))
             }
 
         def close()(using AllowUnsafe): Unit =

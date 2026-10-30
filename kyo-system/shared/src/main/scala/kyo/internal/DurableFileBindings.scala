@@ -13,6 +13,8 @@ import kyo.ffi.Ffi
   */
 private[kyo] trait DurableFileBindings extends Ffi:
     def kyo_durable_open(target: String, temporary: String, error: Buffer[Int])(using AllowUnsafe): Long
+
+    /** Answers 0, an OS error code, or, when a write makes no progress, the negated count of bytes left unwritten. */
     def kyo_durable_write(handle: Long, position: Long, bytes: Buffer[Byte], length: Int)(using AllowUnsafe): Int
     def kyo_durable_truncate(handle: Long, size: Long)(using AllowUnsafe): Int
     def kyo_durable_sync(handle: Long)(using AllowUnsafe): Int

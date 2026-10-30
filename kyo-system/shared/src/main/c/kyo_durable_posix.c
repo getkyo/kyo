@@ -41,11 +41,26 @@ struct kyo_durable_file {
 #endif
 };
 
+/* Failure kinds reported to the caller, shared with the Windows helper:
+   1 the temporary exists, 2 access denied, 3 a parent is not a directory, 4 any other OS error,
+   5 the target is a directory, 6 the target is neither absent nor a regular file. */
+#define KYO_KIND_TARGET_DIRECTORY 5
+#define KYO_KIND_TARGET_NOT_REGULAR 6
+
 static int kyo_error_kind(int error) {
     if (error == EEXIST) return 1;
     if (error == EACCES || error == EPERM) return 2;
     if (error == ENOTDIR) return 3;
     return 4;
+}
+
+/* Darwin's fsync leaves written data in the drive's cache, where a power loss discards it. F_FULLFSYNC asks the
+   drive to flush that cache too. A volume that cannot honor it falls back to fsync, as libuv does. */
+static int kyo_full_sync(int fd) {
+#if defined(__APPLE__)
+    if (fcntl(fd, F_FULLFSYNC) == 0) return 0;
+#endif
+    return fsync(fd) == 0 ? 0 : errno;
 }
 
 #if defined(__linux__)
@@ -405,6 +420,7 @@ int64_t kyo_durable_open(const char *target, const char *temporary, int32_t *err
     errors[1] = 0;
     struct kyo_durable_file *file = calloc(1, sizeof(*file));
     int error = 0;
+    int kind = 0;
     if (file == NULL) error = ENOMEM;
     else {
         file->fd = -1;
@@ -419,8 +435,10 @@ int64_t kyo_durable_open(const char *target, const char *temporary, int32_t *err
 #else
         error = ENOTSUP;
 #endif
-        if (error == 0 && file->existing && !S_ISREG(file->original.st_mode))
+        if (error == 0 && file->existing && !S_ISREG(file->original.st_mode)) {
             error = S_ISDIR(file->original.st_mode) ? EISDIR : ELOOP;
+            kind = S_ISDIR(file->original.st_mode) ? KYO_KIND_TARGET_DIRECTORY : KYO_KIND_TARGET_NOT_REGULAR;
+        }
 #if defined(__APPLE__)
         if (error == 0 && file->existing) error = kyo_validate_filesec(file->security);
         if (error == 0) error = kyo_validate_parent(temporary, file->existing);
@@ -476,7 +494,7 @@ int64_t kyo_durable_open(const char *target, const char *temporary, int32_t *err
             }
             kyo_free_durable(file);
         }
-        errors[0] = kyo_error_kind(error);
+        errors[0] = kind != 0 ? kind : kyo_error_kind(error);
         errors[1] = error;
         return 0;
     }
@@ -497,7 +515,9 @@ int32_t kyo_durable_write(int64_t handle, int64_t position, const unsigned char 
             if (errno == EINTR) continue;
             return errno;
         }
-        if (written == 0) return EIO;
+        /* No progress is not a short write: retrying offers the same bytes at the same offset. Report the
+           unwritten count, negated so it cannot be mistaken for an OS error. */
+        if (written == 0) return -(int32_t)((size_t)length - offset);
         offset += (size_t)written;
     }
     return 0;
@@ -551,7 +571,7 @@ int32_t kyo_durable_sync(int64_t handle) {
                            actual.st_uid != file->original.st_uid || actual.st_gid != file->original.st_gid))
             error = ENOTSUP;
     }
-    if (error == 0 && fsync(file->fd) != 0) error = errno;
+    if (error == 0) error = kyo_full_sync(file->fd);
     return error;
 }
 

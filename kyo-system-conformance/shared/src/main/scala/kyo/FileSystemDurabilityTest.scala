@@ -70,6 +70,21 @@ trait FileSystemDurabilityTest[S >: Async] extends kyo.test.Test[Any]:
             }
         }
 
+        "durability suite refuses to replace a directory and leaves it unchanged" in {
+            withFileSystem { (fileSystem, root) =>
+                val directory = root / "directory"
+                val child     = directory / "child.txt"
+                fileSystem.write(child, "value", Path.WriteOptions()).andThen {
+                    Abort.run[FileSystemException](fileSystem.durableReplace(directory, Span(6.toByte))).map { result =>
+                        fileSystem.read(child).map { value =>
+                            assert(value == "value")
+                            assert(result == Result.fail(FileIsADirectoryException(directory)), s"got $result")
+                        }
+                    }
+                }
+            }
+        }
+
         "durability suite rejects a regular file as a directory to synchronize" in {
             withFileSystem { (fileSystem, root) =>
                 val file = root / "file.txt"

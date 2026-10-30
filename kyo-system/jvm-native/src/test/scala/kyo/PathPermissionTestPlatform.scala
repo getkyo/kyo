@@ -13,4 +13,7 @@ private[kyo] object PathPermissionTestPlatform:
     def permissions(path: Path): String =
         PosixFilePermissions.toString(Files.getPosixFilePermissions(Paths.get(path.unsafe.hostPath.get)))
 
+    def symbolicLink(link: Path, target: Path): Unit =
+        discard(Files.createSymbolicLink(Paths.get(link.unsafe.hostPath.get), Paths.get(target.unsafe.hostPath.get)))
+
 end PathPermissionTestPlatform

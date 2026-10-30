@@ -508,6 +508,8 @@ KYO_DURABLE_EXPORT int64_t kyo_durable_open(const char *target,
     BY_HANDLE_FILE_INFORMATION source_info;
     DWORD error, flags, desired_access;
     BOOL security_privilege = FALSE;
+    /* Overrides the kind derived from error; the kinds are listed in the POSIX helper. */
+    int32_t kind = 0;
     if (result_error == NULL)
         return 0;
     result_error[0] = result_error[1] = 0;
@@ -543,6 +545,13 @@ KYO_DURABLE_EXPORT int64_t kyo_durable_open(const char *target,
         }
         if (source_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             error = ERROR_DIRECTORY;
+            kind = 5;
+            goto failed;
+        }
+        /* A link or other reparse point is not a regular file to take permissions from. */
+        if (source_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+            error = ERROR_NOT_SUPPORTED;
+            kind = 6;
             goto failed;
         }
         if (source_info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
@@ -552,8 +561,7 @@ KYO_DURABLE_EXPORT int64_t kyo_durable_open(const char *target,
         }
         /* Replacing encrypted bytes with plaintext can broaden access even
            when the DACL is identical. This helper does not transfer EFS keys. */
-        if (source_info.dwFileAttributes &
-            (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_ENCRYPTED)) {
+        if (source_info.dwFileAttributes & FILE_ATTRIBUTE_ENCRYPTED) {
             error = ERROR_NOT_SUPPORTED;
             goto failed;
         }
@@ -671,7 +679,7 @@ failed:
     }
     free(target_path);
     free(temporary_path);
-    result_error[0] = kyo_windows_error_kind(error);
+    result_error[0] = kind != 0 ? kind : kyo_windows_error_kind(error);
     result_error[1] = (int32_t)error;
     return 0;
 }
@@ -695,8 +703,9 @@ KYO_DURABLE_EXPORT int32_t kyo_durable_write(int64_t handle, int64_t position,
            SetFilePointerEx cursor or a separately allocated event. */
         if (!WriteFile(state->file, bytes, remaining, &written, &at))
             return (int32_t)GetLastError();
+        /* No progress: report the unwritten count, negated so it cannot be mistaken for an OS error. */
         if (written == 0)
-            return ERROR_WRITE_FAULT;
+            return -(int32_t)remaining;
         bytes += written;
         offset += written;
         remaining -= written;

@@ -87,7 +87,8 @@ val positioned =
 ```
 
 Use `durableReplace` when the target must be replaced through a sibling temporary file, a synced
-write channel, a required atomic move, and a parent-directory sync. Unsupported atomic replacement
+write channel, a required atomic move, and a parent-directory sync. The target must be absent or a
+regular file; a directory or a link fails before anything changes. Unsupported atomic replacement
 fails instead of silently falling back. Newly created parent entries are synced through the first
 existing ancestor. Directory sync failures are reported even when replacement has already occurred;
 platforms that cannot sync directories, including Windows, cannot promise durable replacement.
