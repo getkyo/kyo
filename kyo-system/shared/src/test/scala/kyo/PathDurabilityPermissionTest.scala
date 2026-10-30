@@ -331,10 +331,37 @@ class PathDurabilityPermissionTest extends kyo.test.Test[Any]:
                 actual  <- fs.readBytes(sentinel)
                 entries <- fs.list(root)
             yield
-                assert(result.isFailure)
+                assert(result == Result.fail(FileIsADirectoryException(target)), s"Durable replacement result: $result")
                 assert(after.is(before))
                 assert(actual.is(bytes))
                 assert(entries == Chunk(target))
+            end for
+        }
+    }
+
+    "a link permission source fails before changing the link, its target, or retaining a temporary" in {
+        directory.map { root =>
+            val fs     = FileSystem.host
+            val target = root / "original.bin"
+            val link   = root / "link.bin"
+            val bytes  = Span(8.toByte, 9.toByte)
+            for
+                _       <- fs.writeBytes(target, bytes, Path.WriteOptions())
+                _       <- Sync.defer(PathPermissionTestPlatform.symbolicLink(link, target))
+                result  <- Abort.run[FileSystemException](fs.durableReplace(link, Span(1.toByte)))
+                isLink  <- fs.isSymbolicLink(link)
+                actual  <- fs.readBytes(target)
+                entries <- fs.list(root)
+            yield
+                result match
+                    case Result.Failure(FileIOException(path, FileSystemOperation.Channel, cause)) =>
+                        assert(path == link)
+                        assert(cause.getMessage == s"Durable replacement needs an absent target or a regular file: $link")
+                    case other => fail(s"Expected a regular-file failure, got $other")
+                end match
+                assert(isLink)
+                assert(actual.is(bytes))
+                assert(entries.toSet == Set(target, link))
             end for
         }
     }
