@@ -33,6 +33,8 @@ class HostFileSystemReadConformanceTest extends FileSystemReadConformanceTest[Sy
 end HostFileSystemReadConformanceTest
 
 class HostFileSystemWriteConformanceTest extends FileSystemWriteConformanceTest[Sync]:
+    // Windows has no directory synchronization the host can request, so the host reports it rather than claiming it.
+    override protected def supportsDirectorySync: Boolean = !kyo.internal.Platform.isWindows
     protected def withFileSystem[A](
         use: (FileSystem.Write[Sync], Path) => A < (Sync & Async & Scope & Abort[FileSystemException])
     )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =

@@ -40,6 +40,24 @@ final private[kyo] class DoltVfsStore(client: Dolt):
     ): Long < (Async & Abort[FileIOException]) =
         run(path, operation)(client.routedWith(client.config)(_.extendedExecute(sql, args)))
 
+    /** Runs `body` as one transaction, so its statements commit together or not at all. A failure of `body` rolls every
+      * statement back, and costs the session too: the pool cannot trust a session a failure other than a routine engine one
+      * crossed. A `body` therefore answers an expected outcome, such as a precondition that does not hold, as a value.
+      */
+    def atomically[A, S](path: Path, operation: FileSystemOperation)(body: => A < (S & Async & Abort[FileIOException]))(using
+        Frame
+    ): A < (S & Async & Abort[FileIOException]) =
+        Abort.recover[SqlException]((e: SqlException) => Abort.fail(FileIOException(path, operation, e))) {
+            client.transaction {
+                // An engine failure leaves the transaction as the engine's own, so the pool judges the session by it.
+                Abort.recover[FileIOException] { (e: FileIOException) =>
+                    e.diagnosticCause match
+                        case cause: SqlException => Abort.fail(cause)
+                        case _                   => Abort.fail(e)
+                }(body)
+            }
+        }
+
     private def lifted[A](path: Path, operation: FileSystemOperation)(
         decode: A < Abort[SqlDecodeException]
     )(using Frame): A < Abort[FileIOException] =

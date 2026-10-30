@@ -91,9 +91,9 @@ moves two characters per byte; the alternative corrupts binary files.
 The schema is plain SQL with no engine-specific types, because it has to create identically on a server and on an
 embedded file. `LONGBLOB` rather than `BLOB`: MySQL's `BLOB` caps at 65535 bytes.
 
-## Two deliberate differences from a host filesystem
+## Three deliberate differences from a host filesystem
 
-Both are observable, so they are stated here rather than left to be discovered.
+All three are observable, so they are stated here rather than left to be discovered.
 
 **Advisory locks are held in memory, per filesystem instance, not in the database.** This is the right place for
 them: a lock is not tree content, and a lock table would be versioned, committed and merged along with the files,
@@ -103,6 +103,11 @@ other's locks.
 **A write handle abandoned without finishing has its partial entry removed on the next filesystem operation**,
 rather than the instant it is closed. `Path.WriteHandle.close` is synchronous and takes no effect, so a backend
 whose storage is a database has nowhere to run the removal. The window is bounded by the next thing you do.
+
+**Durable replacement is one transaction, with no temporary entry.** The host's `durableReplace` writes a
+synchronized sibling temporary and renames it over the target. Here the new entry and any missing parent directories
+are written in one transaction, which a reader or a crash observes whole or not at all. `syncDirectory` only confirms
+that the path is a directory: an entry change is a committed statement, already as durable as the engine's commit.
 
 The same constraint shapes reads: `Path.ReadHandle.readChunk` and `WalkHandle.next` return values rather than
 computations, so a read handle materializes its content when it is opened. Opening one here costs the whole file

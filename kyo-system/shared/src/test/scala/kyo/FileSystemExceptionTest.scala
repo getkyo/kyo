@@ -51,11 +51,11 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
         assert(!ex.isInstanceOf[FileStructureException])
     }
 
-    "FileNotADirectoryException is only FileStructureException" in {
+    "FileNotADirectoryException covers directory structure and synchronization" in {
         val ex = FileNotADirectoryException(p)
         assert(ex.isInstanceOf[FileStructureException])
         assert(!ex.isInstanceOf[FileReadException])
-        assert(!ex.isInstanceOf[FileWriteException])
+        assert(ex.isInstanceOf[FileWriteException])
     }
 
     // Exhaustive match on FileReadException covers all concrete subtypes with no wildcard.
@@ -124,16 +124,17 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
 
     // Exhaustive match on FileWriteException covers all concrete subtypes, with no wildcard.
     // FileNotFoundException, FileAccessDeniedException, FileIsADirectoryException,
-    // FileIOException, and FileWriteStalledException all implement FileWriteException.
+    // FileNotADirectoryException, FileIOException, and FileWriteStalledException all implement FileWriteException.
     "exhaustive match on FileWriteException" in {
         val ex: FileWriteException = FileNotFoundException(p)
         val result                 = ex match
-            case _: FileNotFoundException     => "FileNotFoundException"
-            case _: FileAccessDeniedException => "FileAccessDeniedException"
-            case _: FileIsADirectoryException => "FileIsADirectoryException"
-            case _: FileInvalidPathException  => "FileInvalidPathException"
-            case _: FileIOException           => "FileIOException"
-            case _: FileWriteStalledException => "FileWriteStalledException"
+            case _: FileNotFoundException      => "FileNotFoundException"
+            case _: FileAccessDeniedException  => "FileAccessDeniedException"
+            case _: FileIsADirectoryException  => "FileIsADirectoryException"
+            case _: FileNotADirectoryException => "FileNotADirectoryException"
+            case _: FileInvalidPathException   => "FileInvalidPathException"
+            case _: FileIOException            => "FileIOException"
+            case _: FileWriteStalledException  => "FileWriteStalledException"
         assert(result == "FileNotFoundException")
     }
 

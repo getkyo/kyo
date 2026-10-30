@@ -158,7 +158,10 @@ final private[kyo] class DoltChannel(
             }
         }
 
-    def close(using Frame): Unit < Sync = Sync.Unsafe.defer(open.set(false))
+    def close(using Frame): Unit < Sync = Sync.Unsafe.defer(closeNow())
+
+    /** Closes the channel outside any effect, for an owner that cleans it up synchronously. */
+    private[kyo] def closeNow()(using AllowUnsafe): Unit = open.set(false)
 
 end DoltChannel
 
