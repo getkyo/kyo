@@ -255,6 +255,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             if options.atomicity == Path.Atomicity.Required then
                 NioAtomicMovePlatform.move(jpath, target, options.replace)
             else
+                if options.replace == Path.Replace.Existing then clearDirectoryTarget(target)
                 val opts = buildMoveOptions(options.replace)
                 discard(Files.move(jpath, target, opts*))
             end if
@@ -264,19 +265,46 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             case e: IOException if options.atomicity == Path.Atomicity.Required && NioExceptionBoundary.isAtomicMoveUnsupported(e) =>
                 Result.fail(FileAtomicMoveUnsupportedException(safe, to))
             case e: InvalidPathException => Result.fail(FileInvalidPathException(e.getInput, FileSystemOperation.Move))
-            case e: IOException          => Result.fail(translateIoe(safe, FileSystemOperation.Move, e))
+            case e: IOException          => Result.fail(translatePlacement(to, FileSystemOperation.Move, e))
             case e: Throwable            => Result.panic(e)
 
     def copy(to: Path, options: Path.CopyOptions)(using
         AllowUnsafe,
         Frame
     ): Result[FileStructureException, Unit] =
-        catchFs(FileSystemOperation.Copy) {
+        try
             val target = toNioPath(to)
             if options.createFolders then ensureParentOf(target)
+            if options.replace == Path.Replace.Existing then clearDirectoryTarget(target)
             val opts = buildCopyOptions(options)
             discard(Files.copy(jpath, target, opts*))
-        }
+            Result.unit
+        catch
+            case e: IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
+            case e: InvalidPathException => Result.fail(FileInvalidPathException(e.getInput, FileSystemOperation.Copy))
+            case e: IOException          => Result.fail(translatePlacement(to, FileSystemOperation.Copy, e))
+            case e: Throwable            => Result.panic(e)
+
+    /** Applies the JDK's replacement rule for a directory target, which Scala Native's move and copy do not: a directory
+      * with entries refuses the replacement and an empty one is removed first.
+      */
+    private def clearDirectoryTarget(target: java.nio.file.Path): Unit =
+        if Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS) then
+            val entries  = Files.newDirectoryStream(target)
+            val occupied =
+                try entries.iterator().hasNext
+                finally entries.close()
+            if occupied then throw new DirectoryNotEmptyException(target.toString)
+            else Files.delete(target)
+        end if
+    end clearDirectoryTarget
+
+    /** Translates a move or copy failure, naming the target when the target is what refused it. */
+    private def translatePlacement(to: Path, operation: FileSystemOperation, e: IOException)(using Frame): FileStructureException =
+        e match
+            case _: java.nio.file.FileAlreadyExistsException => FileAlreadyExistsException(to)
+            case _: DirectoryNotEmptyException               => FileDirectoryNotEmptyException(to)
+            case _                                           => translateIoe(safe, operation, e)
 
     def remove()(using AllowUnsafe, Frame): Result[FileStructureException, Boolean] =
         catchFs(FileSystemOperation.Remove)(Files.deleteIfExists(jpath))
