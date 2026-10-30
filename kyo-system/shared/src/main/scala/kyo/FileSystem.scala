@@ -289,7 +289,7 @@ object FileSystem:
 
     end Write
 
-    private def reportCleanupFailure(log: Log, primary: Maybe[Throwable], message: String, error: Throwable)(using
+    private def reportCleanupFailure(log: Log, primary: Maybe[Throwable], message: String, error: Throwable, rethrow: Boolean)(using
         Frame,
         AllowUnsafe
     ): Unit =
@@ -302,8 +302,73 @@ object FileSystem:
                 // Preserve reporting failures too, even when the configured logger cannot emit.
                 if reporting ne error then error.addSuppressed(reporting)
         end try
-        if primary.isEmpty then throw error
+        if rethrow && primary.isEmpty then throw error
     end reportCleanupFailure
+
+    /** Decides who cleans up the temporary a replacement protocol acquired.
+      *
+      * While the operation runs, its finalizer does. A backend whose acquisition is asynchronous can finish it after an
+      * interruption has already run that finalizer, so a temporary that arrives after the operation ended is cleaned on
+      * arrival. Either order cleans the temporary exactly once.
+      */
+    final private class TemporaryOwnership(log: Log):
+        import TemporaryOwnership.State
+
+        private val state = new java.util.concurrent.atomic.AtomicReference[State](State.Pending)
+
+        /** The callback a backend invokes with acquisition, taking ownership of the acquired `handle`. */
+        def receive(handle: Path.TempFileHandle)(using Frame): Path.ChannelCloseHandle => Unit =
+            close =>
+                // Unsafe: the backend invokes this synchronously with acquisition, outside any effect.
+                import AllowUnsafe.embrace.danger
+                acquire(close, handle)
+
+        /** Takes ownership of an acquired temporary, or cleans it at once when the operation has already ended. */
+        private def acquire(close: Path.ChannelCloseHandle, handle: Path.TempFileHandle)(using Frame, AllowUnsafe): Unit =
+            if !state.compareAndSet(State.Pending, State.Owned(close, handle)) then
+                state.get() match
+                    case State.Ended(primary) =>
+                        // Nothing is waiting on this cleanup any more, so its failures are reported, never thrown.
+                        clean(close, handle, closeChannel = true, remove = true, primary, rethrow = false)
+                    case _ =>
+                        // A protocol acquires at most one temporary, so a second one is still never left behind.
+                        clean(close, handle, closeChannel = true, remove = true, Absent, rethrow = false)
+
+        /** Ends the operation's ownership and answers the temporary it holds, if one was acquired. */
+        def end(primary: Maybe[Throwable]): Maybe[(Path.ChannelCloseHandle, Path.TempFileHandle)] =
+            state.getAndSet(State.Ended(primary)) match
+                case State.Owned(close, handle) => Present((close, handle))
+                case _                          => Absent
+
+        def clean(
+            close: Path.ChannelCloseHandle,
+            handle: Path.TempFileHandle,
+            closeChannel: Boolean,
+            remove: Boolean,
+            primary: Maybe[Throwable],
+            rethrow: Boolean
+        )(using Frame, AllowUnsafe): Unit =
+            try
+                if closeChannel then close.close()
+            catch
+                case error: Throwable =>
+                    reportCleanupFailure(log, primary, s"Failed to close temporary ${handle.path}", error, rethrow)
+            finally
+                if remove then
+                    try handle.remove()
+                    catch
+                        case error: Throwable =>
+                            reportCleanupFailure(log, primary, s"Failed to remove temporary ${handle.path}", error, rethrow)
+        end clean
+    end TemporaryOwnership
+
+    private object TemporaryOwnership:
+        enum State:
+            case Pending
+            case Owned(close: Path.ChannelCloseHandle, handle: Path.TempFileHandle)
+            case Ended(primary: Maybe[Throwable])
+        end State
+    end TemporaryOwnership
 
     private[kyo] def siblingTemporary[S](
         fileSystem: FileSystem.Write[S & Sync],
@@ -312,10 +377,10 @@ object FileSystem:
     )(using Frame): Path.TempFileHandle < (S & Sync & Abort[FileWriteException | FileStructureException]) =
         Log.get.map { log =>
             Random.uuid.map { identifier =>
-                val parent                                                          = target.parent.getOrElse(Path())
-                var acquired: Maybe[(Path.ChannelCloseHandle, Path.TempFileHandle)] = Absent
-                var primaryFailure: Maybe[Throwable]                                = Absent
-                var completed                                                       = false
+                val parent                           = target.parent.getOrElse(Path())
+                val ownership                        = new TemporaryOwnership(log)
+                var primaryFailure: Maybe[Throwable] = Absent
+                var completed                        = false
                 def loop(attempt: Int): Path.TempFileHandle < (S & Sync & Abort[FileWriteException | FileStructureException]) =
                     val temporary = parent / s".kyo-temporary-$identifier-$attempt"
                     if target.name.exists(_.equalsIgnoreCase(s".kyo-temporary-$identifier-$attempt")) then loop(attempt + 1)
@@ -325,8 +390,7 @@ object FileSystem:
                             fileSystem.openWriteChannelUnscoped(
                                 temporary,
                                 FileSystem.WriteOpen.CreateNew,
-                                close =>
-                                    acquired = Present((close, handle))
+                                ownership.receive(handle)
                             )
                         ).map {
                             case Result.Success((_, release, _)) =>
@@ -345,18 +409,9 @@ object FileSystem:
                     val primary = finalizerError.map(_.failureOrPanic).collect { case error: Throwable => error }.orElse(primaryFailure)
                     // Unsafe: cleanup owns acquisition before any effect continuation can be interrupted.
                     Sync.Unsafe.defer {
-                        if !completed then
-                            acquired.foreach { (close, handle) =>
-                                try close.close()
-                                catch
-                                    case error: Throwable =>
-                                        reportCleanupFailure(log, primary, s"Failed to close temporary ${handle.path}", error)
-                                finally
-                                    try handle.remove()
-                                    catch
-                                        case error: Throwable =>
-                                            reportCleanupFailure(log, primary, s"Failed to remove temporary ${handle.path}", error)
-                            }
+                        ownership.end(primary).foreach { (close, handle) =>
+                            if !completed then ownership.clean(close, handle, closeChannel = true, remove = true, primary, rethrow = true)
+                        }
                     }
                 } {
                     Abort.run[FileWriteException | FileStructureException](loop(0)).map { result =>
@@ -377,11 +432,11 @@ object FileSystem:
     ): Unit < (S & Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
         Log.get.map { log =>
             Random.uuid.map { identifier =>
-                val parent                                                          = target.parent.getOrElse(Path())
-                var acquired: Maybe[(Path.ChannelCloseHandle, Path.TempFileHandle)] = Absent
-                var primaryFailure: Maybe[Throwable]                                = Absent
-                var channelClosed                                                   = false
-                var moved                                                           = false
+                val parent                           = target.parent.getOrElse(Path())
+                val ownership                        = new TemporaryOwnership(log)
+                var primaryFailure: Maybe[Throwable] = Absent
+                var channelClosed                    = false
+                var moved                            = false
                 def open(attempt: Int): (Path, Path.WriteChannel[S], () => Unit < (S & Sync)) <
                     (S & Sync & Abort[FileWriteException | FileStructureException]) =
                     val temporary = parent / s".kyo-durable-$identifier-$attempt"
@@ -392,8 +447,7 @@ object FileSystem:
                             fileSystem.openWriteChannelUnscoped(
                                 temporary,
                                 FileSystem.WriteOpen.CreateNew,
-                                close =>
-                                    acquired = Present((close, handle)),
+                                ownership.receive(handle),
                                 preservePermissionsFrom = Present(target)
                             )
                         ).map {
@@ -415,18 +469,8 @@ object FileSystem:
                     // Unsafe: acquisition transfers ownership before returning the channel. Cleanup reports
                     // both failures without replacing the original operation failure or interruption.
                     Sync.Unsafe.defer {
-                        acquired.foreach { (close, handle) =>
-                            try
-                                if !channelClosed then close.close()
-                            catch
-                                case error: Throwable =>
-                                    reportCleanupFailure(log, primary, s"Failed to close temporary ${handle.path}", error)
-                            finally
-                                if !moved then
-                                    try handle.remove()
-                                    catch
-                                        case error: Throwable =>
-                                            reportCleanupFailure(log, primary, s"Failed to remove temporary ${handle.path}", error)
+                        ownership.end(primary).foreach { (close, handle) =>
+                            ownership.clean(close, handle, closeChannel = !channelClosed, remove = !moved, primary, rethrow = true)
                         }
                     }
                 } {

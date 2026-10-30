@@ -284,6 +284,60 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
             FileSystem.siblingTemporary[Async](this, target, onAcquire)
     end ReleaseInterrupting
 
+    /** Acquires through the host but reaches `onAcquire` only after `hold` opens, as a backend does whose file creation is an
+      * asynchronous statement: the file exists before ownership can transfer, so acquisition and transfer run uninterruptibly
+      * and may finish after the operation that started them has ended.
+      */
+    final private class LateAcquiring(
+        base: FileSystem.Write[Async],
+        ready: Latch,
+        hold: Latch,
+        temporary: AtomicRef[Maybe[Path]],
+        transferred: Latch,
+        removals: AtomicInt
+    ) extends FileSystem.Write[Async]:
+        export base.{durableReplace as _, openWriteChannelUnscoped as _, siblingTemporary as _, tempFileHandle as _, *}
+
+        override private[kyo] def openWriteChannelUnscoped(
+            path: Path,
+            open: FileSystem.WriteOpen,
+            onAcquire: Path.ChannelCloseHandle => Unit,
+            preservePermissionsFrom: Maybe[Path] = Absent
+        )(using
+            Frame
+        ): (Path.WriteChannel[Async], () => Unit < Async, Path.ChannelCloseHandle) <
+            (Async & Abort[FileWriteException | FileStructureException]) =
+            Async.uninterruptible {
+                val captured = new java.util.concurrent.atomic.AtomicReference[Path.ChannelCloseHandle]
+                temporary.set(Present(path))
+                    .andThen(base.openWriteChannelUnscoped(path, open, close => captured.set(close), preservePermissionsFrom))
+                    .map { acquired =>
+                        ready.release.andThen(hold.await).andThen(Sync.defer(onAcquire(captured.get().nn)))
+                            .andThen(transferred.release).andThen(acquired)
+                    }
+            }
+
+        override private[kyo] def tempFileHandle(path: Path)(using Frame): Path.TempFileHandle =
+            val handle = base.tempFileHandle(path)
+            new Path.TempFileHandle:
+                def path: Path                        = handle.path
+                def remove()(using AllowUnsafe): Unit =
+                    handle.remove()
+                    Sync.Unsafe.evalOrThrow(removals.incrementAndGet.unit)
+            end new
+        end tempFileHandle
+
+        override private[kyo] def siblingTemporary(target: Path, onAcquire: Path.TempFileHandle => Unit)(using
+            Frame
+        ): Path.TempFileHandle < (Async & Abort[FileWriteException | FileStructureException]) =
+            FileSystem.siblingTemporary[Async](this, target, onAcquire)
+
+        override def durableReplace(target: Path, bytes: Span[Byte])(using
+            Frame
+        ): Unit < (Async & Abort[FileReadException | FileWriteException | FileStructureException]) =
+            FileSystem.durableReplace[Async](this, target, bytes)
+    end LateAcquiring
+
     final private class ClosePanicking(
         base: FileSystem.Write[Async],
         ready: Latch,
@@ -715,6 +769,40 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         yield
             assert(!exists)
             assert(count == 1)
+    }
+
+    Chunk(false, true).foreach { sibling =>
+        s"${if sibling then "sibling temporary" else "durable replacement"} removes a temporary acquired after interruption" in {
+            for
+                (base, root) <- hostFileSystem("kyo-durable-late-acquire")
+                ready        <- Latch.init(1)
+                finalized    <- Latch.init(1)
+                temporary    <- AtomicRef.init[Maybe[Path]](Absent)
+                transferred  <- Latch.init(1)
+                removals     <- AtomicInt.init(0)
+                fs     = new LateAcquiring(base.asInstanceOf[FileSystem.Write[Async]], ready, finalized, temporary, transferred, removals)
+                target = root / "target.bin"
+                fiber <- Fiber.initUnscoped {
+                    // The acquisition is held until this outermost finalizer has run, so the operation's own cleanup has
+                    // already finished, with nothing acquired yet, when ownership finally transfers.
+                    Sync.ensure(finalized.release) {
+                        if sibling then fs.siblingTemporary(target).unit
+                        else fs.durableReplace(target, Span(1.toByte))
+                    }
+                }
+                _        <- ready.await
+                _        <- fiber.interrupt
+                _        <- transferred.await
+                path     <- temporary.get
+                exists   <- base.exists(path.getOrElse(target))
+                count    <- removals.get
+                original <- base.exists(target)
+            yield
+                assert(path.isDefined)
+                assert(!exists)
+                assert(!original)
+                assert(count == 1)
+        }
     }
 
     "durable temporary names never expose an absent target before replacement" in {
