@@ -419,4 +419,119 @@ class InMemoryFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
+    "every way to create an entry beneath a regular file fails and keeps the file" in {
+        withInMem { svc =>
+            val file    = Path("parent.txt")
+            val source  = Path("beneath-source.txt")
+            val beneath = file / "child.txt"
+            // Each attempt with the entry its failure names; a temporary's name is generated, so only its failure is checked.
+            val attempts: Chunk[(String, Unit < (Sync & Abort[FileSystemException]), Maybe[Path])] = Chunk(
+                ("write", svc.write(beneath, "child", Path.WriteOptions()), Present(beneath)),
+                ("append", svc.append(beneath, "child", Path.WriteOptions()), Present(beneath)),
+                ("mkFile", svc.mkFile(beneath), Present(beneath)),
+                ("mkDir", svc.mkDir(beneath / "nested"), Present(beneath / "nested")),
+                ("openWrite", svc.openWrite(beneath, append = false, Path.WriteOptions()).unit, Present(beneath)),
+                ("move", svc.move(source, beneath, Path.MoveOptions()), Present(beneath)),
+                ("copy", svc.copy(source, beneath, Path.CopyOptions()), Present(beneath)),
+                ("temp", svc.temp((file / "tmp").unsafe.show, ".bin").unit, Absent),
+                ("tempDir", svc.tempDir((file / "tmp").unsafe.show).unit, Absent)
+            )
+            svc.write(file, "value", Path.WriteOptions()).andThen(svc.write(source, "source", Path.WriteOptions())).andThen {
+                Kyo.foreach(attempts) { (name, attempt, named) =>
+                    Abort.run[FileSystemException](attempt).map(result => (name, result, named))
+                }.map { results =>
+                    svc.read(file).map { value =>
+                        svc.read(source).map { sourceValue =>
+                            results.foreach { (name, result, named) =>
+                                named match
+                                    case Present(path) =>
+                                        assert(result == Result.fail(FileNotADirectoryException(path)), s"$name reported $result")
+                                    case Absent =>
+                                        assert(result.failure.exists(_.isInstanceOf[FileNotADirectoryException]), s"$name reported $result")
+                            }
+                            assert(value == "value")
+                            assert(sourceValue == "source")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "writing a file over a directory fails, and mkFile on it changes nothing, so its entries stay" in {
+        withInMem { svc =>
+            val dir                                                                   = Path("occupied-dir")
+            val child                                                                 = dir / "child.txt"
+            val attempts: Chunk[(String, Unit < (Sync & Abort[FileSystemException]))] = Chunk(
+                "write"     -> svc.write(dir, "file", Path.WriteOptions()),
+                "append"    -> svc.append(dir, "file", Path.WriteOptions()),
+                "openWrite" -> svc.openWrite(dir, append = false, Path.WriteOptions()).unit
+            )
+            svc.write(child, "child", Path.WriteOptions()).andThen {
+                Kyo.foreach(attempts) { (name, attempt) =>
+                    Abort.run[FileSystemException](attempt).map(result => (name, result))
+                }.map { results =>
+                    svc.mkFile(dir).andThen(svc.read(child)).map { value =>
+                        results.foreach { (name, result) =>
+                            assert(result == Result.fail(FileIsADirectoryException(dir)), s"$name over a directory reported $result")
+                        }
+                        assert(value == "child")
+                    }
+                }
+            }
+        }
+    }
+
+    "mkFile on an existing file keeps its content" in {
+        withInMem { svc =>
+            val file = Path("kept.txt")
+            svc.write(file, "value", Path.WriteOptions()).andThen(svc.mkFile(file)).andThen(svc.read(file)).map { value =>
+                assert(value == "value")
+            }
+        }
+    }
+
+    "moving or copying an entry onto itself keeps it" in {
+        withInMem { svc =>
+            val file  = Path("self.txt")
+            val dir   = Path("self-dir")
+            val child = dir / "child.txt"
+            for
+                _          <- svc.write(file, "value", Path.WriteOptions())
+                _          <- svc.write(child, "child", Path.WriteOptions())
+                _          <- svc.move(file, file, Path.MoveOptions(replace = Path.Replace.Existing))
+                _          <- svc.copy(file, file, Path.CopyOptions(replace = Path.Replace.Existing))
+                _          <- svc.move(dir, dir, Path.MoveOptions(replace = Path.Replace.Existing))
+                _          <- svc.copy(dir, dir, Path.CopyOptions(replace = Path.Replace.Existing))
+                fileValue  <- svc.read(file)
+                childValue <- svc.read(child)
+            yield
+                assert(fileValue == "value")
+                assert(childValue == "child")
+            end for
+        }
+    }
+
+    "moving or copying a directory inside itself fails and keeps it" in {
+        withInMem { svc =>
+            val dir    = Path("outer")
+            val child  = dir / "child.txt"
+            val inside = dir / "inner"
+            svc.write(child, "child", Path.WriteOptions()).andThen {
+                Abort.run[FileSystemException](svc.move(dir, inside, Path.MoveOptions())).map { moved =>
+                    Abort.run[FileSystemException](svc.copy(dir, inside, Path.CopyOptions())).map { copied =>
+                        svc.read(child).map { value =>
+                            svc.exists(inside).map { insideExists =>
+                                assert(moved.isFailure, s"move into itself reported $moved")
+                                assert(copied.isFailure, s"copy into itself reported $copied")
+                                assert(value == "child")
+                                assert(!insideExists)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end InMemoryFileSystemTest
