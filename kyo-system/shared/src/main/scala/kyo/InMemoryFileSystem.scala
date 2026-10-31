@@ -71,20 +71,38 @@ private[kyo] object InMemoryFileSystem:
                 case Some(child) => root.copy(children = root.children.updated(parts.head, delete(child, parts.tail)))
                 case None        => root
 
-    // True when the immediate parent directory of parts exists in the tree. The root always exists,
-    // so single-segment paths (whose parent IS the root) always return true. Callers use this to
-    // enforce the createFolders = false contract: fail with FileNotFoundException when a required
-    // parent is absent rather than silently creating it.
     /** Whether `parts` names a directory with entries, which a replacing move or copy must not discard. */
     private[kyo] def nonEmptyDirectory(root: Node, parts: Chunk[String]): Boolean =
         lookup(root, parts).exists(node => node.file.isEmpty && node.children.nonEmpty)
 
+    // True when the immediate parent directory of parts exists in the tree. The root always exists,
+    // so single-segment paths (whose parent IS the root) always return true. Callers use this to
+    // enforce the createFolders = false contract: fail with FileNotFoundException when a required
+    // parent is absent rather than silently creating it.
     private[kyo] def parentsExist(root: Node, parts: Chunk[String]): Boolean =
         if parts.size <= 1 then true
         else
             lookup(root, parts.dropRight(1)) match
                 case Present(n) if n.file.isEmpty => true
                 case _                            => false
+
+    /** Refuses an entry at `path` as the host does: an entry beneath a regular file is not a directory, and a missing
+      * parent is not found unless `createFolders` allows creating it. Without this check, [[upsert]] would give the file
+      * children that no read can see.
+      */
+    private[kyo] def placeable(root: Node, path: Path, createFolders: Boolean)(using
+        Frame
+    ): Result[FileNotADirectoryException | FileNotFoundException, Unit] =
+        if hasFileParent(root, path.parts) then Result.fail(FileNotADirectoryException(path))
+        else if !createFolders && !parentsExist(root, path.parts) then Result.fail(FileNotFoundException(path))
+        else Result.unit
+
+    /** Refuses a file write at `path` as the host does: the [[placeable]] checks, and a directory is not a file. */
+    private[kyo] def fileTarget(root: Node, path: Path, createFolders: Boolean)(using
+        Frame
+    ): Result[FileIsADirectoryException | FileNotADirectoryException | FileNotFoundException, Unit] =
+        if lookup(root, path.parts).exists(_.file.isEmpty) then Result.fail(FileIsADirectoryException(path))
+        else placeable(root, path, createFolders)
 end InMemoryFileSystem
 
 final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.State])
@@ -234,6 +252,19 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
             }
         }
 
+    // Unsafe: the synchronous form of modify, for the write handle's finish() and the temporaries' remove(), which run
+    // under AllowUnsafe and return Unit. It notifies watchers as modify does, so a change made there is not missed.
+    private def modifyUnsafe(f: State => State)(using AllowUnsafe, Frame): Unit =
+        @scala.annotation.tailrec
+        def commit(): (State, State) =
+            val cur  = state.unsafe.get()
+            val next = f(cur)
+            if state.unsafe.compareAndSet(cur, next) then (cur, next) else commit()
+        end commit
+        val (cur, next) = commit()
+        if cur ne next then Sync.Unsafe.evalOrThrow(emitAll(cur.watchers, mutationChanges(cur.root, next.root)))
+    end modifyUnsafe
+
     def exists(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
         state.use(s => lookup(s.root, path.parts).isDefined)
     def exists(path: Path, followLinks: Boolean)(using Frame): Boolean < (Sync & Abort[FileReadException]) = exists(path)
@@ -292,10 +323,9 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
     def writeBytes(path: Path, value: Span[Byte], options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
         now.map(t =>
             modify { s =>
-                if !options.createFolders && !parentsExist(s.root, path.parts) then
-                    Result.fail(FileNotFoundException(path))
-                else
-                    Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.file(value, t), t)), ()))
+                fileTarget(s.root, path, options.createFolders).map(_ =>
+                    (s.copy(root = upsert(s.root, path.parts, Node.file(value, t), t)), ())
+                )
             }
         )
     def writeLines(path: Path, value: Chunk[String], options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
@@ -308,12 +338,11 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
     def appendBytes(path: Path, value: Span[Byte], options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
         now.map(t =>
             modify { s =>
-                if !options.createFolders && !parentsExist(s.root, path.parts) then
-                    Result.fail(FileNotFoundException(path))
-                else
+                fileTarget(s.root, path, options.createFolders).map { _ =>
                     val existing = lookup(s.root, path.parts).flatMap(_.file).map(_.bytes).getOrElse(Span.empty[Byte])
                     val merged   = Span.fromUnsafe(existing.toArrayUnsafe ++ value.toArrayUnsafe)
-                    Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.file(merged, t), t)), ()))
+                    (s.copy(root = upsert(s.root, path.parts, Node.file(merged, t), t)), ())
+                }
             }
         )
     def appendLines(path: Path, value: Chunk[String], options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
@@ -354,15 +383,27 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
                 lookup(s.root, path.parts) match
                     case Present(existing) if existing.file.isEmpty => Result.succeed((s, ()))
                     case Present(_)                                 => Result.fail(FileAlreadyExistsException(path))
-                    case Absent => Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.dir(t), t)), ()))
+                    case Absent                                     =>
+                        placeable(s.root, path, createFolders = true).map(_ =>
+                            (s.copy(root = upsert(s.root, path.parts, Node.dir(t), t)), ())
+                        )
             }
         }
+    // An existing entry of either kind is left as it stands, as the host's mkFile does.
     def mkFile(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
-        now.map(t => modify(s => Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.file(Span.empty[Byte], t), t)), ()))))
-    // The in-memory backend honors replaceExisting (aborts FileAlreadyExistsException when the target
-    // exists and replaceExisting is false), never replaces a non-empty directory (aborts
-    // FileDirectoryNotEmptyException, as the host does), and createFolders (aborts FileNotFoundException when the
-    // destination parent is absent and createFolders is false). atomicMove is inherent to the CAS.
+        now.map(t =>
+            modify { s =>
+                if lookup(s.root, path.parts).isDefined then Result.succeed((s, ()))
+                else
+                    placeable(s.root, path, createFolders = true).map(_ =>
+                        (s.copy(root = upsert(s.root, path.parts, Node.file(Span.empty[Byte], t), t)), ())
+                    )
+            }
+        )
+    // The in-memory backend places an entry as the host does: an entry onto itself is left as it stands, an entry
+    // inside itself is refused, an existing target is replaced only when replaceExisting allows (aborts
+    // FileAlreadyExistsException otherwise) and never when it is a non-empty directory (aborts
+    // FileDirectoryNotEmptyException), and the placeable rules hold for the target. atomicMove is inherent to the CAS.
     // There are no symlinks, and copyAttributes selects whether the copied node keeps its source stat.
     def move(
         from: Path,
@@ -371,13 +412,10 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
     )(using Frame): Unit < (Sync & Abort[FileStructureException]) =
         now.map(t =>
             modify { s =>
-                lookup(s.root, from.parts) match
-                    case Absent => Result.fail(FileNotFoundException(from))
-                    case Present(_) if lookup(s.root, to.parts).isDefined && options.replace == Path.Replace.Never =>
-                        Result.fail(FileAlreadyExistsException(to))
-                    case Present(_) if nonEmptyDirectory(s.root, to.parts) => Result.fail(FileDirectoryNotEmptyException(to))
-                    case Present(_) if !options.createFolders && !parentsExist(s.root, to.parts) => Result.fail(FileNotFoundException(to))
-                    case Present(n) => Result.succeed((s.copy(root = delete(upsert(s.root, to.parts, n, t), from.parts)), ()))
+                placement(s.root, from, to, options.replace, options.createFolders, FileSystemOperation.Move).map {
+                    case Absent     => (s, ())
+                    case Present(n) => (s.copy(root = delete(upsert(s.root, to.parts, n, t), from.parts)), ())
+                }
             }
         )
     def copy(
@@ -387,17 +425,33 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
     )(using Frame): Unit < (Sync & Abort[FileStructureException]) =
         now.map(t =>
             modify { s =>
-                lookup(s.root, from.parts) match
-                    case Absent => Result.fail(FileNotFoundException(from))
-                    case Present(_) if lookup(s.root, to.parts).isDefined && options.replace == Path.Replace.Never =>
-                        Result.fail(FileAlreadyExistsException(to))
-                    case Present(_) if nonEmptyDirectory(s.root, to.parts) => Result.fail(FileDirectoryNotEmptyException(to))
-                    case Present(_) if !options.createFolders && !parentsExist(s.root, to.parts) => Result.fail(FileNotFoundException(to))
-                    case Present(n)                                                              =>
-                        val copied = Node.copied(n, t, options.copyAttributes)
-                        Result.succeed((s.copy(root = upsert(s.root, to.parts, copied, t)), ()))
+                placement(s.root, from, to, options.replace, options.createFolders, FileSystemOperation.Copy).map {
+                    case Absent     => (s, ())
+                    case Present(n) => (s.copy(root = upsert(s.root, to.parts, Node.copied(n, t, options.copyAttributes), t)), ())
+                }
             }
         )
+
+    /** The node to place at `to`, `Absent` when `from` and `to` are the same entry and there is nothing to do, or why the
+      * host would refuse the placement. Every check runs before anything changes.
+      */
+    private def placement(
+        root: Node,
+        from: Path,
+        to: Path,
+        replace: Path.Replace,
+        createFolders: Boolean,
+        operation: FileSystemOperation
+    )(using Frame): Result[FileStructureException, Maybe[Node]] =
+        lookup(root, from.parts) match
+            case Absent                                        => Result.fail(FileNotFoundException(from))
+            case Present(_) if to.parts == from.parts          => Result.succeed(Absent)
+            case Present(_) if to.parts.startsWith(from.parts) =>
+                Result.fail(FileIOException(to, operation, new java.io.IOException(s"Cannot place $from inside itself at $to")))
+            case Present(_) if lookup(root, to.parts).isDefined && replace == Path.Replace.Never =>
+                Result.fail(FileAlreadyExistsException(to))
+            case Present(_) if nonEmptyDirectory(root, to.parts) => Result.fail(FileDirectoryNotEmptyException(to))
+            case Present(n)                                      => placeable(root, to, createFolders).map(_ => Present(n))
     def remove(path: Path)(using Frame): Boolean < (Sync & Abort[FileStructureException]) =
         modify(s => Result.succeed((s.copy(root = delete(s.root, path.parts)), lookup(s.root, path.parts).isDefined)))
     def removeExisting(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
@@ -414,12 +468,11 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
         Frame
     ): Path.WriteHandle < (Sync & Abort[FileWriteException]) =
         state.use { s =>
-            if !options.createFolders && !parentsExist(s.root, path.parts) then
-                Abort.fail(FileNotFoundException(path))
-            else
+            Abort.get(fileTarget(s.root, path, options.createFolders)).andThen {
                 val seed =
                     if append then lookup(s.root, path.parts).flatMap(_.file).map(_.bytes).getOrElse(Span.empty[Byte]) else Span.empty[Byte]
                 InMemoryHandles.write(this, path, seed)
+            }
         }
     // writeChunk and writeString are abstract on FileSystem.Write[S]; every concrete service must implement
     // them. The in-memory form delegates into the handle's buffer accumulator.
@@ -432,20 +485,25 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
     def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) =
         now.map { t =>
             val dir = Path(prefix + "-" + java.lang.Long.toHexString(t) + "-" + nextTempId.getAndIncrement().toHexString)
-            modify(s => Result.succeed((s.copy(root = upsert(s.root, dir.parts, Node.dir(t), t)), ()))).andThen {
-                new Path.TempDirHandle:
-                    def path: Path = dir
-                    // Unsafe: removes only the in-memory subtree; never touches the host filesystem.
-                    // AtomicRef.Unsafe exposes updateAndGet(f): A (not update(f): Unit); discard the result.
-                    def remove()(using AllowUnsafe): Unit =
-                        discard(state.unsafe.updateAndGet(s => s.copy(root = delete(s.root, dir.parts))))
-            }
+            modify(s =>
+                placeable(s.root, dir, createFolders = true).map(_ => (s.copy(root = upsert(s.root, dir.parts, Node.dir(t), t)), ()))
+            )
+                .andThen {
+                    new Path.TempDirHandle:
+                        def path: Path = dir
+                        // Unsafe: removes only the in-memory subtree; never touches the host filesystem.
+                        def remove()(using AllowUnsafe): Unit = modifyUnsafe(s => s.copy(root = delete(s.root, dir.parts)))
+                }
         }
 
     def temp(prefix: String, suffix: String)(using Frame): Path.TempFileHandle < (Sync & Abort[FileStructureException]) =
         now.map { t =>
             val file = Path(prefix + "-" + java.lang.Long.toHexString(t) + "-" + nextTempId.getAndIncrement().toHexString + suffix)
-            modify(s => Result.succeed((s.copy(root = upsert(s.root, file.parts, Node.file(Span.empty[Byte], t), t)), ()))).andThen {
+            modify(s =>
+                placeable(s.root, file, createFolders = true).map(_ =>
+                    (s.copy(root = upsert(s.root, file.parts, Node.file(Span.empty[Byte], t), t)), ())
+                )
+            ).andThen {
                 tempFileHandle(file)
             }
         }
@@ -453,8 +511,7 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
     override private[kyo] def tempFileHandle(temporary: Path)(using Frame): Path.TempFileHandle =
         new Path.TempFileHandle:
             def path: Path                        = temporary
-            def remove()(using AllowUnsafe): Unit =
-                discard(state.unsafe.updateAndGet(s => s.copy(root = delete(s.root, temporary.parts))))
+            def remove()(using AllowUnsafe): Unit = modifyUnsafe(s => s.copy(root = delete(s.root, temporary.parts)))
 
     // --- Positioned channels ---
 
@@ -776,12 +833,16 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
 
     // Unsafe: synchronous CAS write used by the in-memory write handle's finish(); the safe writeBytes
     // equivalent, without suspension, so it can run from the handle's AllowUnsafe finish().
-    private[kyo] def commitBytesUnsafe(path: Path, bytes: Span[Byte])(using AllowUnsafe): Unit =
+    //
+    // openWrite checked the target, but the tree can change before finish(). When the target is no longer a place a
+    // file can go (a directory now stands there, or a file above it), the bytes are dropped: on a host they went to a
+    // file that was replaced, which no read can reach either.
+    private[kyo] def commitBytesUnsafe(path: Path, bytes: Span[Byte])(using AllowUnsafe, Frame): Unit =
         val t = java.lang.System.currentTimeMillis()
-        // AtomicRef.Unsafe exposes updateAndGet(f): A; discard the returned state.
-        discard(state.unsafe.updateAndGet(s =>
-            s.copy(root = InMemoryFileSystem.upsert(s.root, path.parts, InMemoryFileSystem.Node.file(bytes, t), t))
-        ))
+        modifyUnsafe(s =>
+            if fileTarget(s.root, path, createFolders = true).isFailure then s
+            else s.copy(root = upsert(s.root, path.parts, Node.file(bytes, t), t))
+        )
     end commitBytesUnsafe
 end InMemoryFileSystem
 

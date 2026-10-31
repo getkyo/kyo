@@ -134,6 +134,43 @@ class InMemoryFileSystemWatchTest extends kyo.test.Test[Any]:
         }
     }
 
+    "in-memory watcher emits Created for a file a write handle commits" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("handle-watched")
+            val file = root / "streamed.bin"
+            Scope.run {
+                Path.runWatchWith(fileSystem) {
+                    Path.runWith(fileSystem) {
+                        for
+                            _       <- root.mkDir
+                            watcher <- root.openWatcher()
+                            _       <- Stream.init(Chunk[Byte](1, 2, 3)).writeTo(file)
+                            events  <- watcher.events.take(1).run
+                        yield assert(events == Chunk(PathChange.Created(file)))
+                    }
+                }
+            }
+        }
+    }
+
+    "in-memory watcher emits Removed when a temporary is removed" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("temporary-watched")
+            Scope.run {
+                Path.runWatchWith(fileSystem) {
+                    for
+                        _         <- fileSystem.mkDir(root)
+                        watcher   <- Path.runWith(fileSystem)(root.openWatcher())
+                        temporary <- fileSystem.temp((root / "scratch").unsafe.show, ".bin")
+                        // Unsafe: removes the temporary through its handle, the path a scope's cleanup takes.
+                        _      <- Sync.Unsafe.defer(temporary.remove())
+                        events <- watcher.events.take(2).run
+                    yield assert(events == Chunk(PathChange.Created(temporary.path), PathChange.Removed(temporary.path)))
+                }
+            }
+        }
+    }
+
     "mutation during an initial walk is queued by the already-open watcher" in {
         FileSystem.inMemory.map { fileSystem =>
             val root    = Path("walk-race-root")
