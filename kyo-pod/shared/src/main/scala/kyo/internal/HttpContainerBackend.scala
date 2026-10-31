@@ -1382,13 +1382,13 @@ final private[kyo] class HttpContainerBackend(
             Chunk.from(entries.map { e =>
                 Container.Summary(
                     id = Container.Id(e.Id),
-                    names = Chunk.from(e.Names.map(_.stripPrefix("/"))),
+                    names = Chunk.from(e.Names.getOrElse(Seq.empty).map(_.stripPrefix("/"))),
                     image = ContainerImage(e.Image),
                     imageId = ContainerImage.Id(e.ImageID),
                     command = e.Command,
                     state = parseState(e.State),
                     status = e.Status,
-                    ports = Chunk.from(e.Ports.map { p =>
+                    ports = Chunk.from(e.Ports.getOrElse(Seq.empty).map { p =>
                         val protocol = p.Type match
                             case "udp"  => Config.Protocol.UDP
                             case "sctp" => Config.Protocol.SCTP
@@ -1400,8 +1400,8 @@ final private[kyo] class HttpContainerBackend(
                             protocol = protocol
                         )
                     }),
-                    labels = Dict.from(e.Labels),
-                    mounts = Chunk.from(e.Mounts.map(_.Name)),
+                    labels = Dict.from(e.Labels.getOrElse(Map.empty)),
+                    mounts = Chunk.from(e.Mounts.getOrElse(Seq.empty).map(_.Name)),
                     createdAt = fromEpochSecond(e.Created)
                 )
             })
@@ -2529,18 +2529,20 @@ final private[kyo] class HttpContainerBackend(
         limit: Option[Long] = None
     ) derives Schema
 
+    // The collections are optional because Docker sends `null` for an empty one (Docker Desktop 29.3: `"Ports": null` on a running
+    // container that publishes no port), and one such entry must not fail the whole list.
     final private case class ListContainerEntry(
         Id: String = "",
-        Names: Seq[String] = Seq.empty,
+        Names: Option[Seq[String]] = None,
         Image: String = "",
         ImageID: String = "",
         Command: String = "",
         State: String = "",
         Status: String = "",
         Created: Long = 0,
-        Ports: Seq[ListPortEntry] = Seq.empty,
-        Labels: Map[String, String] = Map.empty,
-        Mounts: Seq[ListMountEntry] = Seq.empty
+        Ports: Option[Seq[ListPortEntry]] = None,
+        Labels: Option[Map[String, String]] = None,
+        Mounts: Option[Seq[ListMountEntry]] = None
     ) derives Schema
 
     final private case class ListPortEntry(
