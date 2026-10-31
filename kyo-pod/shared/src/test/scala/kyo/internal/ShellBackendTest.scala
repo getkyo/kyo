@@ -378,6 +378,27 @@ class ShellBackendTest extends kyo.BasePodTest:
             val ex = classify("Error response from daemon: manifest for alpine:nope not found: manifest unknown: manifest unknown")
             assert(ex.isInstanceOf[kyo.ContainerImageMissingException], s"expected a missing image, got $ex")
         }
+
+        // Docker 29's containerd image store, as the docker CLI printed it on the Ubuntu 26.04 runner.
+        "a reference the containerd store could not resolve is a missing image naming it" in {
+            val ex = classify(
+                "Error response from daemon: failed to resolve reference \"docker.io/library/nonexistent-image-xyz-999:notatag\": " +
+                    "docker.io/library/nonexistent-image-xyz-999:notatag: not found"
+            )
+            ex match
+                case e: kyo.ContainerImageMissingException =>
+                    assert(e.image.reference == "docker.io/library/nonexistent-image-xyz-999:notatag", s"names the reference: ${e.image}")
+                case other => fail(s"expected a missing image, got $other")
+            end match
+        }
+
+        "a reference the containerd store could not reach the registry for is a registry fault" in {
+            val ex = classify(
+                "Error response from daemon: failed to resolve reference \"docker.io/library/alpine:latest\": failed to do request: " +
+                    "Head \"https://registry-1.docker.io/v2/library/alpine/manifests/latest\": dial tcp: lookup registry-1.docker.io: i/o timeout"
+            )
+            assert(ex.isInstanceOf[kyo.ContainerRegistryUnavailableException], s"expected a registry-unavailable failure, got $ex")
+        }
     }
 
     "treePlatforms" - {

@@ -2334,6 +2334,16 @@ final private[kyo] class ShellBackend(
                             case Seq("--platform", p) => Container.Platform.parse(p).toMaybe
                         }.getOrElse(Absent)
                         ContainerImagePlatformConflictException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)), platform, output)
+                    // Docker's containerd image store prints a reference no registry serves as `failed to resolve reference "<ref>":
+                    // <ref>: not found`. A resolve that failed for another cause, an unreachable registry, ends otherwise and was
+                    // classified as a registry fault above.
+                    else if lower.contains("failed to resolve reference") && lower.trim.endsWith(": not found") then
+                        val ref = "failed to resolve reference \"([^\"]+)\"".r.findFirstMatchIn(output).map(_.group(1)).getOrElse {
+                            ctx match
+                                case ResourceContext.Image(r) => r
+                                case other                    => other.describe
+                        }
+                        ContainerImageMissingException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)))
                     // initializing source: multi-step string surgery to extract the image ref
                     else if lower.contains("initializing source") then
                         val dockerIdx = output.indexOf("docker://")
