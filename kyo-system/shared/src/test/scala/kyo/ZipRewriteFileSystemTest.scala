@@ -370,18 +370,20 @@ class ZipRewriteFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
-    "failed transfer after baseline parent materialization commits no staged state" in {
+    // A copy of a baseline directory that the target refuses: before it is refused, the copy has a baseline tree to
+    // stage and a baseline parent chain to place it in, and none of that may reach the archive.
+    "a refused transfer of a baseline directory stages nothing and commits no change" in {
         Scope.run {
             hostTempDir("kyo-zip-transfer-parent-rollback").map { dir =>
                 val archive      = dir / "archive.zip"
                 val sourceDir    = Path("source")
                 val sourceChild  = sourceDir / "child.txt"
-                val targetParent = Path("destination") / "nested"
-                val target       = targetParent / "copied"
+                val occupied     = Path("destination")
+                val targetParent = occupied / "nested"
                 FileSystem.zip(archive).map { zw =>
                     zw.mkDir(sourceDir)
                         .andThen(zw.write(sourceChild, "baseline-content", Path.WriteOptions()))
-                        .andThen(zw.mkDir(Path("destination")))
+                        .andThen(zw.mkDir(occupied))
                         .andThen(zw.mkDir(targetParent))
                         .andThen(zw.commit)
                 }.andThen {
@@ -390,15 +392,15 @@ class ZipRewriteFileSystemTest extends kyo.test.Test[Any]:
                         FileSystem.host.readBytes(archive).map { beforeBytes =>
                             FileSystem.zip(archive).map { zw =>
                                 Abort.run[FileSystemException](
-                                    zw.copy(sourceDir, target, Path.CopyOptions(createFolders = false))
+                                    zw.copy(sourceDir, occupied, Path.CopyOptions(replace = Path.Replace.Existing))
                                 ).map { result =>
                                     zw.read(sourceChild).map { content =>
-                                        zw.exists(target).map((result, content, _))
+                                        zw.list(occupied).map((result, content, _))
                                     }
-                                }.map { (result, content, targetExists) =>
-                                    assert(result.isFailure)
+                                }.map { (result, content, entries) =>
+                                    assert(result == Result.fail(FileDirectoryNotEmptyException(occupied)), s"copy result: $result")
                                     assert(content == "baseline-content")
-                                    assert(!targetExists)
+                                    assert(entries == Chunk(targetParent))
                                 }.andThen(zw.commit)
                             }.andThen {
                                 FileSystem.host.readBytes(archive).map(afterBytes => assert(afterBytes.is(beforeBytes)))
@@ -606,6 +608,238 @@ class ZipRewriteFileSystemTest extends kyo.test.Test[Any]:
                         end try
                     }
                 }
+            }
+        }
+    }
+
+    /** A rewrite handle over a committed archive holding `base.txt` and `dir/child.txt`, so every entry it starts with is in the
+      * baseline and none is staged.
+      */
+    private def withBaseline[A](prefix: String)(
+        use: (FileSystem.Write[Sync] & FileSystem.StagedChanges[Sync & Abort[FileSystemException]], Path) => A <
+            (Sync & Scope & Abort[FileSystemException | CommitConflict])
+    ): A < (Sync & Scope & Abort[FileSystemException | CommitConflict]) =
+        hostTempDir(prefix).map { dir =>
+            val archive = dir / "archive.zip"
+            FileSystem.zip(archive).map { zw =>
+                zw.write(
+                    baseFile,
+                    "value",
+                    Path.WriteOptions()
+                ).andThen(zw.write(baseChild, "child", Path.WriteOptions())).andThen(zw.commit)
+            }.andThen(FileSystem.zip(archive).map(zw => use(zw, archive)))
+        }
+
+    private val baseFile  = Path("base.txt")
+    private val baseDir   = Path("dir")
+    private val baseChild = baseDir / "child.txt"
+
+    "every way to create an entry beneath a baseline file fails and keeps the file" in {
+        Scope.run {
+            withBaseline("kyo-zip-beneath-baseline") { (zw, archive) =>
+                val beneath                                                                     = baseFile / "child.txt"
+                val attempts: Chunk[(String, Unit < (Sync & Abort[FileSystemException]), Path)] = Chunk(
+                    ("write", zw.write(beneath, "child", Path.WriteOptions()), beneath),
+                    ("append", zw.append(beneath, "child", Path.WriteOptions()), beneath),
+                    ("mkFile", zw.mkFile(beneath), beneath),
+                    ("mkDir", zw.mkDir(beneath / "nested"), beneath / "nested"),
+                    ("openWrite", zw.openWrite(beneath, append = false, Path.WriteOptions()).unit, beneath),
+                    ("move", zw.move(baseChild, beneath, Path.MoveOptions()), beneath),
+                    ("copy", zw.copy(baseChild, beneath, Path.CopyOptions()), beneath)
+                )
+                Kyo.foreach(attempts) { (name, attempt, named) =>
+                    Abort.run[FileSystemException](attempt).map(result => (name, result, named))
+                }.map { results =>
+                    zw.read(baseFile).map { staged =>
+                        zw.commit.andThen(FileSystem.zipReadOnly(archive)).map { committed =>
+                            committed.read(baseFile).map { value =>
+                                committed.read(baseChild).map { child =>
+                                    results.foreach { (name, result, named) =>
+                                        assert(result == Result.fail(FileNotADirectoryException(named)), s"$name reported $result")
+                                    }
+                                    assert(staged == "value")
+                                    assert(value == "value")
+                                    assert(child == "child")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "writing a file over a baseline directory fails, and mkFile or mkDir on a baseline entry keeps it" in {
+        Scope.run {
+            withBaseline("kyo-zip-over-baseline") { (zw, archive) =>
+                val attempts: Chunk[(String, Unit < (Sync & Abort[FileSystemException]), Result[FileSystemException, Unit])] = Chunk(
+                    ("write", zw.write(baseDir, "file", Path.WriteOptions()), Result.fail(FileIsADirectoryException(baseDir))),
+                    ("append", zw.append(baseDir, "file", Path.WriteOptions()), Result.fail(FileIsADirectoryException(baseDir))),
+                    (
+                        "openWrite",
+                        zw.openWrite(baseDir, append = false, Path.WriteOptions()).unit,
+                        Result.fail(FileIsADirectoryException(baseDir))
+                    ),
+                    ("mkDir over a file", zw.mkDir(baseFile), Result.fail(FileAlreadyExistsException(baseFile))),
+                    ("mkDir over a directory", zw.mkDir(baseDir), Result.unit),
+                    ("mkFile over a file", zw.mkFile(baseFile), Result.unit),
+                    ("mkFile over a directory", zw.mkFile(baseDir), Result.unit)
+                )
+                Kyo.foreach(attempts) { (name, attempt, expected) =>
+                    Abort.run[FileSystemException](attempt).map(result => (name, result, expected))
+                }.map { results =>
+                    zw.commit.andThen(FileSystem.zipReadOnly(archive)).map { committed =>
+                        committed.read(baseFile).map { value =>
+                            committed.read(baseChild).map { child =>
+                                results.foreach { (name, result, expected) =>
+                                    assert(result == expected, s"$name reported $result")
+                                }
+                                assert(value == "value")
+                                assert(child == "child")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a write into a baseline directory needs no createFolders" in {
+        Scope.run {
+            withBaseline("kyo-zip-baseline-parent") { (zw, _) =>
+                val added = baseDir / "added.txt"
+                zw.write(added, "added", Path.WriteOptions(createFolders = false)).andThen(zw.read(added)).map { value =>
+                    assert(value == "added")
+                }
+            }
+        }
+    }
+
+    "a replacing move or copy onto a baseline directory with entries fails and keeps it" in {
+        Scope.run {
+            withBaseline("kyo-zip-baseline-nonempty") { (zw, _) =>
+                Abort.run[FileSystemException](zw.move(baseFile, baseDir, Path.MoveOptions(replace = Path.Replace.Existing))).map {
+                    moved =>
+                        Abort.run[FileSystemException](zw.copy(baseFile, baseDir, Path.CopyOptions(replace = Path.Replace.Existing))).map {
+                            copied =>
+                                zw.read(baseChild).map { child =>
+                                    zw.read(baseFile).map { value =>
+                                        assert(moved == Result.fail(FileDirectoryNotEmptyException(baseDir)), s"move result: $moved")
+                                        assert(copied == Result.fail(FileDirectoryNotEmptyException(baseDir)), s"copy result: $copied")
+                                        assert(child == "child")
+                                        assert(value == "value")
+                                    }
+                                }
+                        }
+                }
+            }
+        }
+    }
+
+    "a removed baseline directory hides its entries, also after it is created again" in {
+        Scope.run {
+            withBaseline("kyo-zip-baseline-removed") { (zw, archive) =>
+                for
+                    _              <- zw.removeAll(baseDir)
+                    childAfterGone <- zw.exists(baseChild)
+                    _              <- zw.mkDir(baseDir)
+                    listed         <- zw.list(baseDir)
+                    childRecreated <- zw.exists(baseChild)
+                    _              <- zw.commit
+                    committed      <- FileSystem.zipReadOnly(archive)
+                    childCommitted <- committed.exists(baseChild)
+                yield
+                    assert(!childAfterGone)
+                    assert(listed.isEmpty, s"listed $listed")
+                    assert(!childRecreated)
+                    assert(!childCommitted)
+                end for
+            }
+        }
+    }
+
+    "moving or copying a baseline entry onto itself keeps it, and inside itself fails" in {
+        Scope.run {
+            withBaseline("kyo-zip-baseline-self") { (zw, _) =>
+                for
+                    _      <- zw.move(baseFile, baseFile, Path.MoveOptions(replace = Path.Replace.Existing))
+                    _      <- zw.copy(baseFile, baseFile, Path.CopyOptions(replace = Path.Replace.Existing))
+                    _      <- zw.move(baseDir, baseDir, Path.MoveOptions(replace = Path.Replace.Existing))
+                    inside <- Abort.run[FileSystemException](zw.move(baseDir, baseDir / "inner", Path.MoveOptions()))
+                    value  <- zw.read(baseFile)
+                    child  <- zw.read(baseChild)
+                    nested <- zw.exists(baseDir / "inner")
+                yield
+                    assert(inside.isFailure, s"move inside itself reported $inside")
+                    assert(value == "value")
+                    assert(child == "child")
+                    assert(!nested)
+                end for
+            }
+        }
+    }
+
+    "remove refuses a baseline directory with entries and keeps it" in {
+        Scope.run {
+            withBaseline("kyo-zip-baseline-remove") { (zw, _) =>
+                for
+                    removed  <- Abort.run[FileSystemException](zw.remove(baseDir))
+                    existing <- Abort.run[FileSystemException](zw.removeExisting(baseDir))
+                    child    <- zw.read(baseChild)
+                yield
+                    assert(removed == Result.fail(FileDirectoryNotEmptyException(baseDir)), s"remove reported $removed")
+                    assert(existing == Result.fail(FileDirectoryNotEmptyException(baseDir)), s"removeExisting reported $existing")
+                    assert(child == "child")
+                end for
+            }
+        }
+    }
+
+    "moving or copying a baseline directory carries its entries, staged or not" in {
+        Scope.run {
+            withBaseline("kyo-zip-baseline-directory-transfer") { (zw, archive) =>
+                val staged = baseDir / "staged.txt"
+                val copied = Path("copied")
+                val moved  = Path("moved")
+                for
+                    _              <- zw.write(staged, "staged", Path.WriteOptions())
+                    _              <- zw.copy(baseDir, copied, Path.CopyOptions())
+                    _              <- zw.move(baseDir, moved, Path.MoveOptions())
+                    _              <- zw.commit
+                    committed      <- FileSystem.zipReadOnly(archive)
+                    copiedChild    <- committed.read(copied / "child.txt")
+                    copiedStaged   <- committed.read(copied / "staged.txt")
+                    movedChild     <- committed.read(moved / "child.txt")
+                    movedStaged    <- committed.read(moved / "staged.txt")
+                    sourceRemains  <- committed.exists(baseDir)
+                    sourceChildren <- committed.exists(baseChild)
+                yield
+                    assert(copiedChild == "child")
+                    assert(copiedStaged == "staged")
+                    assert(movedChild == "child")
+                    assert(movedStaged == "staged")
+                    assert(!sourceRemains)
+                    assert(!sourceChildren)
+                end for
+            }
+        }
+    }
+
+    "walk shows baseline entries with staged ones and hides removed ones" in {
+        Scope.run {
+            withBaseline("kyo-zip-baseline-walk") { (zw, _) =>
+                val staged = baseDir / "staged.txt"
+                val nested = baseDir / "nested"
+                for
+                    _      <- zw.write(staged, "staged", Path.WriteOptions())
+                    _      <- zw.write(nested / "deep.txt", "deep", Path.WriteOptions())
+                    _      <- zw.remove(baseFile)
+                    walked <- Path.runReadOnlyWith(zw)(Path().walk.run)
+                    top    <- Path.runReadOnlyWith(zw)(baseDir.walk(1).run)
+                yield
+                    assert(walked == Chunk(baseDir, baseChild, nested, nested / "deep.txt", staged), s"walked $walked")
+                    assert(top == Chunk(baseChild, nested, staged), s"walked $top")
+                end for
             }
         }
     }

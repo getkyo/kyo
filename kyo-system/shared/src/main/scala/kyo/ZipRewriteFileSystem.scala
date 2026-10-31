@@ -43,20 +43,20 @@ final private[kyo] class ZipRewriteFileSystem(
 ) extends FileSystem.Write[Sync]
     with FileSystem.StagedChanges[Sync & Abort[FileSystemException]]:
 
-    final private case class TransferPlan(
-        baselineParents: Chunk[Path],
-        sourceWasInUpper: Boolean,
-        targetWasInUpper: Boolean
-    )
-
     def defaultCaseSensitivity(using Frame): Glob.CaseSensitivity < Sync = Glob.CaseSensitivity.Sensitive
 
     private def name(path: Path): String      = path.parts.mkString("/")
     private def pathFromName(n: String): Path = if n.isEmpty then Path() else Path(n.split("/", -1).toIndexedSeq*)
 
-    private def untombstone(n: String)(using Frame): Unit < Sync     = deletedRef.get.map(cur => deletedRef.set(cur - n))
-    private def tombstone(n: String)(using Frame): Unit < Sync       = deletedRef.get.map(cur => deletedRef.set(cur + n))
-    private def isTombstoned(n: String)(using Frame): Boolean < Sync = deletedRef.get.map(_.contains(n))
+    private def tombstone(n: String)(using Frame): Unit < Sync = deletedRef.updateAndGet(_ + n).unit
+
+    // A removed entry hides every baseline entry beneath it as well, and keeps hiding them once the entry is created
+    // again in the upper: the new entry starts empty, as it would on a host.
+    private def hidden(n: String, tomb: Set[String]): Boolean =
+        tomb.contains("") || tomb.contains(n) || n.indices.exists(i => n.charAt(i) == '/' && tomb.contains(n.substring(0, i)))
+
+    private def ancestors(path: Path): Chunk[Path] =
+        Chunk.from((1 until path.parts.size).map(size => Path(path.parts.take(size).toIndexedSeq*)))
 
     // Loads and memoizes archive's baseline entry index on first use. A missing archive is an
     // empty baseline (the fresh-archive case, item 8's file->zip migrate target), never a
@@ -99,45 +99,138 @@ final private[kyo] class ZipRewriteFileSystem(
                 case None => Abort.fail(FileNotFoundException(pathFromName(n)))
         }
 
-    // Seeds the upper with a baseline-only file's content before the first mutation, so an
-    // append / openWrite(append = true) / move against a path staged nowhere yet reads the
-    // archive's own prior bytes rather than starting from empty. A no-op for a path already
-    // staged, already tombstoned, or that is a directory.
-    private def seedFromBaselineIfAbsent(path: Path)(using Frame): Unit < (Sync & Abort[FileReadException | FileWriteException]) =
-        val n = name(path)
+    /** The kind of the baseline entry named `n` (`true` for a directory) as the merged view shows it, absent when a removal
+      * hides it.
+      */
+    private def baselineKind(n: String)(using Frame): Maybe[Boolean] < (Sync & Abort[FileReadException]) =
+        deletedRef.get.map { tomb =>
+            if hidden(n, tomb) then Absent
+            else baseline.map(idx => idx.kinds.get(n).fold(Maybe.empty[Boolean])(Present(_)))
+        }
+
+    /** The kind of the entry at `path` in the merged view: the upper's when it holds one, the baseline's otherwise. */
+    private def resolveKind(path: Path)(using Frame): Maybe[Boolean] < (Sync & Abort[FileReadException]) =
         upper.exists(path).map { inUpper =>
-            if inUpper then ()
-            else
-                isTombstoned(n).map { td =>
-                    if td then ()
-                    else
-                        baseline.map { idx =>
-                            idx.kinds.get(n) match
-                                case Some(false) =>
-                                    readBaselineEntry(n).map { bytes =>
-                                        upper.writeBytes(path, Span.from(bytes), Path.WriteOptions()).andThen {
-                                            idx.entryStats.get(n) match
-                                                case Some(stat) => upper.setLastModified(path, stat.lastModifiedMs)
-                                                case None       => ()
-                                        }
-                                    }
-                                case _ => ()
+            if inUpper then upper.isDirectory(path).map(Present(_))
+            else baselineKind(name(path))
+        }
+
+    /** The entries directly inside the directory at `path` in the merged view, in name order. */
+    private def children(path: Path)(using Frame): Chunk[Path] < (Sync & Abort[FileReadException | FileStructureException]) =
+        upper.isDirectory(path).map { inUpper =>
+            (if inUpper then upper.list(path) else Sync.defer(Chunk.empty[Path])).map { fromUpper =>
+                baseline.map { idx =>
+                    deletedRef.get.map { tomb =>
+                        val fromBaseline = idx.children.getOrElse(name(path), Chunk.empty)
+                            .map(segment => path / segment)
+                            .filterNot(child => hidden(name(child), tomb))
+                        Chunk.from((fromUpper.toIndexedSeq ++ fromBaseline.toIndexedSeq).distinct.sortBy(name))
+                    }
+                }
+            }
+        }
+
+    // Every read failure is also a write failure, so a read the write makes first reports in the write's row as it is.
+    private def writing[A](v: A < (Sync & Abort[FileReadException | FileWriteException]))(using
+        Frame
+    ): A < (Sync & Abort[FileWriteException]) =
+        Abort.recover[FileReadException] {
+            case error: (FileNotFoundException | FileAccessDeniedException | FileIsADirectoryException |
+                    FileInvalidPathException | FileOutsideRootException | FileIOException) => Abort.fail(error)
+        }(v)
+
+    // A structural change stages through writes; a write failure that is neither a read nor a structural one reports as
+    // an I/O failure of the change.
+    private def structural[A](path: Path, operation: FileSystemOperation)(
+        v: A < (Sync & Abort[FileReadException | FileWriteException | FileStructureException])
+    )(using Frame): A < (Sync & Abort[FileReadException | FileStructureException]) =
+        Abort.recover[FileWriteException] {
+            case error: FileReadException      => Abort.fail(error)
+            case error: FileStructureException => Abort.fail(error)
+            case error                         => Abort.fail(FileIOException(path, operation, error))
+        }(v)
+
+    /** Refuses an entry at `path` against the merged view, as the host does: an entry beneath a regular file is not a
+      * directory, and a missing parent is not found unless `createFolders` allows creating it. The upper checks only its
+      * own entries, so it cannot see a baseline file above `path`.
+      */
+    private def placeable(path: Path, createFolders: Boolean)(using
+        Frame
+    ): Unit < (Sync & Abort[FileReadException | FileNotADirectoryException | FileNotFoundException]) =
+        Loop(ancestors(path)) { remaining =>
+            remaining.headMaybe match
+                case Absent            => Loop.done(())
+                case Present(ancestor) =>
+                    resolveKind(ancestor).map {
+                        case Present(true)  => Loop.continue(remaining.dropLeft(1))
+                        case Present(false) => Abort.fail(FileNotADirectoryException(path))
+                        case Absent         => if createFolders then Loop.done(()) else Abort.fail(FileNotFoundException(path))
+                    }
+        }
+
+    /** [[placeable]] for a file write, which also refuses a directory at `path`. */
+    private def fileTarget(path: Path, createFolders: Boolean)(using Frame): Unit < (Sync & Abort[FileReadException | FileWriteException]) =
+        resolveKind(path).map {
+            case Present(true) => Abort.fail(FileIsADirectoryException(path))
+            case _             => placeable(path, createFolders)
+        }
+
+    /** Copies the baseline entry at `path` into the upper with its baseline stat, when the merged view shows it and the
+      * upper does not hold it yet, and answers whether it did. Its parent must already be in the upper. The copy holds what
+      * the baseline does, so the merged view is unchanged by it.
+      */
+    private def copyUp(path: Path)(using
+        Frame
+    ): Boolean < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        upper.exists(path).map {
+            case true  => false
+            case false =>
+                val n = name(path)
+                baselineKind(n).map {
+                    case Absent         => false
+                    case Present(isDir) =>
+                        val copied =
+                            if isDir then upper.mkDir(path)
+                            else
+                                readBaselineEntry(n).map(bytes =>
+                                    upper.writeBytes(path, Span.from(bytes), Path.WriteOptions(createFolders = false))
+                                )
+                        copied.andThen(baseline).map { idx =>
+                            idx.entryStats.get(n) match
+                                case Some(stat) => upper.setLastModified(path, stat.lastModifiedMs).andThen(true)
+                                case None       => true
                         }
                 }
         }
-    end seedFromBaselineIfAbsent
 
-    private def resolveKind(path: Path)(using Frame): Maybe[Boolean] < (Sync & Abort[FileReadException]) =
-        val n = name(path)
-        upper.exists(path).map { inUpper =>
-            if inUpper then upper.isDirectory(path).map(Present(_))
-            else
-                isTombstoned(n).map { td =>
-                    if td then Absent
-                    else baseline.map(idx => idx.kinds.get(n).fold(Maybe.empty[Boolean])(Present(_)))
-                }
+    /** Copies the baseline directories above `path` into the upper, top down, so the upper places `path` among the archive's
+      * own directories and keeps their stats. Answers what it copied.
+      */
+    private def stageAncestors(path: Path)(using
+        Frame
+    ): Chunk[Path] < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        Kyo.filter(ancestors(path))(copyUp)
+
+    /** [[stageAncestors]], then the baseline entry at `path` itself, so a change to it starts from the archive's content. */
+    private def stage(path: Path)(using
+        Frame
+    ): Chunk[Path] < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        stageAncestors(path).map(staged => copyUp(path).map(copied => if copied then staged.append(path) else staged))
+
+    /** [[stage]], then every baseline entry beneath `path` the merged view shows, so the upper can move or copy the whole tree.
+      * Names sort a directory before its entries, so each entry's parent is copied first.
+      */
+    private def stageTree(path: Path)(using
+        Frame
+    ): Chunk[Path] < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        stage(path).map { staged =>
+            baseline.map { idx =>
+                val n       = name(path)
+                val prefix  = if n.isEmpty then "" else n + "/"
+                val beneath = Chunk.from(idx.kinds.keys.filter(k => k.nonEmpty && k != n && k.startsWith(prefix)).toIndexedSeq.sorted)
+                Kyo.filter(beneath.map(pathFromName))(copyUp).map(staged ++ _)
+            }
         }
-    end resolveKind
 
     def exists(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) = resolveKind(path).map(_.isDefined)
     def exists(path: Path, followLinks: Boolean)(using Frame): Boolean < (Sync & Abort[FileReadException]) = exists(path)
@@ -153,22 +246,15 @@ final private[kyo] class ZipRewriteFileSystem(
             ]) = path
 
     def readBytes(path: Path)(using Frame): Span[Byte] < (Sync & Abort[FileReadException]) =
-        val n = name(path)
         upper.exists(path).map { inUpper =>
             if inUpper then upper.readBytes(path)
             else
-                isTombstoned(n).map { td =>
-                    if td then Abort.fail(FileNotFoundException(path))
-                    else
-                        baseline.map { idx =>
-                            idx.kinds.get(n) match
-                                case Some(true)  => Abort.fail(FileIsADirectoryException(path))
-                                case Some(false) => readBaselineEntry(n).map(Span.from)
-                                case None        => Abort.fail(FileNotFoundException(path))
-                        }
+                baselineKind(name(path)).map {
+                    case Present(true)  => Abort.fail(FileIsADirectoryException(path))
+                    case Present(false) => readBaselineEntry(name(path)).map(Span.from)
+                    case Absent         => Abort.fail(FileNotFoundException(path))
                 }
         }
-    end readBytes
     def read(path: Path)(using Frame): String < (Sync & Abort[FileReadException]) =
         readBytes(path).map(b => new String(b.toArrayUnsafe, java.nio.charset.StandardCharsets.UTF_8))
     def read(path: Path, charset: Charset)(using Frame): String < (Sync & Abort[FileReadException]) =
@@ -179,18 +265,13 @@ final private[kyo] class ZipRewriteFileSystem(
         read(path, charset).map(c => Chunk.from(c.split("\n", -1).toIndexedSeq))
     def size(path: Path)(using Frame): Long < (Sync & Abort[FileReadException])          = readBytes(path).map(_.size.toLong)
     def stat(path: Path)(using Frame): Path.PathStat < (Sync & Abort[FileReadException]) =
-        val n = name(path)
         upper.exists(path).map { inUpper =>
             if inUpper then upper.stat(path)
             else
-                isTombstoned(n).map { td =>
-                    if td then Abort.fail(FileNotFoundException(path))
-                    else
-                        baseline.map { idx =>
-                            idx.kinds.get(n) match
-                                case Some(_) => idx.entryStats.getOrElse(n, Path.PathStat(0L, 0L))
-                                case None    => Abort.fail(FileNotFoundException(path))
-                        }
+                val n = name(path)
+                baselineKind(n).map {
+                    case Present(_) => baseline.map(idx => idx.entryStats.getOrElse(n, Path.PathStat(0L, 0L)))
+                    case Absent     => Abort.fail(FileNotFoundException(path))
                 }
         }
     end stat
@@ -199,160 +280,183 @@ final private[kyo] class ZipRewriteFileSystem(
         readBytes(path).map(bytes => InMemoryHandles.read(bytes))
     def openReadLines(path: Path, charset: Charset)(using Frame): Path.LineReadHandle < (Sync & Abort[FileReadException]) =
         read(path, charset).map(text => InMemoryHandles.lines(text))
-    // The upper's own walk only; a baseline-only subtree not yet touched via list()/exists() on this
-    // handle is not enumerated by a raw walk. list() below already merges both views for the
-    // direct-children case its callers depend on (including materialize's own walkAll, which merges
-    // independently).
+
+    /** Walks the merged view in preorder, siblings in name order, as the in-memory walk does. A path that is not a
+      * directory has nothing beneath it to walk.
+      */
     def openWalk(path: Path, maxDepth: Int, followLinks: Boolean)(using
         Frame
     ): Path.WalkHandle < (Sync & Abort[FileReadException | FileStructureException]) =
-        upper.openWalk(path, maxDepth, followLinks)
+        def preorder(directory: Path, depth: Int): Chunk[Path] < (Sync & Abort[FileReadException | FileStructureException]) =
+            if depth <= 0 then Chunk.empty
+            else
+                children(directory).map { entries =>
+                    Kyo.foreach(entries) { entry =>
+                        resolveKind(entry).map {
+                            case Present(true) => preorder(entry, depth - 1).map(beneath => Chunk(entry) ++ beneath)
+                            case _             => Chunk(entry)
+                        }
+                    }.map(_.flattenChunk)
+                }
+        resolveKind(path).map {
+            case Present(true) => preorder(path, maxDepth)
+            case _             => Chunk.empty[Path]
+        }.map { walked =>
+            new Path.WalkHandle:
+                private var remaining                                                                                 = walked
+                def next()(using AllowUnsafe, Frame): Result[FileReadException | FileStructureException, Maybe[Path]] =
+                    val head = remaining.headMaybe
+                    remaining = remaining.dropLeft(1)
+                    Result.succeed(head)
+                end next
+                def close()(using AllowUnsafe): Unit = ()
+        }
+    end openWalk
 
     def write(path: Path, value: String, options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-        untombstone(name(path)).andThen(upper.write(path, value, options))
+        writeBytes(path, Span.from(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)), options)
     def writeBytes(path: Path, value: Span[Byte], options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-        untombstone(name(path)).andThen(upper.writeBytes(path, value, options))
+        writing(fileTarget(path, options.createFolders).andThen(structuralWrite(path)(stageAncestors(path))))
+            .andThen(upper.writeBytes(path, value, options))
     def writeLines(path: Path, value: Chunk[String], options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-        untombstone(name(path)).andThen(upper.writeLines(path, value, options))
+        write(path, value.mkString("", "\n", "\n"), options)
     def append(path: Path, value: String, options: Path.WriteOptions)(using
         Frame
     ): Unit < (Sync & Abort[FileReadException | FileWriteException]) =
-        seedFromBaselineIfAbsent(path).andThen(untombstone(name(path))).andThen(upper.append(path, value, options))
+        appendBytes(path, Span.from(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)), options)
     def appendBytes(path: Path, value: Span[Byte], options: Path.WriteOptions)(using
         Frame
     ): Unit < (Sync & Abort[FileReadException | FileWriteException]) =
-        seedFromBaselineIfAbsent(path).andThen(untombstone(name(path))).andThen(upper.appendBytes(path, value, options))
+        fileTarget(path, options.createFolders).andThen(structuralWrite(path)(stage(path))).andThen(upper.appendBytes(path, value, options))
     def appendLines(path: Path, value: Chunk[String], options: Path.WriteOptions)(using
         Frame
     ): Unit < (Sync & Abort[FileReadException | FileWriteException]) =
-        seedFromBaselineIfAbsent(path).andThen(untombstone(name(path))).andThen(upper.appendLines(path, value, options))
+        append(path, value.mkString("", "\n", "\n"), options)
     def truncate(path: Path, size: Long)(using Frame): Unit < (Sync & Abort[FileReadException | FileWriteException]) =
-        seedFromBaselineIfAbsent(path).andThen(untombstone(name(path))).andThen(upper.truncate(path, size))
+        resolveKind(path).map {
+            case Absent         => Abort.fail(FileNotFoundException(path))
+            case Present(true)  => Abort.fail(FileIsADirectoryException(path))
+            case Present(false) => structuralWrite(path)(stage(path)).andThen(upper.truncate(path, size))
+        }
     def setLastModified(path: Path, epochMs: Long)(using Frame): Unit < (Sync & Abort[FileReadException | FileWriteException]) =
-        untombstone(name(path)).andThen(upper.setLastModified(path, epochMs))
+        resolveKind(path).map {
+            case Absent     => Abort.fail(FileNotFoundException(path))
+            case Present(_) => structuralWrite(path)(stage(path)).andThen(upper.setLastModified(path, epochMs))
+        }
     def openWrite(path: Path, append: Boolean, options: Path.WriteOptions)(using
         Frame
     ): Path.WriteHandle < (Sync & Abort[FileReadException | FileWriteException]) =
-        (if append then seedFromBaselineIfAbsent(path) else Sync.defer(()))
-            .andThen(untombstone(name(path))).andThen(upper.openWrite(path, append, options))
+        fileTarget(path, options.createFolders)
+            .andThen(structuralWrite(path)(if append then stage(path) else stageAncestors(path)))
+            .andThen(upper.openWrite(path, append, options))
     def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte])(using Frame): Unit < (Sync & Abort[FileWriteException]) =
         upper.writeChunk(handle, chunk)
     def writeString(handle: Path.WriteHandle, value: String, charset: Charset)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
         upper.writeString(handle, value, charset)
     def mkDir(path: Path)(using Frame): Unit < (Sync & Abort[FileReadException | FileStructureException]) =
-        untombstone(name(path)).andThen(upper.mkDir(path))
+        resolveKind(path).map {
+            case Present(true)  => ()
+            case Present(false) => Abort.fail(FileAlreadyExistsException(path))
+            case Absent         =>
+                placeable(path, createFolders = true)
+                    .andThen(structural(path, FileSystemOperation.Create)(stageAncestors(path)))
+                    .andThen(upper.mkDir(path))
+        }
+    // An existing entry of either kind is left as it stands, as the host's mkFile does.
     def mkFile(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException | FileStructureException]) =
-        untombstone(name(path)).andThen(upper.mkFile(path))
+        writing(resolveKind(path)).map {
+            case Present(_) => ()
+            case Absent     =>
+                writing(placeable(
+                    path,
+                    createFolders = true
+                ).andThen(structuralWrite(path)(stageAncestors(path)))).andThen(upper.mkFile(path))
+        }
     def move(
         from: Path,
         to: Path,
         options: Path.MoveOptions
     )(using Frame): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
-        preflightTransfer(from, to, options.replace, options.createFolders).map { plan =>
-            runTransfer(plan, from, to) {
-                upper.move(from, to, options)
-            } {
-                tombstone(name(from)).andThen(untombstone(name(to)))
-            }
-        }
+        transfer(from, to, options.replace, options.createFolders, FileSystemOperation.Move)(upper.move(from, to, options))(
+            tombstone(name(from))
+        )
     def copy(from: Path, to: Path, options: Path.CopyOptions)(using
         Frame
-    )
-        : Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
-        preflightTransfer(from, to, options.replace, options.createFolders).map { plan =>
-            runTransfer(plan, from, to) {
-                upper.copy(from, to, options)
-            } {
-                untombstone(name(to))
-            }
-        }
-
-    private def preflightTransfer(from: Path, to: Path, replace: Path.Replace, createFolders: Boolean)(using
-        Frame
-    ): TransferPlan < (Sync & Abort[FileReadException | FileStructureException]) =
-        resolveKind(from).map {
-            case Absent     => Abort.fail(FileNotFoundException(from))
-            case Present(_) =>
-                resolveKind(to).map { target =>
-                    if target.isDefined && replace == Path.Replace.Never then Abort.fail(FileAlreadyExistsException(to))
-                    else
-                        val parentChain = Chunk.from(
-                            (1 until to.parts.size).map(size => Path(to.parts.take(size).toIndexedSeq*))
-                        )
-                        parentChain.foldLeft[Chunk[Path] < (Sync & Abort[FileReadException | FileStructureException])](Chunk.empty) {
-                            (parentsKyo, parent) =>
-                                parentsKyo.map { parents =>
-                                    resolveKind(parent).map {
-                                        case Present(true) =>
-                                            upper.exists(parent).map(inUpper => if inUpper then parents else parents :+ parent)
-                                        case Present(false) => Abort.fail(FileNotADirectoryException(parent))
-                                        case Absent         =>
-                                            if createFolders then parents
-                                            else Abort.fail(FileNotFoundException(parent))
-                                    }
-                                }
-                        }.map { baselineParents =>
-                            upper.exists(from).map { sourceWasInUpper =>
-                                upper.exists(to).map { targetWasInUpper =>
-                                    TransferPlan(baselineParents, sourceWasInUpper, targetWasInUpper)
-                                }
-                            }
-                        }
-                }
-        }
-    end preflightTransfer
-
-    private def materializeBaselineParents(parents: Chunk[Path])(using
-        Frame
     ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
-        baseline.map { idx =>
-            parents.foldLeft[Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException])](()) {
-                (effect, parent) =>
-                    effect.andThen {
-                        upper.mkDir(parent).andThen {
-                            idx.entryStats.get(name(parent)) match
-                                case Some(stat) => upper.setLastModified(parent, stat.lastModifiedMs)
-                                case None       => ()
-                        }
-                    }
-            }
-        }
-    end materializeBaselineParents
+        transfer(from, to, options.replace, options.createFolders, FileSystemOperation.Copy)(upper.copy(from, to, options))(())
 
-    private def rollbackTransfer(plan: TransferPlan, from: Path, to: Path)(using
-        Frame
-    ): Unit < (Sync & Abort[FileReadException | FileStructureException]) =
-        val removeTarget: Unit < (Sync & Abort[FileReadException | FileStructureException]) =
-            if plan.targetWasInUpper then () else upper.removeAll(to)
-        val removeSource: Unit < (Sync & Abort[FileReadException | FileStructureException]) =
-            if plan.sourceWasInUpper then () else upper.removeAll(from)
-        plan.baselineParents.reverse.foldLeft[Unit < (Sync & Abort[FileReadException | FileStructureException])](
-            removeTarget.andThen(removeSource)
-        ) { (effect, parent) =>
-            effect.andThen(upper.removeAll(parent))
-        }
-    end rollbackTransfer
-
-    private def runTransfer(
-        plan: TransferPlan,
-        from: Path,
-        to: Path
-    )(
-        transfer: => Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException])
+    /** Moves or copies in the merged view. Every check runs against that view before anything is staged, as the host would
+      * decide: an entry onto itself is left as it stands, an entry inside itself is refused, an existing target is replaced
+      * only when `replace` allows and never when it is a directory with entries, and [[placeable]] holds for the target.
+      * Then the source tree and the target's baseline parents are copied into the upper, which carries the transfer out, and
+      * the target hides whatever baseline entry it replaced.
+      *
+      * The upper's own move or copy is one step, so a transfer that still fails there (another fiber changed the tree after
+      * the checks) changed nothing but the copies, and those are taken back out. A copy that fails partway leaves copies that
+      * hold what the baseline does, so the merged view is unchanged by them.
+      */
+    private def transfer(from: Path, to: Path, replace: Path.Replace, createFolders: Boolean, operation: FileSystemOperation)(
+        run: => Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException])
     )(
         complete: => Unit < Sync
     )(using Frame): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
-        val attempt = materializeBaselineParents(plan.baselineParents)
-            .andThen(seedFromBaselineIfAbsent(from))
-            .andThen(transfer)
-        Abort.run[FileReadException | FileWriteException | FileStructureException](attempt).map {
-            case Result.Success(_) => complete
-            case Result.Failure(e) => rollbackTransfer(plan, from, to).andThen(Abort.fail(e))
+        resolveKind(from).map {
+            case Absent                                        => Abort.fail(FileNotFoundException(from))
+            case Present(_) if to.parts == from.parts          => ()
+            case Present(_) if to.parts.startsWith(from.parts) =>
+                Abort.fail(FileIOException(to, operation, new IOException(s"Cannot place $from inside itself at $to")))
+            case Present(_) =>
+                resolveKind(to).map {
+                    case Present(_) if replace == Path.Replace.Never => Abort.fail(FileAlreadyExistsException(to))
+                    case Present(true)                               =>
+                        children(to).map(entries => if entries.nonEmpty then Abort.fail(FileDirectoryNotEmptyException(to)) else ())
+                    case _ => ()
+                }.andThen(placeable(to, createFolders)).andThen {
+                    upper.exists(to).map { targetWasInUpper =>
+                        stageAncestors(to).map { parents =>
+                            stageTree(from).map { sources =>
+                                Abort.run[FileReadException | FileWriteException | FileStructureException](run).map {
+                                    case Result.Success(_)     => complete.andThen(tombstone(name(to)))
+                                    case Result.Failure(error) =>
+                                        unstage(parents ++ sources, to, targetWasInUpper).andThen(Abort.fail(error))
+                                    case Result.Panic(error) =>
+                                        unstage(parents ++ sources, to, targetWasInUpper).andThen(Abort.panic(error))
+                                }
+                            }
+                        }
+                    }
+                }
         }
-    end runTransfer
+    end transfer
 
+    // Takes a failed transfer's copies back out of the upper, entries before the directories that hold them.
+    private def unstage(staged: Chunk[Path], to: Path, targetWasInUpper: Boolean)(using
+        Frame
+    ): Unit < (Sync & Abort[FileReadException | FileStructureException]) =
+        val target: Unit < (Sync & Abort[FileReadException | FileStructureException]) = if targetWasInUpper then () else upper.removeAll(to)
+        target.andThen(Kyo.foreachDiscard(staged.reverse)(upper.removeAll))
+    end unstage
+
+    // A write stages through structural changes; a structural failure that is not a write failure reports as an I/O
+    // failure of the write.
+    private def structuralWrite[A](path: Path)(
+        v: A < (Sync & Abort[FileReadException | FileWriteException | FileStructureException])
+    )(using Frame): A < (Sync & Abort[FileReadException | FileWriteException]) =
+        Abort.recover[FileStructureException] {
+            case error: FileWriteException => Abort.fail(error)
+            case error                     => Abort.fail(FileIOException(path, FileSystemOperation.Write, error))
+        }(v)
+
+    // A directory with entries in the merged view is refused, as the host's remove does; removeAll is the recursive form.
     def remove(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException | FileStructureException]) =
-        resolveKind(path).map(k => upper.remove(path).andThen(tombstone(name(path))).andThen(k.isDefined))
+        resolveKind(path).map {
+            case Absent         => false
+            case Present(isDir) =>
+                val occupied: Unit < (Sync & Abort[FileReadException | FileStructureException]) =
+                    if !isDir then ()
+                    else children(path).map(entries => if entries.nonEmpty then Abort.fail(FileDirectoryNotEmptyException(path)) else ())
+                occupied.andThen(upper.remove(path)).andThen(tombstone(name(path))).andThen(true)
+        }
     def removeExisting(path: Path)(using Frame): Unit < (Sync & Abort[FileReadException | FileStructureException]) =
         remove(path).map(existed => if existed then () else Abort.fail(FileNotFoundException(path)))
     def removeAll(path: Path)(using Frame): Unit < (Sync & Abort[FileReadException | FileStructureException]) =
@@ -369,27 +473,11 @@ final private[kyo] class ZipRewriteFileSystem(
         upper.tempFileHandle(temporary)
 
     def list(path: Path)(using Frame): Chunk[Path] < (Sync & Abort[FileReadException | FileStructureException]) =
-        val n = name(path)
         resolveKind(path).map {
             case Absent         => Abort.fail(FileNotFoundException(path))
             case Present(false) => Abort.fail(FileNotADirectoryException(path))
-            case Present(true)  =>
-                upper.exists(path).map { upperHasDir =>
-                    (if upperHasDir then upper.list(path) else Sync.defer(Chunk.empty[Path])).map { fromUpper =>
-                        baseline.map { idx =>
-                            deletedRef.get.map { tomb =>
-                                val fromBaseline = idx.children.getOrElse(n, Chunk.empty)
-                                    .filterNot(seg => tomb.contains(if n.isEmpty then seg else s"$n/$seg"))
-                                    .map(seg => path / seg)
-                                Chunk.from((fromUpper.toIndexedSeq ++ fromBaseline.toIndexedSeq).distinct.sortBy(p =>
-                                    p.parts.mkString("/")
-                                ))
-                            }
-                        }
-                    }
-                }
+            case Present(true)  => children(path)
         }
-    end list
     def list(path: Path, glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using
         Frame
     ): Chunk[Path] < (Sync & Abort[FileReadException | FileStructureException]) =
@@ -418,21 +506,24 @@ final private[kyo] class ZipRewriteFileSystem(
                 }
             (channel, release)
         }
-    private def seedForWrite(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-        Abort.recover[FileReadException](e => Abort.fail(FileIOException(path, FileSystemOperation.Channel, e)))(seedFromBaselineIfAbsent(
-            path
-        ))
+
+    // A channel writes into the file the merged view shows, so its baseline content is copied up first. The upper creates
+    // a missing parent when a channel opens, so the merged view allows that too.
+    private def channelTarget(path: Path)(using
+        Frame
+    ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        fileTarget(path, createFolders = true).andThen(stage(path)).unit
 
     def openReadChannel(path: Path)(using Frame): Path.ReadChannel[Sync] < (Sync & Scope & Abort[FileReadException]) =
         readChannelSnapshot(path).map { case (channel, release) => Scope.acquireRelease(channel)(_ => release()) }
     def openWriteChannel(path: Path, open: FileSystem.WriteOpen)(using
         Frame
     ): Path.WriteChannel[Sync] < (Sync & Scope & Abort[FileWriteException | FileStructureException]) =
-        seedForWrite(path).andThen(untombstone(name(path))).andThen(upper.openWriteChannel(path, open))
+        channelWriting(channelTarget(path)).andThen(upper.openWriteChannel(path, open))
     def openReadWriteChannel(path: Path, open: FileSystem.WriteOpen)(using
         Frame
     ): Path.ReadWriteChannel[Sync] < (Sync & Scope & Abort[FileReadException | FileWriteException | FileStructureException]) =
-        seedFromBaselineIfAbsent(path).andThen(untombstone(name(path))).andThen(upper.openReadWriteChannel(path, open))
+        channelTarget(path).andThen(upper.openReadWriteChannel(path, open))
     private[kyo] def openReadChannelUnscoped(path: Path)(using
         Frame
     ): (Path.ReadChannel[Sync], () => Unit < Sync) < (Sync & Abort[FileReadException]) =
@@ -446,7 +537,10 @@ final private[kyo] class ZipRewriteFileSystem(
         Frame
     ): (Path.WriteChannel[Sync], () => Unit < Sync, Path.ChannelCloseHandle) <
         (Sync & Abort[FileWriteException | FileStructureException]) =
-        seedForWrite(path).andThen(untombstone(name(path))).andThen(upper.openWriteChannelUnscoped(
+        channelWriting(replacementTarget(
+            path,
+            preservePermissionsFrom
+        ).andThen(channelTarget(path))).andThen(upper.openWriteChannelUnscoped(
             path,
             open,
             onAcquire,
@@ -455,7 +549,36 @@ final private[kyo] class ZipRewriteFileSystem(
     private[kyo] def openReadWriteChannelUnscoped(path: Path, open: FileSystem.WriteOpen)(using
         Frame
     ): (Path.ReadWriteChannel[Sync], () => Unit < Sync) < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
-        seedFromBaselineIfAbsent(path).andThen(untombstone(name(path))).andThen(upper.openReadWriteChannelUnscoped(path, open))
+        channelTarget(path).andThen(upper.openReadWriteChannelUnscoped(path, open))
+
+    /** The checks the in-memory upper makes before a replacement protocol acquires its temporary, made against the merged
+      * view: the target must be absent or a file, and the temporary's parent must not be a file.
+      */
+    private def replacementTarget(temporary: Path, target: Maybe[Path])(using
+        Frame
+    ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        target match
+            case Absent          => ()
+            case Present(target) =>
+                resolveKind(target).map {
+                    case Present(true) => Abort.fail(FileIsADirectoryException(target))
+                    case _             =>
+                        Abort.recover[FileNotADirectoryException](_ =>
+                            Abort.fail(FileNotADirectoryException(temporary.parent.getOrElse(Path())))
+                        )(
+                            placeable(temporary, createFolders = true)
+                        )
+                }
+
+    // A write channel's row has no read failures; every read failure is also a write failure, so it reports as it is.
+    private def channelWriting[A](v: A < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]))(using
+        Frame
+    ): A < (Sync & Abort[FileWriteException | FileStructureException]) =
+        Abort.recover[FileReadException] {
+            case error: (FileNotFoundException | FileAccessDeniedException | FileIsADirectoryException |
+                    FileInvalidPathException | FileOutsideRootException | FileIOException) => Abort.fail(error)
+        }(v)
+
     def syncDirectory(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
         val validate = Loop(0) { depth =>
             resolveKind(Path(path.parts.take(depth)*)).map {
@@ -464,10 +587,7 @@ final private[kyo] class ZipRewriteFileSystem(
                 case Present(true)  => if depth == path.parts.size then Loop.done else Loop.continue(depth + 1)
             }
         }
-        Abort.recover[FileReadException] {
-            case error: (FileNotFoundException | FileAccessDeniedException | FileIsADirectoryException |
-                    FileInvalidPathException | FileOutsideRootException | FileIOException) => Abort.fail(error)
-        }(validate)
+        writing(validate)
     end syncDirectory
     def durableReplace(target: Path, bytes: Span[Byte])(using
         Frame
@@ -512,7 +632,7 @@ final private[kyo] class ZipRewriteFileSystem(
     private def walkAll(using Frame): Chunk[ZipArchive.WriteEntry] < (Sync & Abort[FileSystemException]) =
         baseline.map { idx =>
             deletedRef.get.map { tomb =>
-                val baselineNames = Chunk.from(idx.kinds.keys.filter(n => n.nonEmpty && !tomb.contains(n)).toIndexedSeq)
+                val baselineNames = Chunk.from(idx.kinds.keys.filter(n => n.nonEmpty && !hidden(n, tomb)).toIndexedSeq)
                 Loop(baselineNames, Chunk.empty[ZipArchive.WriteEntry]) { (remaining, acc) =>
                     remaining.headMaybe match
                         case Absent     => Loop.done(acc)
