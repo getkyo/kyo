@@ -170,7 +170,9 @@ object ContainerImage:
     )(using Frame): Chunk[Summary] < (Async & Abort[ContainerException]) =
         currentBackend.map(_.imageList(all, filters))
 
-    /** Full image metadata (ID, tags, digests, size, labels, architecture, OS). */
+    /** Full image metadata (ID, tags, digests, size, labels, architecture, OS). When the store holds a multi-platform reference for more
+      * than one platform, or only for another platform than the host's, the metadata is that of the copy a create without a platform runs.
+      */
     def inspect(image: ContainerImage)(using Frame): Info < (Async & Abort[ContainerException]) =
         currentBackend.map(_.imageInspect(image))
 

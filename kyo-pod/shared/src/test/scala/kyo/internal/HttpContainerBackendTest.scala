@@ -380,6 +380,35 @@ class HttpContainerBackendTest extends BasePodTest:
         }
     }
 
+    /** Docker answers a list entry's collections with `null` when they are empty: Docker Desktop 29.3 sends `"Ports": null` for a running
+      * container that publishes no port. One such container anywhere on the daemon must not fail the whole list.
+      */
+    "list" - {
+        "an entry whose ports, labels, mounts and names are null lists them as empty" in {
+            Sync.defer {
+                if !TestUnixSockets.supported then throw kyo.test.TestCancelled("this host cannot bind a Unix socket for the fake daemon")
+            }.andThen(Path.run(Path.tempDir("kyo-pod-list-").map { dir =>
+                val socket = (dir / "d.sock").toString
+                val body   =
+                    """[{"Id":"c1","Names":null,"Image":"alpine:3","ImageID":"sha256:abc","Command":"sleep 1","State":"running",""" +
+                        """"Status":"Up 1 second","Created":1793460000,"Ports":null,"Labels":null,"Mounts":null}]"""
+                val daemon = HttpRoute.getRaw("v1.43" / "containers" / "json").response(_.bodyText)
+                    .handler(_ => HttpResponse.ok(body).setHeader("Content-Type", "application/json"))
+                HttpServer.init(HttpServerConfig.default.unixSocket(socket))(daemon).andThen {
+                    new HttpContainerBackend(socket).list(all = true, filters = Dict.empty)
+                }
+            })).map { listed =>
+                assert(listed.map(_.id.value) == Chunk("c1"))
+                val entry = listed.head
+                assert(entry.state == Container.State.Running)
+                assert(entry.names.isEmpty)
+                assert(entry.ports.isEmpty)
+                assert(entry.labels.isEmpty)
+                assert(entry.mounts.isEmpty)
+            }
+        }
+    }
+
     /** A failing registry must not be reported as a missing image.
       *
       * The pull path deliberately collapses every no-credentials failure into

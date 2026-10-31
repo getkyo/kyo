@@ -1,3 +1,7 @@
 self-hosted-runner:
+  # bench is a self-hosted runner. The ubuntu-26.04 images are GitHub-hosted but newer than the label
+  # list actionlint 1.7.12 (the latest release) carries, so they are declared here until a release knows them.
   labels:
     - bench
+    - ubuntu-26.04
+    - ubuntu-26.04-arm

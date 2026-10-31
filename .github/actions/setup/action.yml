@@ -136,6 +136,20 @@ runs:
         # starts containers it can never kill got through this gate.
         mkdir -p "$HOME/.config/containers"
         printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
+        # Let pasta receive podman's teardown signal. The Ubuntu 26.04 images confine pasta under the
+        # passt package's AppArmor profile, and the apparmor package labels podman with a profile of
+        # its own named "podman". The pasta profile allows no signal from that peer, so when the last
+        # container leaves a bridge network (the docker-compat API's default, which every kyo-pod
+        # container uses) podman's SIGTERM to the shared rootless-netns pasta is denied, and every
+        # stop and remove fails with "rootless netns: kill network process: permission denied". The
+        # profile does not include local/usr.bin.pasta, so the rule goes into the profile itself.
+        # Skipped where podman runs unlabelled (24.04) or the profile already names the peer.
+        pasta_profile=/etc/apparmor.d/usr.bin.pasta
+        if [ -f "$pasta_profile" ] && [ -f /etc/apparmor.d/podman ] && ! grep -q 'peer=podman' "$pasta_profile"; then
+          sudo perl -0pi -e 's/\}\s*\z/  signal (receive) set=(term, kill) peer=podman,\n}\n/' "$pasta_profile"
+          sudo apparmor_parser -r "$pasta_profile"
+          echo "pasta AppArmor profile: allowed signal receipt from peer=podman"
+        fi
         mkdir -p "$XDG_RUNTIME_DIR/podman"
         sock="$XDG_RUNTIME_DIR/podman/podman.sock"
         # The rootless podman API socket can take well over 10s to appear on a loaded runner. Retry the

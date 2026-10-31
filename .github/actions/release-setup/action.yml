@@ -40,7 +40,9 @@ runs:
 
     # restore, not the full cache action: a key is immutable once written, so whichever job saves first
     # owns it for that hash. Releases are infrequent and the ci legs on these poles are not, so ci writes
-    # and both callers here restore.
+    # the dependency tree and both callers here restore it. The .deb sets are keyed by image, and both
+    # callers run on Ubuntu 24.04 (the release's glibc ceiling) where no ci leg runs, so release.yml's
+    # publish job saves them after its build; the probe runs on pull requests, which never save.
     - uses: ./.github/actions/caches
       with:
         os: ${{ steps.pole.outputs.value }}

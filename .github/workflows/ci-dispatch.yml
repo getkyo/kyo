@@ -41,11 +41,11 @@ on:
         description: 'Used only when mode=custom: the GitHub-hosted runner label the command runs on.'
         type: choice
         options:
-          - ubuntu-latest
-          - ubuntu-24.04-arm
+          - ubuntu-26.04
+          - ubuntu-26.04-arm
           - windows-latest
           - windows-11-arm
-        default: ubuntu-latest
+        default: ubuntu-26.04
       ref:
         description: 'Git ref (branch or sha) to check out and test. Defaults to the ref the workflow is dispatched on.'
         type: string
@@ -94,8 +94,8 @@ jobs:
             | split(" ")
             | map(select(length > 0))
             | map(
-                if . == "linux-x64" then {os: ., image: "ubuntu-latest", supported: ["JVM","JS","Native","Wasm"]}
-                elif . == "linux-arm64" then {os: ., image: "ubuntu-24.04-arm", supported: ["JVM","JS","Native","Wasm"]}
+                if . == "linux-x64" then {os: ., image: "ubuntu-26.04", supported: ["JVM","JS","Native","Wasm"]}
+                elif . == "linux-arm64" then {os: ., image: "ubuntu-26.04-arm", supported: ["JVM","JS","Native","Wasm"]}
                 elif . == "windows-arm64" then {os: ., image: "windows-11-arm", supported: ["JVM","JS"]}
                 else {os: ., image: "windows-latest", supported: ["JVM","JS"]}
                 end
