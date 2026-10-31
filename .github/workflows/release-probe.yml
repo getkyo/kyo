@@ -42,6 +42,8 @@ jobs:
     # push, so whichever arch the probe picks, the rest are still validated before anything is
     # published. Given that, it belongs on the pool with queue headroom rather than the saturated
     # one. release-setup stages the natives for whichever architecture it runs on.
+    # Ubuntu 24.04, the image of release.yml's glibc producers, so the glibc ceiling check below sees
+    # what they would build.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     steps:
@@ -81,6 +83,18 @@ jobs:
         env:
           PLAN: ${{ steps.plan.outputs.jvm }}
         run: scripts/sbt.sh tool -Dplatform=JVM "ffiCompileAll${PLAN:+ $PLAN}"
+      # The release's glibc ceiling, on the natives this host just compiled: on the producers' image, a
+      # change that would make the published natives need a newer glibc fails here, before it lands.
+      - name: glibc ceiling (producer path)
+        if: steps.plan.outputs.scoped != 'true' || steps.plan.outputs.jvm != ''
+        shell: bash
+        run: |
+          mapfile -t natives < <(find . -path '*/target/ffi/lib*-linux-*.so' -not -name '*-linux-musl-*' | sort)
+          if [ ${#natives[@]} -eq 0 ]; then
+            echo "no glibc native was compiled for this plan"
+          else
+            bash scripts/glibc-ceiling-check.sh "${natives[@]}"
+          fi
       - name: Build publishable artifacts (JVM)
         if: steps.plan.outputs.scoped != 'true' || steps.plan.outputs.jvm != ''
         shell: bash

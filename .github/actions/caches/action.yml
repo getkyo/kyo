@@ -18,6 +18,12 @@ inputs:
     description: "Whether to include the kyo-browser cache. Jobs that never launch Chrome pass false."
     required: false
     default: "true"
+  deps:
+    description: >-
+      Whether to include the dependency cache. A job that writes only its own .deb sets, such as a release
+      producer on an image no ci leg runs on, saves with false so that its thinner tree never owns a deps key.
+    required: false
+    default: "true"
   apt-set:
     description: >-
       Which job's apt packages the .deb cache holds: the target (JVM, JS, Native or Wasm) of a setup
@@ -61,7 +67,7 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
     - id: restore-deps
-      if: ${{ inputs.mode == 'restore' }}
+      if: ${{ inputs.mode == 'restore' && inputs.deps == 'true' }}
       uses: actions/cache/restore@v6
       env:
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -124,7 +130,7 @@ runs:
     # building another tree, and a key is immutable once written, so a thinner tree would own that hash.
     # !cancelled() because status functions here see this action's steps, and the caller saves after a
     # failed test step on purpose.
-    - if: ${{ !cancelled() && inputs.mode == 'save' && github.event_name == 'push' && github.ref == 'refs/heads/main' && env.KYO_CACHE_DEPS_HIT != 'true' }}
+    - if: ${{ !cancelled() && inputs.mode == 'save' && inputs.deps == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && env.KYO_CACHE_DEPS_HIT != 'true' }}
       uses: actions/cache/save@v6
       env:
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
