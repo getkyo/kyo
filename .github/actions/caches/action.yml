@@ -50,10 +50,13 @@ runs:
           echo "browser-paths=~/.cache/kyo-browser"
           # The image decides which .debs an install downloads (it skips what the image ships), so a new image writes a new
           # entry; the files hashed are the ones that name apt packages. The prefixes let a new image or list start from the
-          # last entry, whose per-list directories still serve every list that did not change.
+          # last entry, whose per-list directories still serve every list that did not change. Both stop at the Ubuntu
+          # release (ImageOS, e.g. ubuntu26): another release's .debs are built against its libraries, and the first 26.04
+          # jobs restored the 24.04 entry, where only an exact version pin in each package's dependencies kept apt from
+          # installing 24.04 builds.
           echo "apt-key=apt-${{ inputs.os }}-${{ inputs.apt-set }}-${ImageOS:-image}-${ImageVersion:-unknown}-${{ hashFiles('scripts/apt-install.sh', '.github/actions/setup/action.yml', '.github/actions/stage-natives/action.yml') }}"
           echo "apt-image-prefix=apt-${{ inputs.os }}-${{ inputs.apt-set }}-${ImageOS:-image}-${ImageVersion:-unknown}-"
-          echo "apt-prefix=apt-${{ inputs.os }}-${{ inputs.apt-set }}-"
+          echo "apt-prefix=apt-${{ inputs.os }}-${{ inputs.apt-set }}-${ImageOS:-image}-"
           echo "apt-paths=~/.cache/kyo-apt"
         } >> "$GITHUB_OUTPUT"
 
