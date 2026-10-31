@@ -163,19 +163,18 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
-    "mkDir opaque over lower directory hides lower children in list" in {
+    "mkDir over an existing lower directory keeps its children" in {
         withOverlay { (ov, lower) =>
             val dir   = Path("dir")
             val child = dir / "lower-child.txt"
             Path.runWith(lower) {
                 dir.mkDir.andThen(child.write("content"))
             }.andThen {
-                // mkDir over an existing lower dir creates OpaqueDir, hiding lower children
+                // mkDir is mkdir -p, as the host's createDirectories: an existing directory stays as it is.
                 Path.runWith(ov) {
                     dir.mkDir.andThen {
                         dir.list.map { children =>
-                            // lower-child.txt should be hidden by OpaqueDir
-                            assert(!children.exists(_.name.contains("lower-child.txt")))
+                            assert(children == Chunk(child))
                         }
                     }
                 }
@@ -315,18 +314,16 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
 
     // type-transition cases: file to directory and back
 
-    "mkDir over a lower file creates OpaqueDir (upper dir shadows lower file)" in {
+    "mkDir over a lower file fails and keeps the file" in {
         withOverlay { (ov, lower) =>
             val p = Path("target")
             Path.runWith(lower)(p.write("file-content")).andThen {
-                Path.runWith(ov) {
-                    p.mkDir.andThen {
-                        p.isDirectory.map { isDir =>
-                            assert(isDir)
-                        }.andThen {
-                            p.isRegularFile.map { isFile =>
-                                assert(!isFile)
-                            }
+                Abort.run[FileSystemException](ov.mkDir(p)).map { result =>
+                    ov.isRegularFile(p).map { isFile =>
+                        ov.read(p).map { content =>
+                            assert(result == Result.fail(FileAlreadyExistsException(p)), s"mkDir reported $result")
+                            assert(isFile)
+                            assert(content == "file-content")
                         }
                     }
                 }
@@ -334,7 +331,7 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
-    "write over a lower directory stages File entry (upper file shadows lower dir)" in {
+    "write over a lower directory fails and keeps it" in {
         withOverlay { (ov, lower) =>
             val dir = Path("mydir")
             Path.runWith(lower) {
@@ -342,14 +339,12 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
                     (dir / "child.txt").write("child")
                 }
             }.andThen {
-                Path.runWith(ov) {
-                    dir.write("now-a-file").andThen {
-                        dir.isRegularFile.map { isFile =>
-                            assert(isFile)
-                        }.andThen {
-                            dir.isDirectory.map { isDir =>
-                                assert(!isDir)
-                            }
+                Abort.run[FileSystemException](ov.write(dir, "now-a-file", Path.WriteOptions())).map { result =>
+                    ov.isDirectory(dir).map { isDir =>
+                        ov.read(dir / "child.txt").map { child =>
+                            assert(result == Result.fail(FileIsADirectoryException(dir)), s"write reported $result")
+                            assert(isDir)
+                            assert(child == "child")
                         }
                     }
                 }
@@ -593,7 +588,7 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
             val file = dir / "child.txt"
             Path.runWith(lower)(dir.mkDir.andThen(file.write("content"))).andThen {
                 Path.runWith(ov) {
-                    dir.remove.andThen {
+                    dir.removeAll.andThen {
                         file.exists.map { found =>
                             assert(!found)
                         }
@@ -609,7 +604,7 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
             val file = dir / "child.txt"
             Path.runWith(lower)(dir.mkDir.andThen(file.write("content"))).andThen {
                 Path.runWith(ov) {
-                    dir.remove.andThen {
+                    dir.removeAll.andThen {
                         file.isRegularFile.map { isFile =>
                             assert(!isFile)
                         }
@@ -626,7 +621,7 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
             val newFile = dir / "new.txt"
             Path.runWith(lower)(dir.mkDir.andThen(sibling.write("sibling-content"))).andThen {
                 Path.runWith(ov) {
-                    dir.remove.andThen {
+                    dir.removeAll.andThen {
                         newFile.write("new-content").andThen {
                             newFile.exists.map { newFound =>
                                 assert(newFound)
@@ -859,7 +854,7 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
             val target = parent / "target.txt"
             Path.runWith(lower)(target.write("lower")).andThen {
                 Path.runWith(ov) {
-                    parent.remove.andThen(source.write("source")).andThen(source.move(target)).andThen(target.read)
+                    parent.removeAll.andThen(source.write("source")).andThen(source.move(target)).andThen(target.read)
                 }.map(content => assert(content == "source"))
             }
         }
@@ -872,7 +867,7 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
             val target = parent / "target.txt"
             Path.runWith(lower)(target.write("lower")).andThen {
                 Path.runWith(ov) {
-                    parent.remove.andThen(source.write("source")).andThen(source.copy(target)).andThen(target.read)
+                    parent.removeAll.andThen(source.write("source")).andThen(source.copy(target)).andThen(target.read)
                 }.map(content => assert(content == "source"))
             }
         }
@@ -1211,6 +1206,185 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
             else trial.map(len => Loop.continue(lost + (if len == 5 then 0 else 1)))
         }.map { lost =>
             assert(lost == 0, s"$lost of 100 trials lost at least one concurrent append")
+        }
+    }
+
+    private val seedFile  = Path("f")
+    private val seedDir   = Path("d")
+    private val seedChild = seedDir / "c"
+    private val seedEmpty = Path("e")
+
+    private def seed(fs: FileSystem.Write[Sync]): Unit < (Sync & Abort[FileSystemException]) =
+        fs.write(seedFile, "value", Path.WriteOptions())
+            .andThen(fs.write(seedChild, "child", Path.WriteOptions()))
+            .andThen(fs.mkDir(seedEmpty))
+
+    // The overlay's view has to answer the same whether an entry is staged in the overlay or already in its lower, so each
+    // check runs once per layer, labelled by where the seeded entries are.
+    private def inBothLayers(
+        check: (String, Staged, FileSystem.Write[Sync]) => Unit < (Async & Scope & Abort[FileSystemException | CommitConflict])
+    ): Unit < (Async & Scope & Abort[FileSystemException | CommitConflict]) =
+        Kyo.foreachDiscard(Chunk("staged", "lower")) { layer =>
+            FileSystem.inMemory.map { lower =>
+                (if layer == "lower" then seed(lower) else Kyo.lift(())).andThen {
+                    FileSystem.overlay(lower).map { ov =>
+                        (if layer == "staged" then seed(ov) else Kyo.lift(())).andThen(check(layer, ov, lower))
+                    }
+                }
+            }
+        }
+
+    private def attempt(run: Any < (Sync & Scope & Abort[FileSystemException])): Result[FileSystemException, Unit] < Async =
+        Scope.run(Abort.run[FileSystemException](run.unit))
+
+    "every way to create an entry beneath a file fails and keeps the file, in either layer" in {
+        inBothLayers { (layer, ov, _) =>
+            val beneath                                                                            = seedFile / "x"
+            val attempts: Chunk[(String, Any < (Sync & Scope & Abort[FileSystemException]), Path)] = Chunk(
+                ("write", ov.write(beneath, "v", Path.WriteOptions()), beneath),
+                ("append", ov.append(beneath, "v", Path.WriteOptions()), beneath),
+                ("mkFile", ov.mkFile(beneath), beneath),
+                ("mkDir", ov.mkDir(beneath / "nested"), beneath / "nested"),
+                ("openWrite", ov.openWrite(beneath, append = false, Path.WriteOptions()), beneath),
+                ("openWriteChannel", ov.openWriteChannel(beneath, FileSystem.WriteOpen.Create), beneath),
+                ("move", ov.move(seedEmpty, beneath, Path.MoveOptions()), beneath),
+                ("copy", ov.copy(seedEmpty, beneath, Path.CopyOptions()), beneath)
+            )
+            Kyo.foreach(attempts)((name, run, named) => attempt(run).map(result => (name, result, named))).map { results =>
+                ov.read(seedFile).map { value =>
+                    ov.exists(beneath).map { beneathExists =>
+                        results.foreach { (name, result, named) =>
+                            assert(result == Result.fail(FileNotADirectoryException(named)), s"$layer: $name reported $result")
+                        }
+                        assert(value == "value", layer)
+                        assert(!beneathExists, layer)
+                    }
+                }
+            }
+        }
+    }
+
+    "a file write onto a directory fails, and mkFile or mkDir on an existing entry keeps it, in either layer" in {
+        inBothLayers { (layer, ov, _) =>
+            val attempts: Chunk[(String, Any < (Sync & Scope & Abort[FileSystemException]), Result[FileSystemException, Unit])] = Chunk(
+                ("write", ov.write(seedDir, "v", Path.WriteOptions()), Result.fail(FileIsADirectoryException(seedDir))),
+                ("append", ov.append(seedDir, "v", Path.WriteOptions()), Result.fail(FileIsADirectoryException(seedDir))),
+                (
+                    "openWrite",
+                    ov.openWrite(seedDir, append = false, Path.WriteOptions()),
+                    Result.fail(FileIsADirectoryException(seedDir))
+                ),
+                (
+                    "openWriteChannel",
+                    ov.openWriteChannel(seedDir, FileSystem.WriteOpen.Create),
+                    Result.fail(FileIsADirectoryException(seedDir))
+                ),
+                (
+                    "openReadWriteChannel",
+                    ov.openReadWriteChannel(seedDir, FileSystem.WriteOpen.Create),
+                    Result.fail(FileIsADirectoryException(seedDir))
+                ),
+                ("mkDir over a file", ov.mkDir(seedFile), Result.fail(FileAlreadyExistsException(seedFile))),
+                ("mkDir over a directory", ov.mkDir(seedDir), Result.unit),
+                ("mkFile over a file", ov.mkFile(seedFile), Result.unit),
+                ("mkFile over a directory", ov.mkFile(seedDir), Result.unit)
+            )
+            Kyo.foreach(attempts)((name, run, expected) => attempt(run).map(result => (name, result, expected))).map { results =>
+                ov.read(seedFile).map { value =>
+                    ov.list(seedDir).map { entries =>
+                        results.foreach { (name, result, expected) =>
+                            assert(result == expected, s"$layer: $name reported $result")
+                        }
+                        assert(value == "value", layer)
+                        assert(entries == Chunk(seedChild), s"$layer: listed $entries")
+                    }
+                }
+            }
+        }
+    }
+
+    "reading or truncating a directory reports a directory, and listing a missing one reports it missing, in either layer" in {
+        inBothLayers { (layer, ov, _) =>
+            val missing = Path("missing")
+            for
+                read      <- attempt(ov.readBytes(seedDir))
+                truncated <- attempt(ov.truncate(seedDir, 0))
+                listed    <- attempt(ov.list(missing))
+            yield
+                assert(read == Result.fail(FileIsADirectoryException(seedDir)), s"$layer: read reported $read")
+                assert(truncated == Result.fail(FileIsADirectoryException(seedDir)), s"$layer: truncate reported $truncated")
+                assert(listed == Result.fail(FileNotFoundException(missing)), s"$layer: list reported $listed")
+            end for
+        }
+    }
+
+    "remove refuses a directory with entries, and removeAll takes its staged entries with it, in either layer" in {
+        inBothLayers { (layer, ov, lower) =>
+            for
+                removed   <- attempt(ov.remove(seedDir))
+                existing  <- attempt(ov.removeExisting(seedDir))
+                kept      <- ov.read(seedChild)
+                _         <- ov.removeAll(seedDir)
+                gone      <- ov.exists(seedChild)
+                _         <- ov.mkDir(seedDir)
+                recreated <- ov.list(seedDir)
+                _         <- ov.commit
+                committed <- lower.exists(seedChild)
+            yield
+                assert(removed == Result.fail(FileDirectoryNotEmptyException(seedDir)), s"$layer: remove reported $removed")
+                assert(existing == Result.fail(FileDirectoryNotEmptyException(seedDir)), s"$layer: removeExisting reported $existing")
+                assert(kept == "child", layer)
+                assert(!gone, layer)
+                assert(recreated.isEmpty, s"$layer: listed $recreated")
+                assert(!committed, layer)
+            end for
+        }
+    }
+
+    "a move or copy onto itself changes nothing, inside itself fails, and onto a directory with entries fails, in either layer" in {
+        inBothLayers { (layer, ov, _) =>
+            for
+                _            <- ov.move(seedFile, seedFile, Path.MoveOptions())
+                _            <- ov.copy(seedFile, seedFile, Path.CopyOptions())
+                movedInside  <- attempt(ov.move(seedDir, seedDir / "in", Path.MoveOptions()))
+                copiedInside <- attempt(ov.copy(seedDir, seedDir / "in", Path.CopyOptions()))
+                movedOnto    <- attempt(ov.move(seedFile, seedDir, Path.MoveOptions(replace = Path.Replace.Existing)))
+                copiedOnto   <- attempt(ov.copy(seedFile, seedDir, Path.CopyOptions(replace = Path.Replace.Existing)))
+                value        <- ov.read(seedFile)
+                entries      <- ov.list(seedDir)
+            yield
+                assert(movedInside.isFailure, s"$layer: move inside itself reported $movedInside")
+                assert(copiedInside.isFailure, s"$layer: copy inside itself reported $copiedInside")
+                assert(movedOnto == Result.fail(FileDirectoryNotEmptyException(seedDir)), s"$layer: move reported $movedOnto")
+                assert(copiedOnto == Result.fail(FileDirectoryNotEmptyException(seedDir)), s"$layer: copy reported $copiedOnto")
+                assert(value == "value", layer)
+                assert(entries == Chunk(seedChild), s"$layer: listed $entries")
+            end for
+        }
+    }
+
+    "a removed file starts empty when it is appended to again, and mkDir creates missing parents, in either layer" in {
+        inBothLayers { (layer, ov, _) =>
+            val nested = Path("p") / "q" / "r"
+            for
+                _        <- ov.remove(seedFile)
+                _        <- ov.append(seedFile, "again", Path.WriteOptions())
+                appended <- ov.read(seedFile)
+                _        <- ov.remove(seedFile)
+                handle   <- ov.openWrite(seedFile, append = true, Path.WriteOptions())
+                _        <- ov.writeString(handle, "handle", java.nio.charset.StandardCharsets.UTF_8)
+                // Unsafe: completes the handle so its bytes are staged.
+                _       <- Sync.Unsafe.defer(handle.finish())
+                written <- ov.read(seedFile)
+                _       <- ov.mkDir(nested)
+                parents <- Kyo.foreach(Chunk(Path("p"), Path("p") / "q", nested))(ov.isDirectory)
+                listed  <- ov.list(Path("p"))
+            yield
+                assert(appended == "again", s"$layer: appended $appended")
+                assert(written == "handle", s"$layer: wrote $written")
+                assert(parents == Chunk(true, true, true), s"$layer: parents $parents")
+                assert(listed == Chunk(Path("p") / "q"), s"$layer: listed $listed")
+            end for
         }
     }
 

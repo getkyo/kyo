@@ -319,11 +319,12 @@ class OverlayFileSystemCommitTest extends kyo.test.Test[Any]:
     // show only staged children. A commit that leaves the lower's earlier children in place hands
     // back a directory that lists differently before and after the commit.
 
-    withEachLower("mkDir over a populated directory hides its children after commit") { (ov, lower, base) =>
+    // mkDir alone leaves an existing directory as it is, as on a host, so the directory is removed first.
+    withEachLower("a populated directory removed and made again hides its old children after commit") { (ov, lower, base) =>
         val d = base / "opaque-dir"
         Path.runWith(lower)((d / "old.txt").write("stale", Path.WriteOptions(createFolders = true))).andThen {
             Path.runWith(ov) {
-                d.mkDir.andThen((d / "new.txt").write("fresh")).andThen(d.list)
+                d.removeAll.andThen(d.mkDir).andThen((d / "new.txt").write("fresh")).andThen(d.list)
             }.map { stagedList =>
                 ov.commit.andThen {
                     Path.runWith(lower)(d.list).map { liveList =>
@@ -337,7 +338,8 @@ class OverlayFileSystemCommitTest extends kyo.test.Test[Any]:
         }
     }
 
-    withEachLower("copying a directory onto a populated target hides the target's old children") { (ov, lower, base) =>
+    // A replacing copy onto a directory with entries is refused, as on a host, so the target is removed first.
+    withEachLower("copying a directory onto a removed populated target hides the target's old children") { (ov, lower, base) =>
         val src = base / "copy-src"
         val dst = base / "copy-dst"
         Path.runWith(lower) {
@@ -345,7 +347,7 @@ class OverlayFileSystemCommitTest extends kyo.test.Test[Any]:
                 .andThen((dst / "stale.txt").write("stale", Path.WriteOptions(createFolders = true)))
         }.andThen {
             Path.runWith(ov) {
-                src.copy(dst, Path.CopyOptions(replace = Path.Replace.Existing)).andThen(dst.list)
+                dst.removeAll.andThen(src.copy(dst, Path.CopyOptions(replace = Path.Replace.Existing))).andThen(dst.list)
             }.map { stagedList =>
                 ov.commit.andThen {
                     Path.runWith(lower)(dst.list).map { liveList =>

@@ -259,6 +259,8 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
                 val secondBytes = Span(3.toByte, 4.toByte)
                 for
                     _ <- lower.writeBytes(old, Span(9.toByte), Path.WriteOptions())
+                    // Clears the directory: mkDir alone leaves an existing directory as it is, as on a host.
+                    _ <- overlay.removeAll(parent)
                     _ <- overlay.mkDir(parent)
                     _ <- overlay.writeBytes(first, firstBytes, Path.WriteOptions())
                     _ <- overlay.writeBytes(second, secondBytes, Path.WriteOptions())
@@ -641,8 +643,13 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
                         exists <- inner.isDirectory(target)
                     yield
                         assert(exists)
+                        // mkDir stages each missing ancestor, so each is synced as it is created. What durability needs is
+                        // the last of them: the deepest new directory, then each directory holding it, up to the root.
                         val required = Chunk(target, middle, parent, Path())
-                        assert(calls.filter(required.contains) == required, s"missing or unordered directory syncs: $calls")
+                        assert(
+                            calls.filter(required.contains).takeRight(required.size) == required,
+                            s"missing or unordered directory syncs: $calls"
+                        )
                     end for
                 }
             }

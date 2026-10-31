@@ -135,6 +135,7 @@ private[kyo] object OverlayFileSystem:
                 self.updated(cp.parts, retained, replaceSpelling = self.get(cp.parts).contains(Upper.Whiteout))
             end updated
             def removed(cp: CanonicalPath): UpperTrie                 = self.removed(cp.parts)
+            def removedSubtree(cp: CanonicalPath): UpperTrie          = self.removedSubtree(cp.parts)
             def nearestAncestorValue(cp: CanonicalPath): Maybe[Upper] =
                 self.nearestAncestorValue(cp.parts)
             def childValues(cp: CanonicalPath): Chunk[(String, Upper)]             = self.childValues(cp.parts)
@@ -1094,62 +1095,85 @@ private[kyo] class OverlayFileSystem[S](
     ]) =
         lower.realPathPrefix(path)
 
-    // True when the nearest strict ancestor carrying an upper entry shadows `cp`, either by
-    // whiteout or by an opaque directory. The trie answers this from the descent it already makes,
-    // without deriving a key per ancestor level.
+    // True when the nearest strict ancestor carrying an upper entry shadows `cp`: a whiteout, an
+    // opaque directory, or a staged file, which has no entries beneath it whatever the lower holds.
+    // The trie answers this from the descent it already makes, without deriving a key per ancestor
+    // level.
     private def ancestorWhiteout(s: OverlayState, cp: CanonicalPath): Boolean =
         s.upper.nearestAncestorValue(cp).exists {
-            case Upper.Whiteout           => true
-            case Upper.OpaqueDir(_, _, _) => true
-            case _                        => false
+            case Upper.Whiteout                             => true
+            case Upper.OpaqueDir(_, _, _)                   => true
+            case Upper.Entry(Path.Entry.File(_, _), _, _)   => true
+            case Upper.Entry(Path.Entry.Directory(_), _, _) => false
+        }
+
+    /** The kind of the entry at `cp` in the overlay's view: `Present(true)` for a regular file, `Present(false)` for a
+      * directory, `Absent` when there is none. A staged entry answers for itself; otherwise the lower does, unless a
+      * staged ancestor hides it. With `record`, a lower answer is observed as [[observeKind]] does, so the commit
+      * validates the decision made on it.
+      */
+    private def kindIn(s: OverlayState, cp: CanonicalPath, record: Boolean)(using
+        Frame
+    ): Maybe[Boolean] < (S & Abort[FileReadException]) =
+        s.upper.get(cp) match
+            case Present(Upper.Whiteout)                             => Absent
+            case Present(Upper.OpaqueDir(_, _, _))                   => Present(false)
+            case Present(Upper.Entry(Path.Entry.Directory(_), _, _)) => Present(false)
+            case Present(Upper.Entry(Path.Entry.File(_, _), _, _))   => Present(true)
+            case Absent                                              =>
+                if ancestorWhiteout(s, cp) then Absent
+                else if record then observeKind(cp)
+                else
+                    val lp = lowerPath(cp)
+                    lower.exists(lp).map { found =>
+                        if !found then Maybe.empty[Boolean] else lower.isRegularFile(lp).map(Present(_))
+                    }
+
+    private def kindOf(path: Path)(using Frame): Maybe[Boolean] < (S & Abort[FileReadException]) =
+        canonical(path).map(cp => withState(kindIn(_, cp, record = true)))
+
+    // Every read failure is also a write failure, so a read a write makes first reports in the write's row as it is.
+    private def asWrite[A](v: A < (S & Abort[FileReadException | FileWriteException]))(using
+        Frame
+    ): A < (S & Abort[FileWriteException]) =
+        Abort.recover[FileReadException] {
+            case error: (FileNotFoundException | FileAccessDeniedException | FileIsADirectoryException |
+                    FileInvalidPathException | FileOutsideRootException | FileIOException) => Abort.fail(error)
+        }(v)
+
+    // A structural change creates parents through writes; a write failure that is neither a read nor a structural one
+    // reports as an I/O failure of the change.
+    private def asStructure[A](path: Path, operation: FileSystemOperation)(
+        v: A < (S & Abort[FileReadException | FileWriteException | FileStructureException])
+    )(using Frame): A < (S & Abort[FileReadException | FileStructureException]) =
+        Abort.recover[FileWriteException] {
+            case error: FileReadException      => Abort.fail(error)
+            case error: FileStructureException => Abort.fail(error)
+            case error                         => Abort.fail(FileIOException(path, operation, error))
+        }(v)
+
+    // Refuses a file write onto a directory, as the host does. The lower is asked without recording an observation: a
+    // write does not depend on what it replaces, so it must not turn a later change there into a commit conflict.
+    private def refuseDirectory(s: OverlayState, cp: CanonicalPath, path: Path)(using
+        Frame
+    ): Unit < (S & Abort[FileReadException | FileWriteException]) =
+        kindIn(s, cp, record = false).map {
+            case Present(false) => Abort.fail(FileIsADirectoryException(path))
+            case _              => ()
         }
 
     // --- Inspection ---
 
     def exists(path: Path)(using Frame): Boolean < (S & Abort[FileReadException]) =
-        canonical(path).map { cp =>
-            val lp = lowerPath(cp)
-            withState { s =>
-                s.upper.get(cp) match
-                    case Present(Upper.Whiteout) => false
-                    case Present(_)              => true
-                    case Absent                  =>
-                        if ancestorWhiteout(s, cp) then false
-                        else observeKind(cp).map(_.isDefined)
-            }
-        }
+        kindOf(path).map(_.isDefined)
 
     def exists(path: Path, followLinks: Boolean)(using Frame): Boolean < (S & Abort[FileReadException]) = exists(path)
 
     def isDirectory(path: Path)(using Frame): Boolean < (S & Abort[FileReadException]) =
-        canonical(path).map { cp =>
-            val lp = lowerPath(cp)
-            withState { s =>
-                s.upper.get(cp) match
-                    case Present(Upper.Whiteout)                             => false
-                    case Present(Upper.OpaqueDir(_, _, _))                   => true
-                    case Present(Upper.Entry(Path.Entry.Directory(_), _, _)) => true
-                    case Present(Upper.Entry(Path.Entry.File(_, _), _, _))   => false
-                    case Absent                                              =>
-                        if ancestorWhiteout(s, cp) then false
-                        else observeKind(cp).map(_.fold(false)(isFile => !isFile))
-            }
-        }
+        kindOf(path).map(_.contains(false))
 
     def isRegularFile(path: Path)(using Frame): Boolean < (S & Abort[FileReadException]) =
-        canonical(path).map { cp =>
-            val lp = lowerPath(cp)
-            withState { s =>
-                s.upper.get(cp) match
-                    case Present(Upper.Whiteout)                             => false
-                    case Present(Upper.OpaqueDir(_, _, _))                   => false
-                    case Present(Upper.Entry(Path.Entry.Directory(_), _, _)) => false
-                    case Present(Upper.Entry(Path.Entry.File(_, _), _, _))   => true
-                    case Absent                                              =>
-                        if ancestorWhiteout(s, cp) then false
-                        else observeKind(cp).map(_.fold(false)(identity))
-            }
-        }
+        kindOf(path).map(_.contains(true))
 
     /** Reports whether `path` is a symbolic link in the lower.
       *
@@ -1236,7 +1260,8 @@ private[kyo] class OverlayFileSystem[S](
             withState { s =>
                 s.upper.get(cp) match
                     case Present(Upper.Entry(Path.Entry.File(bytes, _), _, _)) => bytes
-                    case Present(_)                                            => Abort.fail(FileNotFoundException(path))
+                    case Present(Upper.Whiteout)                               => Abort.fail(FileNotFoundException(path))
+                    case Present(_)                                            => Abort.fail(FileIsADirectoryException(path))
                     case Absent                                                =>
                         if ancestorWhiteout(s, cp) then Abort.fail(FileNotFoundException(path))
                         else
@@ -1368,9 +1393,10 @@ private[kyo] class OverlayFileSystem[S](
             val lp = lowerPath(cp)
             withState { s =>
                 s.upper.get(cp) match
-                    case Present(Upper.Whiteout)                           => Abort.fail(FileNotFoundException(path))
-                    case Present(Upper.Entry(Path.Entry.File(_, _), _, _)) => Abort.fail(FileNotADirectoryException(path))
-                    case maybeOpaque                                       =>
+                    case Present(Upper.Whiteout)                                       => Abort.fail(FileNotFoundException(path))
+                    case Present(Upper.Entry(Path.Entry.File(_, _), _, _))             => Abort.fail(FileNotADirectoryException(path))
+                    case maybeOpaque if maybeOpaque.isEmpty && ancestorWhiteout(s, cp) => Abort.fail(FileNotFoundException(path))
+                    case maybeOpaque                                                   =>
                         val isOpaque = maybeOpaque.exists {
                             case Upper.OpaqueDir(_, _, _) => true
                             case _                        => false
@@ -1395,7 +1421,11 @@ private[kyo] class OverlayFileSystem[S](
                             if isOpaque then Chunk.empty
                             else
                                 lower.exists(lp).map { exists =>
-                                    if !exists then Chunk.empty[Path]
+                                    // A directory staged here has no lower counterpart to list; with nothing staged
+                                    // either, there is no directory at all.
+                                    if !exists then
+                                        if maybeOpaque.isDefined then Chunk.empty[Path]
+                                        else observe(cp, Observed.Missing).andThen(Abort.fail(FileNotFoundException(path)))
                                     else
                                         lower.list(lp).map { children =>
                                             // A listing depends on what the directory holds, so that is what is
@@ -1444,7 +1474,7 @@ private[kyo] class OverlayFileSystem[S](
                     }
                 }.map {
                     case Result.Success((true, true))                         => ()
-                    case Result.Success((true, false))                        => Abort.fail(FileNotFoundException(errorPath))
+                    case Result.Success((true, false))                        => Abort.fail(FileNotADirectoryException(errorPath))
                     case Result.Success((false, _)) if !options.createFolders => Abort.fail(FileNotFoundException(errorPath))
                     case Result.Success((false, _))                           =>
                         ensureWriteParent(parent, options, errorPath).andThen {
@@ -1479,17 +1509,22 @@ private[kyo] class OverlayFileSystem[S](
     def writeBytes(path: Path, value: Span[Byte], options: Path.WriteOptions)(using Frame): Unit < (S & Abort[FileWriteException]) =
         val stat = Path.PathStat(0L, value.size.toLong)
         ensureWriteParent(path, options).andThen {
-            canonical(path).map { cp =>
+            asWrite(canonical(path).map { cp =>
                 val token = stagedToken("write")
-                stage(path, FileSystemOperation.Write) { s =>
-                    // A plain write asks for no particular modification time: the commit assigns one.
-                    withProvenance(
-                        s.copy(upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(value, stat), Absent))),
-                        cp,
-                        Provenance.Staged(token)
-                    )
+                transact[FileReadException | FileWriteException, Unit](path, FileSystemOperation.Write) { s =>
+                    refuseDirectory(s, cp, path).andThen {
+                        // A plain write asks for no particular modification time: the commit assigns one.
+                        (
+                            withProvenance(
+                                s.copy(upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(value, stat), Absent))),
+                                cp,
+                                Provenance.Staged(token)
+                            ),
+                            ()
+                        )
+                    }
                 }
-            }
+            })
         }
     end writeBytes
 
@@ -1514,12 +1549,14 @@ private[kyo] class OverlayFileSystem[S](
                         // record. Both the base and the result come from the same snapshot, so the
                         // transaction rejects the merge if anything else appended in between.
                         (stagedAppend(s, cp, existing, value, token), ())
-                    case _ =>
+                    case Present(Upper.OpaqueDir(_, _, _) | Upper.Entry(Path.Entry.Directory(_), _, _)) =>
+                        Abort.fail(FileIsADirectoryException(path))
+                    case staged =>
                         // Not in upper: read lower, record the observation, and stage the result all
                         // in the one state this transaction will apply.
-                        // Ancestor Whiteout hides lower content; treat as absent, start fresh.
+                        // A whiteout here or on an ancestor hides lower content; treat as absent, start fresh.
                         lower.exists(lp).map { lowerFound =>
-                            if !lowerFound || ancestorWhiteout(s, cp) then
+                            if !lowerFound || staged.contains(Upper.Whiteout) || ancestorWhiteout(s, cp) then
                                 (stagedAppend(withObservation(s, cp, Observed.Missing), cp, Span.empty[Byte], value, token), ())
                             else
                                 lower.readBytes(lp).map { existing =>
@@ -1570,8 +1607,9 @@ private[kyo] class OverlayFileSystem[S](
                 s.upper.get(cp) match
                     case Present(Upper.Entry(Path.Entry.File(bytes, _), _, _)) =>
                         boundInt(path, "truncate size", size).map(sz => (stagedTruncate(s, cp, bytes, sz, token), ()))
-                    case Present(_) => Abort.fail(FileNotFoundException(path))
-                    case Absent     =>
+                    case Present(Upper.Whiteout) => Abort.fail(FileNotFoundException(path))
+                    case Present(_)              => Abort.fail(FileIsADirectoryException(path))
+                    case Absent                  =>
                         if ancestorWhiteout(s, cp) then Abort.fail(FileNotFoundException(path))
                         else
                             lower.readBytes(lp).map { bytes =>
@@ -1654,65 +1692,44 @@ private[kyo] class OverlayFileSystem[S](
             }
         }
 
+    // mkdir -p, as the host's createDirectories: missing parents are created, an existing directory (staged or in the
+    // lower) is left as it stands with its entries, and an existing file is a conflict. A new directory is opaque when a
+    // whiteout here or above removed what the lower holds, so none of that comes back through it.
     def mkDir(path: Path)(using Frame): Unit < (S & Abort[FileReadException | FileStructureException]) =
-        canonical(path).map { cp =>
-            val lp    = lowerPath(cp)
-            val token = stagedToken("directory")
-            transact[FileReadException | FileStructureException, Unit](path, FileSystemOperation.Create) { s =>
-                def staged(base: OverlayState, entry: Upper): OverlayState =
-                    withProvenance(
-                        base.copy(upper = base.upper.updated(cp, entry)),
-                        cp,
-                        Provenance.Staged(token)
-                    )
-                s.upper.get(cp) match
-                    case Present(Upper.OpaqueDir(_, _, _))                   => (s, ()) // already opaque dir
-                    case Present(Upper.Entry(Path.Entry.Directory(_), _, _)) => (s, ()) // already a dir in upper
-                    case _                                                   =>
-                        // If lower has a directory at this path, create OpaqueDir (hides lower children).
-                        // If lower has a file or absent, create a regular directory entry.
-                        // mkDir asks for a directory, not for a directory dated a particular way, so
-                        // no arm here records an explicit modification time.
-                        lower.exists(lp).map { exists =>
-                            if !exists then
-                                val st = Path.PathStat(0L, 0L)
-                                (
-                                    staged(withObservation(s, cp, Observed.Missing), Upper.Entry(Path.Entry.Directory(st), Absent)),
-                                    ()
-                                )
-                            else
-                                lower.stat(lp).map { stat =>
-                                    lower.isDirectory(lp).map { isDir =>
-                                        // An existing lower dir (or file) gets OpaqueDir, hiding its children.
-                                        val st = if isDir then stat else Path.PathStat(0L, 0L)
-                                        if isDir then
-                                            (
-                                                staged(
-                                                    withObservation(s, cp, Observed.Exists(isDirectory = true)),
-                                                    Upper.OpaqueDir(st, Absent)
-                                                ),
-                                                ()
-                                            )
-                                        else
-                                            lower.readBytes(lp).map { bytes =>
-                                                (
-                                                    staged(
-                                                        withObservation(s, cp, Observed.FileContent(bytes, stat)),
-                                                        Upper.OpaqueDir(st, Absent)
-                                                    ),
-                                                    ()
-                                                )
-                                            }
-                                        end if
-                                    }
-                                }
-                        }
-                end match
+        asStructure(path, FileSystemOperation.Create)(ensureWriteParent(path, Path.WriteOptions(createFolders = true))).andThen {
+            canonical(path).map { cp =>
+                val token = stagedToken("directory")
+                transact[FileReadException | FileStructureException, Unit](path, FileSystemOperation.Create) { s =>
+                    kindIn(s, cp, record = true).map {
+                        case Present(false) => (s, ())
+                        case Present(true)  => Abort.fail(FileAlreadyExistsException(path))
+                        case Absent         =>
+                            // mkDir asks for a directory, not for a directory dated a particular way, so it records no
+                            // explicit modification time.
+                            val stat   = Path.PathStat(0L, 0L)
+                            val opaque = s.upper.get(cp).contains(Upper.Whiteout) || ancestorWhiteout(s, cp)
+                            val entry  = if opaque then Upper.OpaqueDir(stat, Absent) else Upper.Entry(Path.Entry.Directory(stat), Absent)
+                            (withProvenance(s.copy(upper = s.upper.updated(cp, entry)), cp, Provenance.Staged(token)), ())
+                    }
+                }
             }
         }
 
+    // An existing entry of either kind is left as it stands, as the host's mkFile does.
     def mkFile(path: Path)(using Frame): Unit < (S & Abort[FileWriteException | FileStructureException]) =
-        writeBytes(path, Span.empty[Byte], Path.WriteOptions())
+        ensureWriteParent(path, Path.WriteOptions()).andThen {
+            asWrite(canonical(path).map { cp =>
+                val token = stagedToken("write")
+                transact[FileReadException | FileWriteException, Unit](path, FileSystemOperation.Create) { s =>
+                    kindIn(s, cp, record = true).map {
+                        case Present(_) => (s, ())
+                        case Absent     =>
+                            val empty = Upper.Entry(Path.Entry.File(Span.empty[Byte], Path.PathStat(0L, 0L)), Absent)
+                            (withProvenance(s.copy(upper = s.upper.updated(cp, empty)), cp, Provenance.Staged(token)), ())
+                    }
+                }
+            })
+        }
 
     def move(
         from: Path,
@@ -1732,6 +1749,7 @@ private[kyo] class OverlayFileSystem[S](
                     ) { s =>
                         resolveEntry(from).map { resolved =>
                             if s.upper.samePath(fromCp, toCp) then (s, ())
+                            else if inside(s, fromCp, toCp) then Abort.fail(intoItself(from, to, FileSystemOperation.Move))
                             else
                                 checkMoveTarget(to, options.replace) {
                                     resolved match
@@ -1804,54 +1822,68 @@ private[kyo] class OverlayFileSystem[S](
                         FileSystemOperation.Copy
                     ) { s =>
                         resolveEntry(from).map { resolved =>
-                            checkMoveTarget(to, options.replace) {
-                                resolved match
-                                    case file: Path.Entry.File =>
-                                        val copied =
-                                            if options.copyAttributes then file
-                                            else file.copy(stat = Path.PathStat(0L, file.stat.sizeBytes))
-                                        // copyAttributes is exactly the caller asking for the source's timestamp to
-                                        // carry over. Without it the copy is new content and the commit dates it.
-                                        val mtime       = if options.copyAttributes then Present(file.stat.lastModifiedMs) else Absent
-                                        val copiedState = s.copy(upper =
-                                            s.upper.updated(
-                                                toCp,
-                                                Upper.Entry(
-                                                    copied,
-                                                    mtime,
-                                                    s.upper.get(fromCp).map(_.accessRequirement).getOrElse(Access.Default)
+                            // A copy onto itself changes nothing, as on a host, whatever `replace` says.
+                            if s.upper.samePath(fromCp, toCp) then (s, ())
+                            else if inside(s, fromCp, toCp) then Abort.fail(intoItself(from, to, FileSystemOperation.Copy))
+                            else
+                                checkMoveTarget(to, options.replace) {
+                                    resolved match
+                                        case file: Path.Entry.File =>
+                                            val copied =
+                                                if options.copyAttributes then file
+                                                else file.copy(stat = Path.PathStat(0L, file.stat.sizeBytes))
+                                            // copyAttributes is exactly the caller asking for the source's timestamp to
+                                            // carry over. Without it the copy is new content and the commit dates it.
+                                            val mtime       = if options.copyAttributes then Present(file.stat.lastModifiedMs) else Absent
+                                            val copiedState = s.copy(upper =
+                                                s.upper.updated(
+                                                    toCp,
+                                                    Upper.Entry(
+                                                        copied,
+                                                        mtime,
+                                                        s.upper.get(fromCp).map(_.accessRequirement).getOrElse(Access.Default)
+                                                    )
                                                 )
                                             )
-                                        )
-                                        // A copy is new content at the target, so it gets an identity of its own
-                                        // rather than the source's.
-                                        (withProvenance(copiedState, toCp, Provenance.Staged(copyToken)), ())
-                                    case _: Path.Entry.Directory =>
-                                        // A directory copy materializes the entire subtree under `to`, leaving the
-                                        // source intact (no whiteout, no Remove op).
-                                        collectSubtree(from).map { nodes =>
-                                            val upperT = stageSubtree(s.upper, fromCp, toCp, nodes, options.copyAttributes)
-                                            (
-                                                withProvenance(s.copy(upper = upperT), toCp, Provenance.Staged(copyToken)),
-                                                ()
-                                            )
-                                        }
-                            }
+                                            // A copy is new content at the target, so it gets an identity of its own
+                                            // rather than the source's.
+                                            (withProvenance(copiedState, toCp, Provenance.Staged(copyToken)), ())
+                                        case _: Path.Entry.Directory =>
+                                            // A directory copy materializes the entire subtree under `to`, leaving the
+                                            // source intact (no whiteout, no Remove op).
+                                            collectSubtree(from).map { nodes =>
+                                                val upperT = stageSubtree(s.upper, fromCp, toCp, nodes, options.copyAttributes)
+                                                (
+                                                    withProvenance(s.copy(upper = upperT), toCp, Provenance.Staged(copyToken)),
+                                                    ()
+                                                )
+                                            }
+                                }
                         }
                     }
                 }
             }
         )
 
-    // Shared target-existence guard for move/copy. Existence is computed through the effective
-    // overlay view so direct and ancestor whiteouts hide lower entries consistently with reads.
+    // Shared target guard for move/copy, computed through the effective overlay view so direct and
+    // ancestor whiteouts hide lower entries consistently with reads. An existing target is replaced
+    // only when `replace` allows, and never when it is a directory with entries, as on a host.
     private def checkMoveTarget[A](to: Path, replace: Path.Replace)(
         body: => A < (S & Abort[FileReadException | FileStructureException])
     )(using Frame): A < (S & Abort[FileReadException | FileStructureException]) =
-        exists(to).map { targetExists =>
-            if targetExists && replace == Path.Replace.Never then Abort.fail(FileAlreadyExistsException(to))
-            else body
+        kindOf(to).map {
+            case Present(_) if replace == Path.Replace.Never => Abort.fail(FileAlreadyExistsException(to))
+            case Present(false)                              =>
+                list(to).map(entries => if entries.nonEmpty then Abort.fail(FileDirectoryNotEmptyException(to)) else body)
+            case _ => body
         }
+
+    // Whether `to` lies strictly beneath `from`, compared as the staged keys are.
+    private def inside(s: OverlayState, from: CanonicalPath, to: CanonicalPath): Boolean =
+        to.parts.size > from.parts.size && s.upper.samePath(from, CanonicalPath.wrap(to.parts.take(from.parts.size)))
+
+    private def intoItself(from: Path, to: Path, operation: FileSystemOperation)(using Frame): FileIOException =
+        FileIOException(to, operation, new IOException(s"Cannot place $from inside itself at $to"))
 
     // A moved file retains its original access controls even when its new name has never existed
     // in lower. Resolve an earlier move or durable replacement to the same original source.
@@ -1961,26 +1993,45 @@ private[kyo] class OverlayFileSystem[S](
             }
         }
 
+    // A directory with entries is refused, as the host's remove does; removeAll is the recursive form.
     def remove(path: Path)(using Frame): Boolean < (S & Abort[FileReadException | FileStructureException]) =
+        removal(path, recursive = false)
+
+    // Whiteouts `path` and drops everything staged beneath it: a staged entry outranks an ancestor whiteout, so one left
+    // in place would survive the removal, and come back when the path is created again. A hidden path is not there to
+    // remove.
+    private def removal(path: Path, recursive: Boolean)(using Frame): Boolean < (S & Abort[FileReadException | FileStructureException]) =
         canonical(path).map { cp =>
             val lp = lowerPath(cp)
             transact[FileReadException | FileStructureException, Boolean](path, FileSystemOperation.Remove) { s =>
                 def staged(base: OverlayState): OverlayState =
-                    base.copy(upper = base.upper.updated(cp, Upper.Whiteout))
+                    base.copy(upper = base.upper.removedSubtree(cp).updated(cp, Upper.Whiteout))
+                // The listing it checks is observed, so a commit sees an entry the lower gains after the decision.
+                val occupied: Unit < (S & Abort[FileReadException | FileStructureException]) =
+                    if recursive then ()
+                    else
+                        kindIn(s, cp, record = false).map {
+                            case Present(false) =>
+                                list(path).map(entries => if entries.nonEmpty then Abort.fail(FileDirectoryNotEmptyException(path)) else ())
+                            case _ => ()
+                        }
                 s.upper.get(cp) match
                     case Present(Upper.Whiteout) => (s, false)
-                    case Present(_)              => (staged(s), true)
+                    case Present(_)              => occupied.andThen((staged(s), true))
                     case Absent                  =>
-                        lower.exists(lp).map { found =>
-                            if !found then (withObservation(s, cp, Observed.Missing), false)
-                            else
-                                // The removal's base is recorded before the whiteout hides it, so commit
-                                // still has something to validate the removal against.
-                                observedLower(s, cp).map(observed => (staged(observed), true))
-                        }
+                        if ancestorWhiteout(s, cp) then (s, false)
+                        else
+                            lower.exists(lp).map { found =>
+                                if !found then (withObservation(s, cp, Observed.Missing), false)
+                                else
+                                    // The removal's base is recorded before the whiteout hides it, so commit
+                                    // still has something to validate the removal against.
+                                    occupied.andThen(observedLower(s, cp).map(observed => (staged(observed), true)))
+                            }
                 end match
             }
         }
+    end removal
 
     // Records the base a removal is taken against, for use inside a transaction.
     //
@@ -2009,7 +2060,7 @@ private[kyo] class OverlayFileSystem[S](
         remove(path).map(existed => if existed then () else Abort.fail(FileNotFoundException(path)))
 
     def removeAll(path: Path)(using Frame): Unit < (S & Abort[FileReadException | FileStructureException]) =
-        remove(path).unit
+        removal(path, recursive = true).unit
 
     // --- Write handle ---
 
@@ -2019,14 +2070,17 @@ private[kyo] class OverlayFileSystem[S](
         ensureWriteParent(path, options).andThen(canonical(path).map { cp =>
             val lp = lowerPath(cp)
             withState { s =>
+                // A whiteout here or on an ancestor hides the lower file, so an append starts empty.
                 val upperSeed: Maybe[Span[Byte]] =
                     if append then
                         s.upper.get(cp) match
                             case Present(Upper.Entry(Path.Entry.File(bytes, _), _, _)) => Present(bytes)
+                            case Present(Upper.Whiteout)                               => Present(Span.empty[Byte])
+                            case Absent if ancestorWhiteout(s, cp)                     => Present(Span.empty[Byte])
                             case _                                                     => Absent
                     else Present(Span.empty[Byte])
 
-                upperSeed match
+                refuseDirectory(s, cp, path).andThen(upperSeed match
                     case Present(seed) => mkWriteHandle(cp, seed)
                     case Absent        =>
                         // append mode with no upper entry: seed from lower
@@ -2038,8 +2092,7 @@ private[kyo] class OverlayFileSystem[S](
                                         observe(cp, Observed.FileContent(bytes, stat)).andThen(mkWriteHandle(cp, bytes))
                                     }
                                 }
-                        }
-                end match
+                        })
             }
         })
 
@@ -2210,48 +2263,52 @@ private[kyo] class OverlayFileSystem[S](
     private def ensureWriteChannelTarget(path: Path, open: FileSystem.WriteOpen, onAcquire: () => Unit = () => ())(using
         Frame
     ): Unit < (S & Sync & Abort[FileWriteException | FileStructureException]) =
-        Abort.recover[FileReadException](e => Abort.fail(FileIOException(path, FileSystemOperation.Channel, e)))(exists(path)).map {
-            found =>
-                open match
-                    case FileSystem.WriteOpen.CreateNew if found => Abort.fail(FileAlreadyExistsException(path))
-                    case FileSystem.WriteOpen.CreateNew          =>
-                        val stat  = Path.PathStat(0L, 0L)
-                        val token = stagedToken("channel")
-                        ensureWriteParent(path, Path.WriteOptions()).andThen {
-                            canonical(path).map { cp =>
-                                modify(path, FileSystemOperation.Channel)(
-                                    { current =>
-                                        current.upper.get(cp) match
-                                            case Present(Upper.Entry(_, _, _) | Upper.OpaqueDir(_, _, _)) =>
-                                                Result.fail(FileAlreadyExistsException(path))
-                                            case _ =>
-                                                // Creating a channel target asks for no particular timestamp.
-                                                Result.succeed((
-                                                    withProvenance(
-                                                        current.copy(
-                                                            upper = current.upper.updated(
-                                                                cp,
-                                                                Upper.Entry(Path.Entry.File(Span.empty[Byte], stat), Absent)
-                                                            )
+        Abort.recover[FileReadException](e => Abort.fail(FileIOException(path, FileSystemOperation.Channel, e)))(kindOf(path)).map {
+            kind =>
+                val found = kind.isDefined
+                if kind.contains(false) then Abort.fail(FileIsADirectoryException(path))
+                else
+                    open match
+                        case FileSystem.WriteOpen.CreateNew if found => Abort.fail(FileAlreadyExistsException(path))
+                        case FileSystem.WriteOpen.CreateNew          =>
+                            val stat  = Path.PathStat(0L, 0L)
+                            val token = stagedToken("channel")
+                            ensureWriteParent(path, Path.WriteOptions()).andThen {
+                                canonical(path).map { cp =>
+                                    modify(path, FileSystemOperation.Channel)(
+                                        { current =>
+                                            current.upper.get(cp) match
+                                                case Present(Upper.Entry(_, _, _) | Upper.OpaqueDir(_, _, _)) =>
+                                                    Result.fail(FileAlreadyExistsException(path))
+                                                case _ =>
+                                                    // Creating a channel target asks for no particular timestamp.
+                                                    Result.succeed((
+                                                        withProvenance(
+                                                            current.copy(
+                                                                upper = current.upper.updated(
+                                                                    cp,
+                                                                    Upper.Entry(Path.Entry.File(Span.empty[Byte], stat), Absent)
+                                                                )
+                                                            ),
+                                                            cp,
+                                                            Provenance.Staged(token)
                                                         ),
-                                                        cp,
-                                                        Provenance.Staged(token)
-                                                    ),
-                                                    ()
-                                                ))
-                                    },
-                                    _ => onAcquire()
-                                )
+                                                        ()
+                                                    ))
+                                        },
+                                        _ => onAcquire()
+                                    )
+                                }
                             }
-                        }
-                    case FileSystem.WriteOpen.Existing if !found => Abort.fail(FileNotFoundException(path))
-                    case FileSystem.WriteOpen.Create if !found   =>
-                        Abort.recover[FileAlreadyExistsException](_ =>
-                            ensureWriteChannelTarget(path, FileSystem.WriteOpen.Existing, onAcquire)
-                        )(
-                            ensureWriteChannelTarget(path, FileSystem.WriteOpen.CreateNew, onAcquire)
-                        )
-                    case _ => Sync.defer(onAcquire())
+                        case FileSystem.WriteOpen.Existing if !found => Abort.fail(FileNotFoundException(path))
+                        case FileSystem.WriteOpen.Create if !found   =>
+                            Abort.recover[FileAlreadyExistsException](_ =>
+                                ensureWriteChannelTarget(path, FileSystem.WriteOpen.Existing, onAcquire)
+                            )(
+                                ensureWriteChannelTarget(path, FileSystem.WriteOpen.CreateNew, onAcquire)
+                            )
+                        case _ => Sync.defer(onAcquire())
+                end if
         }
 
     final private class ChannelOps(path: Path):
