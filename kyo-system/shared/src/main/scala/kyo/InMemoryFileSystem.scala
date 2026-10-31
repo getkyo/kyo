@@ -452,8 +452,14 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
                 Result.fail(FileAlreadyExistsException(to))
             case Present(_) if nonEmptyDirectory(root, to.parts) => Result.fail(FileDirectoryNotEmptyException(to))
             case Present(n)                                      => placeable(root, to, createFolders).map(_ => Present(n))
+    // A directory with entries is refused, as the host's remove does; removeAll is the recursive form.
     def remove(path: Path)(using Frame): Boolean < (Sync & Abort[FileStructureException]) =
-        modify(s => Result.succeed((s.copy(root = delete(s.root, path.parts)), lookup(s.root, path.parts).isDefined)))
+        modify { s =>
+            lookup(s.root, path.parts) match
+                case Absent                                              => Result.succeed((s, false))
+                case Present(_) if nonEmptyDirectory(s.root, path.parts) => Result.fail(FileDirectoryNotEmptyException(path))
+                case Present(_) => Result.succeed((s.copy(root = delete(s.root, path.parts)), true))
+        }
     def removeExisting(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
         remove(path).map(existed => if existed then () else Abort.fail(FileNotFoundException(path)))
     def removeAll(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =

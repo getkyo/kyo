@@ -534,4 +534,27 @@ class InMemoryFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
+    "remove and removeExisting refuse a directory with entries and keep it" in {
+        withInMem { svc =>
+            val dir   = Path("full-dir")
+            val child = dir / "child.txt"
+            val empty = Path("empty-dir")
+            for
+                _        <- svc.write(child, "child", Path.WriteOptions())
+                _        <- svc.mkDir(empty)
+                removed  <- Abort.run[FileSystemException](svc.remove(dir))
+                existing <- Abort.run[FileSystemException](svc.removeExisting(dir))
+                value    <- svc.read(child)
+                emptied  <- svc.remove(empty)
+                gone     <- svc.exists(empty)
+            yield
+                assert(removed == Result.fail(FileDirectoryNotEmptyException(dir)), s"remove reported $removed")
+                assert(existing == Result.fail(FileDirectoryNotEmptyException(dir)), s"removeExisting reported $existing")
+                assert(value == "child")
+                assert(emptied)
+                assert(!gone)
+            end for
+        }
+    }
+
 end InMemoryFileSystemTest
