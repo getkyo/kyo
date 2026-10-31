@@ -557,4 +557,29 @@ class InMemoryFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
+    "reading, truncating, or opening a write channel on a directory fails and keeps its entries" in {
+        withInMem { svc =>
+            val dir                                                                          = Path("channel-dir")
+            val child                                                                        = dir / "child.txt"
+            val attempts: Chunk[(String, Any < (Sync & Scope & Abort[FileSystemException]))] = Chunk(
+                ("readBytes", svc.readBytes(dir)),
+                ("truncate", svc.truncate(dir, 0)),
+                ("openWriteChannel", svc.openWriteChannel(dir, FileSystem.WriteOpen.Create)),
+                ("openReadWriteChannel", svc.openReadWriteChannel(dir, FileSystem.WriteOpen.Create))
+            )
+            svc.write(child, "child", Path.WriteOptions()).andThen {
+                Kyo.foreach(attempts) { (name, attempt) =>
+                    Scope.run(Abort.run[FileSystemException](attempt.unit)).map(result => (name, result))
+                }.map { results =>
+                    svc.read(child).map { value =>
+                        results.foreach { (name, result) =>
+                            assert(result == Result.fail(FileIsADirectoryException(dir)), s"$name reported $result")
+                        }
+                        assert(value == "child")
+                    }
+                }
+            }
+        }
+    }
+
 end InMemoryFileSystemTest

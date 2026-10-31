@@ -290,7 +290,7 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
                 case Present(n) =>
                     n.file match
                         case Present(body) => body.bytes
-                        case Absent        => Abort.fail(FileNotFoundException(path))
+                        case Absent        => Abort.fail(FileIsADirectoryException(path))
                 case Absent => Abort.fail(FileNotFoundException(path))
         }
     def readLines(path: Path)(using Frame): Chunk[String] < (Sync & Abort[FileReadException]) =
@@ -355,7 +355,7 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
                     case Absent     => Result.fail(FileNotFoundException(path))
                     case Present(n) =>
                         n.file match
-                            case Absent        => Result.fail(FileNotFoundException(path))
+                            case Absent        => Result.fail(FileIsADirectoryException(path))
                             case Present(body) =>
                                 val kept = Span.fromUnsafe(body.bytes.toArrayUnsafe.take(size.toInt))
                                 Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.file(kept, t), t)), ()))
@@ -531,6 +531,7 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
             modify(
                 { s =>
                     if hasFileParent(s.root, path.parts) then Result.fail(FileNotADirectoryException(path))
+                    else if lookup(s.root, path.parts).exists(_.file.isEmpty) then Result.fail(FileIsADirectoryException(path))
                     else
                         val found = lookup(s.root, path.parts).isDefined
                         open match
