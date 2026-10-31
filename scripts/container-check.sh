@@ -5,7 +5,7 @@ set -uo pipefail
 #
 # Usage: container-check.sh [--warn-only]
 #
-# Runs three checks and prints component diagnostics for each:
+# Runs four checks and prints component diagnostics for each:
 #   1. podman startup: create + start + exec a real container. This is the exact cycle the
 #      20260810.x runner image regression broke (conmon without journald support exited 1 on
 #      every start, and each exec then failed with HTTP 500 "container state improper"; see
@@ -18,7 +18,13 @@ set -uo pipefail
 #      CI job accumulated 28 unkillable mysqld totalling 4.6G and paid ~45s per scoped teardown.
 #      When the configured OCI runtime fails this gate the script retries under the alternative
 #      runtime and, if that one passes, pins it in containers.conf and restarts the API service.
-#   3. docker: the daemon answers `docker version`. Ubuntu's runc package Conflicts with
+#   3. podman bridge teardown: stop a container on a bridge network. The docker-compat API puts
+#      every container on the "podman" bridge, which rootless podman 5 serves from one shared
+#      pasta process that it SIGTERMs when the last container leaves. On the Ubuntu 26.04 images
+#      AppArmor denied that signal (the setup action now allows it), so every kyo-pod stop and
+#      remove failed with "rootless netns: kill network process: permission denied" while the
+#      probes above, which use the CLI's per-container pasta network, passed.
+#   4. docker: the daemon answers `docker version`. Ubuntu's runc package Conflicts with
 #      containerd.io, and an apt resolution that removes docker-ce has taken the daemon out
 #      from under CI before; the kyo-pod suites run half of their container cases against it.
 #
@@ -204,6 +210,33 @@ check_podman_teardown() {
     failed=1
 }
 
+# A stop on a bridge network has to tear the network down as well as the container, through a
+# path the default-network probes never take. The gate fails on any error from that stop: the
+# daemon answers it with HTTP 500 and the container is left behind.
+check_podman_bridge_teardown() {
+    local net="kyo-gate-net" name="bridge-probe" out rc=0
+    podman rm -f "$name" >/dev/null 2>&1 || true
+    podman network rm -f "$net" >/dev/null 2>&1 || true
+    if ! podman network create "$net" >/dev/null \
+        || ! podman run -d --pull=never --name "$name" --network "$net" "$PROBE_IMAGE" sleep 300 >/dev/null; then
+        echo "podman bridge teardown check could not start a container on a bridge network" >&2
+        rc=1
+    elif ! out="$(podman stop -t 0 "$name" 2>&1)"; then
+        echo "podman bridge teardown check failed: stopping a container on a bridge network errored:" >&2
+        echo "$out" >&2
+        echo "Recent AppArmor denials:" >&2
+        sudo -n dmesg 2>/dev/null | grep 'apparmor="DENIED"' | tail -5 >&2 || true
+        rc=1
+    fi
+    podman rm -f "$name" >/dev/null 2>&1 || true
+    podman network rm -f "$net" >/dev/null 2>&1 || true
+    if [ "$rc" -eq 0 ]; then
+        echo "podman bridge teardown check passed (stop on a bridge network)"
+    else
+        failed=1
+    fi
+}
+
 check_docker() {
     if docker version; then
         echo "docker check passed"
@@ -236,6 +269,7 @@ if pull_probe_image; then
     check_podman
     podman_ok=$([ -z "$failed" ] && echo 1 || echo "")
     check_podman_teardown
+    check_podman_bridge_teardown
 fi
 check_docker
 
