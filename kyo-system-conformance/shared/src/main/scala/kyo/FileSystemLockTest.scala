@@ -91,6 +91,31 @@ trait FileSystemLockTest[S >: Async] extends kyo.test.Test[Any]:
         }
 
         "lifecycle" - {
+            "different path and suffix combinations contend for the same sentinel" in {
+                withLockTarget { (fileSystem, path) =>
+                    Scope.run {
+                        fileSystem.lock(path, Path.LockMode.Exclusive, Path.LockWait.Immediate, ".b.c").map { held =>
+                            fileSystem.tryLock(Path(path.unsafe.show + ".b"), Path.LockMode.Exclusive, ".c").map { attempted =>
+                                assert(attempted.isEmpty)
+                                held.check
+                            }
+                        }
+                    }.andThen {
+                        Scope.run(fileSystem.tryLock(path, Path.LockMode.Exclusive, ".b.c").map(lock => assert(lock.isDefined)))
+                    }
+                }
+            }
+
+            "claims on one path under different suffixes are independent" in {
+                withLockTarget { (fileSystem, path) =>
+                    Scope.run {
+                        fileSystem.lock(path, Path.LockMode.Exclusive, Path.LockWait.Immediate, ".first").map { _ =>
+                            fileSystem.tryLock(path, Path.LockMode.Exclusive, ".second").map(other => assert(other.isDefined))
+                        }
+                    }
+                }
+            }
+
             "locking claims a sentinel sibling and leaves the data path untouched" in {
                 withLockTarget { (fileSystem, path) =>
                     Scope.run {
