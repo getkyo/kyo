@@ -1,5 +1,6 @@
 package kyo
 
+import java.util.concurrent.ConcurrentHashMap
 import kyo.kernel.ArrowEffect
 import scala.annotation.implicitNotFound
 import scala.util.NotGiven
@@ -33,6 +34,48 @@ object StreamCoreExtensions:
                     Emit.value(fullChunk)
         Abort.run[Closed](emit).unit
     end emitElementsFromChannel
+
+    /** The element fibers a parallel map has forked and not yet seen complete.
+      *
+      * A channel of element fibers does not own them: a fiber the consumer has taken but not yet joined, or one the producer has forked but
+      * not yet put, is in neither the channel nor a join, so draining the channel at the consumer's exit misses it, and it runs on with
+      * whatever it holds. Here a fiber is held from its fork to its completion, and `stop` interrupts every one still held, wherever it
+      * stands. A fiber held after `stop` is interrupted as it is held, so a fork still in flight when the consumer leaves is reached too.
+      */
+    final private class ElementFibers private (
+        live: ConcurrentHashMap[Fiber.Unsafe[Any, Nothing], java.lang.Boolean],
+        stopped: AtomicBoolean.Unsafe
+    ):
+        /** Runs `fork` and holds the fiber it returns. */
+        def own[A, S, S1](fork: => Fiber[A, S] < (Sync & S1))(using Frame): Fiber[A, S] < (Sync & S1) =
+            // The hold is the bracket's release, which the kernel registers as the fiber arrives, with nothing schedulable in between,
+            // and runs however the extent ends: an interrupt landing right after the fork still leaves the fiber held.
+            Sync.acquireReleaseWith(fork)(hold)(identity)
+
+        /** Interrupts every fiber still held, and every one held from now on. */
+        def stop(using Frame): Unit < Sync =
+            // Unsafe: the flag and the walk are plain reads and writes on the set, with no effect between them.
+            Sync.Unsafe.defer {
+                stopped.set(true)
+                live.forEach((fiber, _) => discard(fiber.interrupt()))
+            }
+
+        private def hold(fiber: Fiber[Any, Nothing])(using Frame): Unit < Sync =
+            // Unsafe: the put, the removal on completion, and the stop check are plain operations on the set, with no effect between them.
+            Sync.Unsafe.defer {
+                val held = fiber.unsafe
+                discard(live.put(held, java.lang.Boolean.TRUE))
+                held.onComplete(_ => discard(live.remove(held)))
+                // Read after the put: a `stop` that ran before the put is seen here, and one that runs after it finds the fiber.
+                if stopped.get() then discard(held.interrupt())
+            }
+    end ElementFibers
+
+    private object ElementFibers:
+        def init(using Frame): ElementFibers < Sync =
+            // Unsafe: allocates the set and its flag, which nothing else can reach yet.
+            Sync.Unsafe.defer(new ElementFibers(new ConcurrentHashMap, AtomicBoolean.Unsafe.init(false)))
+    end ElementFibers
 
     sealed trait StreamHub[A, E]:
         def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Scope & Async)
@@ -403,72 +446,67 @@ object StreamCoreExtensions:
                 Channel.use[Fiber[Chunk[V2], Async & Abort[E | Closed] & S & S2]](bufferSize): channelOut =>
                     // Concurrency limiter
                     Meter.useSemaphore(parallel): semaphore =>
-                        // Ensure lingering fibers are interrupted
-                        val cleanup = Abort.run[Closed]:
-                            Sync.ensure(channelOut.closeDiscard):
-                                Loop.foreach:
-                                    channelOut.drain.map: chunk =>
-                                        if chunk.isEmpty then Loop.done
-                                        else Kyo.foreach(chunk)(_.interrupt).andThen(Loop.continue)
+                        ElementFibers.init.map: elements =>
+                            // Stop every element fiber, wherever it stands, and close the channel so neither side stays parked on it
+                            val cleanup = elements.stop.andThen(channelOut.closeDiscard)
 
-                        // Handle original stream by running transformations in parallel, limiting concurrency
-                        // via semaphore
-                        val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
-                            handle = [C] =>
-                                input =>
-                                    // Fork async generation of chunks (with each transformation limited by semaphore)
-                                    // and publish fiber to output channel. Wait for concurrency using semaphore first to
-                                    // backpressure handler loop
-                                    semaphore.run(Fiber.initUnscoped(Async.foreach(input)(v => semaphore.run(f(v))))).map: chunkFiber =>
-                                        channelOut.put(chunkFiber).andThen(Loop.continue(()))
-                        )
+                            // Handle original stream by running transformations in parallel, limiting concurrency
+                            // via semaphore
+                            val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
+                                handle = [C] =>
+                                    input =>
+                                        // Fork async generation of chunks (with each transformation limited by semaphore)
+                                        // and publish fiber to output channel. Wait for concurrency using semaphore first to
+                                        // backpressure handler loop
+                                        val fork = elements.own(Fiber.initUnscoped(Async.foreach(input)(v => semaphore.run(f(v)))))
+                                        semaphore.run(fork).map: chunkFiber =>
+                                            channelOut.put(chunkFiber).andThen(Loop.continue(()))
+                            )
 
-                        // Run stream handler in background, propagating errors to foreground
-                        val background =
-                            Abort.fold[E | Closed](
-                                // When finished, set output channel to close once it's drained
-                                onSuccess = _ => channelOut.closeAwaitEmpty.unit,
-                                onFail = {
-                                    case _: Closed       => cleanup.unit
-                                    case e: E @unchecked => cleanup.andThen(Abort.fail(e))
-                                },
-                                onPanic = e => cleanup.andThen(Abort.panic(e))
-                            )(handleEmit)
+                            // Run stream handler in background, propagating errors to foreground
+                            val background =
+                                Abort.fold[E | Closed](
+                                    // When finished, set output channel to close once it's drained
+                                    onSuccess = _ => channelOut.closeAwaitEmpty.unit,
+                                    onFail = {
+                                        case _: Closed       => cleanup.unit
+                                        case e: E @unchecked => cleanup.andThen(Abort.fail(e))
+                                    },
+                                    onPanic = e => cleanup.andThen(Abort.panic(e))
+                                )(handleEmit)
 
-                        // Emit chunks from fibers published to channelOut.
-                        // Use getResult to inspect fiber errors without re-raising through
-                        // Abort.run[Closed], which can't distinguish user errors from channel errors.
-                        // Store fiber errors and propagate after the background completes.
-                        val emitResults =
-                            AtomicRef.init[Maybe[Either[Throwable, Any]]](Absent).map: fiberError =>
-                                val emit = Loop.forever:
-                                    channelOut.take.map: chunkFiber =>
-                                        chunkFiber.getResult.map:
-                                            case Result.Success(chunk) =>
-                                                if chunk.nonEmpty then Emit.value(chunk) else Kyo.unit
-                                            case Result.Panic(ex) =>
-                                                fiberError.set(Present(Left(ex)))
-                                            case Result.Failure(closed: Closed) =>
-                                                fiberError.set(Present(Left(closed)))
-                                            case Result.Failure(e) =>
-                                                // Not Closed, must be E
-                                                fiberError.set(Present(Right(e)))
-                                // The consumer's exit is where the element fibers must be stopped: closing the channel
-                                // alone discards whatever is still in it and leaves those fibers running with everything
-                                // they hold, so the drain-and-interrupt runs here.
-                                Sync.ensure(cleanup.unit):
-                                    Abort.run[Closed](emit).unit
-                                .andThen(fiberError)
-                        end emitResults
+                            // Emit chunks from fibers published to channelOut.
+                            // Use getResult to inspect fiber errors without re-raising through
+                            // Abort.run[Closed], which can't distinguish user errors from channel errors.
+                            // Store fiber errors and propagate after the background completes.
+                            val emitResults =
+                                AtomicRef.init[Maybe[Either[Throwable, Any]]](Absent).map: fiberError =>
+                                    val emit = Loop.forever:
+                                        channelOut.take.map: chunkFiber =>
+                                            chunkFiber.getResult.map:
+                                                case Result.Success(chunk) =>
+                                                    if chunk.nonEmpty then Emit.value(chunk) else Kyo.unit
+                                                case Result.Panic(ex) =>
+                                                    fiberError.set(Present(Left(ex)))
+                                                case Result.Failure(closed: Closed) =>
+                                                    fiberError.set(Present(Left(closed)))
+                                                case Result.Failure(e) =>
+                                                    // Not Closed, must be E
+                                                    fiberError.set(Present(Right(e)))
+                                    Abort.run[Closed](emit).unit.andThen(fiberError)
+                            end emitResults
 
-                        // Stream from output channel, running handlers in background
-                        Fiber.use[E, Unit, S & S2, S & S2](background): backgroundFiber =>
-                            emitResults.map: fiberError =>
-                                backgroundFiber.get.unit.andThen:
-                                    fiberError.get.map:
-                                        case Present(Left(ex)) => Abort.panic(ex)
-                                        case Present(Right(e)) => Abort.fail(e.asInstanceOf[E])
-                                        case Absent            => ()
+                            // Stream from output channel, running handlers in background. The consumer's exit, whichever way it
+                            // comes, is where the element fibers must be stopped, so the cleanup is in place before the background
+                            // forks the first one.
+                            Sync.ensure(cleanup):
+                                Fiber.use[E, Unit, S & S2, S & S2](background): backgroundFiber =>
+                                    emitResults.map: fiberError =>
+                                        backgroundFiber.get.unit.andThen:
+                                            fiberError.get.map:
+                                                case Present(Left(ex)) => Abort.panic(ex)
+                                                case Present(Right(e)) => Abort.fail(e.asInstanceOf[E])
+                                                case Absent            => ()
         end mapPar
 
         /** Applies effectful transformation of stream elements asynchronously, mapping them in parallel. Preserves chunk boundaries.
@@ -514,73 +552,72 @@ object StreamCoreExtensions:
                     Channel.use[Fiber[Unit, Async & Abort[E | Closed] & S & S2]](bufferSize): channelPar =>
                         // Concurrency limiter
                         Meter.useSemaphore(parallel): semaphore =>
-                            // Ensure lingering fibers are interrupted
-                            val cleanup = Abort.run[Closed]:
-                                Sync.ensure(channelPar.closeDiscard.andThen(channelOut.closeDiscard)):
-                                    Loop.foreach:
-                                        channelPar.drain.map: chunk =>
-                                            if chunk.isEmpty then Loop.done
-                                            else Kyo.foreach(chunk)(_.interrupt).andThen(Loop.continue)
+                            ElementFibers.init.map: elements =>
+                                // Stop every element fiber, wherever it stands, and close both channels so no side stays parked on them
+                                val cleanup = elements.stop.andThen(channelPar.closeDiscard).andThen(channelOut.closeDiscard)
 
-                            // Handle original stream, asynchronously transforming input and publishing output
-                            // using semaphore as rate limiter
-                            val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
-                                handle = [C] =>
-                                    input =>
-                                        // For each element in input chunk, transform and publish each to channelOut
-                                        // concurrently, limited by semaphore. Fork this collective process and publish
-                                        // fiber to channelPar in order to ensure completion/interruption. Wait for
-                                        // concurrency first using semaphore to backpressure handler loop
-                                        semaphore.run(Fiber.initUnscoped(
-                                            Async.foreachDiscard(input)(v => semaphore.run(f(v).map(channelOut.put(_))))
-                                        )).map: fiber =>
-                                            channelPar.put(fiber).andThen(Loop.continue(()))
-                            ).andThen(channelPar.closeAwaitEmpty.unit)
+                                // Handle original stream, asynchronously transforming input and publishing output
+                                // using semaphore as rate limiter
+                                val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
+                                    handle = [C] =>
+                                        input =>
+                                            // For each element in input chunk, transform and publish each to channelOut
+                                            // concurrently, limited by semaphore. Fork this collective process and publish
+                                            // fiber to channelPar, where its completion is awaited. Wait for
+                                            // concurrency first using semaphore to backpressure handler loop
+                                            semaphore.run(elements.own(Fiber.initUnscoped(
+                                                Async.foreachDiscard(input)(v => semaphore.run(f(v).map(channelOut.put(_))))
+                                            ))).map: fiber =>
+                                                channelPar.put(fiber).andThen(Loop.continue(()))
+                                ).andThen(channelPar.closeAwaitEmpty.unit)
 
-                            // Drain channelPar, waiting for each fiber to complete before finishing.
-                            // Use getResult to inspect fiber errors without re-raising through
-                            // Abort.run[Closed]. Store errors for propagation after background.
-                            // On error, run cleanup to close channels and interrupt fibers,
-                            // unblocking the foreground emitElementsFromChannel loop.
-                            AtomicRef.init[Maybe[Either[Throwable, Any]]](Absent).map: fiberError =>
-                                def setError(error: Either[Throwable, Any]) =
-                                    fiberError.compareAndSet(Absent, Present(error)).andThen(cleanup.unit)
+                                // Drain channelPar, waiting for each fiber to complete before finishing.
+                                // Use getResult to inspect fiber errors without re-raising through
+                                // Abort.run[Closed]. Store errors for propagation after background.
+                                // On error, run cleanup to close channels and interrupt fibers,
+                                // unblocking the foreground emitElementsFromChannel loop.
+                                AtomicRef.init[Maybe[Either[Throwable, Any]]](Absent).map: fiberError =>
+                                    def setError(error: Either[Throwable, Any]) =
+                                        fiberError.compareAndSet(Absent, Present(error)).andThen(cleanup.unit)
 
-                                val handlePar =
-                                    Abort.run[Closed](
-                                        Loop.forever:
-                                            channelPar.take.map: fiber =>
-                                                fiber.getResult.map:
-                                                    case Result.Success(_) => ()
-                                                    case Result.Panic(ex)  =>
-                                                        setError(Left(ex))
-                                                    case Result.Failure(closed: Closed) =>
-                                                        setError(Left(closed))
-                                                    case Result.Failure(e) =>
-                                                        setError(Right(e))
-                                    ).unit
+                                    val handlePar =
+                                        Abort.run[Closed](
+                                            Loop.forever:
+                                                channelPar.take.map: fiber =>
+                                                    fiber.getResult.map:
+                                                        case Result.Success(_) => ()
+                                                        case Result.Panic(ex)  =>
+                                                            setError(Left(ex))
+                                                        case Result.Failure(closed: Closed) =>
+                                                            setError(Left(closed))
+                                                        case Result.Failure(e) =>
+                                                            setError(Right(e))
+                                        ).unit
 
-                                // Run stream handler in background, closing the output channel when finished
-                                // and propagating failures
-                                val background =
-                                    Abort.fold[E | Closed](
-                                        onSuccess = _ => channelOut.closeAwaitEmpty.unit,
-                                        onFail = {
-                                            case _: Closed       => cleanup.unit
-                                            case e: E @unchecked => cleanup.andThen(Abort.fail(e))
-                                        },
-                                        onPanic = e => cleanup.andThen(Abort.panic(e))
-                                    )(Async.foreachDiscard(Seq(handleEmit, handlePar))(identity).unit)
+                                    // Run stream handler in background, closing the output channel when finished
+                                    // and propagating failures
+                                    val background =
+                                        Abort.fold[E | Closed](
+                                            onSuccess = _ => channelOut.closeAwaitEmpty.unit,
+                                            onFail = {
+                                                case _: Closed       => cleanup.unit
+                                                case e: E @unchecked => cleanup.andThen(Abort.fail(e))
+                                            },
+                                            onPanic = e => cleanup.andThen(Abort.panic(e))
+                                        )(Async.foreachDiscard(Seq(handleEmit, handlePar))(identity).unit)
 
-                                // Emit from channel while running handler in background, then joining handler
-                                // to capture any failures from background
-                                Fiber.use[E, Unit, S & S2, S & S2](background): backgroundFiber =>
-                                    emitElementsFromChannel(channelOut).andThen:
-                                        backgroundFiber.get.unit.andThen:
-                                            fiberError.get.map:
-                                                case Present(Left(ex)) => Abort.panic(ex)
-                                                case Present(Right(e)) => Abort.fail(e.asInstanceOf[E])
-                                                case Absent            => ()
+                                    // Emit from channel while running handler in background, then joining handler
+                                    // to capture any failures from background. The consumer's exit, whichever way it comes, is
+                                    // where the element fibers must be stopped, so the cleanup is in place before the background
+                                    // forks the first one.
+                                    Sync.ensure(cleanup):
+                                        Fiber.use[E, Unit, S & S2, S & S2](background): backgroundFiber =>
+                                            emitElementsFromChannel(channelOut).andThen:
+                                                backgroundFiber.get.unit.andThen:
+                                                    fiberError.get.map:
+                                                        case Present(Left(ex)) => Abort.panic(ex)
+                                                        case Present(Right(e)) => Abort.fail(e.asInstanceOf[E])
+                                                        case Absent            => ()
         end mapParUnordered
 
         /** Applies effectful transformation of stream elements asynchronously, mapping them in parallel. Does not preserve chunk
@@ -626,71 +663,68 @@ object StreamCoreExtensions:
                 Channel.use[Fiber[Chunk[V2], Async & Abort[E | Closed] & S & S2]](bufferSize): channelOut =>
                     // Concurrency limiter
                     Meter.useSemaphore(parallel): semaphore =>
-                        // Ensure lingering fibers are interrupted
-                        val cleanup = Abort.run[Closed]:
-                            Sync.ensure(channelOut.closeDiscard):
-                                Loop.foreach:
-                                    channelOut.drain.map: chunk =>
-                                        if chunk.isEmpty then Loop.done
-                                        else Kyo.foreach(chunk)(_.interrupt).andThen(Loop.continue)
+                        ElementFibers.init.map: elements =>
+                            // Stop every element fiber, wherever it stands, and close the channel so neither side stays parked on it
+                            val cleanup = elements.stop.andThen(channelOut.closeDiscard)
 
-                        // Handle original stream by running transformations in parallel, limiting concurrency
-                        // via semaphore
-                        val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
-                            handle = [C] =>
-                                input =>
-                                    // Transform chunk in background, publishing fiber to channelOut. The outer
-                                    // `semaphore.run` backpressures the handler loop; the inner one bounds the actual
-                                    // transformation work to `parallel`. Without the inner gate the permit would only
-                                    // span the fork (which returns immediately), leaving every chunk to transform
-                                    // concurrently regardless of `parallel`.
-                                    semaphore.run(Fiber.initUnscoped(semaphore.run(f(input)))).map: chunkFiber =>
-                                        channelOut.put(chunkFiber).andThen(Loop.continue(()))
-                        )
+                            // Handle original stream by running transformations in parallel, limiting concurrency
+                            // via semaphore
+                            val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
+                                handle = [C] =>
+                                    input =>
+                                        // Transform chunk in background, publishing fiber to channelOut. The outer
+                                        // `semaphore.run` backpressures the handler loop; the inner one bounds the actual
+                                        // transformation work to `parallel`. Without the inner gate the permit would only
+                                        // span the fork (which returns immediately), leaving every chunk to transform
+                                        // concurrently regardless of `parallel`.
+                                        semaphore.run(elements.own(Fiber.initUnscoped(semaphore.run(f(input))))).map: chunkFiber =>
+                                            channelOut.put(chunkFiber).andThen(Loop.continue(()))
+                            )
 
-                        // Run stream handler in background, propagating errors to foreground
-                        val background =
-                            Abort.fold[E | Closed](
-                                // When finished, set output channel to close once it's drained
-                                onSuccess = _ => channelOut.closeAwaitEmpty.unit,
-                                onFail = {
-                                    case _: Closed       => cleanup.unit
-                                    case e: E @unchecked => cleanup.andThen(Abort.fail(e))
-                                },
-                                onPanic = e => cleanup.andThen(Abort.panic(e))
-                            )(handleEmit)
+                            // Run stream handler in background, propagating errors to foreground
+                            val background =
+                                Abort.fold[E | Closed](
+                                    // When finished, set output channel to close once it's drained
+                                    onSuccess = _ => channelOut.closeAwaitEmpty.unit,
+                                    onFail = {
+                                        case _: Closed       => cleanup.unit
+                                        case e: E @unchecked => cleanup.andThen(Abort.fail(e))
+                                    },
+                                    onPanic = e => cleanup.andThen(Abort.panic(e))
+                                )(handleEmit)
 
-                        // Emit chunks from fibers published to channelOut.
-                        // Use getResult to inspect fiber errors without re-raising through
-                        // Abort.run[Closed], which can't distinguish user errors from channel errors.
-                        // Store fiber errors and propagate after the background completes.
-                        val emitResults =
-                            AtomicRef.init[Maybe[Either[Throwable, Any]]](Absent).map: fiberError =>
-                                val emit = Loop.forever:
-                                    channelOut.take.map: chunkFiber =>
-                                        chunkFiber.getResult.map:
-                                            case Result.Success(chunk) =>
-                                                if chunk.nonEmpty then Emit.value(chunk) else Kyo.unit
-                                            case Result.Panic(ex) =>
-                                                fiberError.set(Present(Left(ex)))
-                                            case Result.Failure(closed: Closed) =>
-                                                fiberError.set(Present(Left(closed)))
-                                            case Result.Failure(e) =>
-                                                // Not Closed, must be E
-                                                fiberError.set(Present(Right(e)))
-                                Sync.ensure(cleanup.unit):
-                                    Abort.run[Closed](emit).unit
-                                .andThen(fiberError)
-                        end emitResults
+                            // Emit chunks from fibers published to channelOut.
+                            // Use getResult to inspect fiber errors without re-raising through
+                            // Abort.run[Closed], which can't distinguish user errors from channel errors.
+                            // Store fiber errors and propagate after the background completes.
+                            val emitResults =
+                                AtomicRef.init[Maybe[Either[Throwable, Any]]](Absent).map: fiberError =>
+                                    val emit = Loop.forever:
+                                        channelOut.take.map: chunkFiber =>
+                                            chunkFiber.getResult.map:
+                                                case Result.Success(chunk) =>
+                                                    if chunk.nonEmpty then Emit.value(chunk) else Kyo.unit
+                                                case Result.Panic(ex) =>
+                                                    fiberError.set(Present(Left(ex)))
+                                                case Result.Failure(closed: Closed) =>
+                                                    fiberError.set(Present(Left(closed)))
+                                                case Result.Failure(e) =>
+                                                    // Not Closed, must be E
+                                                    fiberError.set(Present(Right(e)))
+                                    Abort.run[Closed](emit).unit.andThen(fiberError)
+                            end emitResults
 
-                        // Stream from output channel, running handlers in background
-                        Fiber.use[E, Unit, S & S2, S & S2](background): backgroundFiber =>
-                            emitResults.map: fiberError =>
-                                backgroundFiber.get.unit.andThen:
-                                    fiberError.get.map:
-                                        case Present(Left(ex)) => Abort.panic(ex)
-                                        case Present(Right(e)) => Abort.fail(e.asInstanceOf[E])
-                                        case Absent            => ()
+                            // Stream from output channel, running handlers in background. The consumer's exit, whichever way it
+                            // comes, is where the element fibers must be stopped, so the cleanup is in place before the background
+                            // forks the first one.
+                            Sync.ensure(cleanup):
+                                Fiber.use[E, Unit, S & S2, S & S2](background): backgroundFiber =>
+                                    emitResults.map: fiberError =>
+                                        backgroundFiber.get.unit.andThen:
+                                            fiberError.get.map:
+                                                case Present(Left(ex)) => Abort.panic(ex)
+                                                case Present(Right(e)) => Abort.fail(e.asInstanceOf[E])
+                                                case Absent            => ()
         end mapChunkPar
 
         /** Applies effectful transformation of stream elements asynchronously, mapping them in parallel. Preserves chunk boundaries.
@@ -742,83 +776,82 @@ object StreamCoreExtensions:
                     Channel.use[Fiber[Unit, Async & Abort[E | Closed] & S & S2]](bufferSize): channelPar =>
                         // Concurrency limiter
                         Meter.useSemaphore(parallel): semaphore =>
-                            // Ensure lingering fibers are interrupted
-                            val cleanup = Abort.run[Closed]:
-                                Sync.ensure(channelPar.closeDiscard.andThen(channelOut.closeDiscard)):
-                                    Loop.foreach:
-                                        channelPar.drain.map: chunk =>
-                                            if chunk.isEmpty then Loop.done
-                                            else Kyo.foreach(chunk)(_.interrupt).andThen(Loop.continue)
+                            ElementFibers.init.map: elements =>
+                                // Stop every element fiber, wherever it stands, and close both channels so no side stays parked on them
+                                val cleanup = elements.stop.andThen(channelPar.closeDiscard).andThen(channelOut.closeDiscard)
 
-                            // Handle original stream, asynchronously transforming input and publishing output
-                            // using semaphore as rate limiter
-                            val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
-                                handle = [C] =>
-                                    input =>
-                                        // Transform chunks and publish to channelOut in background fiber, placing
-                                        // fiber in channelPar to ensure completion/interruption. The outer
-                                        // `semaphore.run` backpressures the handler loop; the inner one bounds the
-                                        // actual transformation work to `parallel`. Without the inner gate the permit
-                                        // would only span the fork (which returns immediately), leaving every chunk to
-                                        // transform concurrently regardless of `parallel`.
-                                        semaphore.run(Fiber.initUnscoped(
-                                            semaphore.run(f(input).map(chunk => channelOut.put(chunk).unit))
-                                        )).map: fiber =>
-                                            channelPar.put(fiber).andThen(Loop.continue(()))
-                            ).andThen(channelPar.closeAwaitEmpty.unit)
+                                // Handle original stream, asynchronously transforming input and publishing output
+                                // using semaphore as rate limiter
+                                val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
+                                    handle = [C] =>
+                                        input =>
+                                            // Transform chunks and publish to channelOut in background fiber, placing
+                                            // fiber in channelPar, where its completion is awaited. The outer
+                                            // `semaphore.run` backpressures the handler loop; the inner one bounds the
+                                            // actual transformation work to `parallel`. Without the inner gate the permit
+                                            // would only span the fork (which returns immediately), leaving every chunk to
+                                            // transform concurrently regardless of `parallel`.
+                                            semaphore.run(elements.own(Fiber.initUnscoped(
+                                                semaphore.run(f(input).map(chunk => channelOut.put(chunk).unit))
+                                            ))).map: fiber =>
+                                                channelPar.put(fiber).andThen(Loop.continue(()))
+                                ).andThen(channelPar.closeAwaitEmpty.unit)
 
-                            // Drain channelPar, waiting for each fiber to complete before finishing.
-                            // Use getResult to inspect fiber errors without re-raising through
-                            // Abort.run[Closed]. Store errors for propagation after background.
-                            // On error, run cleanup to close channels and interrupt fibers,
-                            // unblocking the foreground emit loop.
-                            AtomicRef.init[Maybe[Either[Throwable, Any]]](Absent).map: fiberError =>
-                                def setError(error: Either[Throwable, Any]) =
-                                    fiberError.compareAndSet(Absent, Present(error)).andThen(cleanup.unit)
+                                // Drain channelPar, waiting for each fiber to complete before finishing.
+                                // Use getResult to inspect fiber errors without re-raising through
+                                // Abort.run[Closed]. Store errors for propagation after background.
+                                // On error, run cleanup to close channels and interrupt fibers,
+                                // unblocking the foreground emit loop.
+                                AtomicRef.init[Maybe[Either[Throwable, Any]]](Absent).map: fiberError =>
+                                    def setError(error: Either[Throwable, Any]) =
+                                        fiberError.compareAndSet(Absent, Present(error)).andThen(cleanup.unit)
 
-                                val handlePar =
-                                    Abort.run[Closed](
-                                        Loop.forever:
-                                            channelPar.take.map: fiber =>
-                                                fiber.getResult.map:
-                                                    case Result.Success(_) => ()
-                                                    case Result.Panic(ex)  =>
-                                                        setError(Left(ex))
-                                                    case Result.Failure(closed: Closed) =>
-                                                        setError(Left(closed))
-                                                    case Result.Failure(e) =>
-                                                        setError(Right(e))
-                                    ).unit
+                                    val handlePar =
+                                        Abort.run[Closed](
+                                            Loop.forever:
+                                                channelPar.take.map: fiber =>
+                                                    fiber.getResult.map:
+                                                        case Result.Success(_) => ()
+                                                        case Result.Panic(ex)  =>
+                                                            setError(Left(ex))
+                                                        case Result.Failure(closed: Closed) =>
+                                                            setError(Left(closed))
+                                                        case Result.Failure(e) =>
+                                                            setError(Right(e))
+                                        ).unit
 
-                                // Run stream handler in background, closing the output channel when finished
-                                // and propagating failures
-                                val background =
-                                    Abort.fold[E | Closed](
-                                        onSuccess = _ => channelOut.closeAwaitEmpty.unit,
-                                        onFail = {
-                                            case _: Closed       => cleanup.unit
-                                            case e: E @unchecked => cleanup.andThen(Abort.fail(e))
-                                        },
-                                        onPanic = e => cleanup.andThen(Abort.panic(e))
-                                    )(Async.foreachDiscard(Seq(handleEmit, handlePar))(identity))
+                                    // Run stream handler in background, closing the output channel when finished
+                                    // and propagating failures
+                                    val background =
+                                        Abort.fold[E | Closed](
+                                            onSuccess = _ => channelOut.closeAwaitEmpty.unit,
+                                            onFail = {
+                                                case _: Closed       => cleanup.unit
+                                                case e: E @unchecked => cleanup.andThen(Abort.fail(e))
+                                            },
+                                            onPanic = e => cleanup.andThen(Abort.panic(e))
+                                        )(Async.foreachDiscard(Seq(handleEmit, handlePar))(identity))
 
-                                // Emit chunks from channelOut
-                                val emitResults =
-                                    val emit = Loop.forever:
-                                        channelOut.take.map: chunk =>
-                                            if chunk.nonEmpty then Emit.value(chunk) else Kyo.unit
-                                    Abort.run(emit).unit
-                                end emitResults
+                                    // Emit chunks from channelOut
+                                    val emitResults =
+                                        val emit = Loop.forever:
+                                            channelOut.take.map: chunk =>
+                                                if chunk.nonEmpty then Emit.value(chunk) else Kyo.unit
+                                        Abort.run(emit).unit
+                                    end emitResults
 
-                                // Emit from channel while running handler in background, then joining handler
-                                // to capture any failures from background
-                                Fiber.use[E, Unit, S & S2, S & S2](background): backgroundFiber =>
-                                    emitResults.andThen:
-                                        backgroundFiber.get.unit.andThen:
-                                            fiberError.get.map:
-                                                case Present(Left(ex)) => Abort.panic(ex)
-                                                case Present(Right(e)) => Abort.fail(e.asInstanceOf[E])
-                                                case Absent            => ()
+                                    // Emit from channel while running handler in background, then joining handler
+                                    // to capture any failures from background. The consumer's exit, whichever way it comes, is
+                                    // where the element fibers must be stopped, so the cleanup is in place before the background
+                                    // forks the first one.
+                                    Sync.ensure(cleanup):
+                                        Fiber.use[E, Unit, S & S2, S & S2](background): backgroundFiber =>
+                                            emitResults.andThen:
+                                                backgroundFiber.get.unit.andThen:
+                                                    fiberError.get.map:
+                                                        case Present(Left(ex)) => Abort.panic(ex)
+                                                        case Present(Right(e)) => Abort.fail(e.asInstanceOf[E])
+                                                        case Absent            => ()
 
         /** Applies effectful transformation of stream chunks asynchronously, mapping chunk in parallel. Does not preserve chunk boundaries.
           *

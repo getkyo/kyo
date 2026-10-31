@@ -1346,6 +1346,99 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             end for
         }
 
+        // Interrupts a consumer of `map` once all four element fibers have started and parked on a gate. The gate opens only on the way
+        // out, so an element fiber the interrupt missed stays parked, never counts as released, and the leaf ends on its timeout.
+        def interruptsEveryElementFiber(map: (Int => Int < Async) => Any < (Abort[Any] & Async))(using kyo.test.AssertScope) =
+            for
+                started  <- Latch.init(4)
+                released <- AtomicInt.init(0)
+                gate     <- Latch.init(1)
+                consumer <- Fiber.initUnscoped {
+                    map { v =>
+                        Sync.ensure(released.incrementAndGet.unit):
+                            started.release.andThen(gate.await).andThen(v)
+                    }
+                }
+                _ <- started.await
+                _ <- consumer.interrupt
+                _ <- consumer.getResult
+                _ <- Sync.ensure(gate.release)(assertEventually(released.get.map(_ == 4)))
+            yield ()
+
+        // one element per chunk, so each gets its own fiber
+        val fourChunks: Stream[Int, Any] =
+            Stream(Emit.valueWith(Chunk(1))(Emit.valueWith(Chunk(2))(Emit.valueWith(Chunk(3))(Emit.value(Chunk(4))))))
+
+        "mapChunkPar interrupted with element fibers buffered interrupts every element fiber" in {
+            interruptsEveryElementFiber(f => fourChunks.mapChunkPar(8)(Kyo.foreach(_)(f)).run).andThen(succeed)
+        }
+
+        "mapParUnordered interrupted with element fibers buffered interrupts every element fiber" in {
+            interruptsEveryElementFiber(f => fourChunks.mapParUnordered(8)(f).run).andThen(succeed)
+        }
+
+        "mapChunkParUnordered interrupted with element fibers buffered interrupts every element fiber" in {
+            interruptsEveryElementFiber(f => fourChunks.mapChunkParUnordered(8)(Kyo.foreach(_)(f)).run).andThen(succeed)
+        }
+
+        // The interrupt can land while an element fiber is being handed over: delivered to the consumer's take but not yet joined, or
+        // forked by the producer but not yet put. Neither the channel nor a join holds it there. Rounds run sixteen at a time so the
+        // scheduler is busy enough to reach those windows; every round must still interrupt every element fiber.
+        "mapPar interrupted mid hand-over interrupts every element fiber" in {
+            Async.foreachDiscard(1 to 2000, 16)(_ => interruptsEveryElementFiber(f => fourChunks.mapPar(8)(f).run)).andThen(succeed)
+        }
+
+        "mapChunkPar interrupted mid hand-over interrupts every element fiber" in {
+            Async.foreachDiscard(1 to 2000, 16)(_ =>
+                interruptsEveryElementFiber(f => fourChunks.mapChunkPar(8)(Kyo.foreach(_)(f)).run)
+            ).andThen(succeed)
+        }
+
+        "mapParUnordered interrupted mid hand-over interrupts every element fiber" in {
+            Async.foreachDiscard(1 to 2000, 16)(_ => interruptsEveryElementFiber(f => fourChunks.mapParUnordered(8)(f).run))
+                .andThen(succeed)
+        }
+
+        "mapChunkParUnordered interrupted mid hand-over interrupts every element fiber" in {
+            Async.foreachDiscard(1 to 2000, 16)(_ =>
+                interruptsEveryElementFiber(f => fourChunks.mapChunkParUnordered(8)(Kyo.foreach(_)(f)).run)
+            ).andThen(succeed)
+        }
+
+        // Element 1 finishes alone and is the one the consumer takes, so the stop always finds the other three holding.
+        def releasesEveryElementWhenTheConsumerStops(map: (Int => Int < Async) => Chunk[Int] < (Abort[Any] & Async))(using
+            kyo.test.AssertScope
+        ) =
+            for
+                started  <- Latch.init(3)
+                released <- AtomicInt.init(0)
+                gate     <- Latch.init(1)
+                res      <- map { v =>
+                    if v == 1 then started.await.andThen(v)
+                    else
+                        Sync.ensure(released.incrementAndGet.unit):
+                            started.release.andThen(gate.await).andThen(v)
+                }
+                _ <- assertEventually(released.get.map(_ == 3))
+                r <- released.get
+            yield
+                assert(res == Chunk(1))
+                assert(r == 3, s"released $r of the 3 element fibers that had acquired")
+            end for
+        end releasesEveryElementWhenTheConsumerStops
+
+        "mapChunkPar releases an element's resource when the consumer stops" in {
+            releasesEveryElementWhenTheConsumerStops(f => fourChunks.mapChunkPar(8)(Kyo.foreach(_)(f)).take(1).run)
+        }
+
+        "mapParUnordered releases an element's resource when the consumer stops" in {
+            releasesEveryElementWhenTheConsumerStops(f => fourChunks.mapParUnordered(8)(f).take(1).run)
+        }
+
+        "mapChunkParUnordered releases an element's resource when the consumer stops" in {
+            releasesEveryElementWhenTheConsumerStops(f => fourChunks.mapChunkParUnordered(8)(Kyo.foreach(_)(f)).take(1).run)
+        }
+
         "the rest of a public peel cannot be forked" in {
             typeCheckFailure(
                 """
