@@ -13,7 +13,7 @@ class PathDurabilityJvmTest extends kyo.test.Test[Any]:
             Sync.Unsafe.defer(handle.remove())
         ).map(_.path)
 
-    for operation <- Seq("replace") do
+    for operation <- Seq("replace", "create", "ensure") do
         s"an unloadable native helper produces typed failures before $operation, including repeated calls" in {
             directory.map { root =>
                 val invalidLibrary = root / "invalid-native-library"
@@ -113,6 +113,8 @@ object PathDurabilityJvmTestMain:
         for _ <- 1 to 2 do
             val operation: Unit < (Sync & Abort[FileSystemException]) = args(1) match
                 case "replace" => FileSystem.host.durableReplace(target, Span(1.toByte, 2.toByte))
+                case "create"  => FileSystem.host(root).map(_.privateTempDir("private-create").unit)
+                case "ensure"  => FileSystem.host.privateMkDir(root / "private-ensure")
                 case other     => throw new IllegalArgumentException(s"Unknown operation: $other")
             Sync.Unsafe.evalOrThrow(Abort.run[FileSystemException](operation)) match
                 case Result.Failure(_: FileIOException) => ()
