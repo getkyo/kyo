@@ -2219,7 +2219,11 @@ final private[kyo] class ShellBackend(
         ErrorPatterns.NetworkEndpointExists -> { (ctx, out) =>
             ContainerConflictException(s"Network endpoint already attached: ${ctx.describe}", out)
         },
-        // [10] AuthFailed — last simple entry; "denied" is broad so it comes last
+        // [10] HostRefused: before AuthFailed, whose "denied" would otherwise read a refused system call as a refused credential
+        ErrorPatterns.HostRefused -> { (ctx, out) =>
+            ContainerOperationException(s"${cmd} ${ctx.describe}: the host refused the operation", out)
+        },
+        // [11] AuthFailed: last simple entry; "denied" is broad so it comes last
         ErrorPatterns.AuthFailed -> { (ctx, out) =>
             ContainerAuthException(ctx.describe, out)
         }
@@ -2357,6 +2361,10 @@ final private[kyo] class ShellBackend(
         /** Port conflict — address already bound */
         val PortConflict: Seq[String] =
             Seq("port is already allocated", "address already in use", "bind: address already in use")
+
+        /** The host refused a system call (EACCES, EPERM), for example a security module denying the daemon a signal. */
+        val HostRefused: Seq[String] =
+            Seq("permission denied", "operation not permitted")
 
         /** Authentication failures — registry auth required */
         val AuthFailed: Seq[String] =

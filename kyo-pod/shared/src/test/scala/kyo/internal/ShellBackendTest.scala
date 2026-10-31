@@ -380,6 +380,40 @@ class ShellBackendTest extends kyo.BasePodTest:
         }
     }
 
+    /** A host that refuses a system call has said nothing about registry credentials. The HTTP backend reports the same refusal as the
+      * daemon's 500, an operation failure, so the shell backend must not file it under authentication because the output says "denied".
+      */
+    "mapError on a host permission failure" - {
+        val backend = new ShellBackend("podman")
+        val id      = Container.Id("3c766e33a43abda31e6afd16d7c3397b0288c55d918a7d2490dee49909b7977a")
+        val ctx     = ResourceContext.Container(id)
+
+        def classify(output: String)(using Frame): kyo.ContainerException =
+            backend.mapError(output, ctx, Seq("stop", id.value))
+
+        // The shape podman 5.7 printed on the Ubuntu 26.04 runner, where AppArmor kept it from signalling its rootless network process.
+        "a stop the host refused with EPERM is an operation failure" in {
+            val ex = classify(
+                s"Error: removing container ${id.value} network: 1 error occurred:\n\t* rootless netns: kill network process: permission denied\n\n"
+            )
+            assert(ex.getClass.getName == classOf[kyo.ContainerOperationException].getName, s"expected a plain operation failure, got $ex")
+        }
+
+        "an operation the host did not permit is an operation failure" in {
+            val ex = classify(s"Error: stopping container ${id.value}: kill: operation not permitted")
+            assert(ex.getClass.getName == classOf[kyo.ContainerOperationException].getName, s"expected a plain operation failure, got $ex")
+        }
+
+        "a registry that denied the request is still an auth failure" in {
+            val ex = backend.mapError(
+                "Error response from daemon: Head \"https://ghcr.io/v2/org/app/manifests/1\": denied: denied",
+                ResourceContext.Image("ghcr.io/org/app:1"),
+                Seq("pull", "ghcr.io/org/app:1")
+            )
+            assert(ex.isInstanceOf[kyo.ContainerAuthException], s"expected an auth failure, got $ex")
+        }
+    }
+
     "registry credentials" - {
         "a credential that is not base64 fails as an auth error before any command runs" in {
             val image = ContainerImage("team/app", "1").withRegistry(ContainerImage.Registry("registry.example"))
