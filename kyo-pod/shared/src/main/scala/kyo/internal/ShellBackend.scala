@@ -1528,20 +1528,65 @@ final private[kyo] class ShellBackend(
     end mapPodmanImageListToSummary
 
     def imageInspect(image: ContainerImage)(using Frame): ContainerImage.Info < (Async & Abort[ContainerException]) =
-        run(ResourceContext.Image(image.reference), "image", "inspect", "--format", "{{json .}}", image.reference).map { raw =>
-            decodeJson[ImageInspectJson](raw).map { dto =>
-                ContainerImage.Info(
-                    id = ContainerImage.Id(dto.Id),
-                    repoTags = Chunk.from(dto.RepoTags.getOrElse(Seq.empty).map(ContainerImage(_))),
-                    repoDigests = Chunk.from(dto.RepoDigests.getOrElse(Seq.empty).map(ContainerImage(_))),
-                    createdAt = parseInstantOrEpoch(dto.Created),
-                    size = dto.Size,
-                    labels = Dict.from(dto.Config.Labels.getOrElse(Map.empty)),
-                    architecture = dto.Architecture,
-                    os = dto.Os
-                )
-            }
+        val ref = image.reference
+        val ctx = ResourceContext.Image(ref)
+        inspectImageJson(ctx, ref, Absent).map { index =>
+            if index.Architecture.nonEmpty || index.Os.nonEmpty || cmd.endsWith("podman") then imageInfo(index, index)
+            else inspectDefaultCopy(ctx, ref, index)
         }
+    end imageInspect
+
+    private def inspectImageJson(ctx: ResourceContext, ref: String, platform: Maybe[Container.Platform])(using
+        Frame
+    ): ImageInspectJson < (Async & Abort[ContainerException]) =
+        val selector = platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty)
+        run(
+            ctx,
+            (Chunk("image", "inspect") ++ selector ++ Chunk("--format", "{{json .}}", ref)).toSeq*
+        ).map(decodeJson[ImageInspectJson](_))
+    end inspectImageJson
+
+    /** Docker's containerd image store answers a multi-platform reference with the host's copy, and with the bare index (no platform, no
+      * config) when it holds only other platforms' copies. The CLI has no structured list of which copies are cached, so the platforms the
+      * index names are read from `image ls --tree`, and each is inspected by platform, in the order a create without a platform prefers
+      * them, until one has content. A CLI without `--tree` is answered with what inspect said.
+      */
+    private def inspectDefaultCopy(ctx: ResourceContext, ref: String, index: ImageInspectJson)(using
+        Frame
+    ): ContainerImage.Info < (Async & Abort[ContainerException]) =
+        Abort.run[ContainerException](run(ResourceContext.Op("image ls --tree"), "image", "ls", "--tree")).map {
+            case Result.Success(tree) =>
+                val declared = ShellBackend.treePlatforms(tree, index.Id)
+                if declared.isEmpty then imageInfo(index, index)
+                else
+                    hostPlatform.map { host =>
+                        Loop(ContainerBackend.byPreference(host, declared)) { remaining =>
+                            remaining.headMaybe match
+                                case Absent            => Loop.done(imageInfo(index, index))
+                                case Present(platform) =>
+                                    inspectImageJson(ctx, ref, Present(platform)).map { copy =>
+                                        if copy.Architecture.nonEmpty then Loop.done(imageInfo(index, copy))
+                                        else Loop.continue(remaining.drop(1))
+                                    }
+                        }
+                    }
+                end if
+            case _ => imageInfo(index, index)
+        }
+    end inspectDefaultCopy
+
+    /** The reference's identity (id, tags, digests) from `index`, and what the image is (age, size, labels, platform) from `copy`. */
+    private def imageInfo(index: ImageInspectJson, copy: ImageInspectJson)(using Frame): ContainerImage.Info =
+        ContainerImage.Info(
+            id = ContainerImage.Id(index.Id),
+            repoTags = Chunk.from(index.RepoTags.getOrElse(Seq.empty).map(ContainerImage(_))),
+            repoDigests = Chunk.from(index.RepoDigests.getOrElse(Seq.empty).map(ContainerImage(_))),
+            createdAt = parseInstantOrEpoch(copy.Created),
+            size = copy.Size,
+            labels = Dict.from(copy.Config.Labels.getOrElse(Map.empty)),
+            architecture = copy.Architecture,
+            os = copy.Os
+        )
 
     // A remote podman's `version` client side is the caller's machine, so podman is asked for the host its `info` reports. Docker's
     // `info` names the architecture as uname does (`aarch64`), so docker is asked for its server's Go names through `version`.
@@ -2443,6 +2488,28 @@ private[kyo] object ShellBackend:
       * (docker auto-pull on missing image) or runtime warnings (podman cgroupv2 fallback when no systemd user session is available) before
       * it.
       */
+    /** The platforms `docker image ls --tree` lists under the image whose id is `id`, in the order its index names them.
+      *
+      * The tree prints each image as a line carrying its id cut to 12 characters, followed by one `├─` or `└─` line per platform. An id the
+      * tree does not show, or a layout it no longer prints, yields no platforms.
+      */
+    def treePlatforms(tree: String, id: String): Chunk[Container.Platform] =
+        def isChild(line: String): Boolean =
+            val trimmed = line.trim
+            trimmed.startsWith("├─") || trimmed.startsWith("└─")
+        val short = id.stripPrefix("sha256:").take(12)
+        val lines = tree.linesIterator.toSeq
+        val start = lines.indexWhere(line => !isChild(line) && line.trim.split("\\s+").contains(short))
+        if short.isEmpty || start < 0 then Chunk.empty
+        else
+            Chunk.from(
+                lines.drop(start + 1).takeWhile(isChild).flatMap { line =>
+                    line.trim.split("\\s+").lift(1).flatMap(token => Container.Platform.parse(token).toMaybe.toOption)
+                }.distinct
+            )
+        end if
+    end treePlatforms
+
     def lastLine(output: String): String =
         output.linesIterator.map(_.trim).filter(_.nonEmpty).toSeq.lastOption.getOrElse("")
 

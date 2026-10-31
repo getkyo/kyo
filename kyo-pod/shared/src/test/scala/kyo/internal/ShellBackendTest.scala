@@ -380,6 +380,50 @@ class ShellBackendTest extends kyo.BasePodTest:
         }
     }
 
+    "treePlatforms" - {
+        // `docker image ls --tree` from Docker 29.
+        val tree =
+            """IMAGE                                                                             ID             DISK USAGE   CONTENT SIZE   EXTRA
+              |alpine:3.20                                                                       d9e853e87e55       25.8MB         7.89MB   U
+              |├─ linux/amd64                                                                    c64c687cbea9       12.1MB         3.63MB   U
+              |└─ linux/arm64/v8                                                                 45e09956dc66       13.6MB         4.09MB
+              |
+              |busybox@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092   5cec3fc171c8       2.49MB          875kB
+              |├─ linux/amd64                                                                    dc88b8084258       2.49MB          872kB
+              |├─ linux/arm/v7                                                                   74343d4d63dc           0B             0B
+              |├─ linux/arm64/v8                                                                 c542a2b3cb3c           0B             0B
+              |├─ windows/amd64                                                                  8828b43d3c6b           0B             0B
+              |└─ windows/amd64                                                                  1ef9cebf5261           0B             0B
+              |
+              |jekyll/jekyll:4.4                                                                 20909574b8f1       2.02GB          512MB
+              |""".stripMargin
+
+        "lists the platforms under the image with that id, in the index's order, once each" in {
+            assert(ShellBackend.treePlatforms(tree, "sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092") == Chunk(
+                Container.Platform.LinuxAmd64,
+                Container.Platform.LinuxArmV7,
+                Container.Platform("linux", "arm64", Present("v8")),
+                Container.Platform("windows", "amd64")
+            ))
+        }
+
+        "stops at the next image" in {
+            assert(ShellBackend.treePlatforms(tree, "d9e853e87e55aaaa") == Chunk(
+                Container.Platform.LinuxAmd64,
+                Container.Platform("linux", "arm64", Present("v8"))
+            ))
+        }
+
+        "an image with no platform lines lists none" in {
+            assert(ShellBackend.treePlatforms(tree, "sha256:20909574b8f1") == Chunk.empty)
+        }
+
+        "an id the tree does not show lists none" in {
+            assert(ShellBackend.treePlatforms(tree, "sha256:0123456789ab") == Chunk.empty)
+            assert(ShellBackend.treePlatforms(tree, "") == Chunk.empty)
+        }
+    }
+
     /** A host that refuses a system call has said nothing about registry credentials. The HTTP backend reports the same refusal as the
       * daemon's 500, an operation failure, so the shell backend must not file it under authentication because the output says "denied".
       */

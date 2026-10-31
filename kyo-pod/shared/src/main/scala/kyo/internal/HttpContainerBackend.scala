@@ -1661,21 +1661,58 @@ final private[kyo] class HttpContainerBackend(
 
     def imageInspect(image: ContainerImage)(using Frame): ContainerImage.Info < (Async & Abort[ContainerException]) =
         val ref = image.reference
-        withErrorMapping(ResourceContext.Image(ref)) {
+        val ctx = ResourceContext.Image(ref)
+        withErrorMapping(ctx) {
             HttpClient.getJson[ImageInspectDto](url(s"/images/$ref/json"))
-        }.map { dto =>
-            ContainerImage.Info(
-                id = ContainerImage.Id(dto.Id),
-                repoTags = Chunk.from(dto.RepoTags.getOrElse(Seq.empty).map(ContainerImage(_))),
-                repoDigests = Chunk.from(dto.RepoDigests.getOrElse(Seq.empty).map(ContainerImage(_))),
-                createdAt = parseInstantOrEpoch(dto.Created),
-                size = dto.Size,
-                labels = Dict.from(dto.Config.Labels.getOrElse(Map.empty)),
-                architecture = dto.Architecture,
-                os = dto.Os
-            )
+        }.map { index =>
+            if index.Architecture.nonEmpty || index.Os.nonEmpty then imageInfo(index, index)
+            else inspectDefaultCopy(ref, ctx, index)
         }
     end imageInspect
+
+    /** Docker's containerd image store answers a multi-platform reference with the host's copy, and with the bare index (no platform, no
+      * config) when it holds only other platforms' copies. The copy a create without a platform runs is then found in the index's manifest
+      * list (API 1.48) and inspected by its platform (API 1.49); a daemon too old for either is answered with what it said.
+      */
+    private def inspectDefaultCopy(ref: String, ctx: ResourceContext, index: ImageInspectDto)(using
+        Frame
+    ): ContainerImage.Info < (Async & Abort[ContainerException]) =
+        withErrorMapping(ResourceContext.Op("version"))(HttpClient.getJson[VersionDto](url("/version"))).map { version =>
+            if !HttpContainerBackend.apiAtLeast(version.ApiVersion, 48) then imageInfo(index, index)
+            else
+                withErrorMapping(ctx) {
+                    HttpClient.getJson[ImageManifestsDto](buildUrl("/v1.48", s"/images/$ref/json", Seq("manifests" -> "true")))
+                }.map { listing =>
+                    val cached = Chunk.from(listing.Manifests.getOrElse(Seq.empty)).collect {
+                        case ImageManifestDto("image", true, Some(ImageManifestDataDto(Some(p)))) =>
+                            Container.Platform(p.os, p.architecture, Maybe.fromOption(p.variant))
+                    }
+                    ContainerBackend.defaultCopy(Container.Platform(version.Os, version.Arch), cached) match
+                        case Absent                                                                       => imageInfo(index, index)
+                        case Present(platform) if HttpContainerBackend.apiAtLeast(version.ApiVersion, 49) =>
+                            val selector = Json.encode(OciPlatformDto(platform.os, platform.arch, platform.variant.toOption))
+                            withErrorMapping(ctx) {
+                                HttpClient.getJson[ImageInspectDto](buildUrl("/v1.49", s"/images/$ref/json", Seq("platform" -> selector)))
+                            }.map(copy => imageInfo(index, copy))
+                        case Present(platform) =>
+                            imageInfo(index, index.copy(Architecture = platform.arch, Os = platform.os))
+                    end match
+                }
+        }
+    end inspectDefaultCopy
+
+    /** The reference's identity (id, tags, digests) from `index`, and what the image is (age, size, labels, platform) from `copy`. */
+    private def imageInfo(index: ImageInspectDto, copy: ImageInspectDto)(using Frame): ContainerImage.Info =
+        ContainerImage.Info(
+            id = ContainerImage.Id(index.Id),
+            repoTags = Chunk.from(index.RepoTags.getOrElse(Seq.empty).map(ContainerImage(_))),
+            repoDigests = Chunk.from(index.RepoDigests.getOrElse(Seq.empty).map(ContainerImage(_))),
+            createdAt = parseInstantOrEpoch(copy.Created),
+            size = copy.Size,
+            labels = Dict.from(copy.Config.Labels.getOrElse(Map.empty)),
+            architecture = copy.Architecture,
+            os = copy.Os
+        )
 
     // Docker and podman's compat layer both answer `Os` and `Arch` with Go's GOOS/GOARCH names, which are the platform names.
     def hostPlatform(using Frame): Container.Platform < (Async & Abort[ContainerException]) =
@@ -2712,7 +2749,7 @@ final private[kyo] class HttpContainerBackend(
         linkTarget: String = ""
     ) derives Schema
 
-    final private case class VersionDto(Os: String = "", Arch: String = "") derives Schema
+    final private case class VersionDto(Os: String = "", Arch: String = "", ApiVersion: String = "") derives Schema
 
     // --- DTOs for image operations ---
 
@@ -2731,6 +2768,18 @@ final private[kyo] class HttpContainerBackend(
     final private case class ImageConfigDto(
         Labels: Option[Map[String, String]] = None
     ) derives Schema
+
+    final private case class ImageManifestsDto(Manifests: Option[Seq[ImageManifestDto]] = None) derives Schema
+
+    final private case class ImageManifestDto(
+        Kind: String = "",
+        Available: Boolean = false,
+        ImageData: Option[ImageManifestDataDto] = None
+    ) derives Schema
+
+    final private case class ImageManifestDataDto(Platform: Option[OciPlatformDto] = None) derives Schema
+
+    final private case class OciPlatformDto(os: String = "", architecture: String = "", variant: Option[String] = None) derives Schema
 
     final private case class ImageListEntryDto(
         Id: String = "",
@@ -2927,6 +2976,13 @@ private[kyo] object HttpContainerBackend:
       * `BackendConfig.UnixSocket(path, apiVersion = ...)` if you need to pin a different revision.
       */
     val defaultApiVersion: String = "v1.43"
+
+    /** Whether a daemon whose `/version` reports `apiVersion` (e.g. `1.54`) serves Docker Engine API `1.minor`. */
+    private[internal] def apiAtLeast(apiVersion: String, minor: Int): Boolean =
+        apiVersion.split('.') match
+            case Array("1", m)   => m.toIntOption.exists(_ >= minor)
+            case Array(major, _) => major.toIntOption.exists(_ > 1)
+            case _               => false
 
     /** X-Registry-Auth wrapper: a single-registry auth token used in image pull/push requests. */
     final private case class AuthHeader(auth: String) derives Schema
