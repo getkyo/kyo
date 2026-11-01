@@ -455,6 +455,7 @@ lazy val kyoJVM: Project = project
         `kyo-charset`.jvm,
         `kyo-mime`.jvm,
         `kyo-kernel`.jvm,
+        `kyo-kernel-bench`,
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
         `kyo-core`.jvm,
@@ -1031,6 +1032,26 @@ lazy val `kyo-kernel` =
             // suspended-unit retries. A fresh driver per block sidesteps it.
             doctestFreshDriver                    := true,
             libraryDependencies += "org.javassist" % "javassist" % "3.33.0-GA" % Test,
+            // The Safepoint overflow suite fills the global slot table; a suite running
+            // concurrently in the same classloader would see its threads degraded to the
+            // overflow slot for the duration.
+            Test / parallelExecution := false
+        )
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+// JMH benchmarks for kyo-kernel. A separate unpublished project so JMH and the cross-framework
+// comparison libraries never reach kyo-kernel's published POM.
+lazy val `kyo-kernel-bench` =
+    project
+        .in(file("kyo-kernel/bench"))
+        .enablePlugins(JmhPlugin)
+        .dependsOn(`kyo-kernel`.jvm)
+        .disablePlugins(MimaPlugin)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
             // Benchmarks run on default JVM flags: Jmh extends Test, which carries
             // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
             // flag must not be baked into the canonical numbers.
@@ -1039,16 +1060,8 @@ lazy val `kyo-kernel` =
                 "dev.zio"        %% "zio"             % zioVersion,
                 "org.typelevel"  %% "cats-effect"     % catsVersion,
                 "org.scala-lang" %% "scala3-compiler" % scalaVersion.value
-            ).map(_ % "jmh"),
-            // The Safepoint overflow suite fills the global slot table; a suite running
-            // concurrently in the same classloader would see its threads degraded to the
-            // overflow slot for the duration.
-            Test / parallelExecution := false
+            )
         )
-        .jvmConfigure(_.enablePlugins(JmhPlugin))
-        .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-prelude` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
