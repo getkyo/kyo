@@ -1,8 +1,5 @@
 package kyo.lang
 
-import java.nio.charset.StandardCharsets
-import java.nio.file.Files
-import java.nio.file.Path
 import kyo.*
 
 /** The `Checked` metadata across compilations: it cannot be declared by hand, and separately compiled `.kyo` definitions reach each
@@ -28,28 +25,28 @@ class CheckedTest extends kyo.test.Test[Any]:
 
     "separate compilation" - {
         "a .kyo file compiles against another's output, and ordinary Scala consumes both without the plugin" in {
-            for
-                dir      <- Compilation.workspace
-                programs <- fixture(dir, "Programs.kyo")
-                more     <- fixture(dir, "More.kyo")
-                first    <- Compilation.compile(List(programs), dir.resolve("programs"), Nil, withPlugin = true)
-                second   <- Compilation.compile(List(more), dir.resolve("more"), List(dir.resolve("programs")), withPlugin = true)
-                consumer <- Compilation.write(dir, "Consumer.scala", consumerSource)
-                third    <- Compilation.compile(
-                    List(consumer),
-                    dir.resolve("consumer"),
-                    List(dir.resolve("programs"), dir.resolve("more")),
-                    withPlugin = false
-                )
-                result <- Sync.defer {
-                    val loader = Compilation.loader(List(dir.resolve("programs"), dir.resolve("more"), dir.resolve("consumer")))
-                    loader.loadClass("kyolang.separate.Consumer").getMethod("run").invoke(null).toString
-                }
-            yield
-                assert(!first.hasErrors, first.errors.mkString("\n"))
-                assert(!second.hasErrors, second.errors.mkString("\n"))
-                assert(!third.hasErrors, third.errors.mkString("\n"))
-                assert(result == expectedResults)
+            Path.run {
+                for
+                    dir      <- Compilation.workspace
+                    programs <- fixture(dir, "Programs.kyo")
+                    more     <- fixture(dir, "More.kyo")
+                    first    <- Compilation.compile(Chunk(programs), dir / "programs", Chunk.empty, withPlugin = true)
+                    second   <- Compilation.compile(Chunk(more), dir / "more", Chunk(dir / "programs"), withPlugin = true)
+                    consumer <- Compilation.write(dir, "Consumer.scala", consumerSource)
+                    third    <- Compilation.compile(
+                        Chunk(consumer),
+                        dir / "consumer",
+                        Chunk(dir / "programs", dir / "more"),
+                        withPlugin = false
+                    )
+                    loader <- Compilation.loader(Chunk(dir / "programs", dir / "more", dir / "consumer"))
+                    result <- Sync.defer(loader.loadClass("kyolang.separate.Consumer").getMethod("run").invoke(null).toString)
+                yield
+                    assert(!first.hasErrors, first.errors.mkString("\n"))
+                    assert(!second.hasErrors, second.errors.mkString("\n"))
+                    assert(!third.hasErrors, third.errors.mkString("\n"))
+                    assert(result == expectedResults)
+            }
         }
 
         "ordinary Scala cannot weaken a compiled contract" - {
@@ -80,52 +77,58 @@ class CheckedTest extends kyo.test.Test[Any]:
         }
     }
 
-    private def rejectsScala(name: String, source: String)(expected: String)(using Frame, kyo.test.AssertScope): Unit < (Sync & Scope) =
-        for
-            dir     <- Compilation.workspace
-            file    <- Compilation.write(dir, name, source)
-            outcome <- Compilation.compile(List(file), dir.resolve("classes"), Nil, withPlugin = true)
-        yield
-            assert(outcome.hasErrors)
-            assert(outcome.reports(expected), outcome.errors.mkString("\n"))
+    private def rejectsScala(name: String, source: String)(expected: String)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < (Sync & Abort[FileSystemException] & Scope) =
+        Path.run {
+            for
+                dir     <- Compilation.workspace
+                file    <- Compilation.write(dir, name, source)
+                outcome <- Compilation.compile(Chunk(file), dir / "classes", Chunk.empty, withPlugin = true)
+            yield
+                assert(outcome.hasErrors)
+                assert(outcome.reports(expected), outcome.errors.mkString("\n"))
+        }
 
     /** Compiles the fixtures with the plugin, then `body` without it against their output, expecting a rejection. */
-    private def rejectsInterop(name: String, body: String)(expected: String)(using Frame, kyo.test.AssertScope): Unit < (Sync & Scope) =
-        for
-            dir      <- Compilation.workspace
-            programs <- fixture(dir, "Programs.kyo")
-            more     <- fixture(dir, "More.kyo")
-            first    <- Compilation.compile(List(programs), dir.resolve("programs"), Nil, withPlugin = true)
-            second   <- Compilation.compile(List(more), dir.resolve("more"), List(dir.resolve("programs")), withPlugin = true)
-            file     <- Compilation.write(
-                dir,
-                name,
-                s"""package kyolang.separate
-                   |import kyo.*
-                   |import kyo.lang.Signatures
-                   |$body
-                   |""".stripMargin
-            )
-            outcome <- Compilation.compile(
-                List(file),
-                dir.resolve("classes"),
-                List(dir.resolve("programs"), dir.resolve("more")),
-                withPlugin = false
-            )
-        yield
-            assert(!first.hasErrors, first.errors.mkString("\n"))
-            assert(!second.hasErrors, second.errors.mkString("\n"))
-            assert(outcome.hasErrors)
-            assert(outcome.reports(expected), outcome.errors.mkString("\n"))
+    private def rejectsInterop(name: String, body: String)(expected: String)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < (Sync & Abort[FileSystemException] & Scope) =
+        Path.run {
+            for
+                dir      <- Compilation.workspace
+                programs <- fixture(dir, "Programs.kyo")
+                more     <- fixture(dir, "More.kyo")
+                first    <- Compilation.compile(Chunk(programs), dir / "programs", Chunk.empty, withPlugin = true)
+                second   <- Compilation.compile(Chunk(more), dir / "more", Chunk(dir / "programs"), withPlugin = true)
+                file     <- Compilation.write(
+                    dir,
+                    name,
+                    s"""package kyolang.separate
+                       |import kyo.*
+                       |import kyo.lang.Signatures
+                       |$body
+                       |""".stripMargin
+                )
+                outcome <- Compilation.compile(Chunk(file), dir / "classes", Chunk(dir / "programs", dir / "more"), withPlugin = false)
+            yield
+                assert(!first.hasErrors, first.errors.mkString("\n"))
+                assert(!second.hasErrors, second.errors.mkString("\n"))
+                assert(outcome.hasErrors)
+                assert(outcome.reports(expected), outcome.errors.mkString("\n"))
+        }
 
     /** A copy of a shared `.kyo` fixture in its own package, so its classes never shadow or are shadowed by the ones this suite's
       * classpath already carries.
       */
-    private def fixture(dir: Path, name: String)(using Frame): Path < Sync =
-        Sync.defer {
-            val source = Compilation.sources.resolve("kyolang").resolve(name)
-            Files.readString(source, StandardCharsets.UTF_8).replace("package kyolang", "package kyolang.separate")
-        }.map(content => Compilation.write(dir, name, content))
+    private def fixture(dir: Path, name: String)(using Frame): Path < (PathWrite & Sync & Abort[Nothing]) =
+        for
+            sources <- Compilation.sources
+            content <- (sources / "kyolang" / name).read
+            file    <- Compilation.write(dir, name, content.replace("package kyolang", "package kyolang.separate"))
+        yield file
 
     private val consumerSource =
         """package kyolang.separate

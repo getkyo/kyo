@@ -1,10 +1,6 @@
 package kyo.lang
 
-import java.io.File
 import java.net.URLClassLoader
-import java.nio.charset.StandardCharsets
-import java.nio.file.Files
-import java.nio.file.Path
 import kyo.*
 import scala.jdk.CollectionConverters.*
 
@@ -12,23 +8,30 @@ import scala.jdk.CollectionConverters.*
   *
   * The build passes the plugin jar and the fixture source directory to the forked test JVM as the `kyo.lang.plugin` and
   * `kyo.lang.sources` properties. The compile classpath is this JVM's own, which carries kyo-core, the `kyo-lang` library, and the
-  * Scala libraries.
+  * Scala libraries. File work goes through `Path`; a suite runs it under `Path.run`.
   */
 object Compilation:
 
     /** The `kyo-lang-plugin` jar the build produced. */
-    val plugin: Path = Path.of(property("kyo.lang.plugin"))
+    def plugin(using Frame): Path < (Sync & Abort[Nothing]) = property("kyo.lang.plugin").map(Path(_))
 
     /** The directory holding the module's `.kyo` fixtures. */
-    val sources: Path = Path.of(property("kyo.lang.sources"))
+    def sources(using Frame): Path < (Sync & Abort[Nothing]) = property("kyo.lang.sources").map(Path(_))
 
-    private def property(name: String): String =
-        Maybe(java.lang.System.getProperty(name)).getOrElse(
-            throw new IllegalStateException(s"Missing system property $name; the build sets it for the forked test JVM")
-        )
+    /** This JVM's classpath entries. */
+    def classpath(using Frame): Chunk[Path] < (Sync & Abort[Nothing]) =
+        property("java.class.path").map(value => Chunk.from(value.split(Path.pathSeparator)).map(Path(_)))
+
+    /** A missing property is a misconfigured test JVM, which no suite can recover from, so it panics. */
+    private def property(name: String)(using Frame): String < (Sync & Abort[Nothing]) =
+        System.property[String](name).map {
+            case Present(value) => value
+            case Absent         =>
+                Abort.panic(new IllegalStateException(s"Missing system property $name; the build sets it for the forked test JVM"))
+        }
 
     /** The diagnostics of one compiler run. */
-    final case class Outcome(errors: List[String]):
+    final case class Outcome(errors: Chunk[String]):
         def hasErrors: Boolean = errors.nonEmpty
 
         /** True when one error message contains `expected`. */
@@ -36,43 +39,43 @@ object Compilation:
     end Outcome
 
     /** A temporary directory removed when the enclosing `Scope` closes. */
-    def workspace(using Frame): Path < (Sync & Scope) =
-        Scope.acquireRelease(Sync.defer(Files.createTempDirectory("kyo-lang-")))(dir => Sync.defer(delete(dir)))
-
-    private def delete(path: Path): Unit =
-        if Files.isDirectory(path) then
-            val children = Files.list(path)
-            try children.iterator().asScala.foreach(delete)
-            finally children.close()
-        end if
-        Files.deleteIfExists(path)
-        ()
-    end delete
+    def workspace(using Frame): Path < (PathWrite & Sync & Scope) = Path.tempDir("kyo-lang")
 
     /** Writes `content` as `name` under `dir` and returns the file. */
-    def write(dir: Path, name: String, content: String)(using Frame): Path < Sync =
-        Sync.defer {
-            val file = dir.resolve(name)
-            Files.createDirectories(file.getParent)
-            Files.writeString(file, content, StandardCharsets.UTF_8)
-        }
+    def write(dir: Path, name: String, content: String)(using Frame): Path < PathWrite =
+        val file = dir / name
+        file.write(content).andThen(file)
 
     /** Compiles `files` into `destination`, with `dependencies` ahead of this JVM's classpath, loading the plugin when `withPlugin`. */
-    def compile(files: List[Path], destination: Path, dependencies: List[Path], withPlugin: Boolean)(using Frame): Outcome < Sync =
-        Sync.defer {
-            Files.createDirectories(destination)
-            val classpath = (dependencies.map(_.toString) :+ java.lang.System.getProperty("java.class.path"))
-                .mkString(File.pathSeparator)
-            val plugins =
-                if withPlugin then List("-Xplugin:" + plugin.toString, "-Xplugin-require:kyo-lang") else Nil
-            val arguments =
-                List("-classpath", classpath, "-d", destination.toString, "-language:strictEquality", "-Xcheck-macros", "-color:never") :::
-                    plugins ::: files.map(_.toString)
-            val reporter = dotty.tools.dotc.Main.process(arguments.toArray)
-            Outcome(reporter.allErrors.map(_.message))
-        }
+    def compile(files: Chunk[Path], destination: Path, dependencies: Chunk[Path], withPlugin: Boolean)(using
+        Frame
+    ): Outcome < (PathWrite & Sync & Abort[Nothing]) =
+        for
+            _       <- destination.mkDir
+            jar     <- plugin
+            entries <- classpath
+            outcome <- Sync.defer {
+                val plugins =
+                    if withPlugin then List("-Xplugin:" + jar.toString, "-Xplugin-require:kyo-lang") else Nil
+                val arguments =
+                    List(
+                        "-classpath",
+                        (dependencies ++ entries).map(_.toString).mkString(Path.pathSeparator),
+                        "-d",
+                        destination.toString,
+                        "-language:strictEquality",
+                        "-Xcheck-macros",
+                        "-color:never"
+                    ) ::: plugins ::: files.map(_.toString).toList
+                val reporter = dotty.tools.dotc.Main.process(arguments.toArray)
+                Outcome(Chunk.from(reporter.allErrors).map(_.message))
+            }
+        yield outcome
 
     /** A class loader over `directories`, delegating everything else to this suite's loader. */
-    def loader(directories: List[Path]): URLClassLoader =
-        new URLClassLoader(directories.map(_.toUri.toURL).toArray, getClass.getClassLoader)
+    def loader(directories: Chunk[Path])(using Frame): URLClassLoader < Sync =
+        Sync.defer(new URLClassLoader(
+            directories.map(dir => new java.io.File(dir.toString).toURI.toURL).toArray,
+            Compilation.getClass.getClassLoader
+        ))
 end Compilation

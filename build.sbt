@@ -2122,7 +2122,7 @@ lazy val `kyo-lang` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-lang"))
-        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-core`, `kyo-system` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,

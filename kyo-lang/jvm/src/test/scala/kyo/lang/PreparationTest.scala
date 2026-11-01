@@ -5,14 +5,19 @@ import kyo.*
 /** Declarations and bodies the plugin's preparation phase and the lowering macro reject. */
 class PreparationTest extends kyo.test.Test[Any]:
 
-    private def rejects(name: String, source: String)(expected: String)(using Frame, kyo.test.AssertScope): Unit < (Sync & Scope) =
-        for
-            dir     <- Compilation.workspace
-            file    <- Compilation.write(dir, name, source)
-            outcome <- Compilation.compile(List(file), dir.resolve("classes"), Nil, withPlugin = true)
-        yield
-            assert(outcome.hasErrors)
-            assert(outcome.reports(expected), outcome.errors.mkString("\n"))
+    private def rejects(name: String, source: String)(expected: String)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < (Sync & Abort[FileSystemException] & Scope) =
+        Path.run {
+            for
+                dir     <- Compilation.workspace
+                file    <- Compilation.write(dir, name, source)
+                outcome <- Compilation.compile(Chunk(file), dir / "classes", Chunk.empty, withPlugin = true)
+            yield
+                assert(outcome.hasErrors)
+                assert(outcome.reports(expected), outcome.errors.mkString("\n"))
+        }
 
     "declarations" - {
         "a default parameter" in rejects(

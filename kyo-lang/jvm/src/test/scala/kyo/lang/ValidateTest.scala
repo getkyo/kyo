@@ -5,14 +5,35 @@ import kyo.*
 /** Programs the validator rejects: unadmitted APIs and references, `null`, and mutable state. */
 class ValidateTest extends kyo.test.Test[Any]:
 
-    private def rejects(name: String, source: String)(expected: String)(using Frame, kyo.test.AssertScope): Unit < (Sync & Scope) =
-        for
-            dir     <- Compilation.workspace
-            file    <- Compilation.write(dir, name, source)
-            outcome <- Compilation.compile(List(file), dir.resolve("classes"), Nil, withPlugin = true)
-        yield
-            assert(outcome.hasErrors)
-            assert(outcome.reports(expected), outcome.errors.mkString("\n"))
+    private def rejects(name: String, source: String)(expected: String)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < (Sync & Abort[FileSystemException] & Scope) =
+        Path.run {
+            for
+                dir     <- Compilation.workspace
+                file    <- Compilation.write(dir, name, source)
+                outcome <- Compilation.compile(Chunk(file), dir / "classes", Chunk.empty, withPlugin = true)
+            yield
+                assert(outcome.hasErrors)
+                assert(outcome.reports(expected), outcome.errors.mkString("\n"))
+        }
+
+    /** Compiles an ordinary Scala `Bridge` object together with a `.kyo` file that reaches into it. */
+    private def rejectsWithBridge(name: String, source: String)(expected: String)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < (Sync & Abort[FileSystemException] & Scope) =
+        Path.run {
+            for
+                dir     <- Compilation.workspace
+                bridge  <- Compilation.write(dir, "Bridge.scala", bridgeSource)
+                bad     <- Compilation.write(dir, name, source)
+                outcome <- Compilation.compile(Chunk(bridge, bad), dir / "classes", Chunk.empty, withPlugin = true)
+            yield
+                assert(outcome.hasErrors)
+                assert(outcome.reports(expected), outcome.errors.mkString("\n"))
+        }
 
     "an unadmitted API" in rejects(
         "UnsafeCall.kyo",
@@ -39,39 +60,19 @@ class ValidateTest extends kyo.test.Test[Any]:
           |""".stripMargin
     )("API is not admitted in .kyo")
 
-    "an unadmitted parameterless method on an ordinary Scala object" in {
-        for
-            dir    <- Compilation.workspace
-            bridge <- Compilation.write(dir, "Bridge.scala", bridgeSource)
-            bad    <- Compilation.write(
-                dir,
-                "Parameterless.kyo",
-                """object Parameterless:
-                  |    def bad = Bridge.parameterless
-                  |""".stripMargin
-            )
-            outcome <- Compilation.compile(List(bridge, bad), dir.resolve("classes"), Nil, withPlugin = true)
-        yield
-            assert(outcome.hasErrors)
-            assert(outcome.reports("API is not admitted in .kyo: Bridge.parameterless"), outcome.errors.mkString("\n"))
-    }
+    "an unadmitted parameterless method on an ordinary Scala object" in rejectsWithBridge(
+        "Parameterless.kyo",
+        """object Parameterless:
+          |    def bad = Bridge.parameterless
+          |""".stripMargin
+    )("API is not admitted in .kyo: Bridge.parameterless")
 
-    "an unadmitted field on an ordinary Scala object" in {
-        for
-            dir    <- Compilation.workspace
-            bridge <- Compilation.write(dir, "Bridge.scala", bridgeSource)
-            bad    <- Compilation.write(
-                dir,
-                "UnapprovedField.kyo",
-                """object UnapprovedField:
-                  |    def bad = Bridge.field
-                  |""".stripMargin
-            )
-            outcome <- Compilation.compile(List(bridge, bad), dir.resolve("classes"), Nil, withPlugin = true)
-        yield
-            assert(outcome.hasErrors)
-            assert(outcome.reports("Reference is not admitted in .kyo: Bridge.field"), outcome.errors.mkString("\n"))
-    }
+    "an unadmitted field on an ordinary Scala object" in rejectsWithBridge(
+        "UnapprovedField.kyo",
+        """object UnapprovedField:
+          |    def bad = Bridge.field
+          |""".stripMargin
+    )("Reference is not admitted in .kyo: Bridge.field")
 
     "null" in rejects(
         "Null.kyo",

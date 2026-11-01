@@ -1,9 +1,7 @@
 package kyo.lang
 
 import dotty.tools.pc.ScalaPresentationCompiler
-import java.io.File
 import java.net.URI
-import java.nio.file.Path
 import kyo.*
 import scala.jdk.CollectionConverters.*
 import scala.meta.internal.metals.CompilerOffsetParams
@@ -20,17 +18,22 @@ class KyoLangPluginTest extends kyo.test.Test[Any]:
           |        text.subs@@
           |""".stripMargin
 
-    private def presentationCompiler(withPlugin: Boolean)(using Frame): PresentationCompiler < (Sync & Scope) =
-        Scope.acquireRelease(Sync.defer {
-            val classpath = java.lang.System.getProperty("java.class.path").split(File.pathSeparator).toList.map(Path.of(_))
-            val options   = if withPlugin then List("-Xplugin:" + Compilation.plugin.toString) else Nil
-            new ScalaPresentationCompiler().newInstance("kyo-lang", classpath.asJava, options.asJava)
-        })(pc => Sync.defer(pc.shutdown()))
+    private def presentationCompiler(withPlugin: Boolean)(using Frame): PresentationCompiler < (Sync & Abort[Nothing] & Scope) =
+        for
+            plugin    <- Compilation.plugin
+            classpath <- Compilation.classpath
+            options = if withPlugin then List("-Xplugin:" + plugin.toString) else Nil
+            pc <- Scope.acquireRelease(Sync.defer {
+                // The presentation compiler's own API takes java.nio paths; the conversion sits at that boundary only.
+                val entries = classpath.map(entry => java.nio.file.Path.of(entry.toString)).toList
+                new ScalaPresentationCompiler().newInstance("kyo-lang", entries.asJava, options.asJava)
+            })(pc => Sync.defer(pc.shutdown()))
+        yield pc
 
-    private def substringCompletions(pc: PresentationCompiler)(using Frame): List[String] < Sync =
+    private def substringCompletions(pc: PresentationCompiler)(using Frame): Chunk[String] < Sync =
         Sync.defer {
             val params = CompilerOffsetParams(URI.create("file:///Example.kyo"), marked.replace("@@", ""), marked.indexOf("@@"))
-            pc.complete(params).get().getItems.asScala.map(_.getLabel).filter(_.startsWith("substring")).toList
+            Chunk.from(pc.complete(params).get().getItems.asScala).map(_.getLabel).filter(_.startsWith("substring"))
         }
 
     "completions on a .kyo buffer" - {
