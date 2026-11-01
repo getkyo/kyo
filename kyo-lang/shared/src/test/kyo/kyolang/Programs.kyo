@@ -1,0 +1,56 @@
+package kyolang
+
+import kyo.*
+
+object Programs:
+    val constant = 42
+
+    def repeated =
+        val a = Var.update[Int](x => x + 1)
+        a + a
+
+    def discarded =
+        Var.update[Int](x => x + 1)
+        42
+
+    def unusedFailure =
+        val a = Abort.fail("failure")
+        42
+
+    def branch =
+        if Var.get[Int] == 0 then Var.update[Int](x => x + 1)
+        else Var.update[Int](x => x + 10)
+
+    def pair(a: Int, b: Int) = a * 10 + b
+
+    def ordered = pair(Var.update[Int](x => x + 1), Var.update[Int](x => x + 1))
+
+    def generic = List(Var.update[Int](x => x + 1))
+
+    def length = Var.get[String].length
+
+    def mapped = List(1).map(x => x + 1)
+
+    def mappedPending = Var.get[List[Int]].map(x => x + 1)
+
+    def fromConstant = constant + 1
+
+    def pure = 42
+
+    def annotated: Int < Var[Int] = Var.get[Int] + 1
+
+    def mixed =
+        val current = Var.get[Int]
+        if current > 0 then Abort.fail("failure") else current + 1
+
+    def annotatedMixed: Int < (Var[Int] & Abort[String]) = mixed
+
+    def twoVars = Var.get[Int] + Var.get[String].length
+
+    def effectfulBranch(flag: Boolean) =
+        if flag then Var.get[Int] else Var.get[String].length
+
+    object Nested:
+        def repeated = Programs.repeated + 1
+
+def topLevel = Programs.repeated + 2

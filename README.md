@@ -344,12 +344,13 @@ The vertical an application developer assembles: HTTP services and clients, SQL 
 
 ### Writing style
 
-Alternative dialects to write Kyo code more fluently. Pick `kyo-direct` for straight-line code with `.now` suspension points; pick `kyo-combinators` for ZIO-style fluent operators and the `forAbort[E1]` failure-narrowing DSL.
+Alternative dialects to write Kyo code more fluently. Pick `kyo-direct` for straight-line code with `.now` suspension points; pick `kyo-combinators` for ZIO-style fluent operators and the `forAbort[E1]` failure-narrowing DSL; pick `kyo-lang` for whole `.kyo` files in which effectful expressions expose their results and the compiled definitions keep their `A < S` signatures.
 
 | Module                                         | JVM | JS  | Native | WASM | Identity                                                                                                  |
 | ---------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
 | [kyo-direct](kyo-direct/README.md)             | ✅  | ✅  | ✅     | ✅   | Direct-style: `direct { val x = effect.now; ... }` desugars to the equivalent `flatMap` chain             |
 | [kyo-combinators](kyo-combinators/README.md)   | ✅  | ✅  | ✅     | ✅   | Sanctioned home for symbolic operators (`*>`, `<*>`, `&>`) and the `forAbort[E1]` narrowing DSL           |
+| [kyo-lang](kyo-lang/README.md)                 | ✅  | ✅  | ✅     | ✅   | `.kyo` files: a Scala subset with direct effect syntax, compiled by a scalac plugin into Kyo composition  |
 
 ### Testing
 

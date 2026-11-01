@@ -466,6 +466,8 @@ lazy val kyoJVM: Project = project
         `kyo-ffi-it`.jvm,
         `kyo-net`.jvm,
         `kyo-direct`.jvm,
+        `kyo-lang`.jvm,
+        `kyo-lang-plugin`,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
         `kyo-config`.jvm,
@@ -567,6 +569,7 @@ lazy val kyoJS = project
         `kyo-ffi-it`.js,
         `kyo-net`.js,
         `kyo-direct`.js,
+        `kyo-lang`.js,
         `kyo-stm`.js,
         `kyo-stats-registry`.js,
         `kyo-config`.js,
@@ -657,6 +660,7 @@ lazy val kyoNative = project
         `kyo-ffi-it`.native,
         `kyo-net`.native,
         `kyo-direct`.native,
+        `kyo-lang`.native,
         `kyo-combinators`.native,
         `kyo-case-app`.native,
         `kyo-reactive-streams`.native,
@@ -763,6 +767,7 @@ lazy val kyoWasm = project
         `kyo-core`.wasm,
         `kyo-ffi`.wasm,
         `kyo-direct`.wasm,
+        `kyo-lang`.wasm,
         `kyo-stm`.wasm,
         `kyo-combinators`.wasm,
         `kyo-actor`.wasm,
@@ -2107,6 +2112,52 @@ lazy val `kyo-direct` =
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
+
+// --- kyo-lang: a Scala subset with direct effect syntax, compiled by a scalac plugin ---
+//
+// `kyo-lang` is the compile-time library a `.kyo` compilation needs on its classpath (the markers, the lowering macro, and the
+// Checked metadata); `kyo-lang-plugin` is the scalac plugin that prepares `.kyo` units for it. The module's own `.kyo` fixtures
+// under shared/src/test/kyo compile through the plugin in the Test configuration, which is the same path a user's build takes.
+lazy val `kyo-lang` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-lang"))
+        .dependsOn(`kyo-core`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            Test / unmanagedSourceDirectories += baseDirectory.value.getParentFile / "shared" / "src" / "test" / "kyo",
+            Test / unmanagedSources / includeFilter := (Test / unmanagedSources / includeFilter).value || "*.kyo",
+            Test / scalacOptions ++= Seq(
+                "-Xplugin:" + (`kyo-lang-plugin` / Compile / packageBin).value.getAbsolutePath,
+                "-Xplugin-require:kyo-lang"
+            )
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            // The JVM suites drive the compiler and the presentation compiler in-process against the plugin jar and the
+            // fixture sources, both reached through these properties.
+            libraryDependencies ++= Seq(
+                "org.scala-lang" %% "scala3-compiler"              % scalaVersion.value % Test,
+                "org.scala-lang" %% "scala3-presentation-compiler" % scalaVersion.value % Test
+            ),
+            Test / javaOptions += "-Dkyo.lang.plugin=" + (`kyo-lang-plugin` / Compile / packageBin).value.getAbsolutePath,
+            Test / javaOptions += "-Dkyo.lang.sources=" + (baseDirectory.value.getParentFile / "shared" / "src" / "test" / "kyo").getAbsolutePath
+        )
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-lang-plugin` =
+    project
+        .in(file("kyo-lang/plugin"))
+        .settings(
+            `kyo-settings`,
+            // The compiler loads the plugin from -Xplugin and supplies itself; the artifact declares no compiler dependency.
+            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scalaVersion.value % Provided,
+            // kyo-lang/README.md documents the language and runs its doctests from the kyo-lang module's classpath.
+            doctestSources := Seq.empty
+        )
 
 lazy val `kyo-stm` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
