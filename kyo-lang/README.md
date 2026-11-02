@@ -130,7 +130,7 @@ Three kinds of rejection exist, and each diagnostic names the construct so the r
 | Reason | Meaning | Example |
 |---|---|---|
 | Language restriction | The construct conflicts with the semantic contract. | `null`, `var`, mutable field reads, an annotation erasing an effect. |
-| Unimplemented construct | The intended semantics still need a typing and lowering rule. | Handlers inside a body, effectful callbacks, effectful by-name arguments, effectful fields, classes, default parameters. |
+| Unimplemented construct | The intended semantics still need a typing and lowering rule. | Handlers inside a body, effectful callbacks to methods without a Kyo counterpart, effectful by-name arguments, effectful fields, classes, default parameters. |
 | API admission | The resolved operation is outside the admitted surface. | `println`, `System.currentTimeMillis`, an unlisted method on an ordinary Scala object. |
 
 Pending-value composition methods are deliberately unavailable in a `.kyo` body: `Var.get[Int].map(...)` is a type error because the direct view of `Var.get[Int]` is an `Int`. Generated composition uses those methods; source code does not.
@@ -150,4 +150,4 @@ Compile / unmanagedSources / includeFilter := (Compile / unmanagedSources / incl
 
 ## Status
 
-This module carries the working subset and the complete design. [DESIGN.md](DESIGN.md) records the language objective, the semantic contract, the construct inventory with an allow/deny policy per row, the CPS lowering rules including the ones not yet implemented, the API admission rule, and the implementation sequence. The next steps in that sequence are handler and closure typing, boundary-aware lowering, higher-order substitutions such as an effectful `Chunk.map` becoming `Kyo.foreach`, the `kyo.*` package admission rule with an exact external allowlist, and default formatting with sbt and Metals integration.
+This module carries the working subset and the complete design. [DESIGN.md](DESIGN.md) records the language objective, the semantic contract, the construct inventory with an allow/deny policy per row, the CPS lowering rules including the ones not yet implemented, the API admission rule, and the implementation sequence. The lowering is kyo-direct's: a `.kyo` body is the body of a `direct` block whose `.now` markers the plugin planted, so an effectful callback to `map`, `foldLeft`, or any other method with a Kyo counterpart already runs through `Kyo.foreach` and its relatives. The next steps in that sequence are handler and closure typing, boundary placement, the `kyo.*` package admission rule with an exact external allowlist, and default formatting with sbt and Metals integration.

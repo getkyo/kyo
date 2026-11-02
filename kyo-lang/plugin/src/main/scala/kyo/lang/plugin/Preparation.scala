@@ -16,10 +16,10 @@ import dotty.tools.dotc.report
   * For each definition body the phase:
   *
   *   - wraps every expression in `kyo.lang.internal.Markers.force`. Typing selects the overload: a pure `A` keeps the identity overload,
-  *     a pending `A < S` selects the overload that exposes `A` and records `S`. Those markers are what the macro later lowers into Kyo
-  *     composition, which is how a direct body exposes an operation's result without a user-facing annotation.
+  *     a pending `A < S` selects the overload that is kyo-direct's `.now`. That is how a direct body exposes an operation's result
+  *     without a user-facing annotation, and how the body becomes one kyo-direct knows how to lower.
   *   - wraps the whole body in `kyo.lang.internal.Body.apply` (methods) or `kyo.lang.internal.Body.field` (values), the typed macro that
-  *     validates the body and lowers the markers.
+  *     validates the body and lowers it through kyo-direct.
   *   - attaches the `kyo.lang.Checked` annotation, the metadata a later compilation reads to admit the definition.
   *
   * Declarations outside the supported subset are reported here, at their source position: classes and traits, inheritance, inline and

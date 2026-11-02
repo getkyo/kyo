@@ -7,7 +7,7 @@ import scala.jdk.CollectionConverters.*
 /** Drives the Scala compiler in-process against the `kyo-lang` plugin jar, for the suites that need a whole compilation.
   *
   * The build passes the plugin jar and the fixture source directory to the forked test JVM as the `kyo.lang.plugin` and
-  * `kyo.lang.sources` properties. The compile classpath is this JVM's own, which carries kyo-core, the `kyo-lang` library, and the
+  * `kyo.lang.sources` properties. The compile classpath is this JVM's own, which carries kyo-core, kyo-direct, the `kyo-lang` library, and the
   * Scala libraries. File work goes through `Path`; a suite runs it under `Path.run`.
   */
 object Compilation:

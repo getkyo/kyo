@@ -134,10 +134,18 @@ private[kyo] object Lower:
                                 ${ owned(body(('local).asTerm)).asExprOf[r < S] }
                             }.asTerm
 
+        /** The `.now` the tree is, seen through the wrappers an inline method leaves when it plants the marker (kyo-lang's markers
+          * expand to `.now`). The frame is then built from the wrapper's position, which is the user's expression, not the inline
+          * method's source.
+          */
+        private def marker(tree: Term): Option[(Term, TypeRepr, TypeRepr)] = tree match
+            case Inlined(_, Nil, inner) => marker(inner)
+            case _                      => DirectSyntax.now(tree)
+
         private def lower(tree: Term)(k: Cont): Term =
             if !hasNow(tree) then k(tree)
             else
-                DirectSyntax.now(tree) match
+                marker(tree) match
                     case Some((computation, exposed, _)) =>
                         lower(computation)(cont(k.result)(bound => bind(bound, exposed, frameAt(tree))(k)))
                     case None =>

@@ -2,7 +2,7 @@ package kyo.lang
 
 import kyo.*
 
-/** Declarations and bodies the plugin's preparation phase and the lowering macro reject. */
+/** Declarations and bodies the plugin's preparation phase, the body macro, and kyo-direct's restrictions reject. */
 class PreparationTest extends kyo.test.Test[Any]:
 
     private def rejects(name: String, source: String)(expected: String)(using
@@ -72,13 +72,14 @@ class PreparationTest extends kyo.test.Test[Any]:
               |""".stripMargin
         )("Effectful fields are not supported in .kyo")
 
-        "an effectful callback" in rejects(
+        "an effectful callback to a method without a Kyo counterpart" in rejects(
             "Callback.kyo",
             """import kyo.*
               |object Callback:
-              |    def bad = List(1).map(x => Var.get[Int])
+              |    def twice(f: Int => Int): Int = f(f(1))
+              |    def bad = twice(x => Var.get[Int] + x)
               |""".stripMargin
-        )("Effectful callbacks are not supported in .kyo")
+        )("Method definitions containing")
 
         "an effectful by-name argument" in rejects(
             "ByName.kyo",
@@ -87,6 +88,6 @@ class PreparationTest extends kyo.test.Test[Any]:
               |    def ignore(value: => Int): Int = 42
               |    def bad = ignore(Var.get[Int])
               |""".stripMargin
-        )("Effectful by-name arguments are not supported in .kyo")
+        )("cannot appear inside a")
     }
 end PreparationTest

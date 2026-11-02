@@ -29,6 +29,7 @@ class BodyTest extends kyo.test.Test[Any]:
             Signatures.exact[Int < (Var[Int] & Var[String])]("kyolang.Programs", "twoVars")
             Signatures.exact[Int < (Var[Int] & Var[String])]("kyolang.Programs", "effectfulBranch")
             Signatures.exact[List[Int] < Var[Int]]("kyolang.Programs", "generic")
+            Signatures.exact[List[Int] < Var[Int]]("kyolang.Programs", "effectfulCallback")
             succeed("checked at compile time")
         }
         "definitions in another .kyo file keep the rows they compose" in {
@@ -77,12 +78,15 @@ class BodyTest extends kyo.test.Test[Any]:
         }
     }
 
-    "pure higher-order calls" - {
+    "higher-order calls" - {
         "a pure callback keeps the ordinary collection operation" in {
             assert(Programs.mapped == List(2))
         }
         "a pure callback on an exposed result" in {
             assert(Var.run(List(1, 2))(Programs.mappedPending).eval == List(2, 3))
+        }
+        "an effectful callback runs once per element through the Kyo counterpart" in {
+            assert(Var.runTuple(0)(Programs.effectfulCallback).eval == (3, List(1, 3)))
         }
     }
 

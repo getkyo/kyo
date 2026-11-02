@@ -129,7 +129,7 @@ Every definition the lowering emits or keeps is owned by the macro while the tre
 
 ### Frames
 
-Every generated call that takes a `Frame` receives one explicitly: `<.map`, `Loop.apply`, every `Kyo` operation. None relies on implicit `Frame` search, because that search derives at the macro expansion position and refuses package `kyo` outside test files, and `TestSupport.runLiftTest` expands `direct` in package `kyo.internal`. The frame is built from the marker's own position with `Frame.fromPosition`, so a trace through a block points at the `.now` that suspended.
+Every generated call that takes a `Frame` receives one explicitly: `<.map`, `Loop.apply`, every `Kyo` operation. None relies on implicit `Frame` search, because that search derives at the macro expansion position and refuses package `kyo` outside test files, and `TestSupport.runLiftTest` expands `direct` in package `kyo.internal`. The frame is built from the marker's own position with `Frame.fromPosition`, so a trace through a block points at the `.now` that suspended. A marker planted by an inline method (kyo-lang's markers expand to `.now`) takes the position of the inlined call, which is the user's expression; the inline method's own source may not even be available to the compilation.
 
 ### Diagnostics
 

@@ -16,8 +16,8 @@ import dotty.tools.dotc.report
   *   - [[CheckMetadata]] runs after the typer on every unit and rejects a `.scala` source that declares the `Checked` metadata by hand,
   *     so the metadata always attests a validated `.kyo` definition.
   *
-  * The lowering itself happens in the `Body` macro during normal typing, which is why the compile classpath must carry the `kyo-lang`
-  * library next to this plugin.
+  * The lowering itself happens in the `Body` macro during normal typing, through kyo-direct, which is why the compile classpath must
+  * carry the `kyo-lang` library and kyo-direct next to this plugin.
   *
   * Load it with `-Xplugin:<kyo-lang-plugin jar>`; `-Xplugin-require:kyo-lang` makes a missing plugin a compile error.
   */

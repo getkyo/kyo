@@ -33,6 +33,8 @@ object Programs:
 
     def mappedPending = Var.get[List[Int]].map(x => x + 1)
 
+    def effectfulCallback = List(1, 2).map(x => Var.update[Int](y => y + x))
+
     def fromConstant = constant + 1
 
     def pure = 42

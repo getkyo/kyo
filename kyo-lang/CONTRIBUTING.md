@@ -6,7 +6,7 @@ This guide complements the root [CONTRIBUTING.md](../CONTRIBUTING.md), which cov
 
 `kyo-lang` ships as two artifacts from one module directory:
 
-- `kyo-lang/` (sbt `kyo-lang`, cross-platform): the compile-time library a `.kyo` compilation needs on its classpath. `kyo.lang.Checked` is the metadata attached to compiled definitions; `kyo.lang.internal.Markers` and `kyo.lang.internal.Body` are the marker overloads and the typed lowering macro the plugin inserts; `kyo.lang.internal.Validate` is the API admission check. The library is cross-built because the compiled output of a `.kyo` file runs wherever its enclosing project runs, and the compile classpath of a JS or Native project carries that platform's artifact.
+- `kyo-lang/` (sbt `kyo-lang`, cross-platform): the compile-time library a `.kyo` compilation needs on its classpath. `kyo.lang.Checked` is the metadata attached to compiled definitions; `kyo.lang.internal.Markers` and `kyo.lang.internal.Body` are the marker overloads (the pending one is kyo-direct's `.now`) and the typed body macro the plugin inserts, which validates and then lowers through kyo-direct; `kyo.lang.internal.Validate` is the API admission check. The library is cross-built because the compiled output of a `.kyo` file runs wherever its enclosing project runs, and the compile classpath of a JS or Native project carries that platform's artifact.
 - `kyo-lang/plugin/` (sbt `kyo-lang-plugin`, JVM only): the scalac plugin. `KyoLangPlugin` registers two phases: `Preparation` runs after the parser and before the typer on `.kyo` units only, and `CheckMetadata` runs after the typer on every unit. The plugin depends on `scala3-compiler` as `Provided`: the compiler loading it supplies itself.
 
 The plugin never references the library's classes directly; it builds untyped trees naming `kyo.lang.internal.Markers.force`, `kyo.lang.internal.Body.apply`, `kyo.lang.internal.Body.field`, and `kyo.lang.Checked` by qualified path. Those paths are the contract between the two artifacts. Renaming one side without the other compiles and fails every `.kyo` compilation.
@@ -17,8 +17,8 @@ The plugin never references the library's classes directly; it builds untyped tr
 .kyo source
   -> Preparation (untyped): markers around expressions, Body around definition bodies, Checked on definitions,
      rejection of unsupported declarations
-  -> normal Scala typing: marker overload resolution exposes each result; Body expands as a transparent inline macro
-  -> Body: Validate every resolved call and reference, collect the effect row, lower markers into Kyo composition
+  -> normal Scala typing: marker overload resolution leaves a .now on each sequenced computation; Body expands as a transparent inline macro
+  -> Body: Validate every resolved call and reference, then kyo-direct's restrictions and lowering (kyo.internal.Validate and Lower)
   -> CheckMetadata (typed): a .scala unit declaring Checked is an error
   -> normal compilation
 ```

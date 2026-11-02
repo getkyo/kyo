@@ -41,23 +41,25 @@ private[internal] object Validate:
         def approved(symbol: Symbol): Boolean =
             methods.exists(_.equals(symbol)) || symbol.hasAnnotation(checked)
 
-        val modules          = moduleMethods.map((module, _) => Symbol.requiredModule(module))
-        val aliases          = List(Symbol.requiredModule("scala.package").fieldMember("List"))
-        val localDefinitions = new TreeAccumulator[List[Symbol]]:
-            def foldTree(found: List[Symbol], tree: Tree)(owner: Symbol): List[Symbol] = tree match
-                case definition: ValDef => foldOverTree(definition.symbol :: found, tree)(owner)
-                case _                  => foldOverTree(found, tree)(owner)
-        val locals = localDefinitions.foldTree(Nil, value.asTerm)(Symbol.spliceOwner)
+        val modules = moduleMethods.map((module, _) => Symbol.requiredModule(module))
+        val aliases = List(Symbol.requiredModule("scala.package").fieldMember("List"))
+
+        /** A parameter or a local value: a definition owned by a method or value rather than by a class or package. The body's own
+          * definitions are validated where they are defined, so a reference to one is admitted by its owner alone; the original call
+          * tree kept by an inlined marker refers to the definitions' symbols as they were before the macro re-owned them, which is why
+          * the test is on the owner's kind and not on symbol identity.
+          */
+        def local(symbol: Symbol): Boolean = symbol.owner.isTerm
 
         def approvedReference(symbol: Symbol): Boolean =
-            symbol.flags.is(Flags.Package) || symbol.flags.is(Flags.Param) ||
-                locals.exists(_.equals(symbol)) || aliases.exists(_.equals(symbol)) ||
+            symbol.flags.is(Flags.Package) || local(symbol) || aliases.exists(_.equals(symbol)) ||
                 modules.exists(_.equals(symbol)) || approved(symbol)
 
         /** The symbol's name as a reader writes it: an object's member is `Object.member`, not `Object$.member`. */
         def display(symbol: Symbol): String =
             val owner = symbol.owner
-            if owner.isNoSymbol || owner.flags.is(Flags.Package) then symbol.fullName
+            if owner.isNoSymbol || owner.isTerm then symbol.name
+            else if owner.flags.is(Flags.Package) then symbol.fullName
             else
                 val named = if owner.flags.is(Flags.Module) && owner.isClassDef then owner.companionModule else owner
                 s"${display(named)}.${symbol.name}"
