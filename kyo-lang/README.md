@@ -189,6 +189,10 @@ Compile / unmanagedSources / includeFilter := (Compile / unmanagedSources / incl
 
 `-Xplugin-require` turns a missing plugin into a compile error, so a `.kyo` file is never compiled as if it were plain Scala. The presentation compiler accepts the same plugin option, so an editor typing a `.kyo` buffer sees the direct view: completions on `val text = Var.get[String]` are `String` members.
 
+## Embedding the compiler
+
+A host that compiles `.kyo` text it did not write, code mode being one, drives the compiler the way the module's own `Compilation` test helper does: it writes the unit to a file with the `.kyo` extension, runs `dotty.tools.dotc.Main` with `-Xplugin:<kyo-lang-plugin jar>`, `-Xplugin-require:kyo-lang`, and a classpath holding `kyo-lang` and the Kyo modules the unit uses, collects the diagnostics, and loads the compiled definitions through a class loader to call them with the handlers it chooses. The language's checks are the same as in a build: an unadmitted API, an unsupported construct, or a mutable local is a diagnostic, never a compiled definition, and a definition that compiles has the Kyo signature the host composes.
+
 ## Status
 
 This module carries the working subset and the complete design. [DESIGN.md](DESIGN.md) records the language objective, the semantic contract, the construct inventory with an allow/deny policy per row, the CPS lowering rules including the ones not yet implemented, the API admission rule, and the implementation sequence. The lowering is kyo-direct's: a `.kyo` body is the body of a `direct` block whose `.now` markers the plugin planted, so an effectful callback to `map`, `foldLeft`, or any other method with a Kyo counterpart already runs through `Kyo.foreach` and its relatives. Handlers inside a body, effectful closures, and effect-aware receivers are typed through the computation boundaries DESIGN.md describes. Every Allow row of the construct inventory has its conformance evidence, and the `kyo-lang-sbt` plugin carries the build integration with format-on-compile and a check mode. Editor integration is verified through the presentation compiler, not through a Metals session.

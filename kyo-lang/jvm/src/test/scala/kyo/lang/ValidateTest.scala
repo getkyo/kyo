@@ -71,6 +71,61 @@ class ValidateTest extends kyo.test.Test[Any]:
           |""".stripMargin
     )("Reference is not admitted in .kyo: Bridge.field")
 
+    "an inserted conversion from an ordinary Scala object is not admitted" in rejectsWithBridge(
+        "InsertedConversion.kyo",
+        """import Bridge.given
+          |object InsertedConversion:
+          |    def bad: String = 42
+          |""".stripMargin
+    )("is not admitted in .kyo: Bridge.toText")
+
+    "an implicit AllowUnsafe in scope does not admit an unsafe API" in rejects(
+        "ImplicitUnsafe.kyo",
+        """import AllowUnsafe.embrace.danger
+          |object ImplicitUnsafe:
+          |    def bad = AtomicInt.Unsafe.init(0)
+          |""".stripMargin
+    )("is not admitted in .kyo: kyo.AllowUnsafe")
+
+    "an aliased AllowUnsafe requirement is recognized" in rejectsWithBridge(
+        "AliasedUnsafe.kyo",
+        """object AliasedUnsafe:
+          |    def bad = Bridge.aliased(using AllowUnsafe.embrace.danger)
+          |""".stripMargin
+    )("API is not admitted in .kyo: Bridge.aliased")
+
+    "an unadmitted call inside a callback to a collection method" in rejects(
+        "ProbeA.kyo",
+        """object ProbeA:
+          |    def bad = List(1).map(n => n + java.lang.System.currentTimeMillis().toInt)
+          |""".stripMargin
+    )("API is not admitted in .kyo: java.lang.System.currentTimeMillis")
+
+    "an unadmitted call inside a stored closure" in rejects(
+        "ProbeB.kyo",
+        """object ProbeB:
+          |    def bad =
+          |        val f = (n: Int) => n + java.lang.System.currentTimeMillis().toInt
+          |        f(1)
+          |""".stripMargin
+    )("API is not admitted in .kyo: java.lang.System.currentTimeMillis")
+
+    "an unadmitted call after an effect, inside the generated continuation" in rejects(
+        "ProbeC.kyo",
+        """object ProbeC:
+          |    def bad =
+          |        val n = Var.get[Int]
+          |        n + java.lang.System.currentTimeMillis().toInt
+          |""".stripMargin
+    )("API is not admitted in .kyo: java.lang.System.currentTimeMillis")
+
+    "a source callback inside an inline Kyo API is checked" in rejects(
+        "InlineCallback.kyo",
+        """object InlineCallback:
+          |    def bad = Var.update[Int](n => n + java.lang.System.currentTimeMillis().toInt)
+          |""".stripMargin
+    )("API is not admitted in .kyo: java.lang.System.currentTimeMillis")
+
     "null" in rejects(
         "Null.kyo",
         """object Null:
@@ -103,8 +158,12 @@ class ValidateTest extends kyo.test.Test[Any]:
     )("Required: Int < kyo.Async")
 
     private val bridgeSource =
-        """object Bridge:
+        """import kyo.*
+          |object Bridge:
           |    def parameterless: Int = 42
           |    val field: Int = 42
+          |    type Danger = AllowUnsafe
+          |    def aliased(using Danger): Int = 42
+          |    given toText: Conversion[Int, String] = (value: Int) => value.toString
           |""".stripMargin
 end ValidateTest

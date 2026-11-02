@@ -117,10 +117,12 @@ final class Admission extends PluginPhase:
             report.error(s"$kind is not admitted in .kyo: ${display(tree.symbol)}", tree.srcPos)
 
         /** A compiler-generated member whose body is not the user's: the machinery of enums and case classes, trusted like an admitted
-          * inline API. An export forwarder, a default getter, and a derived instance come from the user's source and are checked.
+          * inline API. An anonymous function is the user's lambda, and an export forwarder, a default getter, and a derived instance
+          * come from the user's source; all of those are checked.
           */
         def trustedSynthetic(sym: Symbol): Boolean =
-            sym.is(Synthetic) && !sym.is(Exported) && !sym.name.is(DefaultGetterName) && !sym.name.startsWith("derived$")
+            sym.is(Synthetic) && !sym.isAnonymousFunction && !sym.is(Exported) &&
+                !sym.name.is(DefaultGetterName) && !sym.name.startsWith("derived$")
 
         /** The parents the compiler adds on its own to a class, enum, or case class. */
         val implicitParents: Set[Symbol] = Set(
