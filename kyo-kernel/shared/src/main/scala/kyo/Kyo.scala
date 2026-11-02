@@ -4,6 +4,7 @@ import kernel.Loop
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableOps
+import scala.collection.WithFilter
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
@@ -2983,6 +2984,36 @@ object Kyo:
       * @return
       *   A new effect that produces the final transformed result
       */
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // WithFilter: the lazy filter `withFilter` and a guarded `for` produce; its elements are the collection's that passed
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /** Applies an effect-producing function to each element that passed a `withFilter`, into the filtered collection's type. */
+    def foreach[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: WithFilter[A, CC])(f: A => B < S)(using
+        Frame
+    ): CC[B] < S =
+        Kyo.foreach(source.map(a => a))(f)
+
+    /** Applies an effect-producing function returning a collection to each element that passed a `withFilter`, concatenating the
+      * results into the filtered collection's type.
+      */
+    def foreachConcat[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: WithFilter[A, CC])(f: A => IterableOnce[B] < S)(
+        using Frame
+    ): CC[B] < S =
+        Kyo.foreachConcat(source.map(a => a))(f)
+
+    /** Applies an effect-producing function to each element that passed a `withFilter`, for its effect. */
+    def foreachDiscard[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: WithFilter[A, CC])(f: A => Any < S)(using
+        Frame
+    ): Unit < S =
+        Kyo.foreachDiscard(source.map(a => a))(f)
+
+    /** Keeps the elements that passed a `withFilter` and for which an effect-producing predicate holds, in the collection's type. */
+    def filter[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: WithFilter[A, CC])(f: A => Boolean < S)(using
+        Frame
+    ): CC[A] < S =
+        Kyo.filter(source.map(a => a))(f)
 
     // -----------------------------------------------------------------------------------------------------------------
     // Maybe

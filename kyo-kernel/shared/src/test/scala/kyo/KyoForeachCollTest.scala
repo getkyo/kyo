@@ -462,6 +462,17 @@ class KyoForeachCollTest extends AnyFreeSpec:
             assert(!TestEffect1.run(Kyo.corresponds(Coll(1, 2))(Seq(2, 3, 4))((a, b) => TestEffect1(a).map(_ == b))).eval)
         }
 
+        "withFilter" in {
+            val filtered = Coll(1, 2, 3, 4).withFilter(_ % 2 == 0)
+            assert(TestEffect1.run(Kyo.foreach(filtered)(i => TestEffect1(i))).eval == Coll(3, 5))
+            assert(TestEffect1.run(Kyo.foreachConcat(filtered)(i => TestEffect1(i).map(v => List(v, v)))).eval == Coll(3, 3, 5, 5))
+            var seen = List.empty[Int]
+            TestEffect1.run(Kyo.foreachDiscard(filtered)(i => TestEffect1(i).map(v => seen :+= v))).eval
+            assert(seen == List(3, 5))
+            assert(TestEffect1.run(Kyo.filter(filtered)(i => TestEffect1(i).map(_ > 3))).eval == Coll(4))
+            assert(TestEffect1.run(Kyo.foreach(Coll.empty[Int].withFilter(_ => true))(i => TestEffect1(i))).eval == Coll.empty)
+        }
+
         "tapEach" in {
             var seen = List.empty[Int]
             assert(TestEffect1.run(Kyo.tapEach(Coll.empty[Int])(i => TestEffect1(i).map(v => seen :+= v))).eval == Coll.empty)

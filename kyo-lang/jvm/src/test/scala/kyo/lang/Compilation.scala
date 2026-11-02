@@ -31,11 +31,11 @@ object Compilation:
         }
 
     /** The diagnostics of one compiler run. */
-    final case class Outcome(errors: Chunk[String]):
+    final case class Outcome(errors: Chunk[String], warnings: Chunk[String]):
         def hasErrors: Boolean = errors.nonEmpty
 
-        /** True when one error message contains `expected`. */
-        def reports(expected: String): Boolean = errors.exists(_.contains(expected))
+        /** True when one error or warning message contains `expected`; under `-Werror` a warning is what fails the compile. */
+        def reports(expected: String): Boolean = (errors ++ warnings).exists(_.contains(expected))
     end Outcome
 
     /** A temporary directory removed when the enclosing `Scope` closes. */
@@ -65,10 +65,11 @@ object Compilation:
                         destination.toString,
                         "-language:strictEquality",
                         "-Xcheck-macros",
+                        "-Werror",
                         "-color:never"
                     ) ::: plugins ::: files.map(_.toString).toList
                 val reporter = dotty.tools.dotc.Main.process(arguments.toArray)
-                Outcome(Chunk.from(reporter.allErrors).map(_.message))
+                Outcome(Chunk.from(reporter.allErrors).map(_.message), Chunk.from(reporter.allWarnings).map(_.message))
             }
         yield outcome
 

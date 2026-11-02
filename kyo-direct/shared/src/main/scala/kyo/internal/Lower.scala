@@ -92,25 +92,35 @@ private[kyo] object Lower:
             accumulator.foldTree(false, tree)(Symbol.spliceOwner)
         end hasNow
 
-        /** A term whose evaluation has no effect and no cost worth a binding: references, literals, stable paths, closures. */
+        /** A term that must not or need not be bound to a local before a later `.now`: references, literals, stable paths, closures,
+          * and the `new` of a constructor call, which is no value until its constructor is applied.
+          */
         private def trivial(term: Term): Boolean = term match
-            case _: Ident | _: Literal | _: This    => true
-            case Typed(inner, _)                    => trivial(inner)
-            case Block(List(_: DefDef), _: Closure) => true
-            case Inlined(_, Nil, inner)             => trivial(inner)
-            case _                                  => term.tpe.isSingleton
+            case _: Ident | _: Literal | _: This | _: New => true
+            case Typed(inner, _)                          => trivial(inner)
+            case Block(List(_: DefDef), _: Closure)       => true
+            case Inlined(_, Nil, inner)                   => trivial(inner)
+            case _                                        => term.tpe.isSingleton
 
         /** The tree with the definitions it holds re-owned to the macro: every definition the lowering emits or keeps is owned by the
           * macro while the tree is built, so a spliced tree has one owner for the quote to move to its place.
           */
         private def owned[T <: Tree](tree: T): T = tree.changeOwner(Symbol.spliceOwner)
 
-        /** Replaces references to the parameters of a rebuilt lambda by references to the new ones. */
+        /** Replaces references to the parameters of a rebuilt lambda by references to the new ones, in terms and in the singleton
+          * types the compiler's desugarings ascribe (a `for case` generator matches on `(x: @unchecked)` with `x`'s own type).
+          */
         private def substitute(tree: Term, replacements: Map[Symbol, Symbol]): Term =
+            def retype(tpe: TypeRepr): Option[TypeRepr] = tpe match
+                case ref: TermRef if replacements.contains(ref.termSymbol) => Some(Ref(replacements(ref.termSymbol)).tpe)
+                case AnnotatedType(underlying, annotation)                 => retype(underlying).map(AnnotatedType(_, annotation))
+                case _                                                     => None
             val mapper = new TreeMap:
                 override def transformTerm(term: Term)(owner: Symbol): Term = term match
                     case id: Ident if replacements.contains(id.symbol) => Ref(replacements(id.symbol))
                     case _                                             => super.transformTerm(term)(owner)
+                override def transformTypeTree(tree: TypeTree)(owner: Symbol): TypeTree =
+                    retype(tree.tpe).fold(super.transformTypeTree(tree)(owner))(Inferred(_))
             mapper.transformTerm(tree)(Symbol.spliceOwner)
         end substitute
 

@@ -292,6 +292,33 @@ class CounterpartsCollTest extends kyo.test.Test[Any]:
 
             assert(d.eval == Seq(1, 2))
         }
+        "withFilter then an effectful map" in {
+            def f(i: Int): Boolean < Any = i < 3
+            def g(i: Int): Int < Any     = i * 10
+
+            val d = direct:
+                xsValues.withFilter(i => f(i).now).map(i => g(i).now)
+
+            assert(d.eval ~== Seq(10, 20))
+        }
+        "for comprehension with a guard and an effectful body" in {
+            def f(i: Int): Boolean < Any = i < 3
+            def g(i: Int): Int < Any     = i * 10
+
+            val d = direct:
+                for
+                    i <- xsValues
+                    if f(i).now
+                yield g(i).now
+
+            assert(d.eval ~== Seq(10, 20))
+        }
+        "for comprehension with an effectful body in do form" in {
+            val d: Unit < Emit[Int] = direct:
+                for i <- xsValues do Emit.value(i).unit.now
+
+            Emit.run(d).map((vs, _) => assert(vs ~== Seq(1, 2, 3, 4)))
+        }
 
         "Choice" - {
             "map" in {

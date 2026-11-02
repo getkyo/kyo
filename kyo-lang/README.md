@@ -121,6 +121,10 @@ val result: Int             = Var.run(0)(program).eval
 
 The other direction holds as well: a `.kyo` definition calls admitted Scala APIs (pure methods directly, effectful methods through result binding), and a `.kyo` file compiles against the output of another `.kyo` file.
 
+## What a body can contain
+
+Bindings, blocks, conditionals, boolean operators, `match` with literal, binder, alternative, constructor, tuple, and typed patterns, pure custom extractors and pure guards, `while`, `for` comprehensions over admitted collections with guards and `case` generators (an effectful body runs through the Kyo counterpart), tuples and named tuples, string interpolation, type ascription, prefix operators, applications with multiple clauses, `using` clauses, named and repeated arguments, pure by-name arguments, pure local methods and closures, context functions, case lambdas as total functions, constructor applications, recursion, extension methods, and `@tailrec`. Each has a test in `BodyInventoryTest` over the `Inventory.kyo` fixture.
+
 ## What the language rejects
 
 Three kinds of rejection exist, and each diagnostic names the construct so the reader knows which rule applies.
@@ -128,7 +132,7 @@ Three kinds of rejection exist, and each diagnostic names the construct so the r
 | Reason | Meaning | Example |
 |---|---|---|
 | Language restriction | The construct conflicts with the semantic contract. | `null`, `var`, mutable field reads, an annotation erasing an effect. |
-| Unimplemented construct | The intended semantics still need a typing and lowering rule. | Handlers inside a body, effectful callbacks to methods without a Kyo counterpart, effectful by-name arguments, effectful fields, classes, default parameters. |
+| Unimplemented construct | The intended semantics still need a typing and lowering rule. | Handlers inside a body, effectful callbacks to methods without a Kyo counterpart, effectful by-name arguments, effectful guards, effectful fields, classes and enums, givens, default parameters. |
 | API admission | The resolved operation is outside the admitted surface. | `println`, `System.currentTimeMillis`, an unlisted method on an ordinary Scala object. |
 
 Pending-value composition methods are deliberately unavailable in a `.kyo` body: `Var.get[Int].map(...)` is a type error because the direct view of `Var.get[Int]` is an `Int`. Generated composition uses those methods; source code does not.

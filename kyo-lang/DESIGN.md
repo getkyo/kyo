@@ -372,10 +372,10 @@ The initial delivery is a coherent, explicitly bounded Scala subset with working
 | Source | Responsibility |
 |---|---|
 | [KyoLangPlugin.scala](plugin/src/main/scala/kyo/lang/plugin/KyoLangPlugin.scala) | Registers the regular plugin, named `kyo-lang`, with its two phases. |
-| [Preparation.scala](plugin/src/main/scala/kyo/lang/plugin/Preparation.scala) | Between parser and typer, selects `.kyo` units, inserts markers and body wrappers, adds checked metadata, and rejects unsupported syntax/declarations. |
+| [Preparation.scala](plugin/src/main/scala/kyo/lang/plugin/Preparation.scala) | Between parser and typer, selects `.kyo` units, adds `import kyo.*`, inserts markers and body wrappers, adds checked metadata, and rejects the syntax and declarations outside the inventory's supported rows, each with a message naming the construct. |
 | [Markers.scala](shared/src/main/scala/kyo/lang/internal/Markers.scala) | Supplies pure `A => A` and pending `A < S => A` marker overloads, both transparent. Normal typing selects the overload; the pending one is kyo-direct's `.now`, so a typed `.kyo` body is the body of a `direct` block. |
 | [Body.scala](shared/src/main/scala/kyo/lang/internal/Body.scala) | Typed macro that validates the body against the admitted surface, keeps a pure body as it is, rejects an effectful field, and otherwise lowers the body through kyo-direct's `Validate` and `Lower`. |
-| [Validate.scala](shared/src/main/scala/kyo/lang/internal/Validate.scala) | Validates resolved API symbols and references against the current small admitted surface; that surface is not the language's permanent standard library. |
+| [Validate.scala](shared/src/main/scala/kyo/lang/internal/Validate.scala) | Validates resolved API symbols, extractors, and references against the current small admitted surface, and rejects `null`, mutable and lazy locals, mutable field reads, and stored partial-function values; that surface is not the language's permanent standard library. |
 | [Checked.scala](shared/src/main/scala/kyo/lang/Checked.scala) | Metadata attached to compiled `.kyo` definitions, including for separate compilation. |
 | [CheckMetadata.scala](plugin/src/main/scala/kyo/lang/plugin/CheckMetadata.scala) | Post-typer check rejecting attempts to declare this metadata in ordinary `.scala` sources compiled with the plugin. |
 
@@ -394,7 +394,20 @@ The lowering is kyo-direct's, not a second implementation: the markers the plugi
 
 The module's tests cover exact exported return types, runtime assertions over every fixture, rejection checks for each unsupported construct and unadmitted API, five Scala interop rejections without the plugin, and presentation-compiler completion on a `.kyo` URI. The module's own `.kyo` fixtures compile through the plugin in the sbt build, which exercises Zinc with `.kyo` sources; it does not establish the planned sbt plugin, default formatting, or Metals integration.
 
-An effectful callback to a method with a Kyo counterpart (`List.map`, `foldLeft`, and the rest of kyo-direct's table) runs per element through that counterpart: `Programs.effectfulCallback` is `List[Int] < Var[Int]`. The implementation currently rejects handlers in the exercised example, effectful callbacks to methods without a counterpart, effectful by-name arguments outside those counterparts, effectful fields, default parameters, classes/traits, inheritance, mutable/lazy definitions, and object initialization statements. Some are deliberate initial language restrictions; handlers and stored closures are the next design work.
+An effectful callback to a method with a Kyo counterpart (`List.map`, `foldLeft`, a guarded `for`, and the rest of kyo-direct's table) runs per element through that counterpart: `Programs.effectfulCallback` is `List[Int] < Var[Int]`. The implementation currently rejects handlers in the exercised example, effectful callbacks to methods without a counterpart, effectful by-name arguments outside those counterparts, effectful guards, effectful fields, default parameters, classes/traits, enums, givens, exports, inheritance, mutable/lazy definitions, and object initialization statements. Some are deliberate initial language restrictions; handlers and stored closures are the next design work.
+
+### Inventory status
+
+Every row of the construct inventory has a test. `BodyInventoryTest` runs the supported Allow rows over the `Inventory.kyo` fixture, with the exact exported signature and runtime assertions; `KyoLangPluginInventoryTest` holds the rejections, one per row, with the exact diagnostic; `PreparationTest`, `ValidateTest`, and `BodyTest` carry the rows the module pinned first.
+
+| Status | Rows |
+|---|---|
+| Supported, with positive tests | L01, L03, L04, L06, L07, L09, T01, T02, T04, T05, T09, T13, D01, D02, D08, D09, D10, D11, D14, E01, E02, E03, E04, E05, E06, E07, E08, E13 (pure closures), E14, E16, E17, P01, P02, P03, P04, P05, P07 (pure guards), P09, O01, O10, C01, C04, C05, C08, M01, M06, A01, A03, A09 (interpolation, extractors, constructors, forwarding through the markers) |
+| Allow in the design, rejected until implemented, with rejection tests | D05 (pattern fields), D12, D15, E15, L08, O02, O03, O04, O05, P07 (effectful guards), C02, C06, M03, M05; stored and returned effectful closures (E13) and handlers inside a body (the boundary question) |
+| Deny, rejected with tests | L05, L10, L11, T10, T11, D03, D04, D06, D07, D13, E09, E10, E11, E12, E18, P06, P08, O06, O07, C03, C07, C09, M02, M04, M07, M09, M11, A02, A04, A05, A06, A07, A08; S04 (postfix) and S10 (placeholders) of the canonical forms |
+| Without a test yet | P10 (given patterns), O09 (`this` and `super`), E10 as distinct from E09 (both are the one `return` rejection) |
+
+Rows not listed are type-level or compile-time features that need no lowering rule (T03, T06, T07, T08, L02, S01 to S03, S05 to S09, S11, S12 belong to the formatter) or cannot be written in a `.kyo` body as the compiler is pinned (T12, M08, M10, P11, O08, O11, which fall under the class rejection or the compiler's own errors).
 
 ### Validated Scala interoperability
 

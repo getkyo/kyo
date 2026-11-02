@@ -1,0 +1,149 @@
+package kyolang
+
+import scala.annotation.tailrec
+
+/** One definition per row of the construct inventory the language supports today; BodyInventoryTest pins each. */
+object Inventory:
+    // L01: identifiers, including backticked names
+    def `backticked name` = Var.get[Int] + 1
+
+    // L03: literals of every kind, and E16: tuples
+    def literals = (1, "s", true)
+    def numeric  = (2L, 1.5, 'c')
+    def unit     = ()
+
+    // L04: string interpolation with an effectful argument
+    def interpolated = s"value ${Var.get[Int]}"
+
+    // L07: a local import of an admitted annotation (see tailRecursive), L09: a rooted qualified path
+    def qualified = _root_.kyolang.Programs.pure + Var.get[Int]
+
+    // T01: generic methods and applications
+    def generic[A](value: A): A = value
+    def applied = generic(Var.get[Int])
+
+    // T02: type aliases
+    type Count = Int
+    def aliased: Count < Var[Int] = Var.get[Int]
+
+    // T05: function-typed parameters applied inside the body
+    def applyTwice(f: Int => Int, value: Int) = f(f(value))
+    def twiceApplied = applyTwice(x => x + 1, Var.get[Int])
+
+    // D02: irrefutable destructuring of a tuple whose components are effectful
+    def destructured =
+        val (a, b) = (Var.get[Int], Var.get[String].length)
+        a + b
+
+    // D08: a pure local method
+    def localMethod =
+        def increment(value: Int) = value + 1
+        increment(Var.get[Int])
+
+    // D10: multiple clauses, named arguments, repeated parameters
+    def clauses(a: Int)(b: Int) = a + b
+    def multiClause = clauses(Var.get[Int])(2)
+    def named = Programs.pair(b = Var.get[Int], a = 1)
+    def first(head: Int, rest: Int*) = head
+    def repeated = first(Var.get[Int], 2, 3)
+
+    // D11: a pure by-name argument stays delayed; the effect is bound before the call
+    def delayed(value: => Int) = value + value
+    def byName =
+        val current = Var.get[Int]
+        delayed(current + 1)
+
+    // D14: recursion with a declared signature
+    def countdown(n: Int): Int < Var[Int] = if n == 0 then Var.get[Int] else countdown(n - 1)
+
+    // E03: a prefix operator on an exposed result
+    def negated = -Var.get[Int]
+
+    // E04: type ascription
+    def ascribed = (Var.get[Int]: Int) + 1
+
+    // E05: short-circuiting boolean operators with effects on both sides
+    def conjunction = Var.get[Int] > 0 && Var.get[String].length > 0
+    def disjunction = Var.get[Int] > 0 || Var.get[String].length > 0
+
+    // E06, P01, P02, P07: match with literal, binder, alternative, wildcard patterns and a pure guard
+    def matched =
+        Var.get[Int] match
+            case 0           => Var.get[String].length
+            case 1 | 2       => 10
+            case n if n > 50 => -n
+            case n           => n
+
+    // E07: for comprehensions over an admitted collection, with a guard and with an effectful body, and for-do
+    def comprehension = for x <- List(1, 2, 3) if x % 2 == 1 yield x * Var.get[Int]
+    def traversal = for x <- List(1, 2) do Var.updateDiscard[Int](y => y + x)
+
+    // E08: while with an effectful condition and body
+    def loop =
+        while Var.get[Int] < 3 do Var.updateDiscard[Int](x => x + 1)
+        Var.get[Int]
+
+    // E13: a stored pure closure applied to an exposed result
+    def stored =
+        val f = (x: Int) => x + 1
+        f(Var.get[Int])
+
+    // E14: a case lambda used as an ordinary total function
+    def caseLambda = List((1, 2), (3, 4)).map { case (a, b) => a + b }
+
+    // E17: a constructor application
+    def constructed = new Some(Var.get[Int])
+
+    // P03, P04: constructor and tuple patterns, a typed pattern
+    def optional(value: Option[Int]) =
+        value match
+            case Some(n) => n + Var.get[Int]
+            case None    => 0
+    def paired(value: (Int, Int)) =
+        value match
+            case (a, b) => a + b
+    def typed(value: Any) =
+        value match
+            case n: Int => n
+            case _      => Var.get[Int]
+
+    // P05: a pure custom extractor defined in the same unit
+    object Positive:
+        def unapply(value: Int): Option[Int] = if value > 0 then Some(value) else None
+    def extracted(value: Int) =
+        value match
+            case Positive(n) => n + Var.get[Int]
+            case _           => 0
+
+    // P09: a refutable for-case generator filters, with an effectful body
+    def collected = for case Some(x) <- List(Some(1), None, Some(3)) yield x + Var.get[Int]
+
+    // C01: a using clause on a .kyo method and an explicit using argument
+    def contextual(using scale: Int) = Var.get[Int] * scale
+    def scaled = contextual(using 3)
+
+    // C05: a context function value applied inside the body
+    def contextFunction =
+        val f: Int ?=> Int = (x: Int) ?=> x + 1
+        f(using Var.get[Int])
+
+    // T13: a named tuple
+    def namedTuple = (count = Var.get[Int], label = "n")
+
+    // O10: a private member used by a public one
+    private def helper = 1
+    def usesHelper = helper + Var.get[Int]
+
+    // C04: an extension method, pure and effectful
+    extension (value: Int)
+        def doubled = value * 2
+        def shifted = value + Var.get[Int]
+    def extended = Var.get[Int].doubled + 1.shifted
+
+    // C08: strict equality on exposed results
+    def equal = Var.get[Int] == 1
+
+    // M06: a diagnostic annotation on a pure recursive method
+    @tailrec def countTo(n: Int, acc: Int): Int = if n == 0 then acc else countTo(n - 1, acc + 1)
+    def counted = countTo(Var.get[Int], 0)
+end Inventory

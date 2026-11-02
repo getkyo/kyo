@@ -112,6 +112,7 @@ The table, with the `Kyo` operation for each method (`foreach`, `foreachConcat`,
 | Receiver family | Methods |
 |---|---|
 | A collection: `IterableOps[A, CC, CC[A]]` in its base types, with the method declared in `IterableOnceOps`, `IterableOps`, or `SeqOps` or overriding one that is | `map`, `flatMap`, `flatten`, `foreach`, `filter`, `filterNot`, `withFilter`, `collect`, `collectFirst` (`findFirst`), `find`, `exists`, `forall`, `count`, `fold` (`foldLeft`), `foldLeft`, `foldRight`, `scanLeft`, `scanRight`, `takeWhile`, `dropWhile`, `span`, `partition`, `partitionMap`, `groupBy`, `groupMap`, `groupMapReduce`, `maxByOption` (`maxBy`), `corresponds`, `tapEach` |
+| `WithFilter[A, CC]`, what `withFilter` and a guarded `for` produce over a collection | `map`, `flatMap`, `foreach`, `withFilter`; the `Kyo` operations materialize the passing elements into `CC` first |
 | `Maybe`, `Result` (extension methods, recognized by the receiver's type) | `map`, `flatMap`, `foreach`, `filter`, `filterNot`, `exists`, `forall`, `collect`, `fold`, `orElse`, `getOrElse`, where the type has the method |
 | `Option`, `Try`, `Either`, `Either.LeftProjection` (members declared in the type or overriding one that is) | `map`, `flatMap`, `foreach`, `filter`, `filterNot`, `filterOrElse`, `filterToOption`, `exists`, `forall`, `collect`, `fold`, `orElse`, `getOrElse`, `recover`, `recoverWith`, where the type has the method |
 

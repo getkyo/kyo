@@ -9,7 +9,8 @@ import scala.quoted.*
   * `xs.map(x => f(x).now)` cannot run its effect inside `Seq.map`, so the lowering rewrites the call to `Kyo.foreach(xs)(x => f(x))`,
   * with the callback lowered to return a computation. [[call]] recognizes such a call by its receiver's type and the method's name: a
   * collection (any `IterableOps` whose representation is its own constructor applied to its element, so `List`, `Vector`, `Chunk`,
-  * `Set`, `Iterable`), `Maybe`, `Result`, `Option`, `Try`, `Either`, or `Either.LeftProjection`. The method must be the type's own, and
+  * `Set`, `Iterable`), the `WithFilter` a guarded `for` produces over one, `Maybe`, `Result`, `Option`, `Try`, `Either`, or
+  * `Either.LeftProjection`. The method must be the type's own, and
   * named in the table below: the standard library's callback-taking methods, each paired with the `Kyo` operation of the same meaning.
   *
   * The `Kyo` operations take their type arguments in a fixed order, the receiver's own followed by the method's own followed by the
@@ -95,6 +96,7 @@ final private[kyo] class Counterparts[Q <: Quotes & Singleton](using val quotes:
 
     val kyo                      = Symbol.requiredModule("kyo.Kyo")
     private val iterableOps      = Symbol.requiredClass("scala.collection.IterableOps")
+    private val withFilter       = Symbol.requiredClass("scala.collection.WithFilter")
     private val collectionOwners =
         Set(iterableOps, Symbol.requiredClass("scala.collection.IterableOnceOps"), Symbol.requiredClass("scala.collection.SeqOps"))
     private val containerTypes = List(
@@ -120,7 +122,7 @@ final private[kyo] class Counterparts[Q <: Quotes & Singleton](using val quotes:
                             case _                    => None
                 receiver.flatMap { receiver =>
                     family(receiver.tpe).flatMap { (owner, receiverTypes) =>
-                        val table = if owner.equals(iterableOps) then collections else containers
+                        val table = if owner.equals(iterableOps) || owner.equals(withFilter) then collections else containers
                         table.get(symbol.name).filter(_ => declared(symbol, owner)).flatMap(operation(_, owner)).map { operation =>
                             val (explicit, explicitParameters, methodTypes) =
                                 if symbol.flags.is(Flags.ExtensionMethod) then
@@ -156,22 +158,26 @@ final private[kyo] class Counterparts[Q <: Quotes & Singleton](using val quotes:
             case TypeApply(fun, types) => peel(fun, lists, parameters, types.map(_.tpe) ::: typeArguments)
             case _                     => (term, lists, parameters, typeArguments)
 
-    /** The receiver's family, as the symbol of `IterableOps` or of the container type, with the type arguments its operations take. */
+    /** The receiver's family, as the symbol of `IterableOps`, of `WithFilter`, or of the container type, with the type arguments its
+      * operations take: constructor and element for a collection and for a filter over one.
+      */
     private def family(tpe: TypeRepr): Option[(Symbol, List[TypeRepr])] =
-        val widened = tpe.widen.dealias
-        widened.baseType(iterableOps) match
+        val widened    = tpe.widen.dealias
+        def collection = widened.baseType(iterableOps) match
             case AppliedType(_, List(element, constructor, repr)) if repr =:= constructor.appliedTo(element) =>
                 Some((iterableOps, List(constructor, element)))
-            case _ =>
-                def container(symbol: Symbol): Option[(Symbol, List[TypeRepr])] =
-                    widened match
-                        case AppliedType(constructor, args) if constructor.typeSymbol.equals(symbol) => Some((symbol, args))
-                        case _                                                                       =>
-                            widened.baseType(symbol) match
-                                case AppliedType(_, args) => Some((symbol, args))
-                                case _                    => None
-                containerTypes.iterator.map(container).collectFirst { case Some(found) => found }
-        end match
+            case _ => None
+        def filtered = widened.baseType(withFilter) match
+            case AppliedType(_, List(element, constructor)) => Some((withFilter, List(constructor, element)))
+            case _                                          => None
+        def container(symbol: Symbol): Option[(Symbol, List[TypeRepr])] =
+            widened match
+                case AppliedType(constructor, args) if constructor.typeSymbol.equals(symbol) => Some((symbol, args))
+                case _                                                                       =>
+                    widened.baseType(symbol) match
+                        case AppliedType(_, args) => Some((symbol, args))
+                        case _                    => None
+        collection.orElse(filtered).orElse(containerTypes.iterator.map(container).collectFirst { case Some(found) => found })
     end family
 
     /** True when the method is the family's own: declared or overridden from the collection traits or the container type. Extension
