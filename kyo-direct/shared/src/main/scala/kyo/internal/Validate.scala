@@ -1,5 +1,6 @@
 package kyo.internal
 
+import kyo.*
 import kyo.Ansi.*
 import kyo.internal.Trees
 import scala.annotation.tailrec
@@ -43,15 +44,35 @@ private val validMethodNamesForAsyncShift = Set(
 )
 
 private[kyo] object Validate:
-    def apply(expr: Expr[Any])(using quotes: Quotes): Unit =
+    def apply(expr: Expr[Any], markers: Markers)(using quotes: Quotes): Unit =
         import quotes.reflect.*
 
         def fail(tree: Tree, msg: String): Unit =
             report.error(msg, tree.pos)
 
+        /** A sequencing marker and the computation it wraps. */
+        object Sequenced:
+            def unapply(tree: Tree): Option[Term] = tree match
+                case term: Term =>
+                    markers.sequencing(term) match
+                        case Present((computation, _, _)) => Some(computation)
+                        case Absent                       => None
+                case _ => None
+        end Sequenced
+
+        /** A pass-through marker and the computation it wraps. */
+        object PassThrough:
+            def unapply(tree: Tree): Option[Term] = tree match
+                case term: Term =>
+                    markers.passThrough(term) match
+                        case Present(computation) => Some(computation)
+                        case Absent               => None
+                case _ => None
+        end PassThrough
+
         def pure(tree: Tree): Boolean =
             !Trees.exists(tree) {
-                case Apply(TypeApply(Ident("now"), _), _) => true
+                case Sequenced(_) => true
             }
         end pure
 
@@ -108,11 +129,12 @@ private[kyo] object Validate:
                     case _                          => Nil // Other cases (Literal, Closure, etc.)
         end extension
 
+        /** A nested boundary, already expanded: its markers belonged to it. */
         object DirectBlock:
             def unapply(t: Term): Boolean =
                 t match
-                    case Inlined(Some(Apply(TypeApply(Ident("direct"), _), _)), _, _) => true
-                    case _                                                            => false
+                    case Inlined(Some(call), _, _) => markers.isBoundary(call)
+                    case _                         => false
         end DirectBlock
 
         object ByNameArgWithNow:
@@ -122,7 +144,7 @@ private[kyo] object Validate:
                         case mt: MethodType =>
                             mt.paramTypes.zip(args).collectFirst {
                                 case (_: ByNameType, arg) if Trees.exists(arg) {
-                                        case Apply(TypeApply(Ident("now"), _), _) => true
+                                        case Sequenced(_) => true
                                     } =>
                                     arg
                             }
@@ -148,9 +170,13 @@ private[kyo] object Validate:
                 tree match
                     case Block(List(DefDef(_, _, _, Some(body))), _) =>
 
+                        // A `.now` in a Stream lambda usually fails to type, since the lambda's expected result type `V2 < S2`
+                        // binds the marker's `A`, and reaches here as an unresolved selection; the lazy-structure message is
+                        // still the one to give. `Clock.now` and other resolved members named `now` are not it.
                         val hasNow: Boolean = Trees.exists(body)({
-                            case t @ (Apply(TypeApply(Ident("now"), _), List(_)) | Select(_, "now")) => true
-                            case DirectBlock()                                                       => false
+                            case Sequenced(_)                                                => true
+                            case selection @ Select(_, "now") if selection.symbol.isNoSymbol => true
+                            case DirectBlock()                                               => false
                         })
 
                         if hasNow then
@@ -174,8 +200,8 @@ private[kyo] object Validate:
                             )
                         else
                             body match
-                                case DirectBlock()                                       =>
-                                case x @ Apply(TypeApply(Ident("later"), _), List(qual)) =>
+                                case DirectBlock()      =>
+                                case x @ PassThrough(_) =>
                                     Trees.Step.goto(x)
 
                                 case tree: Term if tree.tpe.typeSymbol.name == "<" =>
@@ -242,14 +268,14 @@ private[kyo] object Validate:
                     Trees.Step.goto(c.rhs)
                 }
 
-            case Apply(TypeApply(Ident("now"), _), List(qual)) =>
+            case Sequenced(qual) =>
                 statementsDive(qual)
 
-            case Apply(TypeApply(Ident("later"), _), List(qual)) =>
+            case PassThrough(qual) =>
                 statementsDive(qual)
 
                 Trees.traverse(qual) {
-                    case Apply(TypeApply(Ident("now"), _), _) =>
+                    case Sequenced(_) =>
                         fail(
                             qual,
                             s"""${".now".cyan} and ${".later".cyan} should not be nested.

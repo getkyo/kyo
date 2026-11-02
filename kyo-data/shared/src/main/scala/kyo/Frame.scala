@@ -181,9 +181,6 @@ object Frame:
     private def frameImpl()(using Quotes): Expr[String] =
         import quotes.reflect.*
 
-        val pos      = quotes.reflect.Position.ofMacroExpansion
-        val fileName = pos.sourceFile.name
-
         if FindEnclosing.isInternal then
             report.errorAndAbort(
                 s"""Frame cannot be derived within the kyo package.
@@ -197,8 +194,30 @@ object Frame:
             )
         end if
 
-        val cls    = FindEnclosing(_.isClassDef).map(_.fullName).getOrElse("?")
-        val caller = FindEnclosing(_.isDefDef).map(_.name).getOrElse("?")
+        Expr(encode(quotes.reflect.Position.ofMacroExpansion))
+    end frameImpl
+
+    /** The frame value for an encoded frame string. Inline so the literal a macro produces is the frame itself, with no call left. */
+    private[kyo] inline def fromEncoded(inline encoded: String): Frame = encoded
+
+    /** Builds the frame for a source position chosen by a macro, rather than for the macro's own expansion point.
+      *
+      * A lowering macro that generates suspensions on behalf of user code (kyo-direct's `direct`, the `.kyo` language) calls this with
+      * the position of the expression that suspends, so a trace points at that expression and not at the block around it. The
+      * enclosing class and method are those of the expansion, which is where the generated code lives. Unlike `derive`, this
+      * does not refuse package `kyo`: the caller is a macro that decides where its frames belong.
+      */
+    private[kyo] def fromPosition(using q: Quotes)(pos: q.reflect.Position): Expr[Frame] =
+        val encoded = Expr(encode(pos))
+        '{ fromEncoded($encoded) }
+
+    /** The encoded frame for a position: version, location, enclosing class and method, callee, and source snippet. */
+    private def encode(using q: Quotes)(pos: q.reflect.Position): String =
+        import q.reflect.*
+
+        val fileName = pos.sourceFile.name
+        val cls      = FindEnclosing(_.isClassDef).map(_.fullName).getOrElse("?")
+        val caller   = FindEnclosing(_.isDefDef).map(_.name).getOrElse("?")
 
         // Resolve the file's content and line split from the per-file memo. On a hit (same
         // source-file object) the content is reused without re-reading it; on a miss the
@@ -254,8 +273,8 @@ object Frame:
             selected.map(_.drop(toDrop)).mkString("\n")
         end snippet
 
-        Expr(s"$version$fileName:${pos.startLine + 1}:${pos.startColumn + 1}|$cls|$caller|$callee|$snippet")
-    end frameImpl
+        s"$version$fileName:${pos.startLine + 1}:${pos.startColumn + 1}|$cls|$caller|$callee|$snippet"
+    end encode
 
     private def line0Length(lines: Array[String], i: Int): Int =
         if i >= 0 && i < lines.length then lines(i).length else 0

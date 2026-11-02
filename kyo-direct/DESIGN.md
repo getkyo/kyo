@@ -125,7 +125,7 @@ A by-name argument of `orElse`/`getOrElse` with a sequencing marker lowers as a 
 
 **R11. Lambdas.** A lambda whose body contains a sequencing marker and that is not the argument of a shift is rejected (today's message). A lambda whose body is a nested boundary, or contained only pass-through markers, is left alone by R1.
 
-**R12. Streams.** A sequencing marker inside a lambda passed to a `Stream` method is rejected with the lazy-structure diagnostic, regardless of the method. Pass-through markers and nested boundaries inside such a lambda are fine.
+**R12. Streams.** A sequencing marker inside a lambda passed to a `Stream` method is rejected with the lazy-structure diagnostic, regardless of the method. Pass-through markers and nested boundaries inside such a lambda are fine. In practice such a `.now` never types: the lambda's expected result type `V2 < S2` binds the marker's `A`, so it reaches the validator as an unresolved selection named `now`, and the rule recognizes that shape too, which is what makes the diagnostic the one the user sees rather than the type error alone.
 
 **R13. End of a boundary.** The last expression lowers with `K = x => Kyo.lift[A, S](x)`, and the boundary's type is `A < S`.
 

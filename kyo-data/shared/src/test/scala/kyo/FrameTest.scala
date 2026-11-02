@@ -13,9 +13,24 @@ class FrameTest extends kyo.test.Test[Any]:
 
     val internal = Frame.internal
 
+    def positioned = FramePositionMacro.frameOf(1 + 2)
+
     "show" in {
         assert(test1.show == "Frame(FrameTest.scala:7:28, kyo.FrameTest, test1, def test1 = test(1 + 2))")
         assert(test2.show == "Frame(FrameTest.scala:12:6, kyo.FrameTest, test2, })")
+    }
+
+    "fromPosition" - {
+        "points at the chosen expression, not at the macro expansion" in {
+            // The argument `1 + 2` starts at column 49 of line 16; the expansion point would be the end of the call.
+            assert(positioned.position.show == "FrameTest.scala:16:49")
+            assert(positioned.className == "kyo.FrameTest")
+            assert(positioned.callerName == "positioned")
+        }
+        "renders the marker at the expression's end" in {
+            import kyo.Ansi.*
+            assert(positioned.render.stripAnsi.linesIterator.exists(_.endsWith("def positioned = FramePositionMacro.frameOf(1 + 2📍)")))
+        }
     }
 
     "render" - {
