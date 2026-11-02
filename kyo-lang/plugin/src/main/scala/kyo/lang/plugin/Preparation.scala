@@ -5,6 +5,7 @@ import dotty.tools.dotc.core.Contexts.*
 import dotty.tools.dotc.core.Decorators.*
 import dotty.tools.dotc.core.Flags.*
 import dotty.tools.dotc.core.StdNames.nme
+import dotty.tools.dotc.core.Symbols
 import dotty.tools.dotc.plugins.PluginPhase
 import dotty.tools.dotc.report
 
@@ -21,6 +22,9 @@ import dotty.tools.dotc.report
   *   - wraps the whole body in `kyo.lang.internal.Body.apply` (methods) or `kyo.lang.internal.Body.field` (values), the typed macro that
   *     validates the body and lowers it through kyo-direct.
   *   - attaches the `kyo.lang.Checked` annotation, the metadata a later compilation reads to admit the definition.
+  *
+  * Every `.kyo` unit also gets `import kyo.*` ahead of its own statements, so Kyo's API is in scope without an import; a unit that
+  * writes the import as well is unaffected.
   *
   * Declarations outside the supported subset are reported here, at their source position: classes and traits, inheritance, inline and
   * implicit definitions, default parameters, mutable and lazy fields, and object initialization statements. The error text names the
@@ -40,12 +44,28 @@ final class Preparation extends PluginPhase:
     private def force(tree: untpd.Tree)(using Context): untpd.Tree =
         untpd.Apply(qualified(markersPath*), List(tree)).withSpan(tree.span)
 
+    /** True when the tree is a stable path naming a package on the classpath, such as `java.lang` or `_root_.scala`. A package is
+      * not a value, so it cannot be wrapped in a marker; the first selection that leaves the package is wrapped instead.
+      */
+    private def isPackage(tree: untpd.Tree)(using Context): Boolean =
+        def path(tree: untpd.Tree): Option[String] = tree match
+            case untpd.Ident(name) if name == nme.ROOTPKG => Some("")
+            case untpd.Ident(name)                        => Some(name.toString)
+            case untpd.Select(qualifier, name)            =>
+                path(qualifier).map(prefix => if prefix.isEmpty then name.toString else s"$prefix.$name")
+            case _ => None
+        path(tree).exists { dotted =>
+            dotted.isEmpty || Symbols.getPackageClassIfDefined(dotted).exists
+        }
+    end isPackage
+
     /** The function position of an application: its qualifier is an expression, its name is not. */
     private def callee(tree: untpd.Tree)(using Context): untpd.Tree = tree match
-        case tree: untpd.Select    => untpd.cpy.Select(tree)(expression(tree.qualifier), tree.name)
-        case tree: untpd.TypeApply => untpd.cpy.TypeApply(tree)(callee(tree.fun), tree.args)
-        case tree: untpd.Apply     => untpd.cpy.Apply(tree)(callee(tree.fun), tree.args.map(expression))
-        case _                     => tree
+        case tree: untpd.Select if isPackage(tree.qualifier) => tree
+        case tree: untpd.Select                              => untpd.cpy.Select(tree)(expression(tree.qualifier), tree.name)
+        case tree: untpd.TypeApply                           => untpd.cpy.TypeApply(tree)(callee(tree.fun), tree.args)
+        case tree: untpd.Apply                               => untpd.cpy.Apply(tree)(callee(tree.fun), tree.args.map(expression))
+        case _                                               => tree
 
     private def expression(tree: untpd.Tree)(using Context): untpd.Tree = tree match
         case tree: untpd.Literal   => tree
@@ -118,8 +138,18 @@ final class Preparation extends PluginPhase:
                         report.error("Mutable and lazy fields are not supported in .kyo", value.srcPos)
                     untpd.cpy.ValDef(value)(value.name, value.tpt, body(value.rhs, true)).withMods(checkedMods(value))
                 case _ => super.transform(tree)
+
+        /** The unit with `import kyo.*` ahead of its own statements: every `.kyo` file sees Kyo's API without writing the import. */
+        def imported(tree: untpd.Tree): untpd.Tree = tree match
+            case pkg: untpd.PackageDef =>
+                val start    = pkg.span.startPos
+                val wildcard = untpd.ImportSelector(untpd.Ident(nme.WILDCARD).withSpan(start)).withSpan(start)
+                val kyo      = untpd.Import(untpd.Ident("kyo".toTermName).withSpan(start), List(wildcard)).withSpan(start)
+                untpd.cpy.PackageDef(pkg)(pkg.pid, kyo :: pkg.stats)
+            case other => other
+
         // The unit's untyped tree is replaced before the typer reads it; the compiler owns the unit and drives this phase.
-        ctx.compilationUnit.untpdTree = mapper.transform(ctx.compilationUnit.untpdTree)
+        ctx.compilationUnit.untpdTree = imported(mapper.transform(ctx.compilationUnit.untpdTree))
     end run
 end Preparation
 

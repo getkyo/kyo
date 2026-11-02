@@ -6,8 +6,6 @@ A `.kyo` file compiles as part of a regular Scala 3 build: a scalac plugin (`kyo
 
 ```kyo
 // Counter.kyo
-import kyo.*
-
 object Counter:
     def twice(value: Int): Int = value + value
 
@@ -29,7 +27,7 @@ def increment: Int < Var[Int] =
 
 ## Writing a `.kyo` definition
 
-A `.kyo` file holds reusable program definitions: objects, pure and effectful methods, and pure immutable values. There is no `@pure` marker and no annotation to opt in: the file extension selects the language, and a definition's purity follows from its body and the contracts of the operations it uses.
+A `.kyo` file holds reusable program definitions: objects, pure and effectful methods, and pure immutable values. There is no `@pure` marker and no annotation to opt in: the file extension selects the language, and a definition's purity follows from its body and the contracts of the operations it uses. Kyo's API is in scope in every `.kyo` file without an import, as if the file began with `import kyo.*`; writing the import anyway is harmless.
 
 ### Bindings bind results
 

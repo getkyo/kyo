@@ -45,14 +45,13 @@ class ValidateTest extends kyo.test.Test[Any]:
     "a static Java API" in rejects(
         "JavaStatic.kyo",
         """object JavaStatic:
-          |    def bad = System.currentTimeMillis()
+          |    def bad = java.lang.System.currentTimeMillis()
           |""".stripMargin
-    )("not a value")
+    )("API is not admitted in .kyo: java.lang.System.currentTimeMillis")
 
     "a handler" in rejects(
         "Handler.kyo",
-        """import kyo.*
-          |object Handler:
+        """object Handler:
           |    def bad = Abort.run[String] {
           |        Abort.fail("failure")
           |        42
@@ -92,8 +91,7 @@ class ValidateTest extends kyo.test.Test[Any]:
 
     "pending-value methods are not available on an exposed result" in rejects(
         "PendingMethods.kyo",
-        """import kyo.*
-          |object PendingMethods:
+        """object PendingMethods:
           |    def badMap = Var.get[Int].map(x => x + 1)
           |    def badUnit = Var.get[Int].unit
           |""".stripMargin
@@ -101,8 +99,7 @@ class ValidateTest extends kyo.test.Test[Any]:
 
     "an annotation cannot erase or replace a required effect" in rejects(
         "EffectRow.kyo",
-        """import kyo.*
-          |object EffectRow:
+        """object EffectRow:
           |    def bad: Int < Async = Var.get[Int]
           |""".stripMargin
     )("Required: Int < kyo.Async")

@@ -22,8 +22,6 @@ For example, the intended source contract is:
 
 ```scala
 // Counter.kyo
-import kyo.*
-
 object Counter:
     def twice(value: Int): Int = value + value
 
@@ -448,7 +446,7 @@ These are semantic requirements. The syntax preparation alone cannot decide whic
 
 ## CPS transformation rules
 
-Each **From** block is Scala syntax inside a `.kyo` method body; each **To** block is generated ordinary Scala. Assume `import kyo.*`, `chunk: Chunk[Int]`, and that illustrative helpers such as `combine`, `consume`, and `pureCalculation` are approved pure functions. The examples are independent method-body fragments, not one compilation unit.
+Each **From** block is Scala syntax inside a `.kyo` method body; each **To** block is generated ordinary Scala. Every `.kyo` file has `kyo.*` in scope; assume `chunk: Chunk[Int]`, and that illustrative helpers such as `combine`, `consume`, and `pureCalculation` are approved pure functions. The examples are independent method-body fragments, not one compilation unit.
 
 These are target rewrites, including features not yet implemented. They assume resolved value/computation boundaries and callback types; obtaining those through normal Scala typing remains the architecture gate below. Generated pending-value `.map` calls are compiler output, not methods exposed to the source program.
 

@@ -1,7 +1,5 @@
 package kyolang
 
-import kyo.*
-
 object Programs:
     val constant = 42
 

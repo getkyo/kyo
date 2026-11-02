@@ -11,8 +11,7 @@ import scala.meta.pc.PresentationCompiler
 class KyoLangPluginTest extends kyo.test.Test[Any]:
 
     private val marked =
-        """import kyo.*
-          |object Example:
+        """object Example:
           |    def example =
           |        val text = Var.get[String]
           |        text.subs@@

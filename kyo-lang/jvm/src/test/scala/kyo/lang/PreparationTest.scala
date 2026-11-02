@@ -63,19 +63,30 @@ class PreparationTest extends kyo.test.Test[Any]:
         )("Inline and implicit definitions are not supported in .kyo")
     }
 
+    "imports" - {
+        "kyo.* is in scope without an import, and an explicit import is harmless" in {
+            Path.run {
+                for
+                    dir      <- Compilation.workspace
+                    implied  <- Compilation.write(dir, "Implied.kyo", "object Implied:\n    def read = Var.get[Int] + 1\n")
+                    explicit <- Compilation.write(dir, "Explicit.kyo", "import kyo.*\nobject Explicit:\n    def read = Var.get[Int] + 1\n")
+                    outcome  <- Compilation.compile(Chunk(implied, explicit), dir / "classes", Chunk.empty, withPlugin = true)
+                yield assert(!outcome.hasErrors, outcome.errors.mkString("\n"))
+            }
+        }
+    }
+
     "bodies" - {
         "an effectful field" in rejects(
             "EffectfulField.kyo",
-            """import kyo.*
-              |object EffectfulField:
+            """object EffectfulField:
               |    val bad = Var.get[Int]
               |""".stripMargin
         )("Effectful fields are not supported in .kyo")
 
         "an effectful callback to a method without a Kyo counterpart" in rejects(
             "Callback.kyo",
-            """import kyo.*
-              |object Callback:
+            """object Callback:
               |    def twice(f: Int => Int): Int = f(f(1))
               |    def bad = twice(x => Var.get[Int] + x)
               |""".stripMargin
@@ -83,8 +94,7 @@ class PreparationTest extends kyo.test.Test[Any]:
 
         "an effectful by-name argument" in rejects(
             "ByName.kyo",
-            """import kyo.*
-              |object ByName:
+            """object ByName:
               |    def ignore(value: => Int): Int = 42
               |    def bad = ignore(Var.get[Int])
               |""".stripMargin
