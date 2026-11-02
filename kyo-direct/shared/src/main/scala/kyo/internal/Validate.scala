@@ -160,6 +160,32 @@ private[kyo] object Validate:
             qualifiers.foreach(skipDive)
         end skipDive
 
+        /** A computation in a position where its effects would be dropped. */
+        def bare(tree: Tree): Unit =
+            fail(
+                tree,
+                s"""Effectful computations must explicitly use either ${".now".cyan} or ${".later".cyan} in a ${"direct".yellow} block.
+                   |
+                   |You have two options:
+                   |
+                   |${bold("1. Use .now when you need the effect's result immediately:")}
+                   |${highlight("""
+                   |direct {
+                   |  val x: Int = Sync.defer(1).now      // Get result here
+                   |  val y: Int = x + Sync.defer(2).now  // Use result in next computation
+                   |  y * 2                       // Use final result
+                   |}""".stripMargin)}
+                   |
+                   |${bold("2. Use .later (advanced) when you want to preserve the effect:")}
+                   |${highlight("""
+                   |direct {
+                   |  val x: Int < Sync = Sync.defer(1).later    // Keep effect for later
+                   |  val y: Int < Sync = Sync.defer(2).later    // Keep another effect
+                   |  x.now + y.now                    // Sequence effects
+                   |}""".stripMargin)}
+                   |""".stripMargin
+            )
+
         Trees.traverseGoto(expr.asTerm) {
             case CounterpartCall(receiver, arguments) =>
                 Trees.Step.goto(receiver)
@@ -170,7 +196,15 @@ private[kyo] object Validate:
                 skipDive(argGroup0)
                 skipDive(argGroup1)
 
-            // direct: in direct:
+            // A nested block is a computation: its markers were its own. Under a marker or as an argument it is a value;
+            // as a statement its effects would be dropped, so it needs `.now` like any other computation.
+            case Block(statements, expression) =>
+                statements.foreach {
+                    case statement @ DirectBlock() => bare(statement)
+                    case statement                 => Trees.Step.goto(statement)
+                }
+                Trees.Step.goto(expression)
+
             case DirectBlock() =>
 
             // Match expressions: route into scrutinee + each case body, skipping the
@@ -218,30 +252,7 @@ private[kyo] object Validate:
                         )
                 }
 
-            case tree: Term if tree.tpe.typeSymbol.name == "<" =>
-                fail(
-                    tree,
-                    s"""Effectful computations must explicitly use either ${".now".cyan} or ${".later".cyan} in a ${"direct".yellow} block.
-                       |
-                       |You have two options:
-                       |
-                       |${bold("1. Use .now when you need the effect's result immediately:")}
-                       |${highlight("""
-                       |direct {
-                       |  val x: Int = Sync.defer(1).now      // Get result here
-                       |  val y: Int = x + Sync.defer(2).now  // Use result in next computation
-                       |  y * 2                       // Use final result
-                       |}""".stripMargin)}
-                       |
-                       |${bold("2. Use .later (advanced) when you want to preserve the effect:")}
-                       |${highlight("""
-                       |direct {
-                       |  val x: Int < Sync = Sync.defer(1).later    // Keep effect for later
-                       |  val y: Int < Sync = Sync.defer(2).later    // Keep another effect
-                       |  x.now + y.now                    // Sequence effects
-                       |}""".stripMargin)}
-                       |""".stripMargin
-                )
+            case tree: Term if tree.tpe.typeSymbol.name == "<" => bare(tree)
 
             case tree @ ValDef(_, _, _) if tree.symbol.flags.is(Flags.Mutable) =>
                 fail(

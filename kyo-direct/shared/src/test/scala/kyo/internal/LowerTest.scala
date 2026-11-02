@@ -453,6 +453,16 @@ class LowerTest extends kyo.test.Test[Any]:
             }
             assert(Abort.run(value).eval == Result.succeed(1))
         }
+        "a nested block in statement position is rejected" in {
+            typeCheckFailure(
+                """
+                direct {
+                    direct(Sync.defer(1).now)
+                    2
+                }
+                """
+            )("Effectful computations must explicitly use either .now or .later")
+        }
         "the handled effect does not widen the outer row" in {
             typeCheckFailure(
                 """

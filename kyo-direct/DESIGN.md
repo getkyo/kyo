@@ -19,7 +19,7 @@ Unchanged: the names, types, and diagnostics of `direct`, `now`, and `later`; a 
 Two deliberate changes against the dotty-cps-async implementation:
 
 1. **Recognition is by the receiver's type and the resolved method, not by name alone.** A call is rewritten when its receiver is a collection, `Maybe`, `Result`, `Option`, `Try`, `Either`, or `Either.LeftProjection` and the method is that type's own (declared there or overriding it) and in the table of `Counterparts`. A method that merely shares a name on another type is not rewritten.
-2. **A nested `direct` used as a bare statement is rejected.** Any pending-typed expression in statement or value position under no marker is rejected with the "must explicitly use either .now or .later" message, nested blocks included.
+2. **A nested `direct` used as a bare statement is rejected.** Its effects would be dropped, so it gets the "must explicitly use either .now or .later" message like any other computation in statement position. As an argument it is a value, as before.
 
 ## What the implementation does, as the tests pin it
 
@@ -115,7 +115,7 @@ The table, with the `Kyo` operation for each method (`foreach`, `foreachConcat`,
 | `Maybe`, `Result` (extension methods, recognized by the receiver's type) | `map`, `flatMap`, `foreach`, `filter`, `filterNot`, `exists`, `forall`, `collect`, `fold`, `orElse`, `getOrElse`, where the type has the method |
 | `Option`, `Try`, `Either`, `Either.LeftProjection` (members declared in the type or overriding one that is) | `map`, `flatMap`, `foreach`, `filter`, `filterNot`, `filterOrElse`, `filterToOption`, `exists`, `forall`, `collect`, `fold`, `orElse`, `getOrElse`, `recover`, `recoverWith`, where the type has the method |
 
-**R10. Nested blocks.** A nested `direct` inside the body is a value of type `A < S'` as far as the outer block is concerned; its markers belonged to it. Under `.now` it is bound like any computation; under `.later` it is a value. Not under a marker it is a bare pending expression and is rejected, in value and in statement position.
+**R10. Nested blocks.** A nested `direct` inside the body is a value of type `A < S'` as far as the outer block is concerned; its markers belonged to it. Under `.now` it is bound like any computation; under `.later` or as an argument it is a value. As a statement it is a bare pending expression and is rejected.
 
 **R11. Lambdas.** A lambda whose body contains a marker and that is not an argument of a recognized call is rejected. A lambda whose body is a nested block, or contained only `.later`, is left alone by R1.
 
