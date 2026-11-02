@@ -120,44 +120,6 @@ class KyoForeachCollTest extends AnyFreeSpec:
             assert(Kyo.takeWhile(Coll(4, 1, 2))(x => lessThanThree(x)).eval == Coll.empty[Int])
         }
 
-        "shiftedWhile" in {
-            def isEven(i: Int): Boolean < Any = i % 2 == 0
-
-            def lessThanThree(i: Int): Boolean < Any = i < 3
-
-            val countWhile = Kyo.shiftedWhile(Coll(1, 2, 3, 4, 5))(
-                prolog = 0,
-                f = lessThanThree,
-                acc = (count, include, _) => count + 1,
-                epilog = identity
-            )
-            assert(countWhile.eval == 3)
-
-            val sumWithMessage = Kyo.shiftedWhile(Coll(1, 2, -1, 3, 4))(
-                prolog = 0,
-                f = lessThanThree,
-                acc = (sum, include, curr) => if include then sum + curr else sum,
-                epilog = sum => s"Sum: $sum"
-            )
-            assert(sumWithMessage.eval == "Sum: 2") // 1 + 2 + (-1) = 2
-
-            val collectUntilOdd = Kyo.shiftedWhile(Coll(2, 4, 6, 7, 8))(
-                prolog = Coll.empty,
-                f = isEven,
-                acc = (list, include, curr) => if include then curr +: list else list,
-                epilog = _.reverse // Maintain original order
-            )
-            assert(collectUntilOdd.eval == Coll(2, 4, 6))
-
-            val emptyTest = Kyo.shiftedWhile(Coll.empty[Int])(
-                prolog = "Default",
-                f = _ => true,
-                acc = (str, _, curr) => str + curr.toString,
-                epilog = _.toUpperCase
-            )
-            assert(emptyTest.eval == "DEFAULT")
-        }
-
         "span" - {
             "empty sequence" in {
                 val result = Kyo.span(Coll.empty[Int])(x => x < 3).eval
@@ -399,6 +361,113 @@ class KyoForeachCollTest extends AnyFreeSpec:
                 TestEffect1.run(Kyo.foreachDiscard(Coll.fill(n)(1))(v => TestEffect1(v).map(i => acc :+= i))).eval
                 assert(acc.size == n)
             }
+        }
+    }
+
+    // @TestVariant("Coll", "List", "Chunk")
+    "Coll generic" - {
+        "filterNot" in {
+            assert(TestEffect1.run(Kyo.filterNot(Coll.empty[Int])(i => TestEffect1(i).map(_ > 2))).eval == Coll.empty)
+            assert(TestEffect1.run(Kyo.filterNot(Coll(1, 2, 3))(i => TestEffect1(i).map(_ > 2))).eval == Coll(1))
+            assert(TestEffect1.run(Kyo.filterNot(Coll(1, 2, 3))(i => TestEffect1(i).map(_ > 10))).eval == Coll(1, 2, 3))
+        }
+
+        "find" in {
+            assert(TestEffect1.run(Kyo.find(Coll.empty[Int])(i => TestEffect1(i).map(_ > 2))).eval == Maybe.empty)
+            assert(TestEffect1.run(Kyo.find(Coll(1, 2, 3))(i => TestEffect1(i).map(_ > 2))).eval == Maybe(2))
+            assert(TestEffect1.run(Kyo.find(Coll(1, 2, 3))(i => TestEffect1(i).map(_ > 10))).eval == Maybe.empty)
+        }
+
+        "find stops at the first match" in {
+            var visited = 0
+            val found   = TestEffect1.run(Kyo.find(Coll(1, 2, 3))(i =>
+                TestEffect1(i).map(v =>
+                    visited += 1; v > 1
+                )
+            )).eval
+            assert(found == Maybe(1))
+            assert(visited == 1)
+        }
+
+        "exists" in {
+            assert(!TestEffect1.run(Kyo.exists(Coll.empty[Int])(i => TestEffect1(i).map(_ > 0))).eval)
+            assert(TestEffect1.run(Kyo.exists(Coll(1, 2, 3))(i => TestEffect1(i).map(_ > 3))).eval)
+            assert(!TestEffect1.run(Kyo.exists(Coll(1, 2, 3))(i => TestEffect1(i).map(_ > 4))).eval)
+        }
+
+        "exists stops at the first match" in {
+            var visited = 0
+            assert(TestEffect1.run(Kyo.exists(Coll(1, 2, 3))(i =>
+                TestEffect1(i).map(v =>
+                    visited += 1; v == 2
+                )
+            )).eval)
+            assert(visited == 1)
+        }
+
+        "forall" in {
+            assert(TestEffect1.run(Kyo.forall(Coll.empty[Int])(i => TestEffect1(i).map(_ > 10))).eval)
+            assert(TestEffect1.run(Kyo.forall(Coll(1, 2, 3))(i => TestEffect1(i).map(_ > 1))).eval)
+            assert(!TestEffect1.run(Kyo.forall(Coll(1, 2, 3))(i => TestEffect1(i).map(_ > 2))).eval)
+        }
+
+        "forall stops at the first failure" in {
+            var visited = 0
+            assert(!TestEffect1.run(Kyo.forall(Coll(1, 2, 3))(i =>
+                TestEffect1(i).map(v =>
+                    visited += 1; v > 2
+                )
+            )).eval)
+            assert(visited == 1)
+        }
+
+        "count" in {
+            assert(TestEffect1.run(Kyo.count(Coll.empty[Int])(i => TestEffect1(i).map(_ > 2))).eval == 0)
+            assert(TestEffect1.run(Kyo.count(Coll(1, 2, 3))(i => TestEffect1(i).map(_ > 2))).eval == 2)
+            assert(TestEffect1.run(Kyo.count(Coll(1, 2, 3))(i => TestEffect1(i).map(_ > 10))).eval == 0)
+        }
+
+        "foldRight" in {
+            assert(TestEffect1.run(Kyo.foldRight(Coll.empty[Int])(List.empty[Int])((i, acc) => TestEffect1(i).map(_ :: acc))).eval == Nil)
+            assert(TestEffect1.run(Kyo.foldRight(Coll(1, 2, 3))(List.empty[Int])((i, acc) => TestEffect1(i).map(_ :: acc))).eval ==
+                List(2, 3, 4))
+            assert(TestEffect1.run(Kyo.foldRight(Coll(1, 2, 3))("")((i, acc) => TestEffect1(i).map(v => acc + v))).eval == "432")
+        }
+
+        "scanRight" in {
+            assert(TestEffect1.run(Kyo.scanRight(Coll.empty[Int])(0)((i, acc) => TestEffect1(i).map(_ + acc))).eval == Coll(0))
+            assert(TestEffect1.run(Kyo.scanRight(Coll(1, 2, 3))(0)((i, acc) => TestEffect1(i).map(_ + acc))).eval == Coll(9, 7, 4, 0))
+        }
+
+        "groupMapReduce" in {
+            assert(TestEffect1.run(Kyo.groupMapReduce(Coll.empty[Int])(i => TestEffect1(i).map(_ % 2))(i => TestEffect1(i))((a, b) =>
+                TestEffect1(a + b)
+            )).eval == Map.empty)
+            assert(TestEffect1.run(Kyo.groupMapReduce(Coll(1, 2, 3, 4))(i => TestEffect1(i).map(_ % 2))(i => TestEffect1(i))((a, b) =>
+                TestEffect1(a + b)
+            )).eval == Map(0 -> 7, 1 -> 9))
+        }
+
+        "maxBy" in {
+            assert(TestEffect1.run(Kyo.maxBy(Coll.empty[Int])(i => TestEffect1(-i))).eval == Maybe.empty)
+            assert(TestEffect1.run(Kyo.maxBy(Coll(3, 1, 2))(i => TestEffect1(-i))).eval == Maybe(1))
+            assert(TestEffect1.run(Kyo.maxBy(Coll(3, 1, 2))(i => TestEffect1(i))).eval == Maybe(3))
+        }
+
+        "corresponds" in {
+            assert(TestEffect1.run(Kyo.corresponds(Coll.empty[Int])(Seq.empty[Int])((a, b) => TestEffect1(a).map(_ == b))).eval)
+            assert(TestEffect1.run(Kyo.corresponds(Coll(1, 2, 3))(Seq(2, 3, 4))((a, b) => TestEffect1(a).map(_ == b))).eval)
+            assert(!TestEffect1.run(Kyo.corresponds(Coll(1, 2, 3))(Seq(2, 3, 5))((a, b) => TestEffect1(a).map(_ == b))).eval)
+            assert(!TestEffect1.run(Kyo.corresponds(Coll(1, 2, 3))(Seq(2, 3))((a, b) => TestEffect1(a).map(_ == b))).eval)
+            assert(!TestEffect1.run(Kyo.corresponds(Coll(1, 2))(Seq(2, 3, 4))((a, b) => TestEffect1(a).map(_ == b))).eval)
+        }
+
+        "tapEach" in {
+            var seen = List.empty[Int]
+            assert(TestEffect1.run(Kyo.tapEach(Coll.empty[Int])(i => TestEffect1(i).map(v => seen :+= v))).eval == Coll.empty)
+            assert(seen == Nil)
+            assert(TestEffect1.run(Kyo.tapEach(Coll(1, 2, 3))(i => TestEffect1(i).map(v => seen :+= v))).eval == Coll(1, 2, 3))
+            assert(seen == List(2, 3, 4))
         }
     }
 

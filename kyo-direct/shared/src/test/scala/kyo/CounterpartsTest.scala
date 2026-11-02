@@ -1,9 +1,10 @@
 package kyo
 
 import scala.collection.IterableOps
+import scala.util.Success
 import scala.util.Try
 
-class ShiftHygieneTest extends kyo.test.Test[Any]:
+class CounterpartsHygieneTest extends kyo.test.Test[Any]:
     "invalid nested" in {
         typeCheckFailure(
             """
@@ -17,9 +18,9 @@ class ShiftHygieneTest extends kyo.test.Test[Any]:
             "Method definitions containing .now are not supported inside `direct` blocks"
         )
     }
-end ShiftHygieneTest
+end CounterpartsHygieneTest
 
-class ShiftTest extends kyo.test.Test[Any]:
+class CounterpartsTest extends kyo.test.Test[Any]:
 
     "basic" in {
         val x1: Seq[Int < Any] = Seq[Int < Any](1, 2, 3)
@@ -54,7 +55,7 @@ class ShiftTest extends kyo.test.Test[Any]:
         forReference.map(v => assert(v == 2))
     }
 
-    "val binding inside async-shifted lambda body" in {
+    "val binding inside a rewritten lambda body" in {
         val x: Seq[Int < Any]  = Seq[Int < Any](1, 2, 3)
         val x2: Seq[Int] < Any = direct:
             x.map { e =>
@@ -65,9 +66,9 @@ class ShiftTest extends kyo.test.Test[Any]:
         assert(x2.eval == Seq(2, 3, 4))
     }
 
-end ShiftTest
+end CounterpartsTest
 
-class ShiftMethodSupportTest extends kyo.test.Test[Any]:
+class CounterpartsContainerTest extends kyo.test.Test[Any]:
     "Option" - {
         val x: Option[Int < Any] = Option(1)
         val y: Option[Int]       = Option(1)
@@ -102,6 +103,64 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
             assert(d.eval == Option(2))
         }
+
+        "flatMap" in {
+            val d = direct:
+                x.flatMap(i => Option(i.now + 1))
+
+            assert(d.eval == Option(2))
+        }
+
+        "foreach" in {
+            def plus(i: Int) = Var.update[Int](_ + i)
+
+            val d = direct:
+                y.foreach(i => plus(i).unit.now)
+
+            assert(Var.run(0)(d.andThen(Var.get[Int])).eval == 1)
+        }
+
+        "filterNot" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d                        = direct:
+                y.filterNot(i => f(i).now)
+
+            assert(d.eval == None)
+        }
+
+        "exists" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d                        = direct:
+                y.exists(i => f(i).now)
+
+            assert(d.eval)
+        }
+
+        "forall" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d                        = direct:
+                y.forall(i => f(i).now)
+
+            assert(d.eval)
+        }
+
+        "collect" in {
+            def f(i: Int): Int < Any = i + 1
+
+            val d = direct:
+                y.collect:
+                    case i if i < 3 => f(i).now
+
+            assert(d.eval == Option(2))
+        }
+
+        "fold" in {
+            def identity(i: Int): Int < Any = i
+            val d                           = direct:
+                y.fold(0)(i => identity(i).now)
+
+            assert(d.eval == 1)
+        }
     }
 
     "Try" - {
@@ -134,6 +193,208 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
                 z.getOrElse(default.now)
 
             assert(d.eval == 2)
+        }
+
+        "map" in {
+            val d = direct:
+                x.map(_.now + 1)
+
+            assert(d.eval == Try(2))
+        }
+
+        "flatMap" in {
+            val d = direct:
+                x.flatMap(i => Success(i.now + 1))
+
+            assert(d.eval == Try(2))
+        }
+
+        "foreach" in {
+            def plus(i: Int) = Var.update[Int](_ + i)
+
+            val d = direct:
+                y.foreach(i => plus(i).unit.now)
+
+            assert(Var.run(0)(d.andThen(Var.get[Int])).eval == 1)
+        }
+
+        "collect" in {
+            def f(i: Int): Int < Any = i + 1
+
+            val d = direct:
+                y.collect:
+                    case i if i < 3 => f(i).now
+
+            assert(d.eval == Try(2))
+        }
+
+        "fold" in {
+            def identity(i: Int): Int < Any = i
+            val d                           = direct:
+                z.fold(e => identity(e.getMessage.length).now, i => identity(i).now)
+
+            assert(d.eval == 1)
+        }
+
+        "recover" in {
+            def f(i: Int): Int < Any = i
+
+            val d = direct:
+                z.recover:
+                    case e if e.getMessage == "z" => f(2).now
+
+            assert(d.eval == Try(2))
+        }
+
+        "recoverWith" in {
+            def f(i: Int): Try[Int] < Any = Try(i)
+
+            val d = direct:
+                z.recoverWith:
+                    case e if e.getMessage == "z" => f(2).now
+
+            assert(d.eval == Try(2))
+        }
+    }
+
+    "Either" - {
+        val x: Either[String, Int < Any] = Right(1)
+        val y: Either[String, Int]       = Right(1)
+        val z: Either[String, Int]       = Left("z")
+
+        given [A, B]: CanEqual[Either[A, B], Either[A, B]] = CanEqual.derived
+
+        "map" in {
+            val d = direct:
+                x.map(_.now + 1)
+
+            assert(d.eval == Right(2))
+        }
+
+        "flatMap" in {
+            val d = direct:
+                x.flatMap(i => Right(i.now + 1))
+
+            assert(d.eval == Right(2))
+        }
+
+        "foreach" in {
+            def plus(i: Int) = Var.update[Int](_ + i)
+
+            val d = direct:
+                y.foreach(i => plus(i).unit.now)
+
+            assert(Var.run(0)(d.andThen(Var.get[Int])).eval == 1)
+        }
+
+        "exists" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d                        = direct:
+                y.exists(i => f(i).now)
+
+            assert(d.eval)
+        }
+
+        "forall" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d                        = direct:
+                z.forall(i => f(i).now)
+
+            assert(d.eval)
+        }
+
+        "fold" in {
+            def identity(i: Int): Int < Any = i
+            val d                           = direct:
+                z.fold(s => identity(s.length).now, i => identity(i).now)
+
+            assert(d.eval == 1)
+        }
+
+        "orElse" in {
+            val default: Either[String, Int] < Any = Right(2)
+
+            val d = direct:
+                z.orElse(default.now)
+
+            assert(d.eval == Right(2))
+        }
+
+        "getOrElse" in {
+            val default: Int < Any = 2
+            val d                  = direct:
+                z.getOrElse(default.now)
+
+            assert(d.eval == 2)
+        }
+
+        "filterOrElse" in {
+            def f(i: Int): Boolean < Any = i > 3
+            val zero: String < Any       = "zero"
+
+            val d = direct:
+                y.filterOrElse(i => f(i).now, zero.now)
+
+            assert(d.eval == Left("zero"))
+        }
+
+        "left" - {
+            "map" in {
+                val d = direct:
+                    z.left.map(s => identity(s.length).now)
+
+                assert(d.eval == Left(1))
+            }
+
+            "flatMap" in {
+                val d = direct:
+                    z.left.flatMap(s => Right[Int, Int](identity(s.length).now))
+
+                assert(d.eval == Right(1))
+            }
+
+            "foreach" in {
+                def plus(i: Int) = Var.update[Int](_ + i)
+
+                val d = direct:
+                    z.left.foreach(s => plus(s.length).unit.now)
+
+                assert(Var.run(0)(d.andThen(Var.get[Int])).eval == 1)
+            }
+
+            "exists" in {
+                def f(s: String): Boolean < Any = s == "z"
+                val d                           = direct:
+                    z.left.exists(s => f(s).now)
+
+                assert(d.eval)
+            }
+
+            "forall" in {
+                def f(s: String): Boolean < Any = s == "z"
+                val d                           = direct:
+                    y.left.forall(s => f(s).now)
+
+                assert(d.eval)
+            }
+
+            "filterToOption" in {
+                def f(s: String): Boolean < Any = s == "z"
+                val d                           = direct:
+                    z.left.filterToOption[Int](s => f(s).now)
+
+                assert(d.eval == Some(Left("z")))
+            }
+
+            "getOrElse" in {
+                val default: String < Any = "default"
+                val d                     = direct:
+                    y.left.getOrElse(default.now)
+
+                assert(d.eval == "default")
+            }
+
+            def identity(i: Int): Int < Any = i
         }
     }
 
@@ -333,4 +594,4 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
     }
 
-end ShiftMethodSupportTest
+end CounterpartsContainerTest

@@ -4,92 +4,35 @@ import kyo.*
 import kyo.Ansi.*
 import kyo.internal.Trees
 import scala.annotation.tailrec
-import scala.collection.IterableOps
 import scala.quoted.*
 
-private val validMethodNamesForAsyncShift = Set(
-    "map",
-    "flatMap",
-    "flatten",
-    "collect",
-    "collectFirst",
-    "find",
-    "filter",
-    "filterNot",
-    "withFilter",
-    "dropWhile",
-    "takeWhile",
-    "partition",
-    "partitionMap",
-    "span",
-    "fold",
-    "foldLeft",
-    "foldRight",
-    "groupBy",
-    "groupMap",
-    "groupMapReduce",
-    "exists",
-    "forall",
-    "count",
-    "maxByOption",
-    "corresponds",
-    "foreach",
-    "tapEach",
-    "orElse",
-    "getOrElse",
-    "recover",
-    "recoverWith",
-    "scanLeft",
-    "scanRight"
-)
-
 private[kyo] object Validate:
-    def apply(expr: Expr[Any], markers: Markers)(using quotes: Quotes): Unit =
+    def apply(expr: Expr[Any])(using quotes: Quotes): Unit =
         import quotes.reflect.*
 
         def fail(tree: Tree, msg: String): Unit =
             report.error(msg, tree.pos)
 
-        /** A sequencing marker and the computation it wraps. */
+        /** A `.now` and the computation it sequences. */
         object Sequenced:
-            def unapply(tree: Tree): Option[Term] = tree match
-                case term: Term =>
-                    markers.sequencing(term) match
-                        case Present((computation, _, _)) => Some(computation)
-                        case Absent                       => None
-                case _ => None
-        end Sequenced
+            def unapply(tree: Tree): Option[Term] = DirectSyntax.now(tree).map(_._1)
 
-        /** A pass-through marker and the computation it wraps. */
+        /** A `.later` and the computation it keeps pending. */
         object PassThrough:
-            def unapply(tree: Tree): Option[Term] = tree match
-                case term: Term =>
-                    markers.passThrough(term) match
-                        case Present(computation) => Some(computation)
-                        case Absent               => None
-                case _ => None
-        end PassThrough
+            def unapply(tree: Tree): Option[Term] = DirectSyntax.later(tree)
+
+        val counterparts = Counterparts[quotes.type]()
+
+        /** A call to a method with a Kyo counterpart: its receiver and its explicit arguments. */
+        object CounterpartCall:
+            def unapply(tree: Term): Option[(Term, List[Term])] =
+                counterparts.call(tree).map(call => (call.receiver, call.arguments.flatten.map(_._1)))
 
         def pure(tree: Tree): Boolean =
             !Trees.exists(tree) {
                 case Sequenced(_) => true
             }
         end pure
-
-        def validAsyncShift(select: Select): Boolean =
-            val Select(qualifier, methodName) = select
-            inline def validType              =
-                qualifier.tpe <:< TypeRepr.of[Iterable[?]] |
-                    qualifier.tpe <:< TypeRepr.of[IterableOps[?, ?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[Option[?]] |
-                    qualifier.tpe <:< TypeRepr.of[scala.util.Try[?]] |
-                    qualifier.tpe <:< TypeRepr.of[Either[?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]]
-
-            inline def validName: Boolean = validMethodNamesForAsyncShift.contains(methodName)
-
-            validType && validName
-        end validAsyncShift
 
         // Multi-statement lambdas like `xs.map { i => val v = ...; v + 1 }` are typed as
         // `Block(Nil, Block(List(DefDef(...)), Closure(...)))` — an empty outer Block wraps
@@ -102,7 +45,7 @@ private[kyo] object Validate:
             case Block(Nil, expr)                            => unwrapLambda(expr)
             case _                                           => None
 
-        def asyncShiftDive(qualifiers: List[Tree])(using Trees.Step): Unit =
+        def callbackDive(qualifiers: List[Tree])(using Trees.Step): Unit =
             qualifiers.foreach { qual =>
                 unwrapLambda(qual) match
                     case Some(body) =>
@@ -129,11 +72,11 @@ private[kyo] object Validate:
                     case _                          => Nil // Other cases (Literal, Closure, etc.)
         end extension
 
-        /** A nested boundary, already expanded: its markers belonged to it. */
+        /** A nested `direct` block, already expanded: its markers belonged to it. */
         object DirectBlock:
             def unapply(t: Term): Boolean =
                 t match
-                    case Inlined(Some(call), _, _) => markers.isBoundary(call)
+                    case Inlined(Some(call), _, _) => DirectSyntax.isDirect(call)
                     case _                         => false
         end DirectBlock
 
@@ -218,34 +161,9 @@ private[kyo] object Validate:
         end skipDive
 
         Trees.traverseGoto(expr.asTerm) {
-            case Apply(
-                    Apply(TypeApply(Apply(TypeApply(Select(Ident("Maybe" | "Result"), _), _), List(qualifier)), _), argGroup0),
-                    argGroup1
-                ) =>
-                Trees.Step.goto(qualifier)
-                asyncShiftDive(argGroup0)
-                asyncShiftDive(argGroup1)
-
-            case Apply(TypeApply(Apply(TypeApply(Select(Ident("Maybe" | "Result"), _), _), List(qualifier)), _), argGroup0) =>
-                Trees.Step.goto(qualifier)
-                asyncShiftDive(argGroup0)
-
-            case Apply(Apply(TypeApply(Select(Ident("Maybe" | "Result"), _), _), List(qualifier)), argGroup0) =>
-                Trees.Step.goto(qualifier)
-                asyncShiftDive(argGroup0)
-
-            case Apply(Apply(TypeApply(select: Select, _), argGroup0), argGroup1) if validAsyncShift(select) =>
-                Trees.Step.goto(select.qualifier)
-                asyncShiftDive(argGroup0)
-                asyncShiftDive(argGroup1)
-
-            case Apply(select: Select, argGroup0) if validAsyncShift(select) =>
-                Trees.Step.goto(select.qualifier)
-                asyncShiftDive(argGroup0)
-
-            case Apply(TypeApply(select: Select, _), argGroup0) if validAsyncShift(select) =>
-                Trees.Step.goto(select.qualifier)
-                asyncShiftDive(argGroup0)
+            case CounterpartCall(receiver, arguments) =>
+                Trees.Step.goto(receiver)
+                callbackDive(arguments)
 
             case Apply(Apply(TypeApply(Select(qual, _), _), argGroup0), argGroup1) if qual.tpe <:< TypeRepr.of[kyo.Stream[?, ?]] =>
                 Trees.Step.goto(qual)
@@ -497,11 +415,8 @@ private[kyo] object Validate:
                     |• Advanced pure state management: Var (kyo-prelude)""".stripMargin
                 )
 
-            // By-name (lazy) arguments containing `.now` produce confusing
-            // "Can't determinate qual ... during search of AsyncShift" errors from
-            // dotty-cps-async. Catch them up-front with a clear message. CPS sequencing
-            // doesn't compose with by-name semantics: the effect would be captured in
-            // the by-name thunk rather than sequenced at the call site.
+            // A by-name argument may run zero, one, or many times, so a `.now` inside it has no place to be
+            // sequenced; the `orElse` and `getOrElse` counterparts are matched above, before this rule.
             case ByNameArgWithNow(arg) =>
                 fail(
                     arg,

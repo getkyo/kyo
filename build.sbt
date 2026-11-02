@@ -2099,30 +2099,23 @@ lazy val `kyo-direct` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.3.4",
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
-        .jvmConfigure(_.settings(
-            // dotty-cps-async macros register denotations into the compiler symbol table, which the warm
-            // Driver invalidates on subsequent Runs ("denotation class SeqAsyncShift invalid in run N").
-            // Rebuild the Compiler per fence to side-step the assertion.
-            doctestFreshDriver := true
-        ))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
 
 // --- kyo-lang: a Scala subset with direct effect syntax, compiled by a scalac plugin ---
 //
-// `kyo-lang` is the compile-time library a `.kyo` compilation needs on its classpath (the markers, the lowering macro, and the
-// Checked metadata); `kyo-lang-plugin` is the scalac plugin that prepares `.kyo` units for it. The module's own `.kyo` fixtures
+// `kyo-lang` is the compile-time library a `.kyo` compilation needs on its classpath (the markers, the body macro over kyo-direct's
+// lowering, and the Checked metadata); `kyo-lang-plugin` is the scalac plugin that prepares `.kyo` units for it. The module's own `.kyo` fixtures
 // under shared/src/test/kyo compile through the plugin in the Test configuration, which is the same path a user's build takes.
 lazy val `kyo-lang` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-lang"))
-        .dependsOn(`kyo-core`, `kyo-system` % "test->compile")
+        .dependsOn(`kyo-core`, `kyo-direct`, `kyo-system` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,

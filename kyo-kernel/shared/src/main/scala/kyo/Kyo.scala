@@ -4,6 +4,9 @@ import kernel.Loop
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableOps
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 
 /** Object containing utility functions for working with Kyo effects.
   *
@@ -197,7 +200,7 @@ object Kyo:
       * @return
       *   A new effect that produces a collection of results
       */
-    def foreach[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => B < S)(using
+    def foreach[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => B < S)(using
         Frame
     ): CC[B] < S =
         Kyo.foreach(Chunk.from(source))(f).map: resultChunk =>
@@ -213,7 +216,7 @@ object Kyo:
       * @return
       *   A new effect that produces a flattened Chunk of all results
       */
-    def foreachConcat[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => IterableOnce[B] < S)(
+    def foreachConcat[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => IterableOnce[B] < S)(
         using Frame
     ): CC[B] < S =
         Kyo.foreachConcat(Chunk.from(source))(f).map: resultChunk =>
@@ -229,7 +232,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def foreachIndexed[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: (Int, A) => B < S)(using
+    def foreachIndexed[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: (Int, A) => B < S)(using
         Frame
     ): CC[B] < S =
         Kyo.foreachIndexed(Chunk.from(source))(f).map: resultChunk =>
@@ -245,7 +248,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def foreachDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Any < S)(using
+    def foreachDiscard[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Any < S)(using
         Frame
     ): Unit < S =
         Kyo.foreachDiscard(Chunk.from(source))(f)
@@ -260,7 +263,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def foreachIndexedDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(
+    def foreachIndexedDiscard[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(
         f: (Int, A) => Any < S
     )(using Frame): Unit < S =
         Kyo.foreachIndexedDiscard(Chunk.from(source))(f)
@@ -275,7 +278,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of filtered elements
       */
-    def filter[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
+    def filter[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
         Frame
     ): CC[A] < S =
         Kyo.filter(Chunk.from(source))(f).map: resultChunk =>
@@ -293,7 +296,7 @@ object Kyo:
       * @return
       *   A new effect that produces the final accumulated value
       */
-    def foldLeft[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(acc: B)(f: (B, A) => B < S)(using
+    def foldLeft[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(acc: B)(f: (B, A) => B < S)(using
         Frame
     ): B < S =
         Kyo.foldLeft(Chunk.from(source))(acc)(f)
@@ -311,7 +314,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk containing only the Present values after transformation
       */
-    def collect[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Maybe[B] < S)(using
+    def collect[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Maybe[B] < S)(using
         Frame
     ): CC[B] < S =
         val chunk = Chunk.from(source)
@@ -326,7 +329,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def collectAll[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame): CC[A] < S =
+    def collectAll[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame): CC[A] < S =
         Kyo.collectAll(Chunk.from(source)).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
     end collectAll
@@ -338,7 +341,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def collectAllDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame): Unit < S =
+    def collectAllDiscard[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame): Unit < S =
         Kyo.collectAllDiscard(Chunk.from(source))
     end collectAllDiscard
 
@@ -351,7 +354,7 @@ object Kyo:
       * @return
       *   A new effect that produces Maybe of the first matching element
       */
-    def findFirst[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Maybe[B] < S)(using
+    def findFirst[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Maybe[B] < S)(using
         Frame
     ): Maybe[B] < S =
         Kyo.findFirst(Chunk.from(source))(f)
@@ -366,7 +369,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of taken elements
       */
-    def takeWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
+    def takeWhile[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
         Frame
     ): CC[A] < S =
         Kyo.takeWhile(Chunk.from(source))(f).map: resultChunk =>
@@ -384,7 +387,7 @@ object Kyo:
       * @note
       *   Optimized for both linear and indexed sequences
       */
-    def span[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
+    def span[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
         Frame
     ): (CC[A], CC[A]) < S =
         Kyo.span(Chunk.from(source))(f).map: (leftChunk, rightChunk) =>
@@ -400,7 +403,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of remaining elements
       */
-    def dropWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
+    def dropWhile[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
         Frame
     ): CC[A] < S =
         Kyo.dropWhile(Chunk.from(source))(f).map: resultChunk =>
@@ -414,7 +417,7 @@ object Kyo:
       *   - `lefts`: All elements that satisfy the predicate
       *   - `rights`: All elements that do not satisfy the predicate
       */
-    def partition[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
+    def partition[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
         Frame
     ): (CC[A], CC[A]) < S =
         Kyo.partition(Chunk.from(source))(f).map: (leftChunk, rightChunk) =>
@@ -427,7 +430,7 @@ object Kyo:
       *   A tuple `(lefts, rights)` of the `Left` and `Right` results, each in order
       */
     def partitionMap[
-        CC[+X] <: Iterable[X] &
+        CC[X] <: Iterable[X] &
             IterableOps[
                 X,
                 CC,
@@ -451,7 +454,7 @@ object Kyo:
       * @return
       *   Chunk containing all intermediate accumulator states
       */
-    def scanLeft[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(z: B)(op: (B, A) => B < S)(using
+    def scanLeft[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(z: B)(op: (B, A) => B < S)(using
         Frame
     ): CC[B] < S =
         Kyo.scanLeft(Chunk.from(source))(z)(op).map: resultChunk =>
@@ -463,7 +466,7 @@ object Kyo:
       * @return
       *   A `Map` from key to the elements that produced it, each group keeping the source's relative order
       */
-    def groupBy[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, K, S](source: CC[A])(f: A => K < S)(using
+    def groupBy[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, K, S](source: CC[A])(f: A => K < S)(using
         Frame
     ): Map[K, CC[A]] < S =
         Kyo.groupBy(Chunk.from(source))(f).map: resultChunk =>
@@ -476,7 +479,7 @@ object Kyo:
       *   A `Map` from key to the transformed elements that produced it, each group keeping the source's relative order
       */
     def groupMap[
-        CC[+X] <: Iterable[X] &
+        CC[X] <: Iterable[X] &
             IterableOps[
                 X,
                 CC,
@@ -506,15 +509,180 @@ object Kyo:
             else v.map(t => Loop.continue(acc.append(t)))
         }
 
-    // for kyo-direct
-    private[kyo] def shiftedWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S, B, C](source: CC[A])(
-        prolog: B,
-        f: A => Boolean < S,
-        acc: (B, Boolean, A) => B,
-        epilog: B => C
-    )(using Frame): C < S =
-        Kyo.shiftedWhile(Chunk.from(source))(prolog, f, acc, epilog)
-    end shiftedWhile
+    /** Keeps the elements of a collection for which an effect-producing predicate does not hold.
+      *
+      * @param source
+      *   The input collection
+      * @param f
+      *   The effect-producing predicate function
+      * @return
+      *   A new effect that produces the collection without the elements the predicate accepted
+      */
+    def filterNot[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): CC[A] < S =
+        Kyo.filter(source)(a => f(a).map(!_))
+
+    /** Finds the first element of a collection for which an effect-producing predicate holds, stopping at that element.
+      *
+      * @param source
+      *   The input collection
+      * @param f
+      *   The effect-producing predicate function
+      * @return
+      *   A new effect that produces the first accepted element, or Absent when none is accepted
+      */
+    def find[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): Maybe[A] < S =
+        Kyo.findFirst(source)(a => f(a).map(accepted => if accepted then Maybe(a) else Maybe.empty))
+
+    /** Tests whether an effect-producing predicate holds for some element of a collection, stopping at the first that satisfies it.
+      *
+      * @param source
+      *   The input collection
+      * @param f
+      *   The effect-producing predicate function
+      * @return
+      *   A new effect that produces true when some element is accepted
+      */
+    def exists[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): Boolean < S =
+        Kyo.find(source)(f).map(_.isDefined)
+
+    /** Tests whether an effect-producing predicate holds for every element of a collection, stopping at the first that fails it.
+      *
+      * @param source
+      *   The input collection
+      * @param f
+      *   The effect-producing predicate function
+      * @return
+      *   A new effect that produces true when every element is accepted
+      */
+    def forall[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): Boolean < S =
+        Kyo.exists(source)(a => f(a).map(!_)).map(!_)
+
+    /** Counts the elements of a collection for which an effect-producing predicate holds.
+      *
+      * @param source
+      *   The input collection
+      * @param f
+      *   The effect-producing predicate function
+      * @return
+      *   A new effect that produces the number of accepted elements
+      */
+    def count[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): Int < S =
+        Kyo.foldLeft(source)(0)((n, a) => f(a).map(accepted => if accepted then n + 1 else n))
+
+    /** Folds over a collection from the right with an effect-producing function.
+      *
+      * @param source
+      *   The input collection
+      * @param acc
+      *   The initial accumulator value
+      * @param f
+      *   The effect-producing folding function, taking the element and the accumulator
+      * @return
+      *   A new effect that produces the final accumulated value
+      */
+    def foldRight[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(acc: B)(f: (A, B) => B < S)(using
+        Frame
+    ): B < S =
+        Kyo.foldLeft(Chunk.from(source).reverse)(acc)((b, a) => f(a, b))
+
+    /** Produces the running accumulations of an effect-producing function from the right, the final one first.
+      *
+      * @param source
+      *   The input collection
+      * @param z
+      *   The initial accumulator value
+      * @param op
+      *   The effect-producing accumulation function, taking the element and the accumulator
+      * @return
+      *   A new effect that produces the accumulations as a collection of the same type
+      */
+    def scanRight[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(z: B)(op: (A, B) => B < S)(using
+        Frame
+    ): CC[B] < S =
+        Kyo.scanLeft(Chunk.from(source).reverse)(z)((b, a) => op(a, b)).map(accumulated => source.iterableFactory.from(accumulated.reverse))
+
+    /** Groups the elements of a collection by an effect-producing key, maps each with an effect-producing function, and reduces each
+      * group with an effect-producing operation.
+      *
+      * @param source
+      *   The input collection
+      * @param key
+      *   The effect-producing key function
+      * @param f
+      *   The effect-producing mapping function
+      * @param reduce
+      *   The effect-producing reduction of two mapped values
+      * @return
+      *   A new effect that produces the reduced value of each group
+      */
+    def groupMapReduce[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, K, B, S](source: CC[A])(key: A => K < S)(f: A => B < S)(
+        reduce: (B, B) => B < S
+    )(using Frame): Map[K, B] < S =
+        Kyo.foldLeft(source)(Map.empty[K, B]) { (groups, a) =>
+            key(a).map { k =>
+                f(a).map { b =>
+                    groups.get(k) match
+                        case Some(previous) => reduce(previous, b).map(merged => groups.updated(k, merged))
+                        case None           => groups.updated(k, b)
+                }
+            }
+        }
+
+    /** Finds the element of a collection with the greatest effect-producing key.
+      *
+      * @param source
+      *   The input collection
+      * @param f
+      *   The effect-producing key function
+      * @return
+      *   A new effect that produces the first element with the greatest key, or Absent for an empty collection
+      */
+    def maxBy[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => B < S)(using
+        Frame,
+        Ordering[B]
+    ): Maybe[A] < S =
+        val ordering = summon[Ordering[B]]
+        Kyo.foldLeft(source)(Maybe.empty[(A, B)]) { (best, a) =>
+            f(a).map { key =>
+                best match
+                    case Present((_, bestKey)) if ordering.gteq(bestKey, key) => best
+                    case _                                                    => Maybe((a, key))
+            }
+        }.map(_.map(_._1))
+    end maxBy
+
+    /** Tests whether two collections have the same length and an effect-producing relation holds for every pair of elements at the
+      * same position, stopping at the first pair that fails it.
+      *
+      * @param source
+      *   The input collection
+      * @param that
+      *   The collection to compare with
+      * @param f
+      *   The effect-producing relation
+      * @return
+      *   A new effect that produces true when the lengths match and every pair is related
+      */
+    def corresponds[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(that: IterableOnce[B])(
+        f: (A, B) => Boolean < S
+    )(using Frame): Boolean < S =
+        val left  = Chunk.from(source)
+        val right = Chunk.from(that)
+        if left.size != right.size then false
+        else Kyo.exists(left.zip(right))((a, b) => f(a, b).map(!_)).map(!_)
+    end corresponds
+
+    /** Applies an effect-producing function to each element of a collection for its effect and produces the collection unchanged.
+      *
+      * @param source
+      *   The input collection
+      * @param f
+      *   The effect-producing function to apply to each element
+      * @return
+      *   A new effect that produces the input collection
+      */
+    def tapEach[CC[X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => B < S)(using Frame): CC[A] < S =
+        Kyo.foreach(source)(a => f(a).andThen(a))
 
     // -----------------------------------------------------------------------------------------------------------------
     // List
@@ -1006,25 +1174,6 @@ object Kyo:
       * @return
       *   A new effect that produces the final transformed result
       */
-    private[kyo] def shiftedWhile[A, S, B, C](source: List[A])(
-        prolog: B,
-        f: A => Boolean < S,
-        acc: (B, Boolean, A) => B,
-        epilog: B => C
-    )(using Frame): C < S =
-        source match
-            case Nil         => epilog(prolog)
-            case head :: Nil => f(head).map: b =>
-                    epilog(acc(prolog, b, head))
-            case list =>
-                Loop(list, prolog): (curList, b) =>
-                    curList match
-                        case head :: tail =>
-                            f(head).map:
-                                case true  => Loop.continue(tail, acc(b, true, head))
-                                case false => Loop.done(epilog(acc(b, false, head)))
-                        case Nil => Loop.done(epilog(b))
-    end shiftedWhile
 
     // -----------------------------------------------------------------------------------------------------------------
     // Seq
@@ -1315,14 +1464,6 @@ object Kyo:
       * @return
       *   A new effect that produces the final transformed result
       */
-    private[kyo] inline def shiftedWhile[A, S, B, C](source: Seq[A])(
-        prolog: B,
-        f: A => Boolean < S,
-        acc: (B, Boolean, A) => B,
-        epilog: B => C
-    )(using Frame): C < S =
-        shiftedWhile(Chunk.from(source))(prolog, f, acc, epilog)
-    end shiftedWhile
 
     // -----------------------------------------------------------------------------------------------------------------
     // Chunk
@@ -1864,27 +2005,6 @@ object Kyo:
       * @return
       *   A new effect that produces the final transformed result
       */
-    private[kyo] def shiftedWhile[A, S, B, C](source: Chunk[A])(
-        prolog: B,
-        f: A => Boolean < S,
-        acc: (B, Boolean, A) => B,
-        epilog: B => C
-    )(using Frame): C < S =
-        val chunk = source.toIndexed
-        val len   = chunk.length
-        len match
-            case 0 => epilog(prolog)
-            case 1 => f(chunk.head).map(b => epilog(acc(prolog, b, chunk.head)))
-            case _ =>
-                Loop.indexed(prolog): (idx, b) =>
-                    if idx == len then Loop.done(epilog(b))
-                    else
-                        val current = chunk(idx)
-                        f(current).map:
-                            case true  => Loop.continue(acc(b, true, current))
-                            case false => Loop.done(epilog(acc(b, false, current)))
-        end match
-    end shiftedWhile
 
     // -----------------------------------------------------------------------------------------------------------------
     // Set
@@ -2342,23 +2462,6 @@ object Kyo:
       * @return
       *   A new effect that produces the final transformed result
       */
-    private[kyo] def shiftedWhile[A, S, B, C](source: Set[A])(
-        prolog: B,
-        f: A => Boolean < S,
-        acc: (B, Boolean, A) => B,
-        epilog: B => C
-    )(using Frame): C < S =
-        if source.isEmpty then epilog(prolog)
-        else
-            Loop(source, prolog): (curSet, b) =>
-                if curSet.isEmpty then Loop.done(epilog(b))
-                else
-                    val current = curSet.head
-                    f(current).map:
-                        case true  => Loop.continue(curSet - current, acc(b, true, current))
-                        case false => Loop.done(epilog(acc(b, false, current)))
-        end if
-    end shiftedWhile
 
     // -----------------------------------------------------------------------------------------------------------------
     // Map
@@ -2880,22 +2983,396 @@ object Kyo:
       * @return
       *   A new effect that produces the final transformed result
       */
-    private[kyo] def shiftedWhile[K1, V1, S, B, C](source: Map[K1, V1])(
-        prolog: B,
-        f: ((K1, V1)) => Boolean < S,
-        acc: (B, Boolean, (K1, V1)) => B,
-        epilog: B => C
-    )(using Frame): C < S =
-        if source.isEmpty then epilog(prolog)
-        else
-            Loop(source, prolog): (curMap, b) =>
-                if curMap.isEmpty then Loop.done(epilog(b))
-                else
-                    val cur = curMap.head
-                    f(cur).map:
-                        case true  => Loop.continue(curMap - cur._1, acc(b, true, cur))
-                        case false => Loop.done(epilog(acc(b, false, cur)))
-        end if
-    end shiftedWhile
 
+    // -----------------------------------------------------------------------------------------------------------------
+    // Maybe
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /** Applies an effect-producing function to the value of a `Maybe`, when present. */
+    def foreach[A, B, S](source: Maybe[A])(f: A => B < S)(using Frame): Maybe[B] < S =
+        source match
+            case Present(a) => f(a).map(Maybe(_))
+            case Absent     => Maybe.empty
+
+    /** Applies an effect-producing function returning a `Maybe` to the value of a `Maybe`, when present, and flattens the result. */
+    def foreachConcat[A, B, S](source: Maybe[A])(f: A => Maybe[B] < S)(using Frame): Maybe[B] < S =
+        source match
+            case Present(a) => f(a)
+            case Absent     => Maybe.empty
+
+    /** Applies an effect-producing function to the value of a `Maybe`, when present, for its effect. */
+    def foreachDiscard[A, S](source: Maybe[A])(f: A => Any < S)(using Frame): Unit < S =
+        source match
+            case Present(a) => f(a).unit
+            case Absent     => ()
+
+    /** Keeps the value of a `Maybe` when an effect-producing predicate holds for it. */
+    def filter[A, S](source: Maybe[A])(f: A => Boolean < S)(using Frame): Maybe[A] < S =
+        source match
+            case Present(a) => f(a).map(accepted => if accepted then source else Maybe.empty)
+            case Absent     => Maybe.empty
+
+    /** Keeps the value of a `Maybe` when an effect-producing predicate does not hold for it. */
+    def filterNot[A, S](source: Maybe[A])(f: A => Boolean < S)(using Frame): Maybe[A] < S =
+        Kyo.filter(source)(a => f(a).map(!_))
+
+    /** Tests whether an effect-producing predicate holds for the value of a `Maybe`; false when absent. */
+    def exists[A, S](source: Maybe[A])(f: A => Boolean < S)(using Frame): Boolean < S =
+        source match
+            case Present(a) => f(a)
+            case Absent     => false
+
+    /** Tests whether an effect-producing predicate holds for the value of a `Maybe`; true when absent. */
+    def forall[A, S](source: Maybe[A])(f: A => Boolean < S)(using Frame): Boolean < S =
+        source match
+            case Present(a) => f(a)
+            case Absent     => true
+
+    /** Applies an effect-producing partial function, given as a function to `Maybe`, to the value of a `Maybe`. */
+    def collect[A, B, S](source: Maybe[A])(f: A => Maybe[B] < S)(using Frame): Maybe[B] < S =
+        Kyo.foreachConcat(source)(f)
+
+    /** Folds a `Maybe` with an effect-producing alternative for the absent case and an effect-producing function for the present one. */
+    def fold[A, B, S](source: Maybe[A])(ifEmpty: => B < S)(f: A => B < S)(using Frame): B < S =
+        source match
+            case Present(a) => f(a)
+            case Absent     => ifEmpty
+
+    /** Produces a `Maybe`, or an effect-producing alternative when it is absent. */
+    def orElse[A, B >: A, S](source: Maybe[A])(alternative: => Maybe[B] < S)(using Frame): Maybe[B] < S =
+        source match
+            case Present(_) => source
+            case Absent     => alternative
+
+    /** Produces the value of a `Maybe`, or an effect-producing default when it is absent. */
+    def getOrElse[A, B >: A, S](source: Maybe[A])(default: => B < S)(using Frame): B < S =
+        source match
+            case Present(a) => a
+            case Absent     => default
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // Result: an error, Panic included, passes through unchanged. The target names keep these apart from the Maybe
+    // overloads, which erase the same way.
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /** Applies an effect-producing function to the success value of a `Result`. */
+    @targetName("resultForeach")
+    def foreach[E, A, B, S](source: Result[E, A])(f: A => B < S)(using Frame): Result[E, B] < S =
+        source match
+            case Result.Success(a)                 => f(a).map(Result.succeed)
+            case error: Result.Error[E] @unchecked => error
+
+    /** Applies an effect-producing function returning a `Result` to the success value of a `Result`, and flattens the result. */
+    @targetName("resultForeachConcat")
+    def foreachConcat[E, A, E2, B, S](source: Result[E, A])(f: A => Result[E2, B] < S)(using Frame): Result[E | E2, B] < S =
+        source match
+            case Result.Success(a)                 => f(a)
+            case error: Result.Error[E] @unchecked => error
+
+    /** Applies an effect-producing function to the success value of a `Result` for its effect. */
+    @targetName("resultForeachDiscard")
+    def foreachDiscard[E, A, S](source: Result[E, A])(f: A => Any < S)(using Frame): Unit < S =
+        source match
+            case Result.Success(a) => f(a).unit
+            case _                 => ()
+
+    /** Keeps the success value of a `Result` when an effect-producing predicate holds for it, failing otherwise. */
+    @targetName("resultFilter")
+    def filter[E, A, S](source: Result[E, A])(f: A => Boolean < S)(using Frame): Result[E | NoSuchElementException, A] < S =
+        source match
+            case Result.Success(a) =>
+                f(a).map(accepted =>
+                    if accepted then source else Result.fail(new NoSuchElementException("Predicate does not hold for " + a))
+                )
+            case error: Result.Error[E] @unchecked => error
+
+    /** Tests whether an effect-producing predicate holds for the success value of a `Result`; false for an error. */
+    @targetName("resultExists")
+    def exists[E, A, S](source: Result[E, A])(f: A => Boolean < S)(using Frame): Boolean < S =
+        source match
+            case Result.Success(a) => f(a)
+            case _                 => false
+
+    /** Tests whether an effect-producing predicate holds for the success value of a `Result`; true for an error. */
+    @targetName("resultForall")
+    def forall[E, A, S](source: Result[E, A])(f: A => Boolean < S)(using Frame): Boolean < S =
+        source match
+            case Result.Success(a) => f(a)
+            case _                 => true
+
+    /** Folds a `Result` with an effect-producing function per case. */
+    @targetName("resultFold")
+    def fold[E, A, B, S](source: Result[E, A])(onSuccess: A => B < S, onFailure: E => B < S, onPanic: Throwable => B < S)(using
+        Frame
+    ): B < S =
+        source match
+            case Result.Success(a)     => onSuccess(a)
+            case Result.Failure(error) => onFailure(error)
+            case Result.Panic(error)   => onPanic(error)
+
+    /** Produces a `Result`, or an effect-producing alternative when it is an error. */
+    @targetName("resultOrElse")
+    def orElse[E, A, E2, B >: A, S](source: Result[E, A])(alternative: => Result[E2, B] < S)(using Frame): Result[E | E2, B] < S =
+        source match
+            case Result.Success(_) => source
+            case _                 => alternative
+
+    /** Produces the success value of a `Result`, or an effect-producing default when it is an error. */
+    @targetName("resultGetOrElse")
+    def getOrElse[E, A, B >: A, S](source: Result[E, A])(default: => B < S)(using Frame): B < S =
+        source match
+            case Result.Success(a) => a
+            case _                 => default
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // Option
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /** Applies an effect-producing function to the value of an `Option`, when defined. */
+    def foreach[A, B, S](source: Option[A])(f: A => B < S)(using Frame): Option[B] < S =
+        source match
+            case Some(a) => f(a).map(Some(_))
+            case None    => None
+
+    /** Applies an effect-producing function returning an `Option` to the value of an `Option`, when defined, and flattens the result. */
+    def foreachConcat[A, B, S](source: Option[A])(f: A => Option[B] < S)(using Frame): Option[B] < S =
+        source match
+            case Some(a) => f(a)
+            case None    => None
+
+    /** Applies an effect-producing function to the value of an `Option`, when defined, for its effect. */
+    def foreachDiscard[A, B, S](source: Option[A])(f: A => B < S)(using Frame): Unit < S =
+        source match
+            case Some(a) => f(a).unit
+            case None    => ()
+
+    /** Keeps the value of an `Option` when an effect-producing predicate holds for it. */
+    def filter[A, S](source: Option[A])(f: A => Boolean < S)(using Frame): Option[A] < S =
+        source match
+            case Some(a) => f(a).map(accepted => if accepted then source else None)
+            case None    => None
+
+    /** Keeps the value of an `Option` when an effect-producing predicate does not hold for it. */
+    def filterNot[A, S](source: Option[A])(f: A => Boolean < S)(using Frame): Option[A] < S =
+        Kyo.filter(source)(a => f(a).map(!_))
+
+    /** Tests whether an effect-producing predicate holds for the value of an `Option`; false when empty. */
+    def exists[A, S](source: Option[A])(f: A => Boolean < S)(using Frame): Boolean < S =
+        source match
+            case Some(a) => f(a)
+            case None    => false
+
+    /** Tests whether an effect-producing predicate holds for the value of an `Option`; true when empty. */
+    def forall[A, S](source: Option[A])(f: A => Boolean < S)(using Frame): Boolean < S =
+        source match
+            case Some(a) => f(a)
+            case None    => true
+
+    /** Applies an effect-producing partial function, given as a function to `Maybe`, to the value of an `Option`. */
+    def collect[A, B, S](source: Option[A])(f: A => Maybe[B] < S)(using Frame): Option[B] < S =
+        source match
+            case Some(a) => f(a).map(_.toOption)
+            case None    => None
+
+    /** Folds an `Option` with an effect-producing alternative for the empty case and an effect-producing function for the defined one. */
+    def fold[A, B, S](source: Option[A])(ifEmpty: => B < S)(f: A => B < S)(using Frame): B < S =
+        source match
+            case Some(a) => f(a)
+            case None    => ifEmpty
+
+    /** Produces an `Option`, or an effect-producing alternative when it is empty. */
+    def orElse[A, B >: A, S](source: Option[A])(alternative: => Option[B] < S)(using Frame): Option[B] < S =
+        source match
+            case Some(_) => source
+            case None    => alternative
+
+    /** Produces the value of an `Option`, or an effect-producing default when it is empty. */
+    def getOrElse[A, B >: A, S](source: Option[A])(default: => B < S)(using Frame): B < S =
+        source match
+            case Some(a) => a
+            case None    => default
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // Try: a failure passes through unchanged
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /** Applies an effect-producing function to the value of a successful `Try`. */
+    def foreach[A, B, S](source: Try[A])(f: A => B < S)(using Frame): Try[B] < S =
+        source match
+            case Success(a)          => f(a).map(Success(_))
+            case failure: Failure[?] => failure.asInstanceOf[Try[B]]
+
+    /** Applies an effect-producing function returning a `Try` to the value of a successful `Try`, and flattens the result. */
+    def foreachConcat[A, B, S](source: Try[A])(f: A => Try[B] < S)(using Frame): Try[B] < S =
+        source match
+            case Success(a)          => f(a)
+            case failure: Failure[?] => failure.asInstanceOf[Try[B]]
+
+    /** Applies an effect-producing function to the value of a successful `Try` for its effect. */
+    def foreachDiscard[A, B, S](source: Try[A])(f: A => B < S)(using Frame): Unit < S =
+        source match
+            case Success(a) => f(a).unit
+            case _          => ()
+
+    /** Keeps the value of a successful `Try` when an effect-producing predicate holds for it, failing otherwise. */
+    def filter[A, S](source: Try[A])(f: A => Boolean < S)(using Frame): Try[A] < S =
+        source match
+            case Success(a) =>
+                f(a).map(accepted => if accepted then source else Failure(new NoSuchElementException("Predicate does not hold for " + a)))
+            case _ => source
+
+    /** Applies an effect-producing partial function, given as a function to `Maybe`, to the value of a successful `Try`, failing when
+      * it does not apply.
+      */
+    def collect[A, B, S](source: Try[A])(f: A => Maybe[B] < S)(using Frame): Try[B] < S =
+        source match
+            case Success(a) =>
+                f(a).map(_.fold(Failure(new NoSuchElementException("Predicate does not hold for " + a)))(Success(_)))
+            case failure: Failure[?] => failure.asInstanceOf[Try[B]]
+
+    /** Folds a `Try` with an effect-producing function per case. */
+    def fold[A, B, S](source: Try[A])(onFailure: Throwable => B < S, onSuccess: A => B < S)(using Frame): B < S =
+        source match
+            case Success(a)     => onSuccess(a)
+            case Failure(error) => onFailure(error)
+
+    /** Produces a `Try`, or an effect-producing alternative when it is a failure. */
+    def orElse[A, B >: A, S](source: Try[A])(alternative: => Try[B] < S)(using Frame): Try[B] < S =
+        source match
+            case Success(_) => source
+            case _          => alternative
+
+    /** Produces the value of a successful `Try`, or an effect-producing default when it is a failure. */
+    def getOrElse[A, B >: A, S](source: Try[A])(default: => B < S)(using Frame): B < S =
+        source match
+            case Success(a) => a
+            case _          => default
+
+    /** Recovers a failed `Try` with an effect-producing partial function, given as a function to `Maybe`; a failure it does not apply
+      * to passes through unchanged.
+      */
+    def recover[A, B >: A, S](source: Try[A])(f: Throwable => Maybe[B] < S)(using Frame): Try[B] < S =
+        source match
+            case Failure(error) => f(error).map(_.fold(source)(Success(_)))
+            case _              => source
+
+    /** Recovers a failed `Try` with an effect-producing partial function returning a `Try`, given as a function to `Maybe`; a failure
+      * it does not apply to passes through unchanged.
+      */
+    def recoverWith[A, B >: A, S](source: Try[A])(f: Throwable => Maybe[Try[B]] < S)(using Frame): Try[B] < S =
+        source match
+            case Failure(error) => f(error).map(_.getOrElse(source))
+            case _              => source
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // Either: a Left passes through unchanged
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /** Applies an effect-producing function to the `Right` value of an `Either`. */
+    def foreach[A, B, B1, S](source: Either[A, B])(f: B => B1 < S)(using Frame): Either[A, B1] < S =
+        source match
+            case Right(b)         => f(b).map(Right(_))
+            case left: Left[?, ?] => left.asInstanceOf[Either[A, B1]]
+
+    /** Applies an effect-producing function returning an `Either` to the `Right` value of an `Either`, and flattens the result. */
+    def foreachConcat[A, B, A1 >: A, B1, S](source: Either[A, B])(f: B => Either[A1, B1] < S)(using Frame): Either[A1, B1] < S =
+        source match
+            case Right(b)         => f(b)
+            case left: Left[?, ?] => left.asInstanceOf[Either[A1, B1]]
+
+    /** Applies an effect-producing function to the `Right` value of an `Either` for its effect. */
+    def foreachDiscard[A, B, B1, S](source: Either[A, B])(f: B => B1 < S)(using Frame): Unit < S =
+        source match
+            case Right(b) => f(b).unit
+            case _        => ()
+
+    /** Tests whether an effect-producing predicate holds for the `Right` value of an `Either`; false for a `Left`. */
+    def exists[A, B, S](source: Either[A, B])(f: B => Boolean < S)(using Frame): Boolean < S =
+        source match
+            case Right(b) => f(b)
+            case _        => false
+
+    /** Tests whether an effect-producing predicate holds for the `Right` value of an `Either`; true for a `Left`. */
+    def forall[A, B, S](source: Either[A, B])(f: B => Boolean < S)(using Frame): Boolean < S =
+        source match
+            case Right(b) => f(b)
+            case _        => true
+
+    /** Folds an `Either` with an effect-producing function per side. */
+    def fold[A, B, C, S](source: Either[A, B])(onLeft: A => C < S, onRight: B => C < S)(using Frame): C < S =
+        source match
+            case Right(b) => onRight(b)
+            case Left(a)  => onLeft(a)
+
+    /** Produces an `Either`, or an effect-producing alternative when it is a `Left`. */
+    def orElse[A, B, A1 >: A, B1 >: B, S](source: Either[A, B])(alternative: => Either[A1, B1] < S)(using Frame): Either[A1, B1] < S =
+        source match
+            case Right(_) => source
+            case _        => alternative
+
+    /** Produces the `Right` value of an `Either`, or an effect-producing default when it is a `Left`. */
+    def getOrElse[A, B, B1 >: B, S](source: Either[A, B])(default: => B1 < S)(using Frame): B1 < S =
+        source match
+            case Right(b) => b
+            case _        => default
+
+    /** Keeps the `Right` value of an `Either` when an effect-producing predicate holds for it, or produces an effect-producing `Left`
+      * value otherwise.
+      */
+    def filterOrElse[A, B, A1 >: A, S](source: Either[A, B])(f: B => Boolean < S, zero: => A1 < S)(using Frame): Either[A1, B] < S =
+        source match
+            case Right(b) => f(b).map(accepted => if accepted then source else zero.map(Left(_)))
+            case _        => source
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // Either.LeftProjection: a Right passes through unchanged
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /** Applies an effect-producing function to the `Left` value of a projected `Either`. */
+    def foreach[A, B, A1, S](source: Either.LeftProjection[A, B])(f: A => A1 < S)(using Frame): Either[A1, B] < S =
+        source.e match
+            case Left(a)            => f(a).map(Left(_))
+            case right: Right[?, ?] => right.asInstanceOf[Either[A1, B]]
+
+    /** Applies an effect-producing function returning an `Either` to the `Left` value of a projected `Either`, and flattens the
+      * result.
+      */
+    def foreachConcat[A, B, A1, B1 >: B, S](source: Either.LeftProjection[A, B])(f: A => Either[A1, B1] < S)(using
+        Frame
+    ): Either[A1, B1] < S =
+        source.e match
+            case Left(a)            => f(a)
+            case right: Right[?, ?] => right.asInstanceOf[Either[A1, B1]]
+
+    /** Applies an effect-producing function to the `Left` value of a projected `Either` for its effect. */
+    def foreachDiscard[A, B, A1, S](source: Either.LeftProjection[A, B])(f: A => A1 < S)(using Frame): Unit < S =
+        source.e match
+            case Left(a) => f(a).unit
+            case _       => ()
+
+    /** Tests whether an effect-producing predicate holds for the `Left` value of a projected `Either`; false for a `Right`. */
+    def exists[A, B, S](source: Either.LeftProjection[A, B])(f: A => Boolean < S)(using Frame): Boolean < S =
+        source.e match
+            case Left(a) => f(a)
+            case _       => false
+
+    /** Tests whether an effect-producing predicate holds for the `Left` value of a projected `Either`; true for a `Right`. */
+    def forall[A, B, S](source: Either.LeftProjection[A, B])(f: A => Boolean < S)(using Frame): Boolean < S =
+        source.e match
+            case Left(a) => f(a)
+            case _       => true
+
+    /** Keeps a projected `Either` when an effect-producing predicate holds for its `Left` value; a `Right` is kept, a rejected `Left` is
+      * dropped.
+      */
+    def filterToOption[A, B, B1, S](source: Either.LeftProjection[A, B])(f: A => Boolean < S)(using Frame): Option[Either[A, B1]] < S =
+        source.e match
+            case Left(a)            => f(a).map(accepted => if accepted then Some(Left(a)) else None)
+            case right: Right[?, ?] => Some(right.asInstanceOf[Either[A, B1]])
+
+    /** Produces the `Left` value of a projected `Either`, or an effect-producing default when it is a `Right`. */
+    def getOrElse[A, B, A1 >: A, S](source: Either.LeftProjection[A, B])(default: => A1 < S)(using Frame): A1 < S =
+        source.e match
+            case Left(a) => a
+            case _       => default
 end Kyo

@@ -1,19 +1,18 @@
 package kyo.internal
 
 import kyo.*
-import kyo.internal.LowerSupport.lowered
 import scala.collection.mutable.ArrayBuffer
 
-/** The lowering core on kyo-direct's markers, driven through `lowered` until `direct` switches to it. */
+/** The lowering of `direct` blocks: bindings, control flow, applications, nested blocks, and effect rows. */
 class LowerTest extends kyo.test.Test[Any]:
 
     "pure body" - {
         "keeps the value and lifts to A < Any" in {
-            val value: Int < Any = lowered(1 + 1)
+            val value: Int < Any = direct(1 + 1)
             assert(value.eval == 2)
         }
         "keeps a block with locals" in {
-            val value: Int < Any = lowered {
+            val value: Int < Any = direct {
                 val x = 1
                 val y = x + 1
                 x + y
@@ -24,14 +23,14 @@ class LowerTest extends kyo.test.Test[Any]:
 
     "blocks" - {
         "binds a marker once and reuses the result" in {
-            val value = lowered {
+            val value = direct {
                 val a = Var.update[Int](x => x + 1).now
                 a + a
             }
             assert(Var.runTuple(0)(value).eval == (1, 2))
         }
         "a discarded marker still runs" in {
-            val value = lowered {
+            val value = direct {
                 Var.update[Int](x => x + 1).now
                 42
             }
@@ -39,7 +38,7 @@ class LowerTest extends kyo.test.Test[Any]:
         }
         "a pure statement between markers keeps its position" in {
             val order = ArrayBuffer.empty[String]
-            val value = lowered {
+            val value = direct {
                 order += "before"
                 Sync.defer(order += "first").now
                 order += "between"
@@ -52,7 +51,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(order.toList == List("before", "first", "between", "second", "after"))
         }
         "a pure local between markers keeps its value" in {
-            val value = lowered {
+            val value = direct {
                 val a    = Var.get[Int].now
                 val pure = a * 10
                 val b    = Var.update[Int](x => x + 1).now
@@ -61,7 +60,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Var.runTuple(1)(value).eval == (2, 12))
         }
         "nested blocks" in {
-            val value = lowered {
+            val value = direct {
                 val v =
                     val r = Sync.defer(1).now
                     r + 1
@@ -72,14 +71,14 @@ class LowerTest extends kyo.test.Test[Any]:
         }
         "a marker inside the computation of another marker" in {
             def f(i: Int): Int < Var[Int] = Var.set(i)
-            val value                     = lowered {
+            val value                     = direct {
                 f(Sync.defer(1).now).now
             }
             import AllowUnsafe.embrace.danger
             assert(Sync.Unsafe.evalOrThrow(Var.runTuple(-1)(value)) == (1, -1))
         }
         "an unused failure still aborts" in {
-            val value = lowered {
+            val value = direct {
                 val unused = Abort.fail("failure").now
                 42
             }
@@ -87,9 +86,9 @@ class LowerTest extends kyo.test.Test[Any]:
         }
     }
 
-    "pass-through markers" - {
+    ".later" - {
         "erased in value position" in {
-            val value = lowered {
+            val value = direct {
                 val pending = Var.get[Int].later
                 pending.now + 1
             }
@@ -98,13 +97,13 @@ class LowerTest extends kyo.test.Test[Any]:
         "erased inside a lambda" in {
             def f(i: Int): Boolean < Var[Int] = Var.update[Int](x => x + i).map(_ % 2 == 0)
             val stream                        = Stream.init(Seq(1, 2, 3))
-            val value                         = lowered {
+            val value                         = direct {
                 stream.filter(x => f(x).later)
             }
             assert(Var.run(0)(Stream.unwrap(value).run).eval == Chunk(3))
         }
         "erased inside a local def" in {
-            val value = lowered {
+            val value = direct {
                 def inc(i: Int): Int < Any = (i + 1).later
                 inc(Sync.defer(1).now).now
             }
@@ -114,7 +113,7 @@ class LowerTest extends kyo.test.Test[Any]:
         "erased inside another pass-through" in {
             val x: Int < Any              = 1
             def f[S](v: Int < S): Int < S = v.map(_ + 1)
-            val value                     = lowered {
+            val value                     = direct {
                 val g = f(x.later).later
                 g.now
             }
@@ -124,7 +123,7 @@ class LowerTest extends kyo.test.Test[Any]:
 
     "conditionals" - {
         "effectful condition and branches" in {
-            val value = lowered {
+            val value = direct {
                 if Var.get[Int].now == 0 then Var.update[Int](x => x + 1).now
                 else Var.update[Int](x => x + 10).now
             }
@@ -132,7 +131,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Var.runTuple(2)(value).eval == (12, 12))
         }
         "a conditional before more statements is joined, not duplicated" in {
-            val value = lowered {
+            val value = direct {
                 val x =
                     if Var.get[Boolean].now then Var.get[Int].now
                     else 0
@@ -142,7 +141,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Var.run(false)(Var.run(21)(value)).eval == 0)
         }
         "a branch with an implicit unit alternative" in {
-            val value = lowered {
+            val value = direct {
                 val a = Var.get[Int].now
                 if a > 5 then
                     Emit.value(a).now
@@ -153,7 +152,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Emit.run(Var.run(3)(value)).eval == (Chunk.empty, "done"))
         }
         "bindings inside branches" in {
-            val value = lowered {
+            val value = direct {
                 val cond = Sync.defer(true).now
                 if cond then
                     val x = Sync.defer(10).now
@@ -169,28 +168,28 @@ class LowerTest extends kyo.test.Test[Any]:
     "boolean operators" - {
         def notExpected: Boolean = throw new IllegalStateException("evaluated")
         "&& short-circuits" in {
-            val value = lowered {
+            val value = direct {
                 Var.get[Boolean].now && Sync.defer(notExpected).now
             }
             import AllowUnsafe.embrace.danger
             assert(Sync.Unsafe.evalOrThrow(Var.run(false)(value)) == false)
         }
         "&& evaluates the right side when needed" in {
-            val value = lowered {
+            val value = direct {
                 Var.get[Boolean].now && Sync.defer(true).now
             }
             import AllowUnsafe.embrace.danger
             assert(Sync.Unsafe.evalOrThrow(Var.run(true)(value)))
         }
         "|| short-circuits" in {
-            val value = lowered {
+            val value = direct {
                 Var.get[Boolean].now || Sync.defer(notExpected).now
             }
             import AllowUnsafe.embrace.danger
             assert(Sync.Unsafe.evalOrThrow(Var.run(true)(value)))
         }
         "pure left with effectful right" in {
-            val value = lowered {
+            val value = direct {
                 "1".toInt == 1 && Sync.defer(false).now
             }
             import AllowUnsafe.embrace.danger
@@ -201,7 +200,7 @@ class LowerTest extends kyo.test.Test[Any]:
     "applications" - {
         "arguments evaluate in source order" in {
             def pair(a: Int, b: Int) = a * 10 + b
-            val value                = lowered {
+            val value                = direct {
                 pair(Var.update[Int](x => x + 1).now, Var.update[Int](x => x + 1).now)
             }
             assert(Var.runTuple(0)(value).eval == (2, 12))
@@ -212,7 +211,7 @@ class LowerTest extends kyo.test.Test[Any]:
                 order += name
                 order.size
             def pair(a: Int, b: Int) = a * 10 + b
-            val value                = lowered {
+            val value                = direct {
                 pair(record("pure"), Sync.defer(record("effect")).now)
             }
             import AllowUnsafe.embrace.danger
@@ -226,7 +225,7 @@ class LowerTest extends kyo.test.Test[Any]:
             def make(): Combiner =
                 order += "receiver"
                 new Combiner
-            val value = lowered {
+            val value = direct {
                 make().combine(Sync.defer(order += "argument").now.size)
             }
             import AllowUnsafe.embrace.danger
@@ -234,15 +233,15 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(order.toList == List("receiver", "argument"))
         }
         "a method on the exposed result" in {
-            val value = lowered(Var.get[String].now.length)
+            val value = direct(Var.get[String].now.length)
             assert(Var.run("hello")(value).eval == 5)
         }
         "an effectful element in a generic application" in {
-            val value = lowered(List(Var.update[Int](x => x + 1).now))
+            val value = direct(List(Var.update[Int](x => x + 1).now))
             assert(Var.runTuple(0)(value).eval == (1, List(1)))
         }
         "a tuple with effectful elements and a block element" in {
-            val value = lowered {
+            val value = direct {
                 val x = 1
                 (
                     Sync.defer(x).now, {
@@ -257,12 +256,12 @@ class LowerTest extends kyo.test.Test[Any]:
         }
         "a curried call with the marker in the second list" in {
             def add(a: Int)(b: Int) = a + b
-            val value               = lowered(add(1)(Var.get[Int].now))
+            val value               = direct(add(1)(Var.get[Int].now))
             assert(Var.run(2)(value).eval == 3)
         }
         "an opaque receiver exposed by a marker" in {
             val maybe: Maybe[Int] < Sync = Maybe(1)
-            val value                    = lowered(maybe.now.fold(2)(_ + 1))
+            val value                    = direct(maybe.now.fold(2)(_ + 1))
             import AllowUnsafe.embrace.danger
             assert(Sync.Unsafe.evalOrThrow(value) == 2)
         }
@@ -270,7 +269,7 @@ class LowerTest extends kyo.test.Test[Any]:
 
     "pattern matching" - {
         "effectful scrutinee and bodies" in {
-            val value = lowered {
+            val value = direct {
                 Var.get[String].now match
                     case "a" => Sync.defer(2).now
                     case _   => Sync.defer(3).now
@@ -280,7 +279,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Sync.Unsafe.evalOrThrow(Var.run("b")(value)) == 3)
         }
         "a match before more statements is joined" in {
-            val value = lowered {
+            val value = direct {
                 val n = Var.get[Int].now match
                     case 0 => Sync.defer(10).now
                     case n => n
@@ -291,7 +290,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Sync.Unsafe.evalOrThrow(Var.run(5)(value)) == 6)
         }
         "pure guards and bindings in case bodies" in {
-            val value = lowered {
+            val value = direct {
                 val opt = Sync.defer(Option(5)).now
                 opt match
                     case Some(v) if v > 3 =>
@@ -304,7 +303,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Sync.Unsafe.evalOrThrow(value) == 10)
         }
         "a pattern-bound pending identifier used through a marker" in {
-            val value = lowered {
+            val value = direct {
                 val opt: Option[Int < Sync] = Option(Sync.defer(7).later)
                 opt match
                     case Some(inner) => inner.now * 2
@@ -314,7 +313,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Sync.Unsafe.evalOrThrow(value) == 14)
         }
         "a refutable val pattern" in {
-            val value = lowered {
+            val value = direct {
                 val Some(a) = Sync.defer(Some(1)).now
                 a
             }
@@ -322,7 +321,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Sync.Unsafe.evalOrThrow(value) == 1)
         }
         "a tuple val pattern" in {
-            val value = lowered {
+            val value = direct {
                 val (a, b) = (Sync.defer(1).now, Sync.defer(2).now)
                 a + b
             }
@@ -332,19 +331,19 @@ class LowerTest extends kyo.test.Test[Any]:
         "an effectful guard is rejected" in {
             typeCheckFailure(
                 """
-                lowered {
+                direct {
                     Sync.defer(1).now match
                         case n if Sync.defer(n > 0).now => n
                         case _ => 0
                 }
                 """
-            )("An effect marker in a pattern guard is not supported")
+            )("A .now in a pattern guard is not supported")
         }
     }
 
     "loops" - {
         "effectful condition and body" in {
-            val value = lowered {
+            val value = direct {
                 val counter = AtomicInt.init(0).now
                 while counter.get.now < 3 do
                     counter.incrementAndGet.now
@@ -355,7 +354,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Sync.Unsafe.evalOrThrow(value) == 3)
         }
         "compound condition" in {
-            val value = lowered {
+            val value = direct {
                 val a = AtomicInt.init(0).now
                 val b = AtomicInt.init(10).now
                 while a.get.now < 5 && b.get.now > 5 do
@@ -369,10 +368,10 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Sync.Unsafe.evalOrThrow(value) == (5, 5))
         }
         "a loop ended by Abort" in {
-            val value = lowered {
+            val value = direct {
                 val counter = AtomicInt.init(0).now
                 val result  = Abort.run[Int] {
-                    lowered {
+                    direct {
                         while true do
                             val current = counter.incrementAndGet.now
                             if current >= 3 then
@@ -388,7 +387,7 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Sync.Unsafe.evalOrThrow(value) == Result.fail(3))
         }
         "stack safety over many iterations" in {
-            val value = lowered {
+            val value = direct {
                 val counter = AtomicInt.init(0).now
                 while counter.get.now < 100000 do
                     counter.incrementAndGet.now
@@ -400,7 +399,7 @@ class LowerTest extends kyo.test.Test[Any]:
         }
         "nested conditionals inside a loop" in {
             val evens = ArrayBuffer.empty[Int]
-            val value = lowered {
+            val value = direct {
                 val counter = AtomicInt.init(0).now
                 while counter.get.now < 6 do
                     val current = counter.incrementAndGet.now
@@ -419,12 +418,12 @@ class LowerTest extends kyo.test.Test[Any]:
         }
     }
 
-    "nested boundaries" - {
-        "a handler receives a nested boundary and keeps its effect out of the outer row" in {
-            val value: Int < Var[Int] = lowered {
+    "nested direct blocks" - {
+        "a handler receives a nested block and keeps its effect out of the outer row" in {
+            val value: Int < Var[Int] = direct {
                 val current = Var.get[Int].now
                 val handled = Abort.run[String] {
-                    lowered {
+                    direct {
                         val n = Var.get[Int].now
                         if n > 0 then Abort.fail("positive").now else n + 1
                     }
@@ -435,19 +434,19 @@ class LowerTest extends kyo.test.Test[Any]:
             assert(Var.run(3)(value).eval == 2)
         }
         "nested handlers in both orders" in {
-            val inner = lowered {
+            val inner = direct {
                 val n = Var.get[Int].now
                 if n > 0 then Abort.fail("positive").now else n + 1
             }
-            val abortOutside: Result[String, Int] < Any = lowered(Abort.run[String](Var.run(0)(inner)).now)
-            val varOutside: Result[String, Int] < Any   = lowered(Var.run(1)(Abort.run[String](inner)).now)
+            val abortOutside: Result[String, Int] < Any = direct(Abort.run[String](Var.run(0)(inner)).now)
+            val varOutside: Result[String, Int] < Any   = direct(Var.run(1)(Abort.run[String](inner)).now)
             assert(abortOutside.eval == Result.succeed(1))
             assert(varOutside.eval == Result.fail("positive"))
         }
         "a user-defined method taking a computation" in {
             def handle[S](v: Int < (Var[Int] & S)): Int < S = Var.run(0)(v)
-            val value: Int < Abort[String]                  = lowered {
-                handle(lowered {
+            val value: Int < Abort[String]                  = direct {
+                handle(direct {
                     val n = Var.get[Int].now
                     if n > 0 then Abort.fail("positive").now else n + 1
                 }).now
@@ -457,8 +456,8 @@ class LowerTest extends kyo.test.Test[Any]:
         "the handled effect does not widen the outer row" in {
             typeCheckFailure(
                 """
-                val value: Int < Any = lowered {
-                    Abort.run[String](lowered(Abort.fail("x").now)).now
+                val value: Int < Any = direct {
+                    Abort.run[String](direct(Abort.fail("x").now)).now
                     Var.get[Int].now
                 }
                 """
@@ -468,14 +467,14 @@ class LowerTest extends kyo.test.Test[Any]:
 
     "effect rows" - {
         "exactly the union of the markers' rows" in {
-            val value: Int < (Var[Int] & Abort[String]) = lowered {
+            val value: Int < (Var[Int] & Abort[String]) = direct {
                 val n = Var.get[Int].now
                 if n > 0 then Abort.fail("positive").now else n + 1
             }
             assert(Abort.run(Var.run(0)(value)).eval == Result.succeed(1))
             typeCheckFailure(
                 """
-                val narrow: Int < Var[Int] = lowered {
+                val narrow: Int < Var[Int] = direct {
                     val n = Var.get[Int].now
                     if n > 0 then Abort.fail("positive").now else n + 1
                 }
@@ -483,7 +482,7 @@ class LowerTest extends kyo.test.Test[Any]:
             )("Required: Int < kyo.Var[Int]")
         }
         "multi-shot effects resume the continuation once per choice" in {
-            val value = lowered {
+            val value = direct {
                 val x = Choice.eval(1, 2, 3).now
                 val y = Choice.eval("a", "b").now
                 s"$x$y"

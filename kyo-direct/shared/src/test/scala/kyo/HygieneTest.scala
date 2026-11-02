@@ -246,7 +246,7 @@ class HygieneTest extends kyo.test.Test[Any]:
              }""")("Method definitions containing .now are not supported inside `direct` blocks.")
     }
 
-    "asyncShift explicit .later" in {
+    "explicit .later in a lambda" in {
         typeCheckFailure(
             """
               val default:Int < Any = 2

@@ -224,21 +224,21 @@ val sumTwo: Int < (Async & Sync) =
 
 When you reach for an inline `class` or `trait` declaration inside a `direct` block, the macro rejects it. Define the type at the enclosing scope and instantiate it inside the block.
 
-> **Note:** A `.now` inside a by-name argument is also rejected up front, because CPS sequencing cannot compose with by-name capture (left unguarded it would surface a confusing dotty-cps-async error). Bind the effect to a `val` first, then pass the value.
+> **Note:** A `.now` inside a by-name argument is also rejected, because a by-name argument may run zero, one, or many times and a sequenced effect cannot follow that. Bind the effect to a `val` first, then pass the value. The by-name arguments of the methods listed under "Methods with a Kyo counterpart", such as `orElse` and `getOrElse`, are the exception: their semantics are known, so a `.now` inside them runs when the alternative is needed.
 
 ## Higher-order calls and lazy structures
 
-A `direct` block needs to know what to do when `.now` appears inside a lambda passed to `map`, `flatMap`, or another higher-order method. The macro handles this by recognising a curated set of method names on a curated set of receiver types and rewriting the lambda to sequence its inner effect per element. Methods and types outside that set fall back to the "must use .now or .later" error.
+A `direct` block needs to know what to do when `.now` appears inside a lambda passed to `map`, `flatMap`, or another higher-order method. The lambda runs inside the method, where no effect can be sequenced, so the macro replaces the call by the `Kyo` operation with the same meaning that takes an effect-producing callback: `xs.map(x => f(x).now)` becomes `Kyo.foreach(xs)(x => f(x))`. Methods and types without such a counterpart fall back to the "must use .now or .later" error.
 
-### Shift-aware methods
+### Methods with a Kyo counterpart
 
-When the macro sees a higher-order call inside `direct`, it needs a rule for whether the lambda body's `.now` should run once or once-per-element. The whitelist exists so the macro only rewrites lambdas where per-element sequencing matches the method's documented semantics; an unrecognised method falls through to the rejection error rather than guessing the wrong rewrite.
+The replacement is only right where the `Kyo` operation has the method's documented semantics, so the macro rewrites a fixed set of methods on a fixed set of receiver types; a method outside the set falls through to the rejection error rather than guessing the wrong rewrite.
 
 The recognised methods are:
 
-`map`, `flatMap`, `flatten`, `collect`, `collectFirst`, `find`, `filter`, `filterNot`, `withFilter`, `dropWhile`, `takeWhile`, `partition`, `partitionMap`, `span`, `fold`, `foldLeft`, `foldRight`, `groupBy`, `groupMap`, `groupMapReduce`, `exists`, `forall`, `count`, `maxByOption`, `corresponds`, `foreach`, `tapEach`, `orElse`, `getOrElse`, `recover`, `recoverWith`, `scanLeft`, `scanRight`.
+`map`, `flatMap`, `flatten`, `collect`, `collectFirst`, `find`, `filter`, `filterNot`, `filterOrElse`, `filterToOption`, `withFilter`, `dropWhile`, `takeWhile`, `partition`, `partitionMap`, `span`, `fold`, `foldLeft`, `foldRight`, `groupBy`, `groupMap`, `groupMapReduce`, `exists`, `forall`, `count`, `maxByOption`, `corresponds`, `foreach`, `tapEach`, `orElse`, `getOrElse`, `recover`, `recoverWith`, `scanLeft`, `scanRight`.
 
-The recognised receiver types are `Iterable[?]`, `IterableOps[?, ?, ?]`, `Option[?]`, `scala.util.Try[?]`, `Either[?, ?]`, `Either.LeftProjection[?, ?]`, plus the Kyo types `Maybe` and `Result` (matched by their companion-object selector).
+The recognised receiver types are the collections whose `IterableOps` base is `IterableOps[A, CC, CC[A]]` (`Seq`, `List`, `Vector`, `Chunk`, `Set`, and any such `Iterable`), plus `Maybe`, `Result`, `Option`, `scala.util.Try`, `Either`, and `Either.LeftProjection`, each for the methods it has among the names above. The `Kyo` operations behind them live in kyo-kernel and can be called directly as well.
 
 ```scala
 import kyo.*
@@ -265,7 +265,7 @@ val total: Int < (Async & Abort[NotFound]) =
     }
 ```
 
-> **Note:** The whitelist is name-based. A custom method called `map` on one of the supported types is also recognised; a custom method with a name outside the list is not, even on a supported type.
+> **Note:** Recognition is by the receiver's type and the method the compiler resolved. A method that overrides a recognised one, such as a collection's own `map`, is recognised; a method that merely shares the name on another type is not, and a `.now` in its lambda is rejected.
 
 ### Lazy structures: `Stream`
 
@@ -286,7 +286,7 @@ val hoisted: Stream[Int, Any] < Sync =
     }
 
 // Keep the per-element effect with `.later`; it lifts into the stream's row.
-// filter is not shift-aware, so .later is required to lift the predicate effect.
+// On a Stream no method is rewritten, so .later is required to lift the predicate effect.
 val perElement: Stream[Int, Sync] < Any =
     direct {
         nums.filter(x => isMatch(x).later)
@@ -297,7 +297,7 @@ A `.now` in the same lambda would fail at compile time with a diagnostic that po
 
 > **Note:** The rejection is not stylistic: a `.now` evaluated lazily per stream element would run its effect outside the surrounding handlers, letting the effect escape the row. `.later` keeps the effect in the lambda so it lifts into the stream's own effect row instead.
 
-> **Caution:** The lazy-structure rule applies inside any `Stream.*` lambda regardless of the method name. Even shift-aware names like `map` are not rewritten per-element on `Stream`; the lambda is treated as deferred work.
+> **Caution:** The lazy-structure rule applies inside any `Stream.*` lambda regardless of the method name. Even names with a counterpart elsewhere, like `map`, are not rewritten per-element on `Stream`; the lambda is treated as deferred work.
 
 ## Error diagnostics
 
@@ -305,7 +305,7 @@ When a rejection fires, you see a coloured, code-highlighted error that names th
 
 ## Putting it together
 
-The three core capabilities combine in a single block. `.now` sequences each effect and binds its result; a shift-aware `map` runs an effect per element; `.later` preserves an un-sequenced effect for explicit composition.
+The three core capabilities combine in a single block. `.now` sequences each effect and binds its result; a `map` with a Kyo counterpart runs an effect per element; `.later` preserves an un-sequenced effect for explicit composition.
 
 ```scala
 import kyo.*
@@ -325,7 +325,7 @@ val greeting: String < (Async & Abort[NotFound]) =
         s"Hello ${a.name} and ${b.name}"
     }
 
-// Run an effect per element via a shift-aware map
+// Run an effect per element through the counterpart of map
 val allNames: Chunk[String] < (Async & Abort[NotFound]) =
     direct {
         Chunk(1, 2, 3).map(id => fetchUser(id).now.name)

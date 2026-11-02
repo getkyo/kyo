@@ -3,7 +3,7 @@ package kyo
 import scala.annotation.nowarn
 
 @TestVariant("Coll", "List", "Vector", "Chunk", "Iterable", "IterableOneShot", "Set")
-class CollShiftMethodSupportTest extends kyo.test.Test[Any]:
+class CounterpartsCollTest extends kyo.test.Test[Any]:
 
     extension [A](left: Iterable[A])
         @nowarn
@@ -276,6 +276,14 @@ class CollShiftMethodSupportTest extends kyo.test.Test[Any]:
             val (es, res) = Emit.run(d).eval
             assert(es == res)
         }
+        "flatten" in {
+            def f(i: Int): Seq[Int] < Any = Seq(i, i)
+
+            val d = direct:
+                xsValues.flatten(using i => f(i).now)
+
+            assert(d.eval ~== Seq(1, 1, 2, 2, 3, 3, 4, 4))
+        }
         "withFilter" in {
             def f(i: Int): Boolean < Any = i < 3
 
@@ -357,4 +365,4 @@ class CollShiftMethodSupportTest extends kyo.test.Test[Any]:
     }
 
     //  @TestVariant("Coll", "List", "Vector", "Chunk", "Iterable", "IterableOneShot", "Set")
-end CollShiftMethodSupportTest
+end CounterpartsCollTest
