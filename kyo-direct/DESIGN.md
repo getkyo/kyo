@@ -83,7 +83,7 @@ Kyo           the operations themselves, in kyo-kernel
 
 ## Reduction rules
 
-Each rule states the typed shape it matches and the term it produces. `K[·]` is the continuation, the rest of the block as a function of the rule's result term. `bind(e, x => K[x])` is the generated composition `e.map(x => K[x])`, with the `Frame` passed explicitly from the marker's position (see Frames). `now(e)` is a `.now` application. `S` is the block's row.
+[SEMANTICS.md](SEMANTICS.md) states these rules formally, as a translation with its typing; this section explains them. Each rule states the typed shape it matches and the term it produces. `K[·]` is the continuation, the rest of the block as a function of the rule's result term. `bind(e, x => K[x])` is the generated composition `e.map(x => K[x])`, with the `Frame` passed explicitly from the marker's position (see Frames). `now(e)` is a `.now` application. `S` is the block's row.
 
 **R1. Subtree without a marker.** Left as it is. The lowering never descends into a tree it has no reason to change.
 

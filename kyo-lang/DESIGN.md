@@ -460,7 +460,7 @@ These are semantic requirements. The syntax preparation alone cannot decide whic
 
 ## CPS transformation rules
 
-Each **From** block is Scala syntax inside a `.kyo` method body; each **To** block is generated ordinary Scala. Every `.kyo` file has `kyo.*` in scope; assume `chunk: Chunk[Int]`, and that illustrative helpers such as `combine`, `consume`, and `pureCalculation` are approved pure functions. The examples are independent method-body fragments, not one compilation unit.
+The lowering is kyo-direct's, and [kyo-direct/SEMANTICS.md](../kyo-direct/SEMANTICS.md) states it formally: the source shapes, the erasure of `.later`, the row, the translation with its continuation, and the typing it preserves. The examples below illustrate those rules on `.kyo` source. Each **From** block is Scala syntax inside a `.kyo` method body; each **To** block is generated ordinary Scala. Every `.kyo` file has `kyo.*` in scope; assume `chunk: Chunk[Int]`, and that illustrative helpers such as `combine`, `consume`, and `pureCalculation` are approved pure functions. The examples are independent method-body fragments, not one compilation unit.
 
 These are target rewrites, including features not yet implemented. They assume resolved value/computation boundaries and callback types; obtaining those through normal Scala typing remains the architecture gate below. Generated pending-value `.map` calls are compiler output, not methods exposed to the source program.
 
