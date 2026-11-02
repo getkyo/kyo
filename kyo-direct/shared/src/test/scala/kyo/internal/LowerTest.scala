@@ -328,16 +328,35 @@ class LowerTest extends kyo.test.Test[Any]:
             import AllowUnsafe.embrace.danger
             assert(Sync.Unsafe.evalOrThrow(value) == 3)
         }
-        "an effectful guard is rejected" in {
-            typeCheckFailure(
-                """
-                direct {
-                    Sync.defer(1).now match
-                        case n if Sync.defer(n > 0).now => n
-                        case _ => 0
-                }
-                """
-            )("A .now in a pattern guard is not supported")
+        "an effectful guard runs after its pattern matches and falls through when false" in {
+            def classify(n: Int): String < Var[Int] = direct {
+                n match
+                    case x if Var.update[Int](c => c + 1).now > 0 && x > 10 => "big"
+                    case x if Var.update[Int](c => c + 1).now > 0 && x > 5  => "medium"
+                    case _                                                  => "small"
+            }
+            assert(Var.runTuple(0)(classify(20)).eval == (1, "big"))
+            assert(Var.runTuple(0)(classify(7)).eval == (2, "medium"))
+            assert(Var.runTuple(0)(classify(1)).eval == (2, "small"))
+        }
+        "an effectful guard sees the pattern's bindings and joins before more statements" in {
+            val value = direct {
+                val label = Some(3) match
+                    case Some(n) if Var.get[Int].now == n => "equal"
+                    case Some(n)                          => "other"
+                    case None                             => "none"
+                label + Var.get[Int].now
+            }
+            assert(Var.run(3)(value).eval == "equal3")
+            assert(Var.run(4)(value).eval == "other4")
+        }
+        "a failing effectful guard on the last case is a MatchError" in {
+            val value = direct {
+                (1: Any) match
+                    case n: Int if Var.get[Int].now > n => n
+            }
+            assert(Var.run(5)(value).eval == 1)
+            assert(Result.catching[MatchError](Var.run(0)(value).eval).isFailure)
         }
     }
 

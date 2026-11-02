@@ -210,16 +210,6 @@ class KyoLangPluginInventoryTest extends kyo.test.Test[Any]:
               |""".stripMargin
         )("Required: Option[Int]")
 
-        "P07 effectful guards are not supported yet" in rejects(
-            "Guard.kyo",
-            """object Guard:
-              |    def bad(value: Int) =
-              |        value match
-              |            case n if n > Var.get[Int] => n
-              |            case _                    => 0
-              |""".stripMargin
-        )("pattern guard is not supported")
-
         "P08 nonexhaustive matches" in rejects(
             "Nonexhaustive.kyo",
             """object Nonexhaustive:

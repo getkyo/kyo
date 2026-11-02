@@ -28,7 +28,7 @@ Two deliberate changes against the dotty-cps-async implementation:
 | Blocks and bindings | `val x = e.now` binds once; later references reuse the result. Statements run in order. A discarded `e.now` still runs. Nested blocks, blocks inside tuples, `val (a, b) = (x.now, y.now)`. | `BlockTest`, `LowerTest` |
 | Conditionals | Effectful condition, effectful branches, `val` bindings inside a branch, an `if` with an implicit `()` branch. | `IfTest`, `PreludeTest`, `LowerTest` |
 | Boolean operators | `&&` and `||` with effectful operands short-circuit: the right operand runs only when the left does not decide. | `BooleanTest`, `LowerTest` |
-| Pattern matching | Effectful scrutinee, effectful case bodies, pure guards, `val` bindings inside case bodies, a pattern-bound pending identifier used through `.now`, the refutable `val Some(a) = e.now`. An effectful guard is rejected. | `PatMatchTest`, `LowerTest` |
+| Pattern matching | Effectful scrutinee, effectful case bodies, pure and effectful guards, `val` bindings inside case bodies, a pattern-bound pending identifier used through `.now`, the refutable `val Some(a) = e.now`. | `PatMatchTest`, `LowerTest` |
 | Loops | `while` with effectful condition and body, compound `&&` conditions, `while true` ended by `Abort`, loops inside nested blocks. Stack safety over a hundred thousand iterations. | `WhileTest`, `LowerTest` |
 | Nested markers | `f(x.now).now` binds inner then outer. `.later` inside `.later` is fine. `.now` inside `.later` is rejected. `.later` inside lambdas and local `def`s is erased there. | `HygieneTest`, `StreamTest`, `CounterpartsCollTest` |
 | Handlers | A handler receives a nested `direct` block and the handler call takes `.now`, for strict, by-name, and lambda parameters. The inner block is its own boundary; handled effects do not reach the outer row. | `PreludeTest`, `CoreTest`, `WhileTest`, `LowerTest` |
@@ -98,7 +98,7 @@ Kyo           the operations themselves, in kyo-kernel
 
 **R6. Applications.** For `f(a1, ..., an)` the receiver (or function value) lowers first, then each strict argument in order, each bound before the next is evaluated, and the call is rebuilt with the bound terms through `Apply.copy`. A pure strict argument that precedes a marker argument is bound to a local as well, so `combine(pure(), e.now)` evaluates `pure()` first. A by-name argument is never bound: with no marker it stays in place and stays delayed; with one, the call is first checked against `Counterparts` (R9 covers the by-name arguments of `orElse`, `getOrElse`, and `filterOrElse`), and otherwise rejected. Type applications, selections, ascriptions, and repeated arguments follow the same order.
 
-**R7. Pattern matching.** `s match { cases }` lowers `s`, then each case body as a block; patterns and their bound symbols are kept as they are, a pure guard stays a guard. If the match is the last expression, each body ends with the final continuation; otherwise the bodies lower with `K0` as in R4 and `Match.copy` builds the join, bound once into `K`. A guard containing a marker is rejected.
+**R7. Pattern matching.** `s match { cases }` lowers `s`, then each case body as a block; patterns and their bound symbols are kept as they are, a pure guard stays a guard. If the match is the last expression, each body ends with the final continuation; otherwise the bodies lower with `K0` as in R4 and `Match.copy` builds the join, bound once into `K`. A guard containing a marker is lowered inside its case: the case matches on its pattern alone and the lowered guard chooses between the case's body and the remaining cases, matched again on the same selector (bound to a local first), so the guard runs after its pattern matched, in case order, and a false guard falls through; a false guard on the last case is a `MatchError`, as in Scala.
 
 **R8. Loops.** `while c do b` becomes `Loop[Unit, Unit, S](())(_ => lower(c) then if c' then lower(b).map(_ => Loop.continue[Unit]) else Loop.done[Unit])`. No value is threaded through the loop because `var` is excluded; every state the loop observes lives behind an effect. `Loop` is stack safe. The loop is bound into `K` once.
 
@@ -135,7 +135,7 @@ Every generated call that takes a `Frame` receives one explicitly: `<.map`, `Loo
 
 ### Diagnostics
 
-The messages are those of the dotty-cps-async implementation, since the tests pin them, plus the lowering's own for the shapes it refuses: a marker in a pattern guard, in a by-name argument of an unrecognized call, in a local definition, in a callback with more than two parameters.
+The messages are those of the dotty-cps-async implementation, since the tests pin them, plus the lowering's own for the shapes it refuses: a marker in a by-name argument of an unrecognized call, in a local definition, in a callback with more than two parameters.
 
 ## What kyo-lang needs, and what it still owns
 

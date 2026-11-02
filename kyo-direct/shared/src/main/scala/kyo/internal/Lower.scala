@@ -222,14 +222,34 @@ private[kyo] object Lower:
                 bind(joined.asTerm, TypeRepr.of[Boolean], frameAt(tree))(k)
             })
 
+        /** Lowers a match. A guard with a marker is lowered inside its case: the case matches on its pattern alone, and the lowered
+          * guard decides between the case's body and the remaining cases, matched again on the same selector. The guard therefore
+          * runs after its pattern matched, in case order, and a false guard falls through to the cases after it; the selector is bound
+          * to a local when it is reused.
+          */
         private def lowerMatch(tree: Term, scrutinee: Term, cases: List[CaseDef])(k: Cont): Term =
-            cases.flatMap(_.guard).filter(hasNow).foreach { guard =>
-                report.errorAndAbort("A .now in a pattern guard is not supported; bind the value before the match", guard.pos)
-            }
+            def effectfulGuard(c: CaseDef): Boolean = c.guard.exists(hasNow)
             lower(scrutinee)(cont(k.result) { selector =>
-                val branches = if k.isFinal then k else lift(tree.tpe.widen)
-                val rebuilt  = cases.map(c => CaseDef.copy(c)(c.pattern, c.guard, lower(c.rhs)(branches)))
-                val joined   = Match.copy(tree)(selector, rebuilt)
+                val branches                                            = if k.isFinal then k else lift(tree.tpe.widen)
+                def rebuild(selector: Term, cases: List[CaseDef]): Term =
+                    val (plain, guarded) = cases.span(c => !effectfulGuard(c))
+                    val kept             = plain.map(c => CaseDef.copy(c)(c.pattern, c.guard, lower(c.rhs)(branches)))
+                    guarded match
+                        case Nil       => Match.copy(tree)(selector, kept)
+                        case c :: rest =>
+                            val fallthrough =
+                                if rest.isEmpty then '{ throw new MatchError(${ selector.asExpr }) }.asTerm
+                                else rebuild(selector, rest)
+                            val decided = lower(c.guard.get)(cont(branches.result) { test =>
+                                If(test, lower(c.rhs)(branches), fallthrough)
+                            })
+                            Match.copy(tree)(selector, kept :+ CaseDef.copy(c)(c.pattern, None, decided))
+                    end match
+                end rebuild
+                val joined =
+                    if cases.exists(effectfulGuard) && !trivial(selector) then
+                        let(selector, branches.result)(local => rebuild(local, cases))
+                    else rebuild(selector, cases)
                 if k.isFinal then joined else bind(joined, tree.tpe.widen, frameAt(tree))(k)
             })
         end lowerMatch

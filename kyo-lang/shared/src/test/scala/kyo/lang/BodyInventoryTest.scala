@@ -91,6 +91,12 @@ class BodyInventoryTest extends kyo.test.Test[Any]:
         assert(matched(51) == -51)
         assert(matched(7) == 7)
     }
+    "P07 effectful guards" in {
+        Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "guarded")
+        assert(run(Inventory.guarded(7), 5) == 7)
+        assert(run(Inventory.guarded(5), 5) == 0)
+        assert(run(Inventory.guarded(1), 5) == -1)
+    }
     "E07 for comprehensions" in {
         Signatures.exact[List[Int] < Var[Int]]("kyolang.Inventory", "comprehension")
         Signatures.exact[Unit < Var[Int]]("kyolang.Inventory", "traversal")

@@ -138,9 +138,17 @@ right operand is pure is an ordinary application (rule `apply`).
 
 (match-join)  k ≠ end,  T the type of the Match node
               ⟦e match { case p_i if g_i => e_i }⟧ k  =  ⟦e⟧ (s ↦ bind(s match { case p_i if g_i => ⟦e_i⟧ lift_T }, x ↦ k(x)))
+
+(match-guard) M(g_j) ≠ ∅ for the first such j, k' the continuation the cases lower with (k or lift_T above)
+              s match { case p_i if g_i => e_i }  (i ≤ n)  with k'
+                =  s match { case p_i if g_i => ⟦e_i⟧ k'   (i < j)
+                             case p_j => ⟦g_j⟧ (t ↦ if t then ⟦e_j⟧ k' else rest) }
+              rest  =  s match { case p_i if g_i => e_i } (i > j) with k'   by the same rule,   or   throw MatchError(s) when j = n
 ```
 
-Patterns and their bound symbols are kept as they are. A guard `g_i` with a marker is rejected.
+Patterns and their bound symbols are kept as they are, and so is a guard without a marker. A guard with a marker is lowered inside
+its case: the case matches on its pattern alone, the lowered guard runs after the pattern matched, in case order, and a false guard
+falls through to the cases after it, matched again on the same selector `s`, which is bound to a local when it is not trivial.
 
 ### Loops
 
@@ -256,5 +264,5 @@ The translation is total on the shapes above; the checks in [Validate.scala](sha
 before it and reject the shapes it does not give a meaning to, each with a message: `var`, `lazy val`, nested class or object
 definitions, `try`/`throw`, `synchronized`, a read of a mutable member, a bare computation in statement position (a nested block
 included), a `now` inside a `later`, inside a by-name argument of a non-counterpart call, inside a lambda passed to a non-counterpart
-call, inside a `Stream` lambda, inside a pattern guard, or inside a local definition. A `now` in a position no rule covers is reported
+call, inside a `Stream` lambda, or inside a local definition. A `now` in a position no rule covers is reported
 at that position.

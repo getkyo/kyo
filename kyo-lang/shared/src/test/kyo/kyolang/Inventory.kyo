@@ -74,6 +74,13 @@ object Inventory:
             case n if n > 50 => -n
             case n           => n
 
+    // P07: an effectful guard runs after its pattern matches, in case order, and falls through when false
+    def guarded(value: Int) =
+        value match
+            case n if n > Var.get[Int]  => n
+            case n if n == Var.get[Int] => 0
+            case _                      => -1
+
     // E07: for comprehensions over an admitted collection, with a guard and with an effectful body, and for-do
     def comprehension = for x <- List(1, 2, 3) if x % 2 == 1 yield x * Var.get[Int]
     def traversal = for x <- List(1, 2) do Var.updateDiscard[Int](y => y + x)
