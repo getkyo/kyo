@@ -13,6 +13,8 @@ import dotty.tools.dotc.report
   *   - [[Preparation]] runs between the parser and the typer on `.kyo` compilation units only. It wraps every expression in a marker,
   *     wraps every definition body in the `kyo.lang.internal.Body` macro, attaches the `kyo.lang.Checked` metadata, and rejects the
   *     declarations the language does not admit.
+  *   - [[Admission]] runs after the typer on `.kyo` units and rejects every reference outside the admitted API surface, with the
+  *     compiler's own notion of safe code.
   *   - [[CheckMetadata]] runs after the typer on every unit and rejects a `.scala` source that declares the `Checked` metadata by hand,
   *     so the metadata always attests a validated `.kyo` definition.
   *
@@ -27,5 +29,5 @@ final class KyoLangPlugin extends StandardPlugin:
 
     override def initialize(options: List[String])(using Context): List[PluginPhase] =
         if options.nonEmpty then report.error("The kyo-lang plugin takes no options")
-        List(new Preparation, new CheckMetadata)
+        List(new Preparation, new Admission, new CheckMetadata)
 end KyoLangPlugin

@@ -329,7 +329,7 @@ class KyoLangPluginInventoryTest extends kyo.test.Test[Any]:
             """object Unsafe:
               |    def bad = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
               |""".stripMargin
-        )("API is not admitted in .kyo")
+        )("is not admitted in .kyo: kyo.AllowUnsafe")
 
         "A06 raw randomness" in rejects(
             "Randomness.kyo",

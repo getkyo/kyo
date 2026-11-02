@@ -57,7 +57,7 @@ class ValidateTest extends kyo.test.Test[Any]:
           |        42
           |    }
           |""".stripMargin
-    )("API is not admitted in .kyo")
+    )("by-name")
 
     "an unadmitted parameterless method on an ordinary Scala object" in rejectsWithBridge(
         "Parameterless.kyo",

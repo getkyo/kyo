@@ -375,7 +375,8 @@ The initial delivery is a coherent, explicitly bounded Scala subset with working
 | [Preparation.scala](plugin/src/main/scala/kyo/lang/plugin/Preparation.scala) | Between parser and typer, selects `.kyo` units, adds `import kyo.*`, inserts markers and body wrappers, adds checked metadata, and rejects the syntax and declarations outside the inventory's supported rows, each with a message naming the construct. |
 | [Markers.scala](shared/src/main/scala/kyo/lang/internal/Markers.scala) | Supplies pure `A => A` and pending `A < S => A` marker overloads, both transparent. Normal typing selects the overload; the pending one is kyo-direct's `.now`, so a typed `.kyo` body is the body of a `direct` block. |
 | [Body.scala](shared/src/main/scala/kyo/lang/internal/Body.scala) | Typed macro that validates the body against the admitted surface, keeps a pure body as it is, rejects an effectful field, and otherwise lowers the body through kyo-direct's `Validate` and `Lower`. |
-| [Validate.scala](shared/src/main/scala/kyo/lang/internal/Validate.scala) | Validates resolved API symbols, extractors, and references against the current small admitted surface, and rejects `null`, mutable and lazy locals, mutable field reads, and stored partial-function values; that surface is not the language's permanent standard library. |
+| [Validate.scala](shared/src/main/scala/kyo/lang/internal/Validate.scala) | Rejects `null`, mutable and lazy locals, mutable field reads, and stored partial-function values: the body's shape. |
+| [Admission.scala](plugin/src/main/scala/kyo/lang/plugin/Admission.scala) | After the typer, admits or rejects every term reference of a `.kyo` unit: Kyo's API without `AllowUnsafe`, `Checked` definitions, and the compiler's safe-mode judgment of the standard library and the JDK (`SafeRefs`), minus the language's exclusions. |
 | [Checked.scala](shared/src/main/scala/kyo/lang/Checked.scala) | Metadata attached to compiled `.kyo` definitions, including for separate compilation. |
 | [CheckMetadata.scala](plugin/src/main/scala/kyo/lang/plugin/CheckMetadata.scala) | Post-typer check rejecting attempts to declare this metadata in ordinary `.scala` sources compiled with the plugin. |
 
@@ -996,14 +997,17 @@ By-name arguments require the same attention to scope and invocation: preserve z
 
 ### Agreed API admission rule
 
-`.kyo` can use only safe APIs under this initial trust policy:
+`.kyo` can use only safe APIs under this trust policy, implemented by the plugin's `Admission` phase:
 
 | Resolved declaration | Admission |
 |---|---|
 | Validated `.kyo` definition | Allow, preserving its checked signature. |
 | API declared in package `kyo` or any subpackage | Allow if it does not require `AllowUnsafe`. |
-| Standard-library, Java, or other library API | Allow only if its exact symbol is in the external allowlist. |
+| Standard-library, Java, or other library API | Allow if the Scala compiler's safe mode considers it safe: marked `scala.caps.assumeSafe` (by a library compiled under safe mode, or by the compiler's own marks for the standard library and the JDK) or in a package the compiler assumes safe, and not marked `scala.caps.rejectSafe`. The compiler's `SafeRefs` supplies both lists; safe mode itself stays off because it implies capture checking. |
+| Operations safe mode accepts but the language excludes | Reject: casts and runtime type tests, monitors and reference identity, `scala.util.Random`, the partial collection operations (`head`, `last`, `reduce`, `max`, positional `apply`, `Option.get`, `???`). |
 | Anything else | Reject. |
+
+This is the same model as the compiler's safe mode and as TACIT's capability-safe library: reject by default, trusted packages, a safe mark that travels with compiled code (`Checked` here, `@assumeSafe` there), an unsafe mark to punch holes. When Kyo can carry `@assumeSafe` itself, the Kyo row becomes the third row.
 
 The Kyo rule is deliberately package-based. Trust the build and the convention that `kyo.*` contains Kyo APIs. Do not introduce dependency-ownership verification, artifact attestations, or package-spoofing defenses. A same-named method outside `kyo.*` is not Kyo; a member inherited from Scala/Java is classified by its resolved declaring symbol rather than the receiver's package.
 
@@ -1081,7 +1085,7 @@ For each supported operation, test empty and nonempty inputs, exact results, cal
 
 ### 4. Implement safe API admission and the construct policy
 
-Replace the hard-coded API table with the agreed rule: validated `.kyo` definitions, `kyo.*` APIs without an `AllowUnsafe` requirement, and an external exact-symbol allowlist. Resolve allowlist entries once per compiler context and reject ambiguous/missing entries. Do not add package provenance or purity annotation machinery.
+Done for admission: the plugin's `Admission` phase applies the agreed rule, with the compiler's safe-mode judgment (`SafeRefs`) in place of a hand-written external allowlist, validated `.kyo` definitions, `kyo.*` APIs without an `AllowUnsafe` requirement, and the language's own exclusions. No package provenance or purity annotation machinery was added.
 
 Add acceptance cases for a previously unlisted safe Kyo method, a Kyo method requiring explicit and implicit `AllowUnsafe`, an aliased unsafe requirement, an admitted external overload versus an unlisted overload, constructors/getters/default getters, implicit conversions, exports, and source callbacks inside trusted inline APIs. Confirm that users still cannot access pending `<` methods while methods on their result types remain available.
 

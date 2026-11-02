@@ -6,7 +6,7 @@ This guide complements the root [CONTRIBUTING.md](../CONTRIBUTING.md), which cov
 
 `kyo-lang` ships as two artifacts from one module directory:
 
-- `kyo-lang/` (sbt `kyo-lang`, cross-platform): the compile-time library a `.kyo` compilation needs on its classpath. `kyo.lang.Checked` is the metadata attached to compiled definitions; `kyo.lang.internal.Markers` and `kyo.lang.internal.Body` are the marker overloads (the pending one is kyo-direct's `.now`) and the typed body macro the plugin inserts, which validates and then lowers through kyo-direct; `kyo.lang.internal.Validate` is the API admission check. The library is cross-built because the compiled output of a `.kyo` file runs wherever its enclosing project runs, and the compile classpath of a JS or Native project carries that platform's artifact.
+- `kyo-lang/` (sbt `kyo-lang`, cross-platform): the compile-time library a `.kyo` compilation needs on its classpath. `kyo.lang.Checked` is the metadata attached to compiled definitions; `kyo.lang.internal.Markers` and `kyo.lang.internal.Body` are the marker overloads (the pending one is kyo-direct's `.now`) and the typed body macro the plugin inserts, which validates and then lowers through kyo-direct; `kyo.lang.internal.Validate` checks the body's shape; API admission is the plugin's `Admission` phase. The library is cross-built because the compiled output of a `.kyo` file runs wherever its enclosing project runs, and the compile classpath of a JS or Native project carries that platform's artifact.
 - `kyo-lang/plugin/` (sbt `kyo-lang-plugin`, JVM only): the scalac plugin. `KyoLangPlugin` registers two phases: `Preparation` runs after the parser and before the typer on `.kyo` units only, and `CheckMetadata` runs after the typer on every unit. The plugin depends on `scala3-compiler` as `Provided`: the compiler loading it supplies itself.
 
 The plugin never references the library's classes directly; it builds untyped trees naming `kyo.lang.internal.Markers.force`, `kyo.lang.internal.Body.apply`, `kyo.lang.internal.Body.field`, and `kyo.lang.Checked` by qualified path. Those paths are the contract between the two artifacts. Renaming one side without the other compiles and fails every `.kyo` compilation.
@@ -18,7 +18,8 @@ The plugin never references the library's classes directly; it builds untyped tr
   -> Preparation (untyped): markers around expressions, Body around definition bodies, Checked on definitions,
      rejection of unsupported declarations
   -> normal Scala typing: marker overload resolution leaves a .now on each sequenced computation; Body expands as a transparent inline macro
-  -> Body: Validate every resolved call and reference, then kyo-direct's restrictions and lowering (kyo.internal.Validate and Lower)
+  -> Body: Validate the body's shape, then kyo-direct's restrictions and lowering (kyo.internal.Validate and Lower)
+  -> Admission (typed): every term reference of a .kyo unit is admitted or rejected, with the compiler's safe-mode judgment
   -> CheckMetadata (typed): a .scala unit declaring Checked is an error
   -> normal compilation
 ```
@@ -44,4 +45,6 @@ The construct inventory in DESIGN.md assigns every Scala construct a policy and 
 
 ## Admission
 
-`Validate` currently holds a fixed table of admitted symbols: the operations the fixtures use plus the evidence derivations their inline expansions insert. Admission compares resolved symbols; an inline call is checked at the call and its trusted expansion is not re-validated, which is why `Frame.derive` and `Tag.derive` appear in the table. The design replaces the table with the package rule (`kyo.*` without an `AllowUnsafe` requirement) plus an exact external allowlist. Extending the table is appropriate only to let a new conformance fixture compile; the replacement is step 4 of the implementation sequence.
+Which APIs a `.kyo` body may call is decided by the plugin's `Admission` phase, after typing, over the typed tree. The rule reuses the compiler's notion of safe code, the one `import language.experimental.safe` applies, without enabling safe mode or capture checking: the phase calls the compiler's `SafeRefs.init()` once per run, which marks the standard library and the JDK with `scala.caps.assumeSafe` and `scala.caps.rejectSafe` in memory, and then applies the same test the compiler does (marked safe, or owned by something marked safe, up to an assumed-safe package; nothing rejected up the owner chain). On top of that: anything in package `kyo` is admitted unless it requires `AllowUnsafe`; anything carrying `Checked` is admitted; and a short list of operations the compiler accepts but the language excludes (casts, monitors, reference identity, `scala.util.Random`, the partial collection operations) is rejected. A library compiled under safe mode is recognized by the annotations in its TASTy.
+
+`SafeRefs` is compiler-internal API with no stability promise; the plugin is pinned to its compiler version in any case, and the shape of the list has been stable across 3.9 and 3.10. The body macro's `Validate` keeps the language-shape checks only (`null`, mutable and lazy locals, mutable field reads, partial-function values).

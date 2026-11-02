@@ -133,7 +133,7 @@ Three kinds of rejection exist, and each diagnostic names the construct so the r
 |---|---|---|
 | Language restriction | The construct conflicts with the semantic contract. | `null`, `var`, mutable field reads, an annotation erasing an effect. |
 | Unimplemented construct | The intended semantics still need a typing and lowering rule. | Handlers inside a body, effectful callbacks to methods without a Kyo counterpart, effectful by-name arguments, effectful guards, effectful fields, classes and enums, givens, default parameters. |
-| API admission | The resolved operation is outside the admitted surface. | `println`, `System.currentTimeMillis`, an unlisted method on an ordinary Scala object. |
+| API admission | The resolved operation is outside the admitted surface: Kyo's API without `AllowUnsafe`, compiled `.kyo` definitions, and what the Scala compiler's safe mode considers safe in the standard library and the JDK. | `println`, `java.lang.System.currentTimeMillis`, `scala.util.Random`, a mutable collection, a method on an ordinary Scala object. |
 
 Pending-value composition methods are deliberately unavailable in a `.kyo` body: `Var.get[Int].map(...)` is a type error because the direct view of `Var.get[Int]` is an `Int`. Generated composition uses those methods; source code does not.
 
