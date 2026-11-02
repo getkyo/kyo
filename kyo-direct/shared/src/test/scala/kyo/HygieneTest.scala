@@ -199,7 +199,7 @@ class HygieneTest extends kyo.test.Test[Any]:
             f(10)
           }
         """)(
-            "Method definitions containing .now are not supported inside `direct` blocks."
+            "A lambda containing .now is given to a method without a Kyo counterpart."
         )
     }
 

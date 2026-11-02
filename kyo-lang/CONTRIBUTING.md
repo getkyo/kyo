@@ -6,10 +6,10 @@ This guide complements the root [CONTRIBUTING.md](../CONTRIBUTING.md), which cov
 
 `kyo-lang` ships as two artifacts from one module directory:
 
-- `kyo-lang/` (sbt `kyo-lang`, cross-platform): the compile-time library a `.kyo` compilation needs on its classpath. `kyo.lang.Checked` is the metadata attached to compiled definitions; `kyo.lang.internal.Markers` and `kyo.lang.internal.Body` are the marker overloads (the pending one is kyo-direct's `.now`) and the typed body macro the plugin inserts, which validates and then lowers through kyo-direct; `kyo.lang.internal.Validate` checks the body's shape; API admission is the plugin's `Admission` phase. The library is cross-built because the compiled output of a `.kyo` file runs wherever its enclosing project runs, and the compile classpath of a JS or Native project carries that platform's artifact.
+- `kyo-lang/` (sbt `kyo-lang`, cross-platform): the compile-time library a `.kyo` compilation needs on its classpath. `kyo.lang.Checked` is the metadata attached to compiled definitions; `kyo.lang.internal.Markers` holds the marker overloads (the pending one expands to `Markers.sequence`, the application kyo-direct reads as `.now` through its `NowMarker` annotation), the `boundary` conversion the typer applies where a value meets an expected pending type, and the `lowered` wrapper (kyo-direct's `Boundary` annotation) around every computation a boundary produced; `kyo.lang.internal.Body` holds the typed macros the plugin inserts, which validate and then lower through kyo-direct, for a definition body, a field, a closure body, and the conversion; `kyo.lang.internal.Validate` checks the body's shape; API admission is the plugin's `Admission` phase. The library is cross-built because the compiled output of a `.kyo` file runs wherever its enclosing project runs, and the compile classpath of a JS or Native project carries that platform's artifact.
 - `kyo-lang/plugin/` (sbt `kyo-lang-plugin`, JVM only): the scalac plugin. `KyoLangPlugin` registers two phases: `Preparation` runs after the parser and before the typer on `.kyo` units only, and `CheckMetadata` runs after the typer on every unit. The plugin depends on `scala3-compiler` as `Provided`: the compiler loading it supplies itself.
 
-The plugin never references the library's classes directly; it builds untyped trees naming `kyo.lang.internal.Markers.force`, `kyo.lang.internal.Body.apply`, `kyo.lang.internal.Body.field`, and `kyo.lang.Checked` by qualified path. Those paths are the contract between the two artifacts. Renaming one side without the other compiles and fails every `.kyo` compilation.
+The plugin never references the library's classes directly; it builds untyped trees naming `kyo.lang.internal.Markers.force`, `kyo.lang.internal.Markers.boundary` (as an import), `kyo.lang.internal.Body.apply`, `kyo.lang.internal.Body.field`, `kyo.lang.internal.Body.closure`, and `kyo.lang.Checked` by qualified path. Those paths are the contract between the two artifacts. Renaming one side without the other compiles and fails every `.kyo` compilation.
 
 ## The pipeline
 
@@ -17,7 +17,9 @@ The plugin never references the library's classes directly; it builds untyped tr
 .kyo source
   -> Preparation (untyped): markers around expressions, Body around definition bodies, Checked on definitions,
      rejection of unsupported declarations
-  -> normal Scala typing: marker overload resolution leaves a .now on each sequenced computation; Body expands as a transparent inline macro
+  -> normal Scala typing: marker overload resolution leaves a sequence marker on each sequenced computation; where a value meets an
+     expected pending type the typer applies the boundary conversion, which lowers that expression on its own; closure bodies outside
+     argument position lower on their own; Body expands as a transparent inline macro
   -> Body: Validate the body's shape, then kyo-direct's restrictions and lowering (kyo.internal.Validate and Lower)
   -> Admission (typed): every term reference of a .kyo unit is admitted or rejected, with the compiler's safe-mode judgment
   -> CheckMetadata (typed): a .scala unit declaring Checked is an error

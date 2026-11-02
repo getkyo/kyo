@@ -72,13 +72,9 @@ private[kyo] object Validate:
                     case _                          => Nil // Other cases (Literal, Closure, etc.)
         end extension
 
-        /** A nested `direct` block, already expanded: its markers belonged to it. */
+        /** A nested `direct` block, already expanded, or a computation a front end lowered: its markers belonged to it. */
         object DirectBlock:
-            def unapply(t: Term): Boolean =
-                t match
-                    case Inlined(Some(call), _, _) => DirectSyntax.isDirect(call)
-                    case _                         => false
-        end DirectBlock
+            def unapply(t: Term): Boolean = DirectSyntax.isBoundary(t)
 
         object ByNameArgWithNow:
             def unapply(t: Term): Option[Term] = t match
@@ -195,6 +191,22 @@ private[kyo] object Validate:
                 Trees.Step.goto(qual)
                 skipDive(argGroup0)
                 skipDive(argGroup1)
+
+            case tree @ Block(List(DefDef(_, _, _, Some(body))), _: Closure) if !pure(body) =>
+                fail(
+                    tree,
+                    s"""A lambda containing ${".now".cyan} is given to a method without a Kyo counterpart.
+                       |
+                       |The method decides when and how often it calls the lambda, so the effect cannot be sequenced into the
+                       |enclosing computation. Sequence it before the lambda, or use an effect-aware API:
+                       |${highlight("""
+                       |direct {
+                       |  val n = Var.get[Int].now          // OK - sequenced before the lambda
+                       |  twice(x => x + n)
+                       |
+                       |  Kyo.foreach(xs)(x => Var.get[Int].map(_ + x)).now   // OK - the API accepts an effectful callback
+                       |}""".stripMargin)}""".stripMargin
+                )
 
             // A nested block is a computation: its markers were its own. Under a marker or as an argument it is a value;
             // as a statement its effects would be dropped, so it needs `.now` like any other computation.

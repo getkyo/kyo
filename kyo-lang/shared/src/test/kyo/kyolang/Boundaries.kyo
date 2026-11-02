@@ -1,0 +1,118 @@
+package kyolang
+
+/** Computation boundaries inside a body: handlers, effectful closures, and effect-aware receivers (kyo-lang/DESIGN.md rules 8, 9, 11).
+  * BodyBoundaryTest pins each definition's signature and behavior.
+  */
+object Boundaries:
+    def check(n: Int): Int < Abort[String] = if n > 0 then n else Abort.fail("non-positive")
+
+    // Rule 8: a handler receives the independently lowered block; the handled effect does not escape, the other remains
+    def handled =
+        Abort.run[String] {
+            val x = Var.get[Int]
+            if x < 0 then Abort.fail("negative")
+            x + 1
+        }
+
+    // Rule 8: execution continues after the handler with its result
+    def handledThenContinue =
+        val result = Abort.run[String] {
+            Abort.fail("failure")
+            42
+        }
+        result.getOrElse(-1)
+
+    // Rule 8: a handler argument that is a call with an effectful argument
+    def handledCall = Abort.run[String](check(Var.get[Int]))
+
+    // Rule 8: a pure handler argument
+    def handledPure = Abort.run[String](42)
+
+    // Rule 8: branches inside a handler argument
+    def handledBranches(flag: Boolean) = Abort.run[String](if flag then Var.get[Int] else Abort.fail("off"))
+
+    // Rule 8: nested handlers, with the inner one's effect handled before the outer one's
+    def nestedHandlers =
+        Var.run(10) {
+            Abort.run[String] {
+                Var.updateDiscard[Int](n => n + 1)
+                Abort.fail("stop")
+                0
+            }
+        }
+
+    // Rule 8: the same handlers in the other order
+    def nestedHandlersReversed =
+        Abort.run[String] {
+            Var.run(10) {
+                Var.updateDiscard[Int](n => n + 1)
+                Abort.fail("stop")
+                Var.get[Int]
+            }
+        }
+
+    // Rule 8: a method of this unit with a computation parameter receives the lowered argument, like a handler
+    def handleWith(v: Int < Abort[String]): Result[String, Int] < Any = Abort.run(v)
+    def handledByMethod                                               = handleWith(check(2))
+
+    // Rule 9: a stored effectful closure returns a computation on each invocation
+    def storedEffectful =
+        val f = (x: Int) => x + Var.get[Int]
+        val a = f(1)
+        val b = f(2)
+        a + b
+
+    // Rule 9: a captured bound result keeps the closure pure
+    def captured =
+        val n = Var.get[Int]
+        val f = (x: Int) => x + n
+        f(1) + f(2)
+
+    // Rule 9: a returned effectful closure, inferred and annotated
+    def returned = (x: Int) => x * Var.get[Int]
+    def returnedAnnotated: Int => Int < Var[Int] = (x: Int) => x * Var.get[Int]
+
+    // Rule 9: an effectful local method
+    def localEffectful =
+        def read(scale: Int) = Var.get[Int] * scale
+        read(2) + read(3)
+
+    // Rule 9: a stored case lambda with an effectful case
+    def storedCases =
+        val f: Option[Int] => Int < Var[Int] =
+            case Some(n) => n + Var.get[Int]
+            case None    => 0
+        f(Some(1)) + f(None)
+
+    // Rule 11: an effect-aware receiver keeps its API; the callback body becomes a computation
+    def effectAware =
+        Kyo.foreach(Chunk(1, 2, 3)) { x =>
+            val n = Var.get[Int]
+            x + n
+        }
+
+    // Rule 11: a callback whose body is one effectful call
+    def effectAwareDirect = Kyo.foreach(Chunk(1, 2))(x => Var.update[Int](n => n + x))
+
+    // Rule 11: a stored effectful closure given to an effect-aware API
+    def effectAwareStored =
+        val f = (x: Int) => x + Var.get[Int]
+        Kyo.foreach(Chunk(1, 2))(f)
+
+    // Rule 10: the same callback to a collection method runs through the counterpart
+    def counterpart =
+        Chunk(1, 2, 3).map { x =>
+            val n = Var.get[Int]
+            x + n
+        }
+
+    // Computations given to an API that accepts them as values: a computation in a value position is sequenced, so the collection
+    // names its element type, and each element is a computation
+    def collected = Kyo.collectAll(Chunk[Int < Var[Int]](Var.get[Int], Var.get[Int] + 1))
+
+    // A binding annotated with a pending type holds the computation; it runs where it is sequenced, not where it is bound
+    def bound =
+        val computation: Int < Var[Int] = Var.get[Int] + 1
+        Var.updateDiscard[Int](n => n * 10)
+        computation
+end Boundaries

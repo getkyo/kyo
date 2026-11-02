@@ -62,7 +62,8 @@ Kyo           the operations themselves, in kyo-kernel
 | File | Responsibility |
 |---|---|
 | `Direct.scala` | The public surface: `direct`, `now`, `later`, their outside-block diagnostics. `direct` runs `Validate` and then `Lower` on its body. |
-| `internal/DirectSyntax.scala` | Recognizes `direct`, `.now`, and `.later` in a typed tree by their symbols. |
+| `internal/DirectSyntax.scala` | Recognizes `direct`, `.now`, and `.later` in a typed tree by their symbols, and the annotated markers and boundaries below. |
+| `internal/NowMarker.scala`, `internal/Boundary.scala` | Annotations for a front end's own inline methods: an application of a `NowMarker` method is read as `.now`; an application of a `Boundary` method is a lowered computation whose markers were its own, as a nested `direct` block is. |
 | `internal/Validate.scala` | The restriction checks and diagnostics. Asks `Counterparts` which calls may carry `.now` in their callbacks. |
 | `internal/Lower.scala` | Erasure, the row, the reduction rules, joins, owners, frames, and the emission of counterpart calls. |
 | `internal/Counterparts.scala` | The table from standard-library method to `Kyo` operation, the recognition of a call by receiver family and resolved method, and the selection of the `Kyo` overload. |
@@ -130,7 +131,7 @@ Every definition the lowering emits or keeps is owned by the macro while the tre
 
 ### Frames
 
-Every generated call that takes a `Frame` receives one explicitly: `<.map`, `Loop.apply`, every `Kyo` operation. None relies on implicit `Frame` search, because that search derives at the macro expansion position and refuses package `kyo` outside test files, and `TestSupport.runLiftTest` expands `direct` in package `kyo.internal`. The frame is built from the marker's own position with `Frame.fromPosition`, so a trace through a block points at the `.now` that suspended. A marker planted by an inline method (kyo-lang's markers expand to `.now`) takes the position of the inlined call, which is the user's expression; the inline method's own source may not even be available to the compilation.
+Every generated call that takes a `Frame` receives one explicitly: `<.map`, `Loop.apply`, every `Kyo` operation. None relies on implicit `Frame` search, because that search derives at the macro expansion position and refuses package `kyo` outside test files, and `TestSupport.runLiftTest` expands `direct` in package `kyo.internal`. The frame is built from the marker's own position with `Frame.fromPosition`, so a trace through a block points at the `.now` that suspended. A marker planted by a front end's own method (kyo-lang's `Markers.sequence`, read as `.now` through `NowMarker`) has the position of that application, which is the user's expression.
 
 ### Diagnostics
 
@@ -142,7 +143,7 @@ kyo-lang uses this surface as it is: its compiler plugin plants `direct` around 
 
 What kyo-lang settles on its own side:
 
-- **Boundary placement.** A handler argument needs a `direct` of its own and no `.now`; a strict value argument needs its computation exposed with `.now` and bound before the call. The plugin runs before typing and cannot tell the two apart from syntax alone; kyo-lang's design records the candidates and settles them with fixtures.
+- **Boundary placement.** Settled by typing, on kyo-lang's side: a handler argument, a callback to an effect-aware API, or an annotated binding meets an expected pending type, and an implicit conversion kyo-lang imports into every `.kyo` unit lowers the expression there through `Lower`, wrapping the result in a `Boundary` method so this macro's validation of the enclosing body reads it as a computation. A strict value argument is exposed with a marker and bound before the call. kyo-lang/DESIGN.md records the typer behavior this rests on.
 - **Admission.** The language's restrictions beyond `direct`'s (which constructs and which library surface a `.kyo` file may use) are checked by the plugin, not by this macro.
 - **Pure definitions.** A `.kyo` method with no effect keeps its ordinary type; the plugin does not plant `direct` around a body with no markers.
 

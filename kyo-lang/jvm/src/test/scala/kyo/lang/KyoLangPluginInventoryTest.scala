@@ -152,14 +152,22 @@ class KyoLangPluginInventoryTest extends kyo.test.Test[Any]:
               |""".stripMargin
         )("Assignment is not supported in .kyo")
 
-        "E13 stored effectful closures are not supported yet" in rejects(
-            "StoredClosure.kyo",
-            """object StoredClosure:
+        "E13 an ordinary function type cannot hide a latent effect" in rejects(
+            "HiddenEffect.kyo",
+            """object HiddenEffect:
               |    def bad =
-              |        val f = (x: Int) => x + Var.get[Int]
+              |        val f: Int => Int = (x: Int) => x + Var.get[Int]
               |        f(1)
               |""".stripMargin
-        )("Method definitions containing")
+        )("Required: Int")
+
+        "E13 an effectful callback to a method without a counterpart" in rejects(
+            "Callback.kyo",
+            """object Callback:
+              |    def twice(f: Int => Int): Int = f(f(1))
+              |    def bad = twice(x => x + Var.get[Int])
+              |""".stripMargin
+        )("A lambda containing .now is given to a method without a Kyo counterpart")
 
         "E15 partial function values" in rejects(
             "Partial.kyo",

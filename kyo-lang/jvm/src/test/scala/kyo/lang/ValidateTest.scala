@@ -49,13 +49,11 @@ class ValidateTest extends kyo.test.Test[Any]:
           |""".stripMargin
     )("API is not admitted in .kyo: java.lang.System.currentTimeMillis")
 
-    "a handler" in rejects(
-        "Handler.kyo",
-        """object Handler:
-          |    def bad = Abort.run[String] {
-          |        Abort.fail("failure")
-          |        42
-          |    }
+    "an effectful argument to an ordinary by-name parameter" in rejects(
+        "Delayed.kyo",
+        """object Delayed:
+          |    def delayed(value: => Int) = value + value
+          |    def bad = delayed(Var.get[Int])
           |""".stripMargin
     )("by-name")
 

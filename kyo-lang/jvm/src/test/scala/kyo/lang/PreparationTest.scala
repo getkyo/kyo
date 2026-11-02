@@ -90,7 +90,7 @@ class PreparationTest extends kyo.test.Test[Any]:
               |    def twice(f: Int => Int): Int = f(f(1))
               |    def bad = twice(x => Var.get[Int] + x)
               |""".stripMargin
-        )("Method definitions containing")
+        )("A lambda containing .now is given to a method without a Kyo counterpart")
 
         "an effectful by-name argument" in rejects(
             "ByName.kyo",

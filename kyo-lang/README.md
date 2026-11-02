@@ -106,6 +106,32 @@ object Annotated:
         if current > 0 then Abort.fail("failure") else current + 1
 ```
 
+### Handlers and closures are boundaries
+
+A handler receives the computation its argument describes, lowered on its own, and the handler's own signature says which effects remain. A lambda given to an effect-aware API such as `Kyo.foreach` returns a computation, and so does a stored or returned closure with an effectful body; the same callback given to `Chunk.map` runs through the Kyo counterpart instead.
+
+```kyo
+object Boundaries:
+    def handled =
+        Abort.run[String] {
+            val x = Var.get[Int]
+            if x < 0 then Abort.fail("negative")
+            x + 1
+        }
+
+    def storedEffectful =
+        val f = (x: Int) => x + Var.get[Int]
+        f(1) + f(2)
+
+    def effectAware =
+        Kyo.foreach(Chunk(1, 2, 3)) { x =>
+            val n = Var.get[Int]
+            x + n
+        }
+```
+
+`handled` is a `Result[String, Int] < Var[Int]`: the abort is handled, the state read remains. `f` is an `Int => Int < Var[Int]`, invoked twice. `effectAware` keeps `Kyo.foreach`'s API and is a `Chunk[Int] < Var[Int]`. A computation in a position with no expected type is sequenced, so a collection of computations names its element type: `Kyo.collectAll(Chunk[Int < Var[Int]](a, b))`.
+
 ## Calling `.kyo` definitions from Scala
 
 Compiled `.kyo` definitions are ordinary Scala members with Kyo signatures. A `.scala` file in the same build, or in a dependent artifact, calls them, composes the computations, and supplies handlers. Nothing about the caller changes: it does not load the plugin, and it does not need the callee's source. The effect contracts persist in the compiled signatures across separate compilation.
@@ -123,7 +149,7 @@ The other direction holds as well: a `.kyo` definition calls admitted Scala APIs
 
 ## What a body can contain
 
-Bindings, blocks, conditionals, boolean operators, `match` with literal, binder, alternative, constructor, tuple, and typed patterns, pure custom extractors and pure guards, `while`, `for` comprehensions over admitted collections with guards and `case` generators (an effectful body runs through the Kyo counterpart), tuples and named tuples, string interpolation, type ascription, prefix operators, applications with multiple clauses, `using` clauses, named and repeated arguments, pure by-name arguments, pure local methods and closures, context functions, case lambdas as total functions, constructor applications, recursion, extension methods, and `@tailrec`. Each has a test in `BodyInventoryTest` over the `Inventory.kyo` fixture.
+Bindings, blocks, conditionals, boolean operators, `match` with literal, binder, alternative, constructor, tuple, and typed patterns, pure custom extractors and pure guards, `while`, `for` comprehensions over admitted collections with guards and `case` generators (an effectful body runs through the Kyo counterpart), tuples and named tuples, string interpolation, type ascription, prefix operators, applications with multiple clauses, `using` clauses, named and repeated arguments, pure by-name arguments, local methods and closures, pure or effectful, context functions, case lambdas as total functions, constructor applications, recursion, extension methods, `@tailrec`, handlers and other methods taking computations, and effect-aware APIs taking effectful callbacks. Each has a test in `BodyInventoryTest` over the `Inventory.kyo` fixture or in `BodyBoundaryTest` over `Boundaries.kyo`.
 
 ## What the language rejects
 
@@ -132,7 +158,8 @@ Three kinds of rejection exist, and each diagnostic names the construct so the r
 | Reason | Meaning | Example |
 |---|---|---|
 | Language restriction | The construct conflicts with the semantic contract. | `null`, `var`, mutable field reads, an annotation erasing an effect. |
-| Unimplemented construct | The intended semantics still need a typing and lowering rule. | Handlers inside a body, effectful callbacks to methods without a Kyo counterpart, effectful by-name arguments, effectful guards, effectful fields, classes and enums, givens, default parameters. |
+| Unimplemented construct | The intended semantics still need a typing and lowering rule. | Effectful guards, effectful fields, classes and enums, givens, default parameters. |
+| Receiver without a rule | The method receiving an effectful lambda or by-name argument decides when it runs it, and it has no Kyo counterpart. | An effectful callback to a method without a counterpart, an effectful argument to an ordinary by-name parameter, a function type annotation that would hide a latent effect. |
 | API admission | The resolved operation is outside the admitted surface: Kyo's API without `AllowUnsafe`, compiled `.kyo` definitions, and what the Scala compiler's safe mode considers safe in the standard library and the JDK. | `println`, `java.lang.System.currentTimeMillis`, `scala.util.Random`, a mutable collection, a method on an ordinary Scala object. |
 
 Pending-value composition methods are deliberately unavailable in a `.kyo` body: `Var.get[Int].map(...)` is a type error because the direct view of `Var.get[Int]` is an `Int`. Generated composition uses those methods; source code does not.
@@ -152,4 +179,4 @@ Compile / unmanagedSources / includeFilter := (Compile / unmanagedSources / incl
 
 ## Status
 
-This module carries the working subset and the complete design. [DESIGN.md](DESIGN.md) records the language objective, the semantic contract, the construct inventory with an allow/deny policy per row, the CPS lowering rules including the ones not yet implemented, the API admission rule, and the implementation sequence. The lowering is kyo-direct's: a `.kyo` body is the body of a `direct` block whose `.now` markers the plugin planted, so an effectful callback to `map`, `foldLeft`, or any other method with a Kyo counterpart already runs through `Kyo.foreach` and its relatives. The next steps in that sequence are handler and closure typing, boundary placement, the `kyo.*` package admission rule with an exact external allowlist, and default formatting with sbt and Metals integration.
+This module carries the working subset and the complete design. [DESIGN.md](DESIGN.md) records the language objective, the semantic contract, the construct inventory with an allow/deny policy per row, the CPS lowering rules including the ones not yet implemented, the API admission rule, and the implementation sequence. The lowering is kyo-direct's: a `.kyo` body is the body of a `direct` block whose `.now` markers the plugin planted, so an effectful callback to `map`, `foldLeft`, or any other method with a Kyo counterpart already runs through `Kyo.foreach` and its relatives. Handlers inside a body, effectful closures, and effect-aware receivers are typed through the computation boundaries DESIGN.md describes. The next steps in that sequence are the remaining construct rows and default formatting with sbt and Metals integration.

@@ -19,14 +19,21 @@ import dotty.tools.dotc.report
   * For each definition body the phase:
   *
   *   - wraps every expression in `kyo.lang.internal.Markers.force`. Typing selects the overload: a pure `A` keeps the identity overload,
-  *     a pending `A < S` selects the overload that is kyo-direct's `.now`. That is how a direct body exposes an operation's result
-  *     without a user-facing annotation, and how the body becomes one kyo-direct knows how to lower.
+  *     a pending `A < S` selects the overload that is kyo-direct's `.now`, except where a computation is expected, where the identity
+  *     overload passes the computation through. That is how a direct body exposes an operation's result without a user-facing
+  *     annotation, and how the body becomes one kyo-direct knows how to lower.
+  *   - wraps the body of a lambda outside argument position in `kyo.lang.internal.Body.closure`, so a stored or returned closure with an
+  *     effectful body is a function returning a computation. The body of a lambda in argument position keeps its markers: the
+  *     receiving parameter's type decides, through typing, whether the body is a value (a callback to a method with a Kyo
+  *     counterpart) or a computation (a callback to an effect-aware API).
   *   - wraps the whole body in `kyo.lang.internal.Body.apply` (methods) or `kyo.lang.internal.Body.field` (values), the typed macro that
   *     validates the body and lowers it through kyo-direct.
   *   - attaches the `kyo.lang.Checked` annotation, the metadata a later compilation reads to admit the definition.
   *
   * Every `.kyo` unit also gets `import kyo.*` ahead of its own statements, so Kyo's API is in scope without an import; a unit that
-  * writes the import as well is unaffected.
+  * writes the import as well is unaffected. It also gets `import kyo.lang.internal.Markers.boundary`, the conversion the typer applies
+  * where an expression of an ordinary type meets an expected pending type (a handler's argument, the body of a lambda an effect-aware
+  * API calls): its expansion lowers the expression into a computation with the precise row before the receiving call is typed.
   *
   * The expression forms the language admits are the ones [[expression]] handles; every other form, and every declaration outside the
   * supported subset, is reported here at its source position with a message naming the construct: classes and traits, inheritance,
@@ -50,6 +57,10 @@ final class Preparation extends PluginPhase:
 
     private def force(tree: untpd.Tree)(using Context): untpd.Tree =
         untpd.Apply(qualified(markersPath*), List(tree)).withSpan(tree.span)
+
+    /** The body of a lambda outside argument position, lowered on its own so that the closure's type carries its latent effects. */
+    private def closure(tree: untpd.Tree)(using Context): untpd.Tree =
+        untpd.Apply(qualified((bodyPath :+ "closure")*), List(tree)).withSpan(tree.span)
 
     private def reject(tree: untpd.Tree, message: String)(using Context): untpd.Tree =
         report.error(message, tree.srcPos)
@@ -79,12 +90,39 @@ final class Preparation extends PluginPhase:
         case tree: untpd.Select if isPackage(tree.qualifier, ownPackages) => tree
         case tree: untpd.Select                                           => untpd.cpy.Select(tree)(expression(tree.qualifier), tree.name)
         case tree: untpd.TypeApply                                        => untpd.cpy.TypeApply(tree)(callee(tree.fun), tree.args)
-        case tree: untpd.Apply => untpd.cpy.Apply(tree)(callee(tree.fun), tree.args.map(expression))
+        case tree: untpd.Apply => untpd.cpy.Apply(tree)(callee(tree.fun), tree.args.map(argument))
         case _                 => tree
 
-    private def caseDef(tree: untpd.CaseDef)(using Context): untpd.CaseDef =
+    /** An argument: an expression whose expected type is the receiving parameter's, marked as a whole. */
+    private def argument(tree: untpd.Tree)(using Context): untpd.Tree = whole(tree, argument = true)
+
+    /** The expression marked as one whole where typing meets an expected type: a block, a conditional, a match, or an ascription gets
+      * a marker around it, so that a computation expected there is lowered from the whole expression and not from its result alone,
+      * which would leave the markers of its statements and conditions behind. Every other form carries its own marker already, or is a
+      * lambda or a literal, which typing shapes from the expected type itself.
+      */
+    private def whole(tree: untpd.Tree, argument: Boolean)(using Context): untpd.Tree =
+        val marked = expression(tree, argument)
+        tree match
+            case _: untpd.Block | _: untpd.If | _: untpd.Match | _: untpd.Typed if !isLambda(tree) => force(marked)
+            case _                                                                                 => marked
+    end whole
+
+    /** True for a lambda, written with parameters or as cases (a match without a selector), possibly inside braces. */
+    private def isLambda(tree: untpd.Tree): Boolean = tree match
+        case _: untpd.Function        => true
+        case matched: untpd.Match     => matched.selector.isEmpty
+        case untpd.Block(Nil, result) => isLambda(result)
+        case _                        => false
+
+    private def caseDef(tree: untpd.CaseDef, argument: Boolean)(using Context): untpd.CaseDef =
         val guard = if tree.guard.isEmpty then tree.guard else expression(tree.guard)
-        untpd.cpy.CaseDef(tree)(tree.pat, guard, expression(tree.body))
+        untpd.cpy.CaseDef(tree)(tree.pat, guard, expression(tree.body, argument))
+
+    /** The case of a lambda written as cases, outside argument position: each body is lowered on its own, like a lambda body. */
+    private def closureCase(tree: untpd.CaseDef)(using Context): untpd.CaseDef =
+        val guard = if tree.guard.isEmpty then tree.guard else expression(tree.guard)
+        untpd.cpy.CaseDef(tree)(tree.pat, guard, closure(expression(tree.body)))
 
     private def enumerator(tree: untpd.Tree)(using Context): untpd.Tree = tree match
         case generator: untpd.GenFrom => untpd.cpy.GenFrom(generator)(generator.pat, expression(generator.expr), generator.checkMode)
@@ -92,9 +130,10 @@ final class Preparation extends PluginPhase:
         case guard                    => expression(guard)
 
     private def statement(tree: untpd.Tree)(using Context): untpd.Tree = tree match
-        case value: untpd.ValDef    => untpd.cpy.ValDef(value)(value.name, value.tpt, expression(value.rhs))
-        case pattern: untpd.PatDef  => untpd.cpy.PatDef(pattern)(pattern.mods, pattern.pats, pattern.tpt, expression(pattern.rhs))
-        case method: untpd.DefDef   => untpd.cpy.DefDef(method)(method.name, method.paramss, method.tpt, expression(method.rhs))
+        case value: untpd.ValDef   => untpd.cpy.ValDef(value)(value.name, value.tpt, whole(value.rhs, argument = false))
+        case pattern: untpd.PatDef =>
+            untpd.cpy.PatDef(pattern)(pattern.mods, pattern.pats, pattern.tpt, whole(pattern.rhs, argument = false))
+        case method: untpd.DefDef   => untpd.cpy.DefDef(method)(method.name, method.paramss, method.tpt, closure(expression(method.rhs)))
         case imported: untpd.Import => languageImport(imported)
         case definition: untpd.TypeDef if !definition.isClassDef => definition
         case other                                               => expression(other)
@@ -104,29 +143,34 @@ final class Preparation extends PluginPhase:
             reject(tree, "Language imports are not supported in .kyo; the language's features are fixed")
         else tree
 
-    private def expression(tree: untpd.Tree)(using Context): untpd.Tree = tree match
+    /** The expression with its markers. `argument` is true in argument position, where the receiving parameter's type is the expected
+      * type: a lambda there keeps the markers in its body for typing to resolve, while a lambda anywhere else gets its body lowered on
+      * its own. The flag follows the expected type through parentheses, blocks, branches, ascriptions, and named arguments.
+      */
+    private def expression(tree: untpd.Tree, argument: Boolean = false)(using Context): untpd.Tree = tree match
         case tree: untpd.Literal   => tree
         case tree: untpd.Number    => tree
         case tree: untpd.Ident     => force(tree)
         case tree: untpd.This      => force(tree)
         case tree: untpd.Select    => force(callee(tree))
         case tree: untpd.TypeApply => force(callee(tree))
-        case tree: untpd.Apply     => force(untpd.cpy.Apply(tree)(callee(tree.fun), tree.args.map(expression)))
+        case tree: untpd.Apply     => force(untpd.cpy.Apply(tree)(callee(tree.fun), tree.args.map(this.argument)))
         case tree: untpd.Function  =>
             tree.args.foreach {
                 case parameter: untpd.ValDef if parameter.name.is(WildcardParamName) =>
                     report.error("Placeholder lambda shorthand is not canonical .kyo; name the parameter", tree.srcPos)
                 case _ => ()
             }
-            untpd.cpy.Function(tree)(tree.args, expression(tree.body))
+            val body = if argument then whole(tree.body, argument = true) else closure(expression(tree.body))
+            untpd.cpy.Function(tree)(tree.args, body)
         case tree: untpd.InfixOp =>
-            force(untpd.cpy.InfixOp(tree)(expression(tree.left), tree.op, expression(tree.right)))
+            force(untpd.cpy.InfixOp(tree)(expression(tree.left), tree.op, this.argument(tree.right)))
         case tree: untpd.PrefixOp  => force(untpd.cpy.PrefixOp(tree)(tree.op, expression(tree.od)))
         case tree: untpd.PostfixOp => reject(tree, "Postfix calls are not canonical .kyo; use dot syntax")
-        case tree: untpd.Parens    => untpd.cpy.Parens(tree)(expression(tree.t))
-        case tree: untpd.Tuple     => untpd.cpy.Tuple(tree)(tree.trees.map(expression))
-        case tree: untpd.Typed     => untpd.cpy.Typed(tree)(expression(tree.expr), tree.tpt)
-        case tree: untpd.NamedArg  => untpd.cpy.NamedArg(tree)(tree.name, expression(tree.arg))
+        case tree: untpd.Parens    => untpd.cpy.Parens(tree)(expression(tree.t, argument))
+        case tree: untpd.Tuple     => untpd.cpy.Tuple(tree)(tree.trees.map(expression(_, argument)))
+        case tree: untpd.Typed     => untpd.cpy.Typed(tree)(expression(tree.expr, argument), tree.tpt)
+        case tree: untpd.NamedArg  => untpd.cpy.NamedArg(tree)(tree.name, expression(tree.arg, argument))
         case tree: untpd.New       =>
             tree.tpt match
                 case _: untpd.Template => reject(tree, "Anonymous classes are not supported in .kyo")
@@ -137,11 +181,15 @@ final class Preparation extends PluginPhase:
                 case part                                    => part
             }
             force(untpd.cpy.InterpolatedString(tree)(tree.id, segments))
-        case tree: untpd.Block => untpd.cpy.Block(tree)(tree.stats.map(statement), expression(tree.expr))
-        case tree: untpd.If    => untpd.cpy.If(tree)(expression(tree.cond), expression(tree.thenp), expression(tree.elsep))
+        case tree: untpd.Block => untpd.cpy.Block(tree)(tree.stats.map(statement), expression(tree.expr, argument))
+        case tree: untpd.If    =>
+            val elsep = if tree.elsep.isEmpty then tree.elsep else expression(tree.elsep, argument)
+            untpd.cpy.If(tree)(expression(tree.cond), expression(tree.thenp, argument), elsep)
+        case tree: untpd.Match if tree.selector.isEmpty && !argument =>
+            untpd.cpy.Match(tree)(tree.selector, tree.cases.map(closureCase))
         case tree: untpd.Match =>
             val selector = if tree.selector.isEmpty then tree.selector else expression(tree.selector)
-            untpd.cpy.Match(tree)(selector, tree.cases.map(caseDef))
+            untpd.cpy.Match(tree)(selector, tree.cases.map(caseDef(_, argument)))
         case tree: untpd.WhileDo                 => untpd.cpy.WhileDo(tree)(expression(tree.cond), expression(tree.body))
         case tree: untpd.ForYield                => untpd.cpy.ForYield(tree)(tree.enums.map(enumerator), expression(tree.expr))
         case tree: untpd.ForDo                   => untpd.cpy.ForDo(tree)(tree.enums.map(enumerator), expression(tree.body))
@@ -225,13 +273,18 @@ final class Preparation extends PluginPhase:
                 case imported: untpd.Import => languageImport(imported)
                 case _                      => super.transform(tree)
 
-        /** The unit with `import kyo.*` ahead of its own statements: every `.kyo` file sees Kyo's API without writing the import. */
+        /** The unit with `import kyo.*` and the boundary conversion ahead of its own statements: every `.kyo` file sees Kyo's API
+          * without writing the import, and the typer finds the conversion in lexical scope.
+          */
         def imported(tree: untpd.Tree): untpd.Tree = tree match
             case pkg: untpd.PackageDef =>
-                val start    = pkg.span.startPos
-                val wildcard = untpd.ImportSelector(untpd.Ident(nme.WILDCARD).withSpan(start)).withSpan(start)
-                val kyo      = untpd.Import(untpd.Ident("kyo".toTermName).withSpan(start), List(wildcard)).withSpan(start)
-                untpd.cpy.PackageDef(pkg)(pkg.pid, kyo :: pkg.stats)
+                val start      = pkg.span.startPos
+                val wildcard   = untpd.ImportSelector(untpd.Ident(nme.WILDCARD).withSpan(start)).withSpan(start)
+                val kyo        = untpd.Import(untpd.Ident("kyo".toTermName).withSpan(start), List(wildcard)).withSpan(start)
+                val boundary   = untpd.ImportSelector(untpd.Ident(boundaryName.toTermName).withSpan(start)).withSpan(start)
+                val markers    = qualified(markersPath.init*).withSpan(start)
+                val conversion = untpd.Import(markers, List(boundary)).withSpan(start)
+                untpd.cpy.PackageDef(pkg)(pkg.pid, kyo :: conversion :: pkg.stats)
             case other => other
 
         // The unit's untyped tree is replaced before the typer reads it; the compiler owns the unit and drives this phase.
@@ -250,6 +303,7 @@ object Preparation:
     val checkedClass: String         = (checkedPackage :+ checkedName).mkString(".")
 
     private val markersPath: List[String] = List("kyo", "lang", "internal", "Markers", "force")
+    private val boundaryName: String      = "boundary"
     private val bodyPath: List[String]    = List("kyo", "lang", "internal", "Body")
 
     /** True when the compilation unit being compiled is a `.kyo` source. */
