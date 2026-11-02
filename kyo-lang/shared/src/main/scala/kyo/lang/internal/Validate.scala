@@ -29,7 +29,7 @@ private[internal] object Validate:
             "kyo.Abort"                       -> List("fail", "run"),
             "kyo.Frame"                       -> List("derive"),
             "kyo.Tag"                         -> List("apply", "derive"),
-            "scala.Predef"                    -> List("identity"),
+            "scala.Predef"                    -> List("identity", "summon"),
             "scala.StringContext"             -> List("apply"),
             "scala.Some"                      -> List("apply", "unapply"),
             "scala.None"                      -> Nil,

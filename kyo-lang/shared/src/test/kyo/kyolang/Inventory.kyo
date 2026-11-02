@@ -130,9 +130,18 @@ object Inventory:
     // T13: a named tuple
     def namedTuple = (count = Var.get[Int], label = "n")
 
+    // O09: `this` inside an object body
+    def self = this.helper + Var.get[Int]
+
     // O10: a private member used by a public one
     private def helper = 1
     def usesHelper = helper + Var.get[Int]
+
+    // P10: a given pattern introduces evidence for the case body
+    def evidenced(value: Any) =
+        value match
+            case given Int => summon[Int] + Var.get[Int]
+            case _         => 0
 
     // C04: an extension method, pure and effectful
     extension (value: Int)

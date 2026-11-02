@@ -108,6 +108,7 @@ final class Preparation extends PluginPhase:
         case tree: untpd.Literal   => tree
         case tree: untpd.Number    => tree
         case tree: untpd.Ident     => force(tree)
+        case tree: untpd.This      => force(tree)
         case tree: untpd.Select    => force(callee(tree))
         case tree: untpd.TypeApply => force(callee(tree))
         case tree: untpd.Apply     => force(untpd.cpy.Apply(tree)(callee(tree.fun), tree.args.map(expression)))

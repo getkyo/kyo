@@ -146,6 +146,15 @@ class BodyInventoryTest extends kyo.test.Test[Any]:
         assert(named.count == 2)
         assert(named.label == "n")
     }
+    "O09 this inside an object body" in {
+        Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "self")
+        assert(run(Inventory.self, 1) == 2)
+    }
+    "P10 given patterns" in {
+        Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "evidenced")
+        assert(run(Inventory.evidenced(5), 1) == 6)
+        assert(run(Inventory.evidenced("x"), 1) == 0)
+    }
     "O10 private members" in {
         Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "usesHelper")
         assert(run(Inventory.usesHelper, 1) == 2)

@@ -402,10 +402,10 @@ Every row of the construct inventory has a test. `BodyInventoryTest` runs the su
 
 | Status | Rows |
 |---|---|
-| Supported, with positive tests | L01, L03, L04, L06, L07, L09, T01, T02, T04, T05, T09, T13, D01, D02, D08, D09, D10, D11, D14, E01, E02, E03, E04, E05, E06, E07, E08, E13 (pure closures), E14, E16, E17, P01, P02, P03, P04, P05, P07 (pure guards), P09, O01, O10, C01, C04, C05, C08, M01, M06, A01, A03, A09 (interpolation, extractors, constructors, forwarding through the markers) |
+| Supported, with positive tests | L01, L03, L04, L06, L07, L09, T01, T02, T04, T05, T09, T13, D01, D02, D08, D09, D10, D11, D14, E01, E02, E03, E04, E05, E06, E07, E08, E13 (pure closures), E14, E16, E17, P01, P02, P03, P04, P05, P07 (pure guards), P09, P10, O01, O09 (`this` in an object), O10, C01, C04, C05, C08, M01, M06, A01, A03, A09 (interpolation, extractors, constructors, forwarding through the markers) |
 | Allow in the design, rejected until implemented, with rejection tests | D05 (pattern fields), D12, D15, E15, L08, O02, O03, O04, O05, P07 (effectful guards), C02, C06, M03, M05; stored and returned effectful closures (E13) and handlers inside a body (the boundary question) |
 | Deny, rejected with tests | L05, L10, L11, T10, T11, D03, D04, D06, D07, D13, E09, E10, E11, E12, E18, P06, P08, O06, O07, C03, C07, C09, M02, M04, M07, M09, M11, A02, A04, A05, A06, A07, A08; S04 (postfix) and S10 (placeholders) of the canonical forms |
-| Without a test yet | P10 (given patterns), O09 (`this` and `super`), E10 as distinct from E09 (both are the one `return` rejection) |
+| Without a test yet | O09's `super` (objects have no parents here), E10 as distinct from E09 (both are the one `return` rejection) |
 
 Rows not listed are type-level or compile-time features that need no lowering rule (T03, T06, T07, T08, L02, S01 to S03, S05 to S09, S11, S12 belong to the formatter) or cannot be written in a `.kyo` body as the compiler is pinned (T12, M08, M10, P11, O08, O11, which fall under the class rejection or the compiler's own errors).
 
