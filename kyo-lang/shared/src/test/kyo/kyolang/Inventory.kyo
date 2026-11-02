@@ -35,6 +35,24 @@ object Inventory:
         val (a, b) = (Var.get[Int], Var.get[String].length)
         a + b
 
+    // D05: a pattern binding at the object level, pure
+    val (width, height) = (3, 4)
+    def area             = width * height + Var.get[Int]
+
+    // D12: a pure default argument, evaluated at the call when the argument is omitted
+    def scaled(value: Int, factor: Int = width - 1) = value * factor
+    def defaulted                                   = scaled(Var.get[Int])
+
+    // M03: a constant inline val
+    inline val limit = 10
+    def limited      = Var.get[Int].min(limit)
+
+    // L08: export forwarders to a checked definition and to an admitted library member
+    object Exports:
+        export Programs.pure
+        export scala.math.max
+    def forwarded = Exports.pure + Exports.max(Var.get[Int], 0)
+
     // D08: a pure local method
     def localMethod =
         def increment(value: Int) = value + 1
@@ -127,7 +145,7 @@ object Inventory:
 
     // C01: a using clause on a .kyo method and an explicit using argument
     def contextual(using scale: Int) = Var.get[Int] * scale
-    def scaled = contextual(using 3)
+    def contextualScaled = contextual(using 3)
 
     // C05: a context function value applied inside the body
     def contextFunction =

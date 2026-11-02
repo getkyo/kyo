@@ -5,6 +5,7 @@ import dotty.tools.dotc.cc.SafeRefs
 import dotty.tools.dotc.core.Contexts.*
 import dotty.tools.dotc.core.Decorators.*
 import dotty.tools.dotc.core.Flags.*
+import dotty.tools.dotc.core.NameKinds.DefaultGetterName
 import dotty.tools.dotc.core.Symbols.*
 import dotty.tools.dotc.plugins.PluginPhase
 import dotty.tools.dotc.report
@@ -56,8 +57,13 @@ final class Admission extends PluginPhase:
         /** Defined in the unit being checked: every definition in it goes through this phase, synthetic wrappers included. */
         def ownUnit(sym: Symbol): Boolean = sym.source == ctx.compilationUnit.source
 
+        /** Carries `Checked`, or is a member of a definition that does, or is the default getter of a method that does. */
         def isChecked(sym: Symbol): Boolean =
-            sym.exists && !sym.is(Package) && (sym.hasAnnotation(checked) || isChecked(sym.owner))
+            sym.exists && !sym.is(Package) && (sym.hasAnnotation(checked) || isChecked(sym.owner) || checkedDefaultGetter(sym))
+
+        def checkedDefaultGetter(sym: Symbol): Boolean = sym.name match
+            case DefaultGetterName(method, _) => sym.owner.info.member(method).alternatives.exists(alt => isChecked(alt.symbol))
+            case _                            => false
 
         def requiresAllowUnsafe(sym: Symbol): Boolean =
             sym.ownersIterator.contains(allowUnsafe) ||

@@ -35,11 +35,15 @@ import dotty.tools.dotc.report
   * where an expression of an ordinary type meets an expected pending type (a handler's argument, the body of a lambda an effect-aware
   * API calls): its expansion lowers the expression into a computation with the precise row before the receiving call is typed.
   *
+  * A default argument is wrapped in `kyo.lang.internal.Body.default`, which the compiler makes the body of the default getter: pure
+  * or rejected. A pattern binding at the object level is a field. A constant `inline val` keeps its literal, which must be one. An
+  * `export` clause is left to the compiler: the forwarders it generates call the exported member, which admission checks.
+  *
   * The expression forms the language admits are the ones [[expression]] handles; every other form, and every declaration outside the
   * supported subset, is reported here at its source position with a message naming the construct: classes and traits, inheritance,
-  * inline and implicit definitions, default parameters, mutable and lazy fields, object initialization statements, entry points,
-  * exports, package objects, language imports, assignments, exceptions, returns, anonymous classes, postfix calls, and placeholder
-  * lambdas. kyo-lang/DESIGN.md's construct inventory gives each its row.
+  * inline methods and implicit definitions, mutable and lazy fields, object initialization statements, entry points, package objects,
+  * language imports, assignments, exceptions, returns, anonymous classes, postfix calls, and placeholder lambdas.
+  * kyo-lang/DESIGN.md's construct inventory gives each its row.
   */
 final class Preparation extends PluginPhase:
     import Preparation.*
@@ -213,23 +217,44 @@ final class Preparation extends PluginPhase:
                 )
             case _ => Set.empty
 
-        def body(tree: untpd.Tree, field: Boolean): untpd.Tree =
-            val entry = if field then "field" else "apply"
+        /** The body macro around a definition body: `apply` for a method, `field` for a value, `default` for a default argument. */
+        def body(tree: untpd.Tree, entry: String): untpd.Tree =
             untpd.Apply(qualified((bodyPath :+ entry)*), List(expression(tree))).withSpan(tree.span)
 
-        def checkedMods(member: untpd.MemberDef): untpd.Modifiers =
+        def checkedMods(mods: untpd.Modifiers, tree: untpd.Tree): untpd.Modifiers =
             val tpt        = untpd.Select(qualified(checkedPackage*), checkedName.toTypeName)
-            val annotation = untpd.Apply(untpd.Select(untpd.New(tpt), nme.CONSTRUCTOR), Nil).withSpan(member.span)
-            member.mods.withAddedAnnotation(annotation)
+            val annotation = untpd.Apply(untpd.Select(untpd.New(tpt), nme.CONSTRUCTOR), Nil).withSpan(tree.span)
+            mods.withAddedAnnotation(annotation)
         end checkedMods
+
+        /** The parameter clauses with each default argument wrapped as a body of its own: the compiler makes it the body of the
+          * default getter, which is pure or rejected.
+          */
+        def parameters(method: untpd.DefDef): List[untpd.ParamClause] =
+            method.paramss.map { clause =>
+                if clause.forall(_.isInstanceOf[untpd.ValDef]) then
+                    clause.asInstanceOf[List[untpd.ValDef]].map { parameter =>
+                        if parameter.rhs.isEmpty then parameter
+                        else untpd.cpy.ValDef(parameter)(parameter.name, parameter.tpt, body(parameter.rhs, "default"))
+                    }
+                else clause
+            }
+
+        /** True for a literal, the only initializer a constant `inline val` can have. */
+        def isLiteral(tree: untpd.Tree): Boolean = tree match
+            case _: untpd.Literal | _: untpd.Number => true
+            case untpd.Parens(inner)                => isLiteral(inner)
+            case _                                  => false
 
         val mapper = new untpd.UntypedTreeMap:
             private def template(tree: untpd.Template)(using Context): untpd.Template =
                 if tree.parents.nonEmpty then
                     report.error("Object inheritance is not supported in .kyo", tree.srcPos)
                 val members = tree.body.map {
-                    case exported: untpd.Export       => reject(exported, "Export clauses are not supported in .kyo")
-                    case pattern: untpd.PatDef        => reject(pattern, "Pattern bindings are supported only inside method bodies in .kyo")
+                    // A forwarder's body is the exported member's call, which admission checks like any other.
+                    case exported: untpd.Export => exported
+                    case pattern: untpd.PatDef  =>
+                        untpd.cpy.PatDef(pattern)(checkedMods(pattern.mods, pattern), pattern.pats, pattern.tpt, body(pattern.rhs, "field"))
                     case extensions: untpd.ExtMethods =>
                         untpd.cpy.ExtMethods(extensions)(extensions.paramss, extensions.methods.map(transform))
                     case member: untpd.MemberDef => transform(member)
@@ -243,7 +268,7 @@ final class Preparation extends PluginPhase:
                 case module: untpd.ModuleDef if module.mods.is(Package) =>
                     reject(module, "Package objects are not supported in .kyo; use top-level definitions")
                 case module: untpd.ModuleDef =>
-                    untpd.cpy.ModuleDef(module)(module.name, template(module.impl)).withMods(checkedMods(module))
+                    untpd.cpy.ModuleDef(module)(module.name, template(module.impl)).withMods(checkedMods(module.mods, module))
                 case definition: untpd.TypeDef if definition.isClassDef =>
                     reject(definition, "Classes and traits are not supported in .kyo; use objects and methods")
                 case tree: untpd.Template                                                          => template(tree)
@@ -256,20 +281,19 @@ final class Preparation extends PluginPhase:
                             method.srcPos
                         )
                     end if
-                    method.paramss.flatten.foreach {
-                        case parameter: untpd.ValDef if !parameter.rhs.isEmpty =>
-                            report.error("Default parameters are not supported in .kyo", parameter.srcPos)
-                        case _ => ()
-                    }
-                    untpd.cpy.DefDef(method)(method.name, method.paramss, method.tpt, body(method.rhs, false))
-                        .withMods(checkedMods(method))
+                    untpd.cpy.DefDef(method)(method.name, parameters(method), method.tpt, body(method.rhs, "apply"))
+                        .withMods(checkedMods(method.mods, method))
+                case value: untpd.ValDef if value.mods.is(Inline) && !value.rhs.isEmpty =>
+                    if !isLiteral(value.rhs) then
+                        report.error("An inline val must be a literal constant in .kyo", value.rhs.srcPos)
+                    value.withMods(checkedMods(value.mods, value))
                 case value: untpd.ValDef if !value.rhs.isEmpty =>
-                    if value.mods.is(Inline) || value.mods.is(Implicit) || value.mods.is(Given) then
+                    if value.mods.is(Implicit) || value.mods.is(Given) then
                         report.error("Inline and implicit definitions are not supported in .kyo", value.srcPos)
                     else if value.mods.is(Mutable) || value.mods.is(Lazy) then
                         report.error("Mutable and lazy fields are not supported in .kyo", value.srcPos)
                     end if
-                    untpd.cpy.ValDef(value)(value.name, value.tpt, body(value.rhs, true)).withMods(checkedMods(value))
+                    untpd.cpy.ValDef(value)(value.name, value.tpt, body(value.rhs, "field")).withMods(checkedMods(value.mods, value))
                 case imported: untpd.Import => languageImport(imported)
                 case _                      => super.transform(tree)
 

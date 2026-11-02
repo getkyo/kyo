@@ -24,12 +24,12 @@ class KyoLangPluginInventoryTest extends kyo.test.Test[Any]:
         }
 
     "lexical forms and compilation units" - {
-        "L08 export clauses are not supported yet" in rejects(
+        "L08 an export forwarder to an unadmitted member" in rejects(
             "Exported.kyo",
             """object Exported:
-              |    export scala.collection.immutable.List.apply
+              |    export java.lang.System.currentTimeMillis
               |""".stripMargin
-        )("Export clauses are not supported in .kyo")
+        )("API is not admitted in .kyo: java.lang.System.currentTimeMillis")
 
         "L10 package objects" in rejects(
             "Packaged.kyo",
@@ -97,12 +97,12 @@ class KyoLangPluginInventoryTest extends kyo.test.Test[Any]:
               |""".stripMargin
         )("Assignment is not supported in .kyo")
 
-        "D05 pattern bindings as fields are not supported yet" in rejects(
+        "D05 an effectful pattern binding as a field" in rejects(
             "FieldPattern.kyo",
             """object FieldPattern:
-              |    val (a, b) = (1, 2)
+              |    val (a, b) = (Var.get[Int], 2)
               |""".stripMargin
-        )("Pattern bindings are supported only inside method bodies in .kyo")
+        )("Effectful fields are not supported in .kyo")
 
         "D07 lazy locals" in rejects(
             "LazyLocal.kyo",
@@ -118,7 +118,7 @@ class KyoLangPluginInventoryTest extends kyo.test.Test[Any]:
             """object EffectfulDefault:
               |    def bad(value: Int = Var.get[Int]) = value
               |""".stripMargin
-        )("Default parameters are not supported in .kyo")
+        )("Effectful default arguments are not supported in .kyo")
     }
 
     "expressions" - {
@@ -281,12 +281,12 @@ class KyoLangPluginInventoryTest extends kyo.test.Test[Any]:
     }
 
     "inlining, annotations, and compiler features" - {
-        "M03 constant inline values are not supported yet" in rejects(
+        "M03 an inline val whose initializer is not a literal" in rejects(
             "Constant.kyo",
             """object Constant:
-              |    inline val size = 1
+              |    inline val size = 1 + 1
               |""".stripMargin
-        )("Inline and implicit definitions are not supported in .kyo")
+        )("An inline val must be a literal constant in .kyo")
 
         "M04 quotes" in rejects(
             "Quoted.kyo",

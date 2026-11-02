@@ -7,12 +7,12 @@ import scala.quoted.*
 
 /** The typed macros that validate and lower a `.kyo` body, and the boundaries inside it.
   *
-  * The `kyo-lang` plugin wraps every method body in `Body.apply` and every field initializer in `Body.field`, after wrapping each
-  * expression in a [[Markers]] marker. Normal typing resolves the markers, leaving kyo-direct's `.now` on every sequenced computation,
+  * The `kyo-lang` plugin wraps every method body in `Body.apply`, every field initializer in `Body.field`, and every default argument
+  * in `Body.default`, after wrapping each expression in a [[Markers]] marker. Normal typing resolves the markers, leaving kyo-direct's `.now` on every sequenced computation,
   * and this macro receives the typed body. It validates every resolved call and reference through [[Validate]], and then:
   *
   *   - returns the body unchanged when it has no `.now`, so a pure definition keeps its ordinary type;
-  *   - rejects an effectful field initializer, since a field cannot carry an effect row;
+  *   - rejects an effectful field initializer or default argument, since neither can carry an effect row;
   *   - otherwise hands the body to kyo-direct: its restrictions apply and its lowering produces the Kyo composition, exactly as for
   *     the body of a `direct` block. Every construct and every counterpart kyo-direct supports is available to a `.kyo` body, under
   *     the syntax the plugin admits.
@@ -31,17 +31,22 @@ import scala.quoted.*
   */
 object Body:
 
-    transparent inline def apply[A](inline value: A) = ${ transform('value, false) }
+    transparent inline def apply[A](inline value: A) = ${ transform('value, "") }
 
-    transparent inline def field[A](inline value: A) = ${ transform('value, true) }
+    transparent inline def field[A](inline value: A) =
+        ${ transform('value, "Effectful fields are not supported in .kyo; define a method") }
+
+    transparent inline def default[A](inline value: A) =
+        ${ transform('value, "Effectful default arguments are not supported in .kyo; pass the value at the call") }
 
     transparent inline def closure[A](inline value: A): A = ${ lowered('value) }
 
-    def transform[A: Type](value: Expr[A], field: Boolean)(using Quotes): Expr[Any] =
+    /** The body macro: `pureOnly`, when not empty, is the rejection of an effectful body where only a pure one can stand. */
+    def transform[A: Type](value: Expr[A], pureOnly: String)(using Quotes): Expr[Any] =
         import quotes.reflect.*
         Validate(value)
         if !hasMarker(value) then value
-        else if field then report.errorAndAbort("Effectful fields are not supported in .kyo; define a method", value.asTerm.pos)
+        else if pureOnly.nonEmpty then report.errorAndAbort(pureOnly, value.asTerm.pos)
         else
             kyo.internal.Validate(value)
             Lower(value)

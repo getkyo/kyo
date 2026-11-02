@@ -149,7 +149,7 @@ The other direction holds as well: a `.kyo` definition calls admitted Scala APIs
 
 ## What a body can contain
 
-Bindings, blocks, conditionals, boolean operators, `match` with literal, binder, alternative, constructor, tuple, and typed patterns, pure custom extractors and guards, pure or effectful, `while`, `for` comprehensions over admitted collections with guards and `case` generators (an effectful body runs through the Kyo counterpart), tuples and named tuples, string interpolation, type ascription, prefix operators, applications with multiple clauses, `using` clauses, named and repeated arguments, pure by-name arguments, local methods and closures, pure or effectful, context functions, case lambdas as total functions, constructor applications, recursion, extension methods, `@tailrec`, handlers and other methods taking computations, and effect-aware APIs taking effectful callbacks. Each has a test in `BodyInventoryTest` over the `Inventory.kyo` fixture or in `BodyBoundaryTest` over `Boundaries.kyo`.
+Bindings, blocks, conditionals, boolean operators, `match` with literal, binder, alternative, constructor, tuple, and typed patterns, pure custom extractors and guards, pure or effectful, `while`, `for` comprehensions over admitted collections with guards and `case` generators (an effectful body runs through the Kyo counterpart), tuples and named tuples, string interpolation, type ascription, prefix operators, applications with multiple clauses, `using` clauses, named and repeated arguments, pure by-name arguments, local methods and closures, pure or effectful, context functions, case lambdas as total functions, constructor applications, recursion, extension methods, `@tailrec`, pattern bindings as fields, pure default arguments, constant `inline val`s, `export` clauses, handlers and other methods taking computations, and effect-aware APIs taking effectful callbacks. Each has a test in `BodyInventoryTest` over the `Inventory.kyo` fixture or in `BodyBoundaryTest` over `Boundaries.kyo`.
 
 ## What the language rejects
 
@@ -157,8 +157,8 @@ Three kinds of rejection exist, and each diagnostic names the construct so the r
 
 | Reason | Meaning | Example |
 |---|---|---|
-| Language restriction | The construct conflicts with the semantic contract. | `null`, `var`, mutable field reads, an annotation erasing an effect. |
-| Unimplemented construct | The intended semantics still need a typing and lowering rule. | Effectful fields, classes and enums, givens, default parameters. |
+| Language restriction | The construct conflicts with the semantic contract. | `null`, `var`, mutable field reads, an annotation erasing an effect, an effectful field or default argument. |
+| Unimplemented construct | The intended semantics still need a typing and lowering rule. | Classes and enums, givens. |
 | Receiver without a rule | The method receiving an effectful lambda or by-name argument decides when it runs it, and it has no Kyo counterpart. | An effectful callback to a method without a counterpart, an effectful argument to an ordinary by-name parameter, a function type annotation that would hide a latent effect. |
 | API admission | The resolved operation is outside the admitted surface: Kyo's API without `AllowUnsafe`, compiled `.kyo` definitions, and what the Scala compiler's safe mode considers safe in the standard library and the JDK. | `println`, `java.lang.System.currentTimeMillis`, `scala.util.Random`, a mutable collection, a method on an ordinary Scala object. |
 

@@ -1,0 +1,12 @@
+package kyolang
+
+/** Uses of Inventory's pattern fields, default getters, inline value, and export forwarders from another unit; BodyInventoryTest pins them. */
+object Across:
+    def crossPattern = Inventory.width + Inventory.height
+
+    def crossDefault = Inventory.scaled(2)
+
+    def crossInline = Inventory.limit
+
+    def crossExport = Inventory.Exports.max(Inventory.Exports.pure, 1)
+end Across

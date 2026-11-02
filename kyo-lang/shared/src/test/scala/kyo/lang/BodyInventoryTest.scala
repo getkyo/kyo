@@ -47,6 +47,32 @@ class BodyInventoryTest extends kyo.test.Test[Any]:
         Signatures.exact[Int < (Var[Int] & Var[String])]("kyolang.Inventory", "destructured")
         assert(Var.run("abc")(Var.run(2)(Inventory.destructured)).eval == 5)
     }
+    "D05 pattern bindings as fields" in {
+        Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "area")
+        val width: Int = Inventory.width
+        assert(width == 3)
+        assert(Inventory.width == 3 && Inventory.height == 4)
+        assert(run(Inventory.area, 1) == 13)
+        assert(Across.crossPattern == 7)
+    }
+    "D12 pure default arguments" in {
+        Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "defaulted")
+        assert(run(Inventory.defaulted, 5) == 10)
+        assert(Inventory.scaled(5, 3) == 15)
+        assert(Across.crossDefault == 4)
+    }
+    "M03 constant inline values" in {
+        Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "limited")
+        assert(run(Inventory.limited, 15) == 10)
+        assert(run(Inventory.limited, 5) == 5)
+        assert(Across.crossInline == 10)
+    }
+    "L08 export forwarders" in {
+        Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "forwarded")
+        assert(run(Inventory.forwarded, -4) == 42)
+        assert(run(Inventory.forwarded, 4) == 46)
+        assert(Across.crossExport == 42)
+    }
     "D08 pure local methods" in {
         Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "localMethod")
         assert(run(Inventory.localMethod, 1) == 2)
@@ -139,8 +165,8 @@ class BodyInventoryTest extends kyo.test.Test[Any]:
         assert(run(Inventory.collected, 10) == List(11, 13))
     }
     "C01 using clauses" in {
-        Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "scaled")
-        assert(run(Inventory.scaled, 2) == 6)
+        Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "contextualScaled")
+        assert(run(Inventory.contextualScaled, 2) == 6)
     }
     "C05 context functions" in {
         Signatures.exact[Int < Var[Int]]("kyolang.Inventory", "contextFunction")

@@ -20,12 +20,12 @@ class PreparationTest extends kyo.test.Test[Any]:
         }
 
     "declarations" - {
-        "a default parameter" in rejects(
+        "a default argument calling an unadmitted API" in rejects(
             "DefaultArgument.kyo",
             """object DefaultArgument:
               |    def bad(value: Unit = println("must not execute")): Int = 42
               |""".stripMargin
-        )("Default parameters are not supported in .kyo")
+        )("API is not admitted in .kyo: scala.Predef.println")
 
         "an object initialization statement" in rejects(
             "Initialization.kyo",
