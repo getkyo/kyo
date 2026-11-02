@@ -1,0 +1,2 @@
+# Rejection: the compiler plugin is required and rejects a mutable local.
+-> compile

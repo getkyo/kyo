@@ -1,0 +1,4 @@
+# Compile: the .kyo source is discovered, compiled with the language plugin, and called from Scala.
+> compile
+> run
+$ exists target/result.txt

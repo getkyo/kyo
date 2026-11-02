@@ -164,7 +164,7 @@ Formatting cannot fix an unsafe API, erase an effect, or translate an unsupporte
 
 Add pinned golden cases for every S-row, with source comments, multiline strings, nested handlers, callbacks, patterns, and source positions. Verify exact normalized output, repeated-format idempotence, unchanged-file timestamps, no rewriting of `.scala` or dependency files, and preservation of valid/invalid program behavior across normalization. Exercise write/check modes, invalid input, read-only paths, concurrent edits, and sbt/Zinc/Metals interaction. Establish that the chosen Scalafmt dialect can parse `.kyo` contents and explicitly include the extension; do not assume a Scala formatter discovers it automatically.
 
-This is planned behavior, not implemented by the current module. The repository's format-on-compile setting establishes the desired workflow for its Scala modules, not proof that `.kyo` sources are formatted; they are not.
+Implemented by the `kyo-lang-sbt` plugin: the pinned profile is its `kyo-lang/scalafmt.conf` resource, formatted by the scalafmt-core the plugin carries, applied before `compile` (`kyoFormat`) or enforced by `kyoFormatCheck`; a project's `.scalafmt.conf` does not apply. `FormatterTest` pins one golden case per S-row (S01, S02, S05, S07, S08, S09, S11, S12, comments and string contents) with idempotence, and S03's one-statement-per-line is the check the formatter reports rather than rewrites; S04 and S10 are the compiler plugin's rejections; S06 is the Scala 2 implicit rejection. The scripted suite covers write mode on compile, a second compile changing nothing, check mode failing and passing, compilation and a Scala caller, and a rejection through the loaded compiler plugin. Not covered: concurrent edits, read-only paths, and an actual Metals session, which the presentation-compiler completion test stands in for.
 
 ## Language construct inventory
 
@@ -1113,11 +1113,13 @@ Implement the remaining intended constructs by inventory family, with validation
 
 Separate semantic rejection from external API admission in diagnostics. Exercise a reusable admitted library API independently of code-mode tools and a narrower external list for an embedding. Do not add an unrestricted mode that silently permits unsuspended effects. Check the host callback assumptions explicitly rather than treating `Checked` metadata as proof of arbitrary binary behavior.
 
-### 5. Integrate default formatting, sbt, Zinc, and Metals
+### 5. Integrate default formatting, sbt, Zinc, and Metals (done, except the Metals session)
 
 Add a shared source-preparation entry point with a pinned `.kyo` formatting profile and canonical-syntax checks, then a small integration project that discovers `.kyo` files and loads the plugin. Format/write by default, or enforce the same output in explicit check mode, before source capture and incremental hashing. Source discovery and formatting happen before the compiler plugin receives a parsed unit; do not implement formatting as a late file mutation inside the existing phase.
 
 Test the formatting acceptance cases above alongside clean and incremental compilation, mixed `.scala`/`.kyo` dependencies, separate compilation, changes to inferred effect rows, and original source paths in diagnostics. Ensure direct supported compile commands and sbt use the same preparer; a raw plugin-only invocation must not silently claim formatting support. Through actual Metals, verify formatting edits, unsaved-buffer behavior, completion, hover, diagnostics, and navigation on `.kyo` files. The existing presentation-compiler completion test is baseline evidence, not completion of this step.
+
+Status: `kyo-lang-sbt` is the integration project (see [Formatting acceptance](#formatting-acceptance) for what its suites cover). The compiler plugin alone compiles `.kyo` sources and formats nothing, and says so in its documentation. The Metals session has not been run; the presentation-compiler test remains the editor evidence.
 
 ### 6. Consolidate and document the supported implementation
 

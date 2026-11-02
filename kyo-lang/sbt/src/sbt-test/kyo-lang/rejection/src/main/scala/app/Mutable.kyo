@@ -1,0 +1,7 @@
+package app
+
+object Mutable:
+    def count =
+        var n = 0
+        n = n + 1
+        n

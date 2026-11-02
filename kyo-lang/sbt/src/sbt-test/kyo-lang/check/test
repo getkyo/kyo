@@ -1,0 +1,6 @@
+# Check mode: compile leaves the source as written, kyoFormatCheck fails, kyoFormat rewrites it, and the check passes.
+> compile
+-> kyoFormatCheck
+> kyoFormat
+> kyoFormatCheck
+> compile

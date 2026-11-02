@@ -468,6 +468,7 @@ lazy val kyoJVM: Project = project
         `kyo-direct`.jvm,
         `kyo-lang`.jvm,
         `kyo-lang-plugin`,
+        `kyo-lang-sbt`,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
         `kyo-config`.jvm,
@@ -2151,6 +2152,64 @@ lazy val `kyo-lang-plugin` =
             // kyo-lang/README.md documents the language and runs its doctests from the kyo-lang module's classpath.
             doctestSources := Seq.empty
         )
+
+// --- kyo-lang-sbt (in-tree sbt plugin; published as artifact `kyo-lang-sbt`)
+//
+// The build integration of `.kyo` sources: source discovery, the compiler plugin and library at the plugin's own version, and
+// formatting with the language's pinned profile before compilation or in check mode. Scala 2.12 only (sbt 1.x runtime), aggregated
+// into kyoJVM so the JVM `ci-release` pass publishes it; its scripted suite is bound into `test` like the sibling plugins'.
+lazy val `kyo-lang-sbt` = (project in file("kyo-lang/sbt"))
+    .enablePlugins(SbtPlugin)
+    .disablePlugins(KyoDoctestPlugin)
+    .settings(
+        moduleName         := "kyo-lang-sbt",
+        scalaVersion       := "2.12.21",
+        crossScalaVersions := Seq("2.12.21"),
+        sbtPlugin          := true,
+        // The formatter is scalafmt-core on the plugin's classpath, at the version the repository pins, so a published plugin
+        // formats `.kyo` sources the same way everywhere and never fetches a formatter at run time.
+        libraryDependencies += "org.scalameta" %% "scalafmt-core" % {
+            val conf = IO.read((ThisBuild / baseDirectory).value / ".scalafmt.conf")
+            """(?m)^\s*version\s*=\s*"?([^"\s]+)"?""".r.findFirstMatchIn(conf).map(_.group(1))
+                .getOrElse(sys.error("no version in .scalafmt.conf"))
+        },
+        libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.20" % Test,
+        // The plugin resolves kyo-lang and kyo-lang-plugin at its own version by default; the version is baked into a resource.
+        Compile / resourceGenerators += Def.task {
+            val outDir = (Compile / resourceManaged).value / "kyo-lang"
+            IO.createDirectory(outDir)
+            val versionFile = outDir / "version.txt"
+            IO.write(versionFile, version.value)
+            Seq(versionFile)
+        }.taskValue,
+        scriptedLaunchOpts := Seq(
+            "-Xmx1024M",
+            "-Dplugin.version=" + version.value,
+            // The sub-builds compile against the Scala the published artifacts were built with.
+            "-Dkyo.scalaVersion=" + scala39Version
+        ),
+        scriptedBufferLog := false,
+        // The sub-builds resolve kyo-lang and kyo-lang-plugin from ivy-local, and publishLocal is not transitive, so the whole
+        // classpath closure is published first, derived from the build graph as kyo-test-sbt does.
+        scriptedDependencies := Def.taskDyn {
+            val build   = thisProjectRef.value.build
+            val deps    = buildDependencies.value.classpathTransitive
+            val roots   = Seq("kyo-langJVM", "kyo-lang-plugin").map(id => ProjectRef(build, id))
+            val closure = roots.flatMap(r => r +: deps.getOrElse(r, Nil)).distinct
+            Def.task {
+                publishLocal.all(ScopeFilter(inProjects(closure *))).value
+                publishLocal.value
+                ()
+            }
+        }.value,
+        // Run the scripted suite as part of the plugin's regular test task so CI gates it via `kyo-lang-sbt/test`.
+        Test / test := (Test / test).dependsOn(Def.taskDyn {
+            if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
+                Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777 boot-server named-pipe flake)"))
+            else
+                Def.task((scripted.toTask("")).value)
+        }).value
+    )
 
 lazy val `kyo-stm` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)

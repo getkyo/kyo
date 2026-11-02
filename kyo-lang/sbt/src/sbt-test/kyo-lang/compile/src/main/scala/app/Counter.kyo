@@ -1,0 +1,7 @@
+package app
+
+object Counter:
+    def bump(by: Int) =
+        val current = Var.get[Int]
+        Var.set(current + by)
+        current + by

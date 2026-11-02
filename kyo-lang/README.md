@@ -166,7 +166,19 @@ Pending-value composition methods are deliberately unavailable in a `.kyo` body:
 
 ## Build integration
 
-A build loads the plugin and keeps the library on the compile classpath, then includes `.kyo` files among its sources. In sbt:
+The `kyo-lang-sbt` plugin integrates `.kyo` sources into an sbt build: it discovers `.kyo` files among the project's sources, adds the library and the compiler plugin at its own version, requires the compiler plugin, and formats the `.kyo` sources with the language's pinned profile before each compilation.
+
+```
+// project/plugins.sbt
+addSbtPlugin("io.getkyo" % "kyo-lang-sbt" % "<version>")
+
+// build.sbt
+lazy val app = project.enablePlugins(KyoLangPlugin)
+```
+
+`kyoFormat` formats the `.kyo` sources in place and runs before `compile` by default (`kyoFormatOnCompile := false` turns that off); `kyoFormatCheck` fails when a source is not in the language's format, for CI. The profile is one canonical layout for every `.kyo` source, pinned by the plugin rather than chosen per project: significant indentation with four spaces, the new control-flow syntax, colon syntax for a multi-line final block argument, `*` and `as` in imports, `?` wildcard types, `values*`, ASCII arrows, a stable modifier order, end markers after four lines, and a 140-column target. A project's `.scalafmt.conf` does not apply to `.kyo` sources. One statement per line, infix calls of alphanumeric methods, postfix calls, and placeholder lambdas have no rewrite the formatter applies: the first is reported by the formatter and the others by the compiler plugin.
+
+Without the sbt plugin, a build loads the compiler plugin by hand and gets compilation but no formatting:
 
 ```
 libraryDependencies += "io.getkyo" %% "kyo-lang" % "<version>"
@@ -179,4 +191,4 @@ Compile / unmanagedSources / includeFilter := (Compile / unmanagedSources / incl
 
 ## Status
 
-This module carries the working subset and the complete design. [DESIGN.md](DESIGN.md) records the language objective, the semantic contract, the construct inventory with an allow/deny policy per row, the CPS lowering rules including the ones not yet implemented, the API admission rule, and the implementation sequence. The lowering is kyo-direct's: a `.kyo` body is the body of a `direct` block whose `.now` markers the plugin planted, so an effectful callback to `map`, `foldLeft`, or any other method with a Kyo counterpart already runs through `Kyo.foreach` and its relatives. Handlers inside a body, effectful closures, and effect-aware receivers are typed through the computation boundaries DESIGN.md describes. The next steps in that sequence are the remaining construct rows and default formatting with sbt and Metals integration.
+This module carries the working subset and the complete design. [DESIGN.md](DESIGN.md) records the language objective, the semantic contract, the construct inventory with an allow/deny policy per row, the CPS lowering rules including the ones not yet implemented, the API admission rule, and the implementation sequence. The lowering is kyo-direct's: a `.kyo` body is the body of a `direct` block whose `.now` markers the plugin planted, so an effectful callback to `map`, `foldLeft`, or any other method with a Kyo counterpart already runs through `Kyo.foreach` and its relatives. Handlers inside a body, effectful closures, and effect-aware receivers are typed through the computation boundaries DESIGN.md describes. Every Allow row of the construct inventory has its conformance evidence, and the `kyo-lang-sbt` plugin carries the build integration with format-on-compile and a check mode. Editor integration is verified through the presentation compiler, not through a Metals session.

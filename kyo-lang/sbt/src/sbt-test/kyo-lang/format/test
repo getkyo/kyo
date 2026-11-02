@@ -1,0 +1,6 @@
+# Format on compile: the .kyo source is rewritten into the pinned profile, then compiled; a second compile changes nothing.
+> compile
+$ must-mirror src/main/scala/app/Program.kyo expected/Program.kyo
+> kyoFormatCheck
+> compile
+$ must-mirror src/main/scala/app/Program.kyo expected/Program.kyo

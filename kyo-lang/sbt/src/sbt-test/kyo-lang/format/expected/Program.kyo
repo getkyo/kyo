@@ -1,0 +1,7 @@
+package app
+
+object Program:
+    def pick(flag: Boolean) =
+        val current = Var.get[Int]
+        if flag then current else -current
+end Program
