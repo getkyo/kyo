@@ -57,9 +57,16 @@ final class Admission extends PluginPhase:
         /** Defined in the unit being checked: every definition in it goes through this phase, synthetic wrappers included. */
         def ownUnit(sym: Symbol): Boolean = sym.source == ctx.compilationUnit.source
 
-        /** Carries `Checked`, or is a member of a definition that does, or is the default getter of a method that does. */
+        /** Carries `Checked`, or is a member of a definition that does, the default getter of a method that does, or the companion the
+          * compiler generated for a class that does.
+          */
         def isChecked(sym: Symbol): Boolean =
-            sym.exists && !sym.is(Package) && (sym.hasAnnotation(checked) || isChecked(sym.owner) || checkedDefaultGetter(sym))
+            sym.exists && !sym.is(Package) &&
+                (sym.hasAnnotation(checked) || isChecked(sym.owner) || checkedDefaultGetter(sym) || checkedCompanion(sym))
+
+        def checkedCompanion(sym: Symbol): Boolean =
+            val cls = if sym.is(ModuleVal) then sym.moduleClass else sym
+            cls.is(ModuleClass) && cls.companionClass.exists && cls.companionClass.hasAnnotation(checked)
 
         def checkedDefaultGetter(sym: Symbol): Boolean = sym.name match
             case DefaultGetterName(method, _) => sym.owner.info.member(method).alternatives.exists(alt => isChecked(alt.symbol))
@@ -109,11 +116,89 @@ final class Admission extends PluginPhase:
             val kind = if tree.symbol.is(Method) then "API" else "Reference"
             report.error(s"$kind is not admitted in .kyo: ${display(tree.symbol)}", tree.srcPos)
 
+        /** A compiler-generated member whose body is not the user's: the machinery of enums and case classes, trusted like an admitted
+          * inline API. An export forwarder, a default getter, and a derived instance come from the user's source and are checked.
+          */
+        def trustedSynthetic(sym: Symbol): Boolean =
+            sym.is(Synthetic) && !sym.is(Exported) && !sym.name.is(DefaultGetterName) && !sym.name.startsWith("derived$")
+
+        /** The parents the compiler adds on its own to a class, enum, or case class. */
+        val implicitParents: Set[Symbol] = Set(
+            defn.ObjectClass,
+            defn.AnyClass,
+            defn.ProductClass,
+            defn.SerializableClass,
+            defn.EnumClass,
+            requiredClass("scala.runtime.EnumValue")
+        )
+
+        /** The closed-hierarchy policy after typing: every parent is admitted, so an unsafe class cannot be extended, and a checked
+          * parent is sealed, so its implementations are in its own unit and checked.
+          */
+        def checkParents(definition: tpd.TypeDef, template: tpd.Template): Unit =
+            template.parents.foreach { parent =>
+                val cls = parent.tpe.classSymbol
+                if !implicitParents.contains(cls) && !admitted(cls) then
+                    report.error(s"Parent is not admitted in .kyo: ${display(cls)}", parent.srcPos)
+                else if isChecked(cls) && !cls.is(Sealed) && !cls.is(Final) && !cls.is(Enum) && !cls.is(Module) then
+                    report.error(s"Parent is not sealed: ${display(cls)}", parent.srcPos)
+                end if
+            }
+
+        /** Safe initialization: a field initializer and a parent constructor argument may read a constructor parameter or a field
+          * defined before it, and nothing else of the object under construction. A method call could read a field not yet set, and
+          * `this` as a value could escape before the object is complete.
+          */
+        def checkInitialization(definition: tpd.TypeDef, template: tpd.Template): Unit =
+            val cls                                                = definition.symbol
+            def check(initializer: tpd.Tree, position: Long): Unit =
+                def fail(tree: tpd.Tree, message: String): Unit = report.error(message, tree.srcPos)
+                def earlier(member: Symbol): Boolean            =
+                    member.is(ParamAccessor) || (member.isTerm && !member.is(Method) && member.span.exists && member.span.start < position)
+                // A nested object is initialized on its first access and a synthetic member is the compiler's, so both are safe.
+                def member(tree: tpd.Tree): Unit =
+                    val member = tree.symbol
+                    if member.is(Module) || member.isType || member.is(Synthetic) then ()
+                    else if member.is(Method) && !member.is(ParamAccessor) then
+                        fail(tree, s"An initializer may not call ${member.name}; the object is not initialized yet")
+                    else if !earlier(member) then
+                        fail(tree, s"An initializer may not read ${member.name} before it is initialized")
+                    end if
+                end member
+                // A member of the object under construction is referenced through `this` or, unqualified, by name.
+                val visitor = new tpd.TreeTraverser:
+                    def traverse(tree: tpd.Tree)(using Context): Unit = tree match
+                        case tpd.Select(qualifier: tpd.This, _) if qualifier.symbol == cls => member(tree)
+                        case tree: tpd.Ident if tree.symbol.maybeOwner == cls              => member(tree)
+                        case tree: tpd.This if tree.symbol == cls                          =>
+                            fail(tree, "this may not escape while the object is initialized")
+                        case _ => traverseChildren(tree)
+                visitor.traverse(initializer)
+            end check
+            template.parents.foreach(parent => check(parent, parent.span.start))
+            template.body.foreach {
+                // A lazy field and a nested object are initialized on first access, after the enclosing object is complete.
+                case field: tpd.ValDef if !field.symbol.isOneOf(Synthetic | ParamAccessor | Lazy | Module) && !field.rhs.isEmpty =>
+                    check(field.rhs, field.span.start)
+                case _ => ()
+            }
+        end checkInitialization
+
         val visitor = new tpd.TreeTraverser:
             def traverse(tree: tpd.Tree)(using Context): Unit = tree match
-                case _: tpd.Import | _: tpd.TypTree         => ()
-                case tree: tpd.Annotated                    => traverse(tree.arg)
-                case tree: tpd.Select if tree.symbol.isTerm =>
+                case _: tpd.Import | _: tpd.TypTree       => ()
+                case tree: tpd.Annotated                  => traverse(tree.arg)
+                case tree: tpd.TypeDef if tree.isClassDef =>
+                    tree.rhs match
+                        case template: tpd.Template =>
+                            checkParents(tree, template)
+                            checkInitialization(tree, template)
+                        case _ => ()
+                    end match
+                    traverseChildren(tree)
+                case tree: tpd.DefDef if trustedSynthetic(tree.symbol) => ()
+                case tree: tpd.ValDef if trustedSynthetic(tree.symbol) => ()
+                case tree: tpd.Select if tree.symbol.isTerm            =>
                     if !admittedMember(tree.symbol, tree.qualifier) then reject(tree)
                     traverse(tree.qualifier)
                 case tree: tpd.Ident if tree.symbol.isTerm && !admitted(tree.symbol) => reject(tree)

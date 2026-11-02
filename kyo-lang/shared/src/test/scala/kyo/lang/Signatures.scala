@@ -10,12 +10,19 @@ import scala.quoted.*
   */
 object Signatures:
 
+    /** Checks the result type of a method of the object `module`. */
     inline def exact[Expected](inline module: String, inline method: String): Unit =
-        ${ check[Expected]('module, 'method) }
+        ${ check[Expected]('module, '{ "" }, 'method) }
 
-    private def check[Expected: Type](module: Expr[String], method: Expr[String])(using Quotes): Expr[Unit] =
+    /** Checks the result type of a method of the class `cls` nested in the object `module`. */
+    inline def exactIn[Expected](inline module: String, inline cls: String, inline method: String): Unit =
+        ${ check[Expected]('module, 'cls, 'method) }
+
+    private def check[Expected: Type](module: Expr[String], cls: Expr[String], method: Expr[String])(using Quotes): Expr[Unit] =
         import quotes.reflect.*
-        val owner  = Symbol.requiredModule(module.valueOrAbort)
+        val owner = cls.valueOrAbort match
+            case ""   => Symbol.requiredModule(module.valueOrAbort)
+            case name => Symbol.requiredModule(module.valueOrAbort).moduleClass.declaredType(name).head
         val name   = method.valueOrAbort
         val symbol = owner.methodMember(name) match
             case List(single) => single
@@ -24,8 +31,9 @@ object Signatures:
             case method: MethodType => result(method.resType)
             case method: ByNameType => result(method.underlying)
             case other              => other
-        val actual   = result(owner.termRef.memberType(symbol))
-        val expected = TypeRepr.of[Expected]
+        val reference = if owner.isClassDef && !owner.flags.is(Flags.Module) then owner.typeRef else owner.termRef
+        val actual    = result(reference.memberType(symbol))
+        val expected  = TypeRepr.of[Expected]
         if !(actual =:= expected) then
             report.errorAndAbort(s"Signature mismatch for ${owner.fullName}.$name: ${actual.show}; expected ${expected.show}")
         '{ () }

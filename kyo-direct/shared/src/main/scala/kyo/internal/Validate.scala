@@ -7,7 +7,11 @@ import scala.annotation.tailrec
 import scala.quoted.*
 
 private[kyo] object Validate:
-    def apply(expr: Expr[Any])(using quotes: Quotes): Unit =
+    /** Validates a block body. With `computation`, the body's own value may be a computation: a term in result position (the body,
+      * and through blocks, conditionals, matches, ascriptions, and inlined wrappers, the expressions that produce its value) is not a
+      * bare computation but the block's result, as a front end lowering a body whose result is a boundary needs.
+      */
+    def apply(expr: Expr[Any], computation: Boolean = false)(using quotes: Quotes): Unit =
         import quotes.reflect.*
 
         def fail(tree: Tree, msg: String): Unit =
@@ -68,9 +72,23 @@ private[kyo] object Validate:
                     case Block(stats, expr)         => stats.collect { case t: Term => t } :+ expr
                     case Inlined(_, bindings, expr) => bindings.collect { case t: Term => t } :+ expr
                     case If(cond, thenp, elsep)     => List(cond, thenp, elsep)
+                    case Match(scrutinee, cases)    => scrutinee :: cases.map(_.rhs)
+                    case Typed(expr, _)             => List(expr)
                     case Lambda(meth, _)            => meth
                     case _                          => Nil // Other cases (Literal, Closure, etc.)
         end extension
+
+        /** The terms in result position of the body, when its value may be a computation. */
+        val tails: Set[Tree] =
+            def collect(tree: Term): Set[Tree] = tree match
+                case Block(_, result)     => collect(result) + tree
+                case If(_, thenp, elsep)  => collect(thenp) ++ collect(elsep) + tree
+                case Match(_, cases)      => cases.flatMap(c => collect(c.rhs)).toSet + tree
+                case Typed(inner, _)      => collect(inner) + tree
+                case Inlined(_, _, inner) => collect(inner) + tree
+                case _                    => Set(tree)
+            if computation then collect(expr.asTerm) else Set.empty
+        end tails
 
         /** A nested `direct` block, already expanded, or a computation a front end lowered: its markers belonged to it. */
         object DirectBlock:
@@ -263,6 +281,8 @@ private[kyo] object Validate:
                                """.stripMargin
                         )
                 }
+
+            case tree: Term if tails.contains(tree) && tree.tpe.typeSymbol.name == "<" => tree.children.foreach(Trees.Step.goto)
 
             case tree: Term if tree.tpe.typeSymbol.name == "<" => bare(tree)
 

@@ -14,7 +14,8 @@ import scala.quoted.*
   *   - returns the body unchanged when it has no `.now`, so a pure definition keeps its ordinary type;
   *   - rejects an effectful field initializer or default argument, since neither can carry an effect row;
   *   - otherwise hands the body to kyo-direct: its restrictions apply and its lowering produces the Kyo composition, exactly as for
-  *     the body of a `direct` block. Every construct and every counterpart kyo-direct supports is available to a `.kyo` body, under
+  *     the body of a `direct` block. A body whose own type is already a computation, because a boundary inside it produced one, lowers
+  *     with its row joined to the markers' row rather than as a value. Every construct and every counterpart kyo-direct supports is available to a `.kyo` body, under
   *     the syntax the plugin admits.
   *
   * The macro is `transparent inline`, so the definition's inferred result type is the precise `A < S` of the lowered body rather than a
@@ -48,16 +49,20 @@ object Body:
         if !hasMarker(value) then value
         else if pureOnly.nonEmpty then report.errorAndAbort(pureOnly, value.asTerm.pos)
         else
-            kyo.internal.Validate(value)
-            Lower(value)
+            kyo.internal.Validate(value, computation = isPending[A])
+            Lower.nested(value)
         end if
     end transform
+
+    private def isPending[A: Type](using Quotes): Boolean =
+        import quotes.reflect.*
+        TypeRepr.of[A] <:< TypeRepr.of[Any < Nothing]
 
     def boundary[A: Type, S: Type](value: Expr[A])(using Quotes): Expr[A < S] =
         if !hasMarker(value) then wrapped('{ kyo.Kyo.lift[A, Any]($value) }).asInstanceOf[Expr[A < S]]
         else
-            kyo.internal.Validate(value)
-            wrapped(Lower(value)).asInstanceOf[Expr[A < S]]
+            kyo.internal.Validate(value, computation = isPending[A])
+            wrapped(Lower.nested(value)).asInstanceOf[Expr[A < S]]
     end boundary
 
     def sequenced[P: Type](value: Expr[P])(using Quotes): Expr[Markers.Exposed[P]] =
@@ -76,8 +81,8 @@ object Body:
     def lowered[A: Type](value: Expr[A])(using Quotes): Expr[A] =
         if !hasMarker(value) then value
         else
-            kyo.internal.Validate(value)
-            wrapped(Lower(value)).asInstanceOf[Expr[A]]
+            kyo.internal.Validate(value, computation = isPending[A])
+            wrapped(Lower.nested(value)).asInstanceOf[Expr[A]]
     end lowered
 
     /** The computation wrapped in [[Markers.lowered]], the boundary kyo-direct's validation of the enclosing body reads as a value. */

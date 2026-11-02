@@ -32,21 +32,51 @@ class PreparationTest extends kyo.test.Test[Any]:
             """object Initialization:
               |    println("must not execute")
               |""".stripMargin
-        )("Object initialization statements are not supported in .kyo")
+        )("Initialization statements are not supported in .kyo")
 
-        "a class" in rejects(
+        "an open class" in rejects(
             "Class.kyo",
             """class Bad(value: Int):
               |    def twice = value + value
               |""".stripMargin
-        )("Classes and traits are not supported in .kyo")
+        )("A class in .kyo must be final")
 
-        "object inheritance" in rejects(
+        "an unsealed trait" in rejects(
             "Inheritance.kyo",
             """trait Base
               |object Bad extends Base
               |""".stripMargin
-        )("Object inheritance is not supported in .kyo")
+        )("A trait or abstract class in .kyo must be sealed")
+
+        "a parent that is not admitted" in rejects(
+            "Parent.kyo",
+            """object Bad extends scala.collection.mutable.ArrayBuffer[Int]
+              |""".stripMargin
+        )("Parent is not admitted in .kyo: scala.collection.mutable.ArrayBuffer")
+
+        "a field initializer calling a method of the object under construction" in rejects(
+            "Initializer.kyo",
+            """object Bad:
+              |    val first = second + 1
+              |    def second = third
+              |    val third  = 1
+              |""".stripMargin
+        )("An initializer may not call second; the object is not initialized yet")
+
+        "a field initializer reading a later field" in rejects(
+            "Later.kyo",
+            """object Bad:
+              |    val first  = second + 1
+              |    val second = 1
+              |""".stripMargin
+        )("An initializer may not read second before it is initialized")
+
+        "this escaping an initializer" in rejects(
+            "Escape.kyo",
+            """final case class Bad(value: Int):
+              |    val self = List(this)
+              |""".stripMargin
+        )("this may not escape while the object is initialized")
 
         "a mutable field" in rejects(
             "MutableField.kyo",

@@ -39,9 +39,14 @@ import dotty.tools.dotc.report
   * or rejected. A pattern binding at the object level is a field. A constant `inline val` keeps its literal, which must be one. An
   * `export` clause is left to the compiler: the forwarders it generates call the exported member, which admission checks.
   *
+  * Class-like definitions follow the closed-hierarchy policy: a trait or abstract class is sealed, a concrete class is final, enums,
+  * enum cases, and given instances are closed by construction, and a constructor parameter is immutable. Their templates are prepared
+  * like an object's; the parents and the initialization order are checked after typing by `Admission`. An alias given is a field, a
+  * conditional given is a method, and a structural given is a class.
+  *
   * The expression forms the language admits are the ones [[expression]] handles; every other form, and every declaration outside the
-  * supported subset, is reported here at its source position with a message naming the construct: classes and traits, inheritance,
-  * inline methods and implicit definitions, mutable and lazy fields, object initialization statements, entry points, package objects,
+  * supported subset, is reported here at its source position with a message naming the construct: open classes and unsealed traits,
+  * inline methods and Scala 2 implicit definitions, mutable and lazy fields, initialization statements, entry points, package objects,
   * language imports, assignments, exceptions, returns, anonymous classes, postfix calls, and placeholder lambdas.
   * kyo-lang/DESIGN.md's construct inventory gives each its row.
   */
@@ -217,9 +222,21 @@ final class Preparation extends PluginPhase:
                 )
             case _ => Set.empty
 
-        /** The body macro around a definition body: `apply` for a method, `field` for a value, `default` for a default argument. */
-        def body(tree: untpd.Tree, entry: String): untpd.Tree =
-            untpd.Apply(qualified((bodyPath :+ entry)*), List(expression(tree))).withSpan(tree.span)
+        /** The body macro around a definition body: `apply` for a method, `field` for a value, `default` for a default argument. A
+          * declared type is ascribed inside the marker, so the body is typed against it: the macro's own type parameter would
+          * otherwise stand between the two and the expected type would not reach the body's applications.
+          */
+        def body(tree: untpd.Tree, entry: String, declared: untpd.Tree = untpd.EmptyTree): untpd.Tree =
+            val marked = expression(tree)
+            val typed  =
+                if declared.isEmpty then marked
+                else
+                    val inner = marked match
+                        case untpd.Apply(function, List(inner)) if path(function).contains(markersPath.mkString(".")) => inner
+                        case other                                                                                    => other
+                    force(untpd.Typed(inner, declared).withSpan(tree.span))
+            untpd.Apply(qualified((bodyPath :+ entry)*), List(typed)).withSpan(tree.span)
+        end body
 
         def checkedMods(mods: untpd.Modifiers, tree: untpd.Tree): untpd.Modifiers =
             val tpt        = untpd.Select(qualified(checkedPackage*), checkedName.toTypeName)
@@ -247,22 +264,50 @@ final class Preparation extends PluginPhase:
             case _                                  => false
 
         val mapper = new untpd.UntypedTreeMap:
+            /** A class, trait, enum, or given template: its members are prepared like an object's, its constructor's default arguments
+              * like a method's, and its parents are left for the post-typer admission check. A mutable constructor parameter is rejected.
+              */
             private def template(tree: untpd.Template)(using Context): untpd.Template =
-                if tree.parents.nonEmpty then
-                    report.error("Object inheritance is not supported in .kyo", tree.srcPos)
+                tree.constr.paramss.flatten.foreach {
+                    case parameter: untpd.ValDef if parameter.mods.is(Mutable) =>
+                        report.error("Mutable constructor parameters are not supported in .kyo", parameter.srcPos)
+                    case _ => ()
+                }
+                val constr  = untpd.cpy.DefDef(tree.constr)(tree.constr.name, parameters(tree.constr), tree.constr.tpt, tree.constr.rhs)
                 val members = tree.body.map {
                     // A forwarder's body is the exported member's call, which admission checks like any other.
-                    case exported: untpd.Export => exported
-                    case pattern: untpd.PatDef  =>
+                    case exported: untpd.Export                              => exported
+                    case cases: untpd.PatDef if cases.mods.isAllOf(EnumCase) =>
+                        untpd.cpy.PatDef(cases)(checkedMods(cases.mods, cases), cases.pats, cases.tpt, cases.rhs)
+                    case pattern: untpd.PatDef =>
                         untpd.cpy.PatDef(pattern)(checkedMods(pattern.mods, pattern), pattern.pats, pattern.tpt, body(pattern.rhs, "field"))
                     case extensions: untpd.ExtMethods =>
                         untpd.cpy.ExtMethods(extensions)(extensions.paramss, extensions.methods.map(transform))
                     case member: untpd.MemberDef => transform(member)
                     case imported: untpd.Import  => languageImport(imported)
-                    case statement               => reject(statement, "Object initialization statements are not supported in .kyo")
+                    case statement               => reject(statement, "Initialization statements are not supported in .kyo")
                 }
-                untpd.cpy.Template(tree)(tree.constr, tree.parents, tree.derived, tree.self, members)
+                untpd.cpy.Template(tree)(constr, tree.parents, tree.derived, tree.self, members)
             end template
+
+            /** The shape policy of a class-like definition: a trait or abstract class is sealed, so its implementations are in this
+              * unit and checked; a concrete class is final; an enum, an enum case, and a given instance are closed by construction.
+              */
+            private def classPolicy(definition: untpd.TypeDef)(using Context): Unit =
+                val mods = definition.mods
+                if mods.is(Implicit) then
+                    report.error("Scala 2 implicit classes are not supported in .kyo; use an extension or a given", definition.srcPos)
+                else if (mods.is(Trait) || mods.is(Abstract)) && !mods.is(Sealed) && !mods.is(Enum) then
+                    report.error(
+                        "A trait or abstract class in .kyo must be sealed; its implementations live in the same unit",
+                        definition.srcPos
+                    )
+                else if !mods.is(Trait) && !mods.is(Abstract) && !mods.is(Final) && !mods.is(Enum) && !mods.isAllOf(EnumCase) &&
+                    !mods.is(Given)
+                then
+                    report.error("A class in .kyo must be final; open classes are not supported", definition.srcPos)
+                end if
+            end classPolicy
 
             override def transform(tree: untpd.Tree)(using Context): untpd.Tree = tree match
                 case module: untpd.ModuleDef if module.mods.is(Package) =>
@@ -270,10 +315,20 @@ final class Preparation extends PluginPhase:
                 case module: untpd.ModuleDef =>
                     untpd.cpy.ModuleDef(module)(module.name, template(module.impl)).withMods(checkedMods(module.mods, module))
                 case definition: untpd.TypeDef if definition.isClassDef =>
-                    reject(definition, "Classes and traits are not supported in .kyo; use objects and methods")
-                case tree: untpd.Template                                                          => template(tree)
+                    classPolicy(definition)
+                    definition.rhs match
+                        case impl: untpd.Template =>
+                            untpd.cpy.TypeDef(definition)(
+                                definition.name,
+                                template(impl)
+                            ).withMods(checkedMods(definition.mods, definition))
+                        case _ => definition.withMods(checkedMods(definition.mods, definition))
+                    end match
+                case tree: untpd.Template                                                         => template(tree)
+                case method: untpd.DefDef if method.rhs.isEmpty && method.name != nme.CONSTRUCTOR =>
+                    method.withMods(checkedMods(method.mods, method))
                 case method: untpd.DefDef if !method.rhs.isEmpty && method.name != nme.CONSTRUCTOR =>
-                    if method.mods.is(Inline) || method.mods.is(Implicit) || method.mods.is(Given) then
+                    if method.mods.is(Inline) || method.mods.is(Implicit) then
                         report.error("Inline and implicit definitions are not supported in .kyo", method.srcPos)
                     if method.mods.annotations.exists(isMain) then
                         report.error(
@@ -281,24 +336,28 @@ final class Preparation extends PluginPhase:
                             method.srcPos
                         )
                     end if
-                    untpd.cpy.DefDef(method)(method.name, parameters(method), method.tpt, body(method.rhs, "apply"))
+                    untpd.cpy.DefDef(method)(method.name, parameters(method), method.tpt, body(method.rhs, "apply", method.tpt))
                         .withMods(checkedMods(method.mods, method))
                 case value: untpd.ValDef if value.mods.is(Inline) && !value.rhs.isEmpty =>
                     if !isLiteral(value.rhs) then
                         report.error("An inline val must be a literal constant in .kyo", value.rhs.srcPos)
                     value.withMods(checkedMods(value.mods, value))
+                case value: untpd.ValDef if value.rhs.isEmpty && !value.mods.is(Param) && !value.mods.is(ParamAccessor) =>
+                    value.withMods(checkedMods(value.mods, value))
                 case value: untpd.ValDef if !value.rhs.isEmpty =>
-                    if value.mods.is(Implicit) || value.mods.is(Given) then
+                    if value.mods.is(Implicit) then
                         report.error("Inline and implicit definitions are not supported in .kyo", value.srcPos)
-                    else if value.mods.is(Mutable) || value.mods.is(Lazy) then
+                    else if value.mods.is(Mutable) || (value.mods.is(Lazy) && !value.mods.is(Given)) then
                         report.error("Mutable and lazy fields are not supported in .kyo", value.srcPos)
                     end if
-                    untpd.cpy.ValDef(value)(value.name, value.tpt, body(value.rhs, "field")).withMods(checkedMods(value.mods, value))
+                    untpd.cpy.ValDef(value)(value.name, value.tpt, body(value.rhs, "field", value.tpt))
+                        .withMods(checkedMods(value.mods, value))
                 case imported: untpd.Import => languageImport(imported)
                 case _                      => super.transform(tree)
 
-        /** The unit with `import kyo.*` and the boundary conversion ahead of its own statements: every `.kyo` file sees Kyo's API
-          * without writing the import, and the typer finds the conversion in lexical scope.
+        /** The unit with `import kyo.*`, the boundary conversion, and the conversions feature ahead of its own statements: every
+          * `.kyo` file sees Kyo's API without writing the import, the typer finds the conversion in lexical scope, and a conversion
+          * the unit declares (inventory row C06) is usable without a language import, which the language does not accept.
           */
         def imported(tree: untpd.Tree): untpd.Tree = tree match
             case pkg: untpd.PackageDef =>
@@ -308,7 +367,9 @@ final class Preparation extends PluginPhase:
                 val boundary   = untpd.ImportSelector(untpd.Ident(boundaryName.toTermName).withSpan(start)).withSpan(start)
                 val markers    = qualified(markersPath.init*).withSpan(start)
                 val conversion = untpd.Import(markers, List(boundary)).withSpan(start)
-                untpd.cpy.PackageDef(pkg)(pkg.pid, kyo :: conversion :: pkg.stats)
+                val feature    = untpd.ImportSelector(untpd.Ident("implicitConversions".toTermName).withSpan(start)).withSpan(start)
+                val language   = untpd.Import(qualified("scala", "language").withSpan(start), List(feature)).withSpan(start)
+                untpd.cpy.PackageDef(pkg)(pkg.pid, kyo :: conversion :: language :: pkg.stats)
             case other => other
 
         // The unit's untyped tree is replaced before the typer reads it; the compiler owns the unit and drives this phase.

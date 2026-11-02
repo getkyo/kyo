@@ -1,0 +1,63 @@
+package kyolang
+
+/** Closed data definitions and contextual instances: final case classes, a sealed hierarchy, enums, givens, a conversion, and a
+  * derived instance (inventory rows O02 to O05, D15, C02, C06, M05). BodyShapeTest pins each.
+  */
+object Shapes:
+    // O02: a final case class with a pure field and a method; D12: a default argument in its constructor
+    final case class Point(x: Int, y: Int = 0) derives CanEqual:
+        val sum           = x + y
+        def moved(dx: Int) = Point(x + dx, y)
+        def scaled        = Point(x * Var.get[Int], y * Var.get[Int])
+
+    // D15, O03, O05: a sealed hierarchy with abstract members, implemented by final case classes and a case object
+    sealed trait Shape derives CanEqual:
+        def area: Int
+        def describe = s"area ${area}"
+    final case class Square(side: Int) extends Shape:
+        def area = side * side
+    final case class Rectangle(width: Int, height: Int) extends Shape:
+        def area = width * height
+    case object Dot extends Shape:
+        def area = 0
+
+    def areas(shapes: List[Shape]) = shapes.map(shape => shape.area + Var.get[Int])
+
+    def total(shape: Shape) =
+        shape match
+            case Square(side)              => side * side
+            case Rectangle(width, height)  => width * height
+            case Dot                       => Var.get[Int]
+
+    // O03: an enum with simple and parameterized cases
+    enum Color derives CanEqual:
+        case Red, Green
+        case Custom(code: Int)
+    def code(color: Color) =
+        color match
+            case Color.Red          => 1
+            case Color.Green        => 2
+            case Color.Custom(code) => code + Var.get[Int]
+    def colors = Color.fromOrdinal(1).ordinal
+
+    // O04: a sealed abstract class with a constructor parameter, extended with a parent argument
+    sealed abstract class Named(val name: String)
+    final case class Labeled(label: String) extends Named(label.toUpperCase)
+    def named = Labeled("tag").name
+
+    // C02: an alias given, and a conditional given with a using clause
+    given defaultPoint: Point = Point(1, 2)
+    given [A](using ordering: Ordering[A]): Ordering[Point] = Ordering.by(point => point.sum)
+    def summoned = summon[Point].sum + Var.get[Int]
+
+    // C06: a conversion as a structural given, inserted where the types ask for it
+    given Conversion[Int, Point]:
+        def apply(value: Int): Point = Point(value, value)
+    def converted =
+        val point: Point = Var.get[Int]
+        point.sum
+
+    // M05: a derived instance
+    final case class Pair(left: Int, right: Int) derives CanEqual
+    def equalPairs = Pair(1, Var.get[Int]) == Pair(1, 2)
+end Shapes

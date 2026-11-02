@@ -34,6 +34,35 @@ private[kyo] object Lower:
         end match
     end apply
 
+    /** The lowered block for a body that is itself a computation `B < S2` with `.now` markers inside it: the result is `B < (S & S2)`,
+      * where `S` is the markers' row. The body's computation is the final result of the lowered block rather than a value lifted into
+      * it, so a block whose statements hold markers and whose result is a computation keeps one row. A body of a value type lowers as
+      * [[apply]] does; a body without a marker is returned as it is.
+      */
+    def nested[A: Type](body: Expr[A])(using Quotes): Expr[Any] =
+        import quotes.reflect.*
+        val erased = erase(body.asTerm)
+        (rowOf(erased), pending(TypeRepr.of[A])) match
+            case (Some(row), Some((exposed, inner))) =>
+                (row :+ inner).foldLeft(TypeRepr.of[Any])(AndType(_, _)).simplified.asType match
+                    case '[s] =>
+                        exposed.asType match
+                            case '[b] => new Lowering[b, s].flat(erased.asExpr)
+            case (Some(_), None) => apply(body)
+            case (None, _)       => body
+        end match
+    end nested
+
+    /** The exposed type and the row of a pending type, `None` for a value type. */
+    private def pending(using Quotes)(tpe: quotes.reflect.TypeRepr): Option[(quotes.reflect.TypeRepr, quotes.reflect.TypeRepr)] =
+        import quotes.reflect.*
+        val constructor = TypeRepr.of[Any < Nothing] match
+            case AppliedType(constructor, _) => constructor
+        tpe.dealias match
+            case AppliedType(tycon, List(exposed, row)) if tycon =:= constructor => Some((exposed, row))
+            case _                                                               => None
+    end pending
+
     /** Replaces every `.later` by the computation it wraps, in every position of the tree. */
     private def erase(using Quotes)(tree: quotes.reflect.Term): quotes.reflect.Term =
         import quotes.reflect.*
@@ -75,6 +104,11 @@ private[kyo] object Lower:
 
         def apply(body: Expr[Any]): Expr[A < S] =
             val end = new Cont(TypeRepr.of[A], isFinal = true)(term => '{ Kyo.lift[A, S](${ term.asExprOf[A] }) }.asTerm)
+            lower(owned(body.asTerm))(end).asExprOf[A < S]
+
+        /** The lowering of a body whose own type is `A < S2` with `S2` part of `S`: the final term is the result, not lifted. */
+        def flat(body: Expr[Any]): Expr[A < S] =
+            val end = new Cont(TypeRepr.of[A], isFinal = true)(term => term)
             lower(owned(body.asTerm))(end).asExprOf[A < S]
 
         private def cont(result: TypeRepr)(continue: Term => Term): Cont = new Cont(result, isFinal = false)(continue)

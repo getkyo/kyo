@@ -221,33 +221,40 @@ class KyoLangPluginInventoryTest extends kyo.test.Test[Any]:
     }
 
     "classes and objects" - {
-        "O02 case classes are not supported yet" in rejects(
+        "O02 a case class that is not final" in rejects(
             "Data.kyo",
             """object Data:
-              |    final case class Point(x: Int, y: Int)
+              |    case class Point(x: Int, y: Int)
               |""".stripMargin
-        )("Classes and traits are not supported in .kyo")
+        )("A class in .kyo must be final")
 
-        "O03 enums are not supported yet" in rejects(
+        "O03 an enum case with a mutable field" in rejects(
             "Colors.kyo",
             """enum Color:
-              |    case Red, Green
+              |    case Custom(var code: Int)
               |""".stripMargin
-        )("Classes and traits are not supported in .kyo")
+        )("Mutable constructor parameters are not supported in .kyo")
 
-        "D15, O04, O05 traits with abstract members are not supported yet" in rejects(
+        "D15, O05 a trait that is not sealed" in rejects(
             "Shapes.kyo",
             """trait Shape(val sides: Int):
               |    def area: Int
               |""".stripMargin
-        )("Classes and traits are not supported in .kyo")
+        )("A trait or abstract class in .kyo must be sealed")
 
-        "M05 derivation needs a class and is not supported yet" in rejects(
-            "Derived.kyo",
-            """object Derived:
-              |    final case class Point(x: Int) derives CanEqual
+        "O04 a mutable constructor parameter" in rejects(
+            "Mutable.kyo",
+            """final case class Counter(var count: Int)
               |""".stripMargin
-        )("Classes and traits are not supported in .kyo")
+        )("Mutable constructor parameters are not supported in .kyo")
+
+        "O06 a Scala 2 implicit class" in rejects(
+            "ImplicitClass.kyo",
+            """object Rich:
+              |    implicit class RichInt(value: Int):
+              |        def twice = value * 2
+              |""".stripMargin
+        )("Scala 2 implicit classes are not supported in .kyo")
 
         "O07 anonymous classes" in rejects(
             "Anonymous.kyo",
@@ -258,17 +265,17 @@ class KyoLangPluginInventoryTest extends kyo.test.Test[Any]:
     }
 
     "contextual abstractions" - {
-        "C02 givens are not supported yet" in rejects(
+        "C02 a Scala 2 implicit value" in rejects(
             "Givens.kyo",
             """object Givens:
-              |    given Int = 1
+              |    implicit val scale: Int = 1
               |""".stripMargin
         )("Inline and implicit definitions are not supported in .kyo")
 
-        "C06 conversions need a given and are not supported yet" in rejects(
+        "C06 a Scala 2 implicit conversion method" in rejects(
             "Conversions.kyo",
             """object Conversions:
-              |    given Conversion[Int, String] = (value: Int) => "n"
+              |    implicit def toString(value: Int): String = "n"
               |""".stripMargin
         )("Inline and implicit definitions are not supported in .kyo")
 
