@@ -42,15 +42,20 @@ object StreamCoreExtensions:
       * whatever it holds. Here a fiber is held from its fork to its completion, and `stop` interrupts every one still held, wherever it
       * stands. A fiber held after `stop` is interrupted as it is held, so a fork still in flight when the consumer leaves is reached too.
       */
-    final private class ElementFibers private (
+    final private[kyo] class ElementFibers(
         live: ConcurrentHashMap[Fiber.Unsafe[Any, Nothing], java.lang.Boolean],
         stopped: AtomicBoolean.Unsafe
-    ):
-        /** Runs `fork` and holds the fiber it returns. */
-        def own[A, S, S1](fork: => Fiber[A, S] < (Sync & S1))(using Frame): Fiber[A, S] < (Sync & S1) =
-            // The hold is the bracket's release, which the kernel registers as the fiber arrives, with nothing schedulable in between,
-            // and runs however the extent ends: an interrupt landing right after the fork still leaves the fiber held.
-            Sync.acquireReleaseWith(fork)(hold)(identity)
+    )(using initFrame: Frame):
+        /** Rejects a fork after stop, otherwise holds the fiber it returns until completion. */
+        def own[A, S, S1](fork: => Fiber[A, S] < (Sync & S1))(using Frame): Fiber[A, S] < (Sync & S1 & Abort[Closed]) =
+            // Unsafe: read the stop flag before evaluating the by-name fork.
+            Sync.Unsafe.defer {
+                if stopped.get() then Abort.fail(Closed("Stream parallel map", initFrame))
+                else
+                    // The hold is the bracket's release, which the kernel registers as the fiber arrives, with nothing schedulable in
+                    // between, and runs however the extent ends: an interrupt landing right after the fork still leaves the fiber held.
+                    Sync.acquireReleaseWith(fork)(hold)(identity)
+            }
 
         /** Interrupts every fiber still held, and every one held from now on. */
         def stop(using Frame): Unit < Sync =
@@ -65,6 +70,7 @@ object StreamCoreExtensions:
             Sync.Unsafe.defer {
                 val held = fiber.unsafe
                 discard(live.put(held, java.lang.Boolean.TRUE))
+                // Completion includes interruption, so interrupted fibers are removed after their releases run too.
                 held.onComplete(_ => discard(live.remove(held)))
                 // Read after the put: a `stop` that ran before the put is seen here, and one that runs after it finds the fiber.
                 if stopped.get() then discard(held.interrupt())

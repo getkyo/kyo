@@ -1,8 +1,113 @@
 package kyo
 
+import java.util.concurrent.ConcurrentHashMap
 import kyo.Clock.TimeControl
 
 class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
+
+    "element fiber ownership" - {
+        def init(using Frame) =
+            // Unsafe: each test owns an isolated registry and its stop flag.
+            Sync.Unsafe.defer {
+                val live = new ConcurrentHashMap[Fiber.Unsafe[Any, Nothing], java.lang.Boolean]
+                (new StreamCoreExtensions.ElementFibers(live, AtomicBoolean.Unsafe.init(false)), live)
+            }
+
+        "releases references when a pending fiber completes" in {
+            for
+                state <- init
+                (elements, live) = state
+                promise <- Fiber.Promise.init[Int, Any]
+                _       <- elements.own(promise)
+                held    <- Sync.defer(live.size())
+                _       <- promise.completeDiscard(Result.succeed(42))
+                value   <- promise.get
+                left    <- Sync.defer(live.size())
+            yield
+                assert(held == 1)
+                assert(value == 42)
+                assert(left == 0)
+        }
+
+        "releases references when stop interrupts pending fibers" in {
+            for
+                state <- init
+                (elements, live) = state
+                promise <- Fiber.Promise.init[Int, Any]
+                _       <- elements.own(promise)
+                held    <- Sync.defer(live.size())
+                _       <- elements.stop
+                result  <- promise.getResult
+                left    <- Sync.defer(live.size())
+            yield
+                assert(held == 1)
+                assert(result.isPanic)
+                assert(left == 0)
+        }
+
+        "does not retain an already completed fiber" in {
+            for
+                state <- init
+                (elements, live) = state
+                fiber <- elements.own(Fiber.succeed(42))
+                value <- fiber.get
+                left  <- Sync.defer(live.size())
+            yield
+                assert(value == 42)
+                assert(left == 0)
+        }
+
+        "releases references after an interrupted task finishes" in {
+            for
+                state <- init
+                (elements, live) = state
+                started  <- Latch.init(1)
+                gate     <- Latch.init(1)
+                released <- AtomicInt.init(0)
+                fiber    <- elements.own(Fiber.initUnscoped {
+                    Sync.ensure(released.incrementAndGet.unit)(started.release.andThen(gate.await))
+                })
+                _      <- started.await
+                held   <- Sync.defer(live.size())
+                _      <- elements.stop
+                result <- Sync.ensure(gate.release)(fiber.getResult)
+                _      <- assertEventually(Sync.defer(live.isEmpty()))
+                count  <- released.get
+            yield
+                assert(held == 1)
+                assert(result.isPanic)
+                assert(count == 1)
+        }
+
+        "rejects ownership after stop without evaluating the fork" in {
+            for
+                state <- init
+                (elements, live) = state
+                started <- AtomicInt.init(0)
+                fork = elements.own(started.incrementAndGet.andThen(Fiber.succeed(42)))
+                _      <- elements.stop
+                result <- Abort.run[Closed](fork)
+                count  <- started.get
+                left   <- Sync.defer(live.size())
+            yield
+                assert(result.isFailure)
+                assert(count == 0)
+                assert(left == 0)
+        }
+
+        "interrupts a fiber when stop runs during its fork" in {
+            for
+                state <- init
+                (elements, live) = state
+                promise <- Fiber.Promise.init[Int, Any]
+                fiber   <- elements.own(elements.stop.andThen(promise))
+                result  <- fiber.getResult
+                left    <- Sync.defer(live.size())
+            yield
+                assert(result.isPanic)
+                assert(left == 0)
+        }
+    }
 
     "factory" - {
         "collectAll" in {
