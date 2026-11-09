@@ -237,9 +237,9 @@ val checkUnboundLocalErrors = taskKey[Unit](
 checkUnboundLocalErrors := {
     val caught: Option[Throwable] =
         try {
-            val m = sbt.internal.ProjectMatrix("unboundLocalLib", file("unbound-local-lib"))
+                    val unboundLocalLib = projectMatrix.in(file("unbound-local-lib"))
                 .compatLibrary(CompatBackendAxis.local("acme", "Acme", "-acme", Set("jvm")))(VirtualAxis.jvm)(Seq("3.3.4"))
-            val _ = m.componentProjects // force materialization so the guard fires
+            val _ = unboundLocalLib.componentProjects // force materialization so the guard fires
             None
         } catch {
             case t: Throwable => Some(t)
