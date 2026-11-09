@@ -4683,7 +4683,7 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
 
 // --- kyo-compat-plugin (in-tree sbt plugin; published as artifact `kyo-compat-plugin`)
 //
-// First SbtPlugin module in kyo. Scala 2.12 only (sbt 1.x runtime).
+// First SbtPlugin module in kyo. Cross-built for sbt 1 (Scala 2.12) and sbt 2 (Scala 3).
 // Aggregated into kyoJVM only (not kyoJS/kyoNative, since an sbt plugin
 // is a single JVM artifact) so the JVM `ci-release` pass publishes it.
 // Its behavioral tests are scripted tests, bound into `test` (below) so the
@@ -4694,14 +4694,17 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
     .settings(
         moduleName         := "kyo-compat-plugin",
         scalaVersion       := "2.12.21",
-        crossScalaVersions := Seq("2.12.21"),
+        crossScalaVersions := Seq("2.12.21", "3.8.4"),
         sbtPlugin          := true,
-        // Plugin code adds rows to a `ProjectMatrix` programmatically, so
-        // it compiles against sbt-projectmatrix; it also references the
-        // %%% macro from sbt-scalajs-crossproject / sbt-scala-native-crossproject's
-        // platform-deps shim. Pinned to the same versions as kyo's own
-        // project/plugins.sbt so the runtime sbt classloader resolves
-        // exactly one copy of each.
+        // The oldest sbt 2, and the Scala it runs on (3.8.4).
+        pluginCrossBuild / sbtVersion := (scalaBinaryVersion.value match {
+            case "2.12" => sbtVersion.value
+            case _      => "2.0.0"
+        }),
+        // On sbt 1 the plugin builds on sbt-projectmatrix and sbt-platform-deps (through
+        // the two crossproject plugins); sbt 2 has both built in. Pinned to the same
+        // versions as kyo's own project/plugins.sbt so the runtime sbt classloader
+        // resolves exactly one copy of each.
         //
         // sbt-scalajs and sbt-scala-native are pinned here even though this project
         // never calls them: the two crossproject plugins each declare a compile-scope
@@ -4709,11 +4712,20 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
         // to the sbt and Typesafe ivy repos, never to Maven Central. Without these
         // pins winning conflict resolution, resolving this project reaches those two
         // hosts, and any runner that cannot reach them fails the build.
-        addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.11.0"),
-        addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.4.0"),
-        addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.4.0"),
-        addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.22.0"),
-        addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % "0.5.12"),
+        libraryDependencies ++= {
+            if (scalaBinaryVersion.value != "2.12") Nil
+            else {
+                val sbtV   = (pluginCrossBuild / sbtBinaryVersion).value
+                val scalaV = scalaBinaryVersion.value
+                Seq(
+                    "com.eed3si9n"       % "sbt-projectmatrix"             % "0.11.0",
+                    "org.portable-scala" % "sbt-scalajs-crossproject"      % "1.4.0",
+                    "org.portable-scala" % "sbt-scala-native-crossproject" % "1.4.0",
+                    "org.scala-js"       % "sbt-scalajs"                   % "1.22.0",
+                    "org.scala-native"   % "sbt-scala-native"              % "0.5.12"
+                ).map(Defaults.sbtPluginExtra(_, sbtV, scalaV))
+            }
+        },
         scriptedLaunchOpts := Seq(
             "-Xmx1024M",
             "-Dplugin.version=" + version.value

@@ -4,4 +4,6 @@
 > checkJvmSettings
 > checkJsSettings
 > checkNativeSettings
-> checkForkTest
+# ForkTest checks that Test/fork and Test/javaOptions reached the JVM cells.
+> myLibFuture/Test/test
+> myLibKyo/Test/test

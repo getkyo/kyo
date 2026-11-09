@@ -27,7 +27,7 @@ concurrency:
 jobs:
   build:
     if: github.repository == 'getkyo/kyo'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -35,7 +35,7 @@ jobs:
       # The deps-<os>- namespace .github/actions/setup uses, not coursier/cache-action's own. That action
       # keys on the job name, minting another ~1.6 GB entry holding the coursier tree the ci poles already
       # cache, against a 10 GB per-repo budget where eviction is what pushed the deps and kyo-browser
-      # entries out. ubuntu-latest is the linux-x64 pole.
+      # entries out. ubuntu-26.04 is the linux-x64 pole's image.
       #
       # restore, not the full cache action: a key is immutable once written, so a consumer with a thinner
       # tree than a ci leg must not be the one that mints it. The ci legs write; this restores.

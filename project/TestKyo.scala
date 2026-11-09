@@ -23,7 +23,7 @@ import scala.sys.process.*
   *   - `testKyo --all Native` full test, Native only
   *   - `testKyo --scala 2 JVM` diff, the Scala 2 cross-build, JVM only (auto-discovers modules)
   *   - `testKyo --scala 3 --all JVM` full test, primary Scala 3 version only
-  *   - `testKyo --cross JVM` the Scala 2.x cross-build passes only
+  *   - `testKyo --cross JVM` the cross-build passes only (Scala 2.x, and sbt 2 for the plugins)
   *   - `testKyo --exclude kyo-aeron,kyo-sql --all Native` full test minus those cross-projects
   *   - `testKyo --only kyo-schema-tests --all Native` only that cross-project
   *   - `testKyo --quick --all JVM` re-run only what sbt has not recorded as passing
@@ -35,11 +35,11 @@ import scala.sys.process.*
   *   - `testKyo --phase scaladoc --all JVM` scaladoc of every kyoJVM member
   *   - `testKyo --phase publish JVM` +publishLocal of the kyoJVM members whose main sources a diff reaches
   *
-  * A run is a sequence of passes: the primary Scala version, then one per Scala 2.x cross-build
-  * version. All passes go out as ONE `;`-chained command string (per pass: version switch, module
-  * tasks, completion marker). sbt queues a submitted command string rather than running it in
-  * place, so passes submitted as separate strings are unordered against each other and their tasks
-  * run at whichever version the queue last selected.
+  * A run is a sequence of passes: the primary Scala version, then one per cross-build version. All
+  * passes go out as ONE `;`-chained command string (per pass: version switch, module tasks, completion
+  * marker). sbt queues a submitted command string rather than running it in place, so passes
+  * submitted as separate strings are unordered against each other and their tasks run at whichever
+  * version the queue last selected.
   */
 object TestKyo {
 
@@ -302,13 +302,13 @@ object TestKyo {
 
         // One pass per Scala version, in execution order. --cross drops the primary pass, --scala
         // and --modules pin a single one; the default is the primary version plus 2.13 for the
-        // cross-build library modules and 2.12 for the sbt plugins.
+        // cross-build library modules, and 2.12 and Scala 3 (sbt 2) for the sbt plugins.
         val versions =
-            if (a.isCross) findScala2Versions(extracted)
+            if (a.isCross) findCrossVersions(extracted)
             else a.scalaArg.map(resolveScalaVersion(_, extracted)) match {
                 case Some(v)                     => Seq(v)
                 case None if a.modules.isDefined => Seq(scala3)
-                case None                        => scala3 +: findScala2Versions(extracted)
+                case None                        => scala3 +: findCrossVersions(extracted)
             }
 
         val mode =
@@ -318,7 +318,7 @@ object TestKyo {
         log(s"scala: ${if (versions.isEmpty) "none" else versions.mkString(" + ")}, platform: ${a.platform.getOrElse("all")}, mode: $mode")
 
         if (versions.isEmpty) {
-            log("no Scala 2.x cross-build modules found")
+            log("no cross-build modules found")
             a.planFile.foreach(writePlan(_, Nil))
             log("completed")
             state
@@ -1099,13 +1099,16 @@ object TestKyo {
         }.find(_.startsWith("2."))
     }
 
-    /** All distinct Scala 2.x versions in crossScalaVersions across projects (e.g. 2.13 cross-build
-      * modules and 2.12 sbt plugins), sorted so each gets its own test pass.
+    /** The Scala 2.x versions in crossScalaVersions across projects, plus the other versions sbt plugins
+      * cross-build for (their sbt 2 build), sorted so each gets its own test pass.
       */
-    private def findScala2Versions(extracted: Extracted): Seq[String] = {
+    private def findCrossVersions(extracted: Extracted): Seq[String] = {
         val structure = extracted.structure
+        val primary   = extracted.get(scalaVersion)
         structure.allProjectRefs.flatMap { ref =>
-            (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
-        }.filter(_.startsWith("2.")).distinct.sorted
+            val versions = (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
+            val isPlugin = (ref / sbtPlugin).get(structure.data).getOrElse(false)
+            versions.filter(v => v.startsWith("2.") || (isPlugin && v != primary))
+        }.distinct.sorted
     }
 }

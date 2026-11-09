@@ -18,6 +18,12 @@ inputs:
     description: "Whether to include the kyo-browser cache. Jobs that never launch Chrome pass false."
     required: false
     default: "true"
+  deps:
+    description: >-
+      Whether to include the dependency cache. A job that writes only its own .deb sets, such as a release
+      producer on an image no ci leg runs on, saves with false so that its thinner tree never owns a deps key.
+    required: false
+    default: "true"
   apt-set:
     description: >-
       Which job's apt packages the .deb cache holds: the target (JVM, JS, Native or Wasm) of a setup
@@ -50,15 +56,18 @@ runs:
           echo "browser-paths=~/.cache/kyo-browser"
           # The image decides which .debs an install downloads (it skips what the image ships), so a new image writes a new
           # entry; the files hashed are the ones that name apt packages. The prefixes let a new image or list start from the
-          # last entry, whose per-list directories still serve every list that did not change.
+          # last entry, whose per-list directories still serve every list that did not change. Both stop at the Ubuntu
+          # release (ImageOS, e.g. ubuntu26): another release's .debs are built against its libraries, and the first 26.04
+          # jobs restored the 24.04 entry, where only an exact version pin in each package's dependencies kept apt from
+          # installing 24.04 builds.
           echo "apt-key=apt-${{ inputs.os }}-${{ inputs.apt-set }}-${ImageOS:-image}-${ImageVersion:-unknown}-${{ hashFiles('scripts/apt-install.sh', '.github/actions/setup/action.yml', '.github/actions/stage-natives/action.yml') }}"
           echo "apt-image-prefix=apt-${{ inputs.os }}-${{ inputs.apt-set }}-${ImageOS:-image}-${ImageVersion:-unknown}-"
-          echo "apt-prefix=apt-${{ inputs.os }}-${{ inputs.apt-set }}-"
+          echo "apt-prefix=apt-${{ inputs.os }}-${{ inputs.apt-set }}-${ImageOS:-image}-"
           echo "apt-paths=~/.cache/kyo-apt"
         } >> "$GITHUB_OUTPUT"
 
     - id: restore-deps
-      if: ${{ inputs.mode == 'restore' }}
+      if: ${{ inputs.mode == 'restore' && inputs.deps == 'true' }}
       uses: actions/cache/restore@v6
       env:
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -121,7 +130,7 @@ runs:
     # building another tree, and a key is immutable once written, so a thinner tree would own that hash.
     # !cancelled() because status functions here see this action's steps, and the caller saves after a
     # failed test step on purpose.
-    - if: ${{ !cancelled() && inputs.mode == 'save' && github.event_name == 'push' && github.ref == 'refs/heads/main' && env.KYO_CACHE_DEPS_HIT != 'true' }}
+    - if: ${{ !cancelled() && inputs.mode == 'save' && inputs.deps == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && env.KYO_CACHE_DEPS_HIT != 'true' }}
       uses: actions/cache/save@v6
       env:
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

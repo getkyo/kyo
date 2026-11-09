@@ -17,19 +17,19 @@ val checkErrorMessage = taskKey[Unit]("invoke compatLibrary inside try/catch and
 // Wrap the failing call in a task so build.sbt evaluation succeeds and
 // the scripted step `-> triggerError` can observe the failure.
 triggerError := {
-    val m = sbt.internal.ProjectMatrix("triggerLib", file("trigger-lib"))
+    val triggerLib = projectMatrix.in(file("trigger-lib"))
         .compatLibrary(OxLib)(VirtualAxis.js)(Seq("3.3.4"))
     // Force materialization so any deferred error fires.
-    val _ = m.componentProjects
+    val _ = triggerLib.componentProjects
     ()
 }
 
 checkErrorMessage := {
     val caught: Option[Throwable] =
         try {
-            val m = sbt.internal.ProjectMatrix("checkLib", file("check-lib"))
+            val checkLib = projectMatrix.in(file("check-lib"))
                 .compatLibrary(OxLib)(VirtualAxis.js)(Seq("3.3.4"))
-            val _ = m.componentProjects
+            val _ = checkLib.componentProjects
             None
         } catch {
             case t: Throwable => Some(t)

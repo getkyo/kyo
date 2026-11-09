@@ -73,6 +73,10 @@ checkDepsPerPlatform := {
         Case(myLib.ox.jvm,        "kyo-compat-ox",     "jvm")
     )
 
+    // On sbt 2 the platform comes from the row's `platform` key, which sbt 1 lacks.
+    val platformKey: Option[SettingKey[String]] =
+        scala.util.Try(Keys.getClass.getMethod("platform").invoke(Keys).asInstanceOf[SettingKey[String]]).toOption
+
     cases.foreach { c =>
         val deps = ext.get(c.proj / Keys.libraryDependencies)
         val matching = deps.find { mid =>
@@ -87,7 +91,8 @@ checkDepsPerPlatform := {
                         s"Actual deps: ${deps.map(_.toString).mkString(", ")}"
                 )
             case Some(mid) =>
-                val cvStr = mid.crossVersion.toString
+                val platform = platformKey.flatMap(k => ext.getOpt(c.proj / k)).fold("")(p => s" (platform $p)")
+                val cvStr    = mid.crossVersion.toString + platform
                 c.platformTag match {
                     case "jvm" =>
                         if (cvStr.contains("sjs") || cvStr.contains("native"))

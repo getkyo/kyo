@@ -1,7 +1,7 @@
 package io.getkyo.compat
 
 import java.io.File
-import sbt._
+import sbt.*
 
 /** Extracts the cross-binding conformance suite that [[CompatPlugin]] bundles into its own jar (see the `resourceGenerators` step in the
   * plugin's build).

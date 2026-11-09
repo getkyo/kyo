@@ -37,7 +37,11 @@ ThisBuild / compatKyoVersion := "STUB-FOR-SCRIPTED-TEST"
 // sbt's per-project Defaults so we apply the setting on every project.
 val rootBase: File = file(".").getCanonicalFile
 val pinnedIvyPaths: Setting[IvyPaths] =
-    ivyPaths := IvyPaths(rootBase, Some(rootBase / "ivy-cache"))
+    ivyPaths := {
+        // IvyPaths takes Files on sbt 1, Strings on sbt 2.
+        implicit def pathOf(f: File): String = f.getPath
+        IvyPaths(rootBase, rootBase / "ivy-cache")
+    }
 
 // --------------------------------------------------------------------
 // fake kyo-compat-{future,kyo} stubs (JVM only).
@@ -184,7 +188,7 @@ val checkTransitiveDeps = taskKey[Unit](
 )
 
 checkBackendAwareDeps := {
-    val base = baseDirectory.value
+    val base = (ThisBuild / baseDirectory).value
     val backends = Seq("future", "kyo")
     backends.foreach { backend =>
         val pom = localPomFile(base, "my-http", backend)
@@ -218,7 +222,7 @@ checkBackendAwareDeps := {
 }
 
 checkPlainProjectDep := {
-    val base = baseDirectory.value
+    val base = (ThisBuild / baseDirectory).value
     val backends = Seq("future", "kyo")
     backends.foreach { backend =>
         val pom = localPomFile(base, "my-thing", backend)
@@ -239,7 +243,7 @@ checkPlainProjectDep := {
 }
 
 checkTransitiveDeps := {
-    val base = baseDirectory.value
+    val base = (ThisBuild / baseDirectory).value
     val backends = Seq("future", "kyo")
     backends.foreach { backend =>
         val pomA = localPomFile(base, "my-a", backend)
