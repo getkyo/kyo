@@ -378,6 +378,105 @@ class ShellBackendTest extends kyo.BasePodTest:
             val ex = classify("Error response from daemon: manifest for alpine:nope not found: manifest unknown: manifest unknown")
             assert(ex.isInstanceOf[kyo.ContainerImageMissingException], s"expected a missing image, got $ex")
         }
+
+        // Docker 29's containerd image store, as the docker CLI printed it on the Ubuntu 26.04 runner.
+        "a reference the containerd store could not resolve is a missing image naming it" in {
+            val ex = classify(
+                "Error response from daemon: failed to resolve reference \"docker.io/library/nonexistent-image-xyz-999:notatag\": " +
+                    "docker.io/library/nonexistent-image-xyz-999:notatag: not found"
+            )
+            ex match
+                case e: kyo.ContainerImageMissingException =>
+                    assert(e.image.reference == "docker.io/library/nonexistent-image-xyz-999:notatag", s"names the reference: ${e.image}")
+                case other => fail(s"expected a missing image, got $other")
+            end match
+        }
+
+        "a reference the containerd store could not reach the registry for is a registry fault" in {
+            val ex = classify(
+                "Error response from daemon: failed to resolve reference \"docker.io/library/alpine:latest\": failed to do request: " +
+                    "Head \"https://registry-1.docker.io/v2/library/alpine/manifests/latest\": dial tcp: lookup registry-1.docker.io: i/o timeout"
+            )
+            assert(ex.isInstanceOf[kyo.ContainerRegistryUnavailableException], s"expected a registry-unavailable failure, got $ex")
+        }
+    }
+
+    "treePlatforms" - {
+        // `docker image ls --tree` from Docker 29.
+        val tree =
+            """IMAGE                                                                             ID             DISK USAGE   CONTENT SIZE   EXTRA
+              |alpine:3.20                                                                       d9e853e87e55       25.8MB         7.89MB   U
+              |├─ linux/amd64                                                                    c64c687cbea9       12.1MB         3.63MB   U
+              |└─ linux/arm64/v8                                                                 45e09956dc66       13.6MB         4.09MB
+              |
+              |busybox@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092   5cec3fc171c8       2.49MB          875kB
+              |├─ linux/amd64                                                                    dc88b8084258       2.49MB          872kB
+              |├─ linux/arm/v7                                                                   74343d4d63dc           0B             0B
+              |├─ linux/arm64/v8                                                                 c542a2b3cb3c           0B             0B
+              |├─ windows/amd64                                                                  8828b43d3c6b           0B             0B
+              |└─ windows/amd64                                                                  1ef9cebf5261           0B             0B
+              |
+              |jekyll/jekyll:4.4                                                                 20909574b8f1       2.02GB          512MB
+              |""".stripMargin
+
+        "lists the platforms under the image with that id, in the index's order, once each" in {
+            assert(ShellBackend.treePlatforms(tree, "sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092") == Chunk(
+                Container.Platform.LinuxAmd64,
+                Container.Platform.LinuxArmV7,
+                Container.Platform("linux", "arm64", Present("v8")),
+                Container.Platform("windows", "amd64")
+            ))
+        }
+
+        "stops at the next image" in {
+            assert(ShellBackend.treePlatforms(tree, "d9e853e87e55aaaa") == Chunk(
+                Container.Platform.LinuxAmd64,
+                Container.Platform("linux", "arm64", Present("v8"))
+            ))
+        }
+
+        "an image with no platform lines lists none" in {
+            assert(ShellBackend.treePlatforms(tree, "sha256:20909574b8f1") == Chunk.empty)
+        }
+
+        "an id the tree does not show lists none" in {
+            assert(ShellBackend.treePlatforms(tree, "sha256:0123456789ab") == Chunk.empty)
+            assert(ShellBackend.treePlatforms(tree, "") == Chunk.empty)
+        }
+    }
+
+    /** A host that refuses a system call has said nothing about registry credentials. The HTTP backend reports the same refusal as the
+      * daemon's 500, an operation failure, so the shell backend must not file it under authentication because the output says "denied".
+      */
+    "mapError on a host permission failure" - {
+        val backend = new ShellBackend("podman")
+        val id      = Container.Id("3c766e33a43abda31e6afd16d7c3397b0288c55d918a7d2490dee49909b7977a")
+        val ctx     = ResourceContext.Container(id)
+
+        def classify(output: String)(using Frame): kyo.ContainerException =
+            backend.mapError(output, ctx, Seq("stop", id.value))
+
+        // The shape podman 5.7 printed on the Ubuntu 26.04 runner, where AppArmor kept it from signalling its rootless network process.
+        "a stop the host refused with EPERM is an operation failure" in {
+            val ex = classify(
+                s"Error: removing container ${id.value} network: 1 error occurred:\n\t* rootless netns: kill network process: permission denied\n\n"
+            )
+            assert(ex.getClass.getName == classOf[kyo.ContainerOperationException].getName, s"expected a plain operation failure, got $ex")
+        }
+
+        "an operation the host did not permit is an operation failure" in {
+            val ex = classify(s"Error: stopping container ${id.value}: kill: operation not permitted")
+            assert(ex.getClass.getName == classOf[kyo.ContainerOperationException].getName, s"expected a plain operation failure, got $ex")
+        }
+
+        "a registry that denied the request is still an auth failure" in {
+            val ex = backend.mapError(
+                "Error response from daemon: Head \"https://ghcr.io/v2/org/app/manifests/1\": denied: denied",
+                ResourceContext.Image("ghcr.io/org/app:1"),
+                Seq("pull", "ghcr.io/org/app:1")
+            )
+            assert(ex.isInstanceOf[kyo.ContainerAuthException], s"expected an auth failure, got $ex")
+        }
     }
 
     "registry credentials" - {

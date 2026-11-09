@@ -30,7 +30,7 @@ jobs:
     # source analysis, and `sbt doctest` validates that README blocks compile and run,
     # with the staged natives below built for whichever host runs the job. The x64 pool
     # carries most of the repo's jobs and has roughly twice the p90 queue wait.
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     # Measured with the class-name check on all four platforms: 108 to 112 minutes on main with a warm
     # doctest cache, and about 131 on a run whose classpath change misses every cached block. The JS,
     # Native and Wasm rows took 67 to 74 of those minutes, so the job should now take about 40 warm and
@@ -90,7 +90,7 @@ jobs:
       # 2026-09-19 missed even the bare deps-windows-x64- and kyo-browser-windows-x64- prefixes, so the leg
       # refetched every dependency and redownloaded chrome-headless-shell inside a test with a 60s timeout.
       # Sharing the namespace both removes that pressure and warms this job from the far more frequent ci runs.
-      # This job runs on ubuntu-24.04-arm, which is the linux-arm64 pole.
+      # This job runs on ubuntu-26.04-arm, which is the linux-arm64 pole.
       #
       # restore, not the full cache action: a key is immutable once written, so a job that saves first owns
       # it. This job resolves scalafmt, actionlint and the doctest set, which is not the whole dependency
@@ -211,7 +211,7 @@ jobs:
       #
       # JVM only. It reuses what doctest compiled (~2 min) and also covers the sbt plugins. The JS, Native
       # and Wasm rows compile every module of their platform from nothing, 67 to 74 min together on
-      # ubuntu-24.04-arm, more than half of this job. A name declared only in `js`, `js-wasm`, `native` or
+      # the linux-arm64 runner, more than half of this job. A name declared only in `js`, `js-wasm`, `native` or
       # `wasm` sources is therefore not checked in CI.
       #
       # Main checks every project and records each one's classes in an index keyed by its commit. A pull

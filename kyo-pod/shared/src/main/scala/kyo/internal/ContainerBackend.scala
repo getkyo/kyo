@@ -347,6 +347,38 @@ private[kyo] object ContainerBackend:
       */
     def checkpointArchive(name: String): Path = Path("/tmp", s"$name.tar")
 
+    /** The copy of a multi-platform image that a create without a platform runs, among the copies the store holds, as Docker's containerd
+      * image store chooses it: the host's own platform first, then the platforms the host runs natively (`386` on `amd64`, `arm` from `v8`
+      * down on `arm64`), nearest first, and otherwise the copy that comes first in the image's index.
+      */
+    def defaultCopy(host: Container.Platform, available: Chunk[Container.Platform]): Maybe[Container.Platform] =
+        byPreference(host, available).headMaybe
+
+    /** `platforms` in the order [[defaultCopy]] prefers them, for a caller that must test each for a cached copy. */
+    def byPreference(host: Container.Platform, platforms: Chunk[Container.Platform]): Chunk[Container.Platform] =
+        Chunk.from(platforms.zipWithIndex.sortBy((platform, index) => (nativeRank(host, platform), index)).map(_._1))
+
+    /** How close `platform` is to what `host` runs natively: 0 for the host's own architecture, higher for each step down a compatible
+      * line, and `Int.MaxValue` for a platform the host could only emulate.
+      */
+    private def nativeRank(host: Container.Platform, platform: Container.Platform): Int =
+        // A 32-bit arm platform with no variant is v7, as Docker normalizes it.
+        def armVersion(variant: Maybe[String]): Int = variant.flatMap(v => Maybe.fromOption(v.stripPrefix("v").toIntOption)).getOrElse(7)
+        // Rank of an arm platform below a host that runs arm up to `top`, where `top` itself ranks `first`.
+        def armRank(top: Int, first: Int): Int =
+            val version = armVersion(platform.variant)
+            if version <= top then first + top - version else Int.MaxValue
+        if platform.os != host.os then Int.MaxValue
+        else
+            (host.arch, platform.arch) match
+                case ("arm", "arm")   => armRank(armVersion(host.variant), 0)
+                case ("arm64", "arm") => armRank(8, 1)
+                case ("amd64", "386") => 1
+                case (h, p) if h == p => 0
+                case _                => Int.MaxValue
+        end if
+    end nativeRank
+
     /** The bytes of base64 `text` from a daemon or a credential, in either alphabet and with or without padding.
       *
       * Podman encodes `X-Docker-Container-Path-Stat` with the URL-safe alphabet, where docker uses the standard one. A registry credential

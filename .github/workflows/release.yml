@@ -119,8 +119,11 @@ jobs:
           path: natives-out
           if-no-files-found: error
 
-  # ubuntu-latest is x86_64: it produces the glibc linux-x86_64 natives directly, and the linux-musl-x86_64
-  # natives via an Alpine step. build-boringssl.sh REJECTS a cross-OS request, so each musl leg builds on a
+  # ubuntu-24.04 is x86_64: it produces the glibc linux-x86_64 natives directly, and the linux-musl-x86_64
+  # natives via an Alpine step. The glibc producers name Ubuntu 24.04, not the 26.04 the ci poles run on, and
+  # not ubuntu-latest: a shared object needs the glibc it was linked against, so the build image's glibc is
+  # the oldest one a user can load the natives on. scripts/glibc-ceiling-check.sh holds that ceiling (2.39)
+  # and fails a producer whose natives need more. build-boringssl.sh REJECTS a cross-OS request, so each musl leg builds on a
   # genuine musl host: an eclipse-temurin JDK-on-Alpine container (musl JDK + toolchain). checkout and upload
   # run on the glibc host so they use the runner's Node; only the build runs in the container.
   natives-linux-x86_64:
@@ -130,14 +133,16 @@ jobs:
         (github.event_name == 'issue_comment' &&
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Restore only: the ci legs on this pole write. A producer resolves a JVM-only tree, and a key is
-      # immutable once written, so saving here would lock out ci's fuller tree for the hash.
+      # The dependency cache is restore only: the ci legs on this pole write it. A producer resolves a
+      # JVM-only tree, and a key is immutable once written, so saving here would lock out ci's fuller tree
+      # for the hash. The .deb cache is keyed by image, and no ci leg runs on this one, so this job saves
+      # its own sets after the build (deps: false below).
       - uses: ./.github/actions/caches
         with:
           os: linux-x64
@@ -250,14 +255,24 @@ jobs:
             file "$f" | grep -qi 'ELF' || { echo "$f is not an ELF object" >&2; exit 1; }
           done
           ls -l natives-out
+          bash scripts/glibc-ceiling-check.sh natives-out/*
       - uses: actions/upload-artifact@v7
         with:
           name: natives-linux-x86_64
           path: natives-out
           if-no-files-found: error
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/caches
+        with:
+          os: linux-x64
+          mode: save
+          browser: false
+          deps: false
+          apt-set: JVM
 
   # ubuntu-24.04-arm is arm64: the glibc linux-aarch64 natives directly, the linux-musl-aarch64 natives via
-  # the same Alpine step on the arm64 host (the temurin alpine image is multi-arch).
+  # the same Alpine step on the arm64 host (the temurin alpine image is multi-arch). 24.04 for the glibc
+  # ceiling, as natives-linux-x86_64 explains.
   natives-linux-aarch64:
     if: |
       github.repository == 'getkyo/kyo' && (
@@ -271,7 +286,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Restore only: the ci legs on this pole write.
+      # Dependencies restore only, the .deb sets saved after the build: as natives-linux-x86_64.
       - uses: ./.github/actions/caches
         with:
           os: linux-arm64
@@ -375,11 +390,20 @@ jobs:
             file "$f" | grep -qi 'ELF' || { echo "$f is not an ELF object" >&2; exit 1; }
           done
           ls -l natives-out
+          bash scripts/glibc-ceiling-check.sh natives-out/*
       - uses: actions/upload-artifact@v7
         with:
           name: natives-linux-aarch64
           path: natives-out
           if-no-files-found: error
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/caches
+        with:
+          os: linux-arm64
+          mode: save
+          browser: false
+          deps: false
+          apt-set: JVM
 
   # The two Windows producers. Windows publishes kyo-aeron's shim and kyo-net's posix/uring shim:
   # kyo_epoll.c and kyo_uring.c define every entry point on every target, so the binding resolves
@@ -500,7 +524,9 @@ jobs:
         (github.event_name == 'issue_comment' &&
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
-    runs-on: ubuntu-latest
+    # The glibc producers' image: the JVM stage merges this host's own linux-x86_64 compile with theirs,
+    # so this host must not need a newer glibc either.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -612,3 +638,12 @@ jobs:
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+      # The .deb sets release-setup installed, kept for the next run on this image: no ci leg runs on it.
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/caches
+        with:
+          os: linux-x64
+          mode: save
+          browser: false
+          deps: false
+          apt-set: Native
