@@ -325,6 +325,14 @@ class ShellBackendTest extends kyo.BasePodTest:
                 case other                             => fail(s"expected a missing image, got $other")
         }
 
+        "an initializing-source error preserves the requested image before registry normalization" in {
+            val ref    = "missing-app:notatag"
+            val output = "Error: initializing source docker://docker.io/library/missing-app:notatag: reading manifest: unknown image"
+            backend.mapError(output, ResourceContext.Image(ref), Seq("pull", ref)) match
+                case e: ContainerImageMissingException => assert(e.image == ContainerImage("missing-app", "notatag"))
+                case other                             => fail(s"expected a missing image, got $other")
+        }
+
         "a registry denial is still an auth failure" in {
             val ex = classify("Error: initializing source docker://private/app:1: unauthorized: authentication required")
             assert(ex.isInstanceOf[kyo.ContainerAuthException], s"expected an auth failure, got $ex")
@@ -394,9 +402,14 @@ class ShellBackendTest extends kyo.BasePodTest:
 
         "a rate-limit token in an image name does not hide its absence" in {
             val ref = "docker.io/library/toomanyrequests:latest"
-            classify(s"Error response from daemon: failed to resolve reference \"$ref\": $ref: not found") match
+            backend.mapError(
+                s"Error response from daemon: failed to resolve reference \"$ref\": $ref: not found",
+                ResourceContext.Image(ref),
+                Seq("pull", ref)
+            ) match
                 case e: ContainerImageMissingException => assert(e.image.reference == ref)
                 case other                             => fail(s"expected a missing image, got $other")
+            end match
         }
 
         // The shape the daemon gave on PR #2064's linux-x64 JVM run, through the docker CLI.
@@ -415,13 +428,16 @@ class ShellBackendTest extends kyo.BasePodTest:
 
         // Docker 29's containerd image store, as the docker CLI printed it on the Ubuntu 26.04 runner.
         "a reference the containerd store could not resolve is a missing image naming it" in {
-            val ex = classify(
+            val ref = "nonexistent-image-xyz-999:notatag"
+            val ex  = backend.mapError(
                 "Error response from daemon: failed to resolve reference \"docker.io/library/nonexistent-image-xyz-999:notatag\": " +
-                    "docker.io/library/nonexistent-image-xyz-999:notatag: not found"
+                    "docker.io/library/nonexistent-image-xyz-999:notatag: not found",
+                ResourceContext.Image(ref),
+                Seq("pull", ref)
             )
             ex match
                 case e: kyo.ContainerImageMissingException =>
-                    assert(e.image.reference == "docker.io/library/nonexistent-image-xyz-999:notatag", s"names the reference: ${e.image}")
+                    assert(e.image == ContainerImage("nonexistent-image-xyz-999", "notatag"), s"names the requested image: ${e.image}")
                 case other => fail(s"expected a missing image, got $other")
             end match
         }

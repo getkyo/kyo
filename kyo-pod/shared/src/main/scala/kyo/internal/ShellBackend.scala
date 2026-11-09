@@ -2337,27 +2337,27 @@ final private[kyo] class ShellBackend(
                         ContainerImagePlatformConflictException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)), platform, output)
                     // Docker's containerd image store prints a reference no registry serves as `failed to resolve reference "<ref>":
                     // <ref>: not found`. A resolve that failed for another cause, an unreachable registry, ends otherwise and was
-                    // classified as a registry fault above.
+                    // classified as a registry fault above. Preserve the requested image: the daemon can expand a short name.
                     else if lower.contains("failed to resolve reference") && lower.trim.endsWith(": not found") then
-                        val ref = "failed to resolve reference \"([^\"]+)\"".r.findFirstMatchIn(output).map(_.group(1)).getOrElse {
-                            ctx match
-                                case ResourceContext.Image(r) => r
-                                case other                    => other.describe
-                        }
+                        val ref = ctx match
+                            case ResourceContext.Image(r) => r
+                            case other                    =>
+                                "failed to resolve reference \"([^\"]+)\"".r.findFirstMatchIn(output).map(_.group(1))
+                                    .getOrElse(other.describe)
                         ContainerImageMissingException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)))
-                    // initializing source: multi-step string surgery to extract the image ref
+                    // Podman can expand short names too; extract its reference only when there is no image context.
                     else if lower.contains("initializing source") then
-                        val dockerIdx = output.indexOf("docker://")
-                        val imageRef  =
-                            if dockerIdx >= 0 then
-                                val afterPrefix = output.substring(dockerIdx + "docker://".length)
-                                val colonSpace  = afterPrefix.indexOf(": ")
-                                if colonSpace >= 0 then afterPrefix.substring(0, colonSpace)
-                                else afterPrefix.takeWhile(!_.isWhitespace)
-                            else
-                                ctx match
-                                    case ResourceContext.Image(ref) => ref
-                                    case other                      => other.describe
+                        val imageRef = ctx match
+                            case ResourceContext.Image(ref) => ref
+                            case other                      =>
+                                val dockerIdx = output.indexOf("docker://")
+                                if dockerIdx >= 0 then
+                                    val afterPrefix = output.substring(dockerIdx + "docker://".length)
+                                    val colonSpace  = afterPrefix.indexOf(": ")
+                                    if colonSpace >= 0 then afterPrefix.substring(0, colonSpace)
+                                    else afterPrefix.takeWhile(!_.isWhitespace)
+                                else other.describe
+                                end if
                         ContainerImageMissingException(ContainerImage(imageRef))
                     else
                         ContainerOperationException(s"${cmd} ${args.mkString(" ")} failed", output)
