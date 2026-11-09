@@ -282,6 +282,19 @@ class ShellBackendTest extends kyo.BasePodTest:
         def classify(output: String)(using Frame): kyo.ContainerException =
             backend.mapError(output, ctx, Seq("pull", "alpine:3.20"))
 
+        "registry rate-limit replies preserve the target and detail" in {
+            val replies = Seq("received unexpected HTTP status: 429 Too Many Requests", "toomanyrequests: Rate exceeded")
+            replies.foreach { reply =>
+                val output = s"Error: initializing source docker://alpine:3.20: $reply"
+                classify(output) match
+                    case e: ContainerRegistryUnavailableException =>
+                        assert(e.target == "image alpine:3.20")
+                        assert(e.detail == output)
+                    case other => fail(s"expected a registry-unavailable failure, got $other")
+                end match
+            }
+        }
+
         // The shape podman printed on main run 35491732864, with the reference it was asked for.
         "a quoted gateway status is a registry fault" in {
             val ex = classify(
@@ -307,7 +320,9 @@ class ShellBackendTest extends kyo.BasePodTest:
             val ex = classify(
                 "Error: initializing source docker://alpine:nope: reading manifest nope in docker.io/library/alpine: manifest unknown"
             )
-            assert(ex.isInstanceOf[kyo.ContainerImageMissingException], s"expected a missing image, got $ex")
+            ex match
+                case e: ContainerImageMissingException => assert(e.image == ContainerImage("alpine", "3.20"))
+                case other                             => fail(s"expected a missing image, got $other")
         }
 
         "a registry denial is still an auth failure" in {
@@ -364,6 +379,25 @@ class ShellBackendTest extends kyo.BasePodTest:
 
         def classify(output: String)(using Frame): kyo.ContainerException =
             backend.mapError(output, ctx, Seq("pull", "alpine:latest"))
+
+        "a quoted registry rate limit preserves the target and detail" in {
+            val output =
+                "Error response from daemon: unknown: failed to resolve reference \"docker.io/library/alpine:latest\": " +
+                    "unexpected status from HEAD request to https://mirror.gcr.io/v2/library/alpine/manifests/latest: 429 Too Many Requests"
+            classify(output) match
+                case e: ContainerRegistryUnavailableException =>
+                    assert(e.target == "image alpine:latest")
+                    assert(e.detail == output)
+                case other => fail(s"expected a registry-unavailable failure, got $other")
+            end match
+        }
+
+        "a rate-limit token in an image name does not hide its absence" in {
+            val ref = "docker.io/library/toomanyrequests:latest"
+            classify(s"Error response from daemon: failed to resolve reference \"$ref\": $ref: not found") match
+                case e: ContainerImageMissingException => assert(e.image.reference == ref)
+                case other                             => fail(s"expected a missing image, got $other")
+        }
 
         // The shape the daemon gave on PR #2064's linux-x64 JVM run, through the docker CLI.
         "a reset connection to the token service is a registry fault" in {

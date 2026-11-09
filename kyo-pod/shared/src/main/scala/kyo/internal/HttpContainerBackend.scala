@@ -3049,16 +3049,16 @@ private[kyo] object HttpContainerBackend:
       * A 5xx is the upstream saying it could not serve the request at all, which is transient and carries no claim about whether the image
       * exists or whether credentials would help. A body naming a server-side status is treated the same way, since the daemon proxies the
       * registry's own wording and reports it under its own status: a `docker pull` that hits a failing Docker Hub surfaces as a 200-level
-      * daemon reply whose body quotes `received unexpected HTTP status: 500 Internal Server Error`.
+      * daemon reply whose body quotes `received unexpected HTTP status: 500 Internal Server Error`. Rate limiting likewise leaves the
+      * image's existence unknown, whether reported as HTTP 429 or quoted in the body.
       *
       * The distinction is load-bearing rather than cosmetic. A missing image is the one classification callers treat as permanent, so a
       * registry fault classified that way lands in the bucket nothing retries.
       */
     private[kyo] def isRegistryUnavailable(httpStatus: Int, body: Maybe[String]): Boolean =
-        httpStatus >= 500 || bodyNamesRegistryFault(body)
+        httpStatus == 429 || httpStatus >= 500 || bodyNamesRegistryFault(body)
 
-    /** True when the body quotes a server-side status the daemon proxies verbatim from the registry, or reports that its connection to
-      * the registry failed.
+    /** True when the body quotes a registry error or rate limit, or reports that its connection to the registry failed.
       *
       * Separate from [[isRegistryUnavailable]] because the status-code half is not usable everywhere: by the time a response has been
       * mapped to a canonical status, the wire status has already been consumed, and only the body still carries the registry's own answer.
@@ -3066,7 +3066,8 @@ private[kyo] object HttpContainerBackend:
     private[kyo] def bodyNamesRegistryFault(body: Maybe[String]): Boolean =
         body.exists { b =>
             val lower = b.toLowerCase
-            DaemonErrorPhrases.ServerError.exists(lower.contains) || DaemonErrorPhrases.RegistryUnreachable.exists(lower.contains)
+            DaemonErrorPhrases.ServerError.exists(lower.contains) || DaemonErrorPhrases.RegistryRateLimited.exists(lower.contains) ||
+            DaemonErrorPhrases.RegistryUnreachable.exists(lower.contains)
         }
 
     /** True when the body itself claims the resource is absent, in the vocabulary both daemons use.

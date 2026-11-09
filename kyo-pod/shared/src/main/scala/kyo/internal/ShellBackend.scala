@@ -2323,7 +2323,8 @@ final private[kyo] class ShellBackend(
                     // the same failures as the daemon's message on an image operation, with no "initializing source". An
                     // output that names the image absent has already matched ErrorPatterns.ImageNotFound in the table above.
                     else if (lower.contains("initializing source") || ctx.isInstanceOf[ResourceContext.Image]) &&
-                        (matchesAny(DaemonErrorPhrases.ServerError) || matchesAny(DaemonErrorPhrases.RegistryUnreachable))
+                        (matchesAny(DaemonErrorPhrases.ServerError) || matchesAny(DaemonErrorPhrases.RegistryRateLimited) ||
+                            matchesAny(DaemonErrorPhrases.RegistryUnreachable))
                     then
                         ContainerRegistryUnavailableException(ctx.describe, output)
                     else if matchesAny(DaemonErrorPhrases.PlatformCopyConflict) then

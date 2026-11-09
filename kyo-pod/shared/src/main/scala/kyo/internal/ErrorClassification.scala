@@ -78,6 +78,11 @@ private[internal] object DaemonErrorPhrases:
         "504 gateway timeout"
     )
 
+    /** Registry throttling says nothing about whether an image exists, and can be retried when the limit clears.
+      * The space after the error token excludes image references such as `toomanyrequests:latest`.
+      */
+    val RegistryRateLimited: Seq[String] = Seq("429 too many requests", "toomanyrequests: ")
+
     /** Phrases by which a daemon reports that its connection to the registry failed, from Go's network errors.
       *
       * The registry never answered, so nothing was said about the image: the failure is as transient as a quoted server status. Podman
