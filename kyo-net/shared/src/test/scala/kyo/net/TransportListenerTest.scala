@@ -22,6 +22,25 @@ class TransportListenerTest extends Test:
             }
         }
 
+        "a listener on the IPv6 loopback accepts a connection and reports its address" - eachBackend { transport =>
+            val accepted = Promise.Unsafe.init[Connection, Any]()
+            for
+                listener <- transport.listen("::1", 0, 16)(connection => accepted.completeDiscard(Result.succeed(connection))).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
+                client   <- transport.connect("::1", listener.port).safe.get
+                _        <- Scope.ensure(Sync.defer(client.close()))
+                server   <- accepted.safe.get
+                _        <- Scope.ensure(Sync.defer(server.close()))
+                address  <- NetAddress.resolve(listener.host).safe.get
+            yield
+                client.close()
+                listener.close()
+                // NIO reports the JDK's expanded spelling of ::1; compare the address bytes across backends.
+                assert(Chunk.from(address.toArray).map(_ & 0xff) == Chunk.fill(15)(0).append(1))
+                assert(listener.address == NetAddress.Tcp(listener.host, listener.port))
+            end for
+        }
+
         "listening on an already-bound port fails NetBindException" in {
             val transport = NetPlatform.transport
             transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { first =>
