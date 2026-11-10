@@ -144,19 +144,42 @@ case class InstrumentationScope(
 
 case class KeyValue(key: String, value: AnyValue) derives Schema
 
+object KeyValue:
+    import kyo.stats.Attributes
+    import kyo.stats.Attributes.Attribute
+
+    /** Attributes as OTLP key-values with unique keys and typed array elements. */
+    def of(attributes: Attributes): Seq[KeyValue] =
+        attributes.normalized.get.map {
+            case Attribute.BooleanAttribute(name, value)     => KeyValue(name, AnyValue.boolean(value))
+            case Attribute.DoubleAttribute(name, value)      => KeyValue(name, AnyValue.double(value))
+            case Attribute.LongAttribute(name, value)        => KeyValue(name, AnyValue.int(value))
+            case Attribute.StringAttribute(name, value)      => KeyValue(name, AnyValue.string(value))
+            case Attribute.BooleanListAttribute(name, value) => KeyValue(name, AnyValue.array(value.map(AnyValue.boolean)))
+            case Attribute.DoubleListAttribute(name, value)  => KeyValue(name, AnyValue.array(value.map(AnyValue.double)))
+            case Attribute.LongListAttribute(name, value)    => KeyValue(name, AnyValue.array(value.map(AnyValue.int)))
+            case Attribute.StringListAttribute(name, value)  => KeyValue(name, AnyValue.array(value.map(AnyValue.string)))
+        }
+end KeyValue
+
 /** OTLP AnyValue union type. Each variant has exactly one field set. */
 case class AnyValue(
     stringValue: Maybe[String] = Absent,
     intValue: Maybe[String] = Absent,
     doubleValue: Maybe[Double] = Absent,
-    boolValue: Maybe[Boolean] = Absent
+    boolValue: Maybe[Boolean] = Absent,
+    arrayValue: Maybe[ArrayValue] = Absent
 ) derives Schema
 
+/** An OTLP array preserves each element's type and permits empty arrays. */
+case class ArrayValue(values: Seq[AnyValue]) derives Schema
+
 object AnyValue:
-    def string(v: String): AnyValue   = AnyValue(stringValue = Present(v))
-    def int(v: Long): AnyValue        = AnyValue(intValue = Present(v.toString))
-    def double(v: Double): AnyValue   = AnyValue(doubleValue = Present(v))
-    def boolean(v: Boolean): AnyValue = AnyValue(boolValue = Present(v))
+    def string(v: String): AnyValue       = AnyValue(stringValue = Present(v))
+    def int(v: Long): AnyValue            = AnyValue(intValue = Present(v.toString))
+    def double(v: Double): AnyValue       = AnyValue(doubleValue = Present(v))
+    def boolean(v: Boolean): AnyValue     = AnyValue(boolValue = Present(v))
+    def array(v: Seq[AnyValue]): AnyValue = AnyValue(arrayValue = Present(ArrayValue(v)))
 end AnyValue
 
 /** Constants for OTLP enum values that are represented as integers in the JSON protocol. */
