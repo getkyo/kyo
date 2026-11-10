@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
+import kyo.net.NetAddress
 import kyo.net.NetDnsResolutionException
 import kyo.net.Test
 import kyo.scheduler.IOPromise
@@ -39,6 +40,19 @@ class HostResolverTest extends Test:
     end counting
 
     "HostResolver" - {
+        "public address resolution reads the transport cache, including an IPv6 answer for an IPv4 hint" in {
+            import AllowUnsafe.embrace.danger
+            val host         = freshHost("public-address")
+            val (calls, raw) = counting(Result.succeed(v6))
+            for
+                _       <- HostResolver.resolveWith(host, PosixConstants.AF_INET, raw).safe.get
+                address <- NetAddress.resolve(host).safe.get
+            yield
+                assert(Chunk.from(address.toArray).map(_ & 0xff) == Chunk.from(1 to 16))
+                assert(calls.get() == 1)
+            end for
+        }
+
         "resolves through the raw resolver and returns its answer (family + bytes)" in {
             import AllowUnsafe.embrace.danger
             val (calls, raw) = counting(Result.succeed(v4))
