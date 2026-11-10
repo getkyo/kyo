@@ -20,7 +20,7 @@ permissions:
 # behind an OS gate). Only kyo-net's BoringSSL shim declares itself out through osTargets, Windows
 # being NIO + JDK TLS by ruling.
 jobs:
-  # macos-14 is arm64, and covers BOTH Mac targets: darwin-aarch64 is the host build; darwin-x86_64 is
+  # macos-15 is arm64, and covers BOTH Mac targets: darwin-aarch64 is the host build; darwin-x86_64 is
   # a real cross-build on the same runner. build-boringssl.sh cross-builds the vendored BoringSSL with
   # -DCMAKE_OSX_ARCHITECTURES=x86_64 + a lipo arch assertion; -Dos.arch=x86_64 makes the build's
   # host-keyed os-arch resolution (which drives build.sbt's BoringSSL staged dir and the target name)
@@ -33,7 +33,10 @@ jobs:
         (github.event_name == 'issue_comment' &&
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
-    runs-on: macos-14
+    runs-on: macos-15
+    env:
+      # Keep the deployment floor independent of the runner, for both CMake dependencies and FFI shims.
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
     steps:
       - uses: actions/checkout@v7.0.1
         with:
