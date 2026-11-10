@@ -60,7 +60,7 @@ A dispatch kind the model does not declare is `Event.Unknown` with its name and 
 
 ### The receive loop forks; the read loop never waits
 
-`Gateway.run`'s read loop handles control frames in place and puts dispatches on the session's queue with an unwaited put, so a slow handler never delays a heartbeat ACK. `Dispatch.run` forks each event's handler with `isolate.capture` and `isolate.isolate`, so order between handlers is not kept and a handler's changes to `S` are dropped. The first handler's typed failure completes a promise. The loop races an uninterruptible view of that promise against the next event, so losing a race neither consumes the failure nor interrupts its promise.
+`Gateway.run`'s read loop handles control frames in place and puts dispatches on the session's queue with an unwaited put, so a slow handler never delays a heartbeat ACK. `Dispatch.run` forks each event's handler with `isolate.capture` and `isolate.isolate`, so order between handlers is not kept and a handler's changes to `S` are dropped. A handler's typed failure goes through a one-slot failures `Channel`, which the loop races against the next event; the loop does not race a `Promise.get`, because `Async.raceFirst` interrupting that leg would complete the promise itself.
 
 ### Time under test control
 
