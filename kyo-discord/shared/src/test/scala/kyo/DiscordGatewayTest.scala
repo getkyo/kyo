@@ -425,6 +425,41 @@ class DiscordGatewayTest extends kyo.test.Test[Any]:
 
     // --- Handlers and the end of receive ---
 
+    "a handler failure is retained when it races with the next dispatch" in {
+        withGateway { gw =>
+            connected(gw) { (_, discord) =>
+                // Queue deliveries directly so the event/failure race does not depend on socket timing.
+                val events = discord.session.get.events
+                val stop   = kyo.internal.discord.Gateway.Delivery(
+                    Event.MessageCreated(Json.decode[Message](messageJson).getOrThrow),
+                    Present(2L),
+                    Instant.Epoch
+                )
+                val next = kyo.internal.discord.Gateway.Delivery(Event.Resumed, Present(3L), Instant.Epoch)
+                Kyo.foreachDiscard(Chunk.range(0, 500)) { _ =>
+                    for
+                        started <- Latch.init(1)
+                        release <- Latch.init(1)
+                        loop    <-
+                            Fiber.initUnscoped(Abort.run[DiscordReceiveFailure | String](Discord.run(discord)(Discord.receive[String]([A] =>
+                                (event: Event[A]) =>
+                                    event match
+                                        case Event.MessageCreated(_) => started.release.andThen(release.await).andThen(Abort.fail("stop"))
+                                        case other                   => answer[A](other)
+                            ))))
+                        _      <- events.put(stop)
+                        _      <- started.await
+                        _      <- assertEventually(events.pendingTakes.map(_ == 1))
+                        _      <- release.release
+                        _      <- events.offer(next)
+                        result <- loop.get
+                        _      <- events.drain
+                    yield assert(result == Result.fail("stop"))
+                }.andThen(Discord.close(discord))
+            }
+        }
+    }
+
     "a handler's typed failure ends receive with it and closes the socket with 1000, and a panic is logged and the loop goes on" in {
         withGateway { gw =>
             Fiber.initUnscoped(Abort.run[DiscordReceiveFailure | String](Discord.run(gw.config)(Discord.receive[String]([A] =>
