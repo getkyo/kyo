@@ -437,6 +437,49 @@ class HttpContainerBackendTest extends BasePodTest:
             )
         end classify
 
+        "a daemon 404 on imagePull is a missing image with the requested reference" in {
+            Sync.defer {
+                if !TestUnixSockets.supported then throw kyo.test.TestCancelled("this host cannot bind a Unix socket for the fake daemon")
+            }.andThen(Path.run(Path.tempDir("kyo-pod-pull-").map { dir =>
+                for
+                    requests <- AtomicInt.init(0)
+                    socket = (dir / "d.sock").toString
+                    daemon = HttpRoute.postRaw("v1.43" / "images" / "create").response(_.bodyText).handler { _ =>
+                        requests.incrementAndGet.andThen(
+                            HttpResponse.notFound("""{"message":"manifest unknown"}""").setHeader("Content-Type", "application/json")
+                        )
+                    }
+                    _      <- HttpServer.init(HttpServerConfig.default.unixSocket(socket))(daemon)
+                    result <- Abort.run[ContainerException](new HttpContainerBackend(socket).imagePull(pullImage, Absent, Absent))
+                    count  <- requests.get
+                yield
+                    assert(count == 1)
+                    result match
+                        case Result.Failure(e: ContainerImageMissingException) => assert(e.image == pullImage)
+                        case other => fail(s"expected a missing image from the daemon's 404, got $other")
+            }))
+        }
+
+        "a registry rate limit is retryable even under the daemon's not-found status" in {
+            val body =
+                """{"message":"unexpected status from HEAD request to https://mirror.gcr.io/v2/library/redis/manifests/7-alpine: 429 Too Many Requests"}"""
+            classify(404, body).map { result =>
+                result match
+                    case Result.Failure(e: ContainerRegistryUnavailableException) =>
+                        assert(e.target == "redis:7-alpine")
+                        assert(e.detail == body)
+                    case other => fail(s"expected a registry-unavailable failure, got $other")
+            }
+        }
+
+        "a direct registry rate-limit status is retryable" in {
+            classify(429, "").map { result =>
+                result match
+                    case Result.Failure(e: ContainerRegistryUnavailableException) => assert(e.target == "redis:7-alpine")
+                    case other => fail(s"expected a registry-unavailable failure, got $other")
+            }
+        }
+
         // A real daemon response body, quoting the registry's own status.
         val hubFailure =
             """Error response from daemon: Head "https://registry-1.docker.io/v2/library/redis/manifests/7-alpine": """ +

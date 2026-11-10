@@ -282,6 +282,19 @@ class ShellBackendTest extends kyo.BasePodTest:
         def classify(output: String)(using Frame): kyo.ContainerException =
             backend.mapError(output, ctx, Seq("pull", "alpine:3.20"))
 
+        "registry rate-limit replies preserve the target and detail" in {
+            val replies = Seq("received unexpected HTTP status: 429 Too Many Requests", "toomanyrequests: Rate exceeded")
+            replies.foreach { reply =>
+                val output = s"Error: initializing source docker://alpine:3.20: $reply"
+                classify(output) match
+                    case e: ContainerRegistryUnavailableException =>
+                        assert(e.target == "image alpine:3.20")
+                        assert(e.detail == output)
+                    case other => fail(s"expected a registry-unavailable failure, got $other")
+                end match
+            }
+        }
+
         // The shape podman printed on main run 35491732864, with the reference it was asked for.
         "a quoted gateway status is a registry fault" in {
             val ex = classify(
@@ -307,7 +320,17 @@ class ShellBackendTest extends kyo.BasePodTest:
             val ex = classify(
                 "Error: initializing source docker://alpine:nope: reading manifest nope in docker.io/library/alpine: manifest unknown"
             )
-            assert(ex.isInstanceOf[kyo.ContainerImageMissingException], s"expected a missing image, got $ex")
+            ex match
+                case e: ContainerImageMissingException => assert(e.image == ContainerImage("alpine", "3.20"))
+                case other                             => fail(s"expected a missing image, got $other")
+        }
+
+        "an initializing-source error preserves the requested image before registry normalization" in {
+            val ref    = "missing-app:notatag"
+            val output = "Error: initializing source docker://docker.io/library/missing-app:notatag: reading manifest: unknown image"
+            backend.mapError(output, ResourceContext.Image(ref), Seq("pull", ref)) match
+                case e: ContainerImageMissingException => assert(e.image == ContainerImage("missing-app", "notatag"))
+                case other                             => fail(s"expected a missing image, got $other")
         }
 
         "a registry denial is still an auth failure" in {
@@ -365,6 +388,30 @@ class ShellBackendTest extends kyo.BasePodTest:
         def classify(output: String)(using Frame): kyo.ContainerException =
             backend.mapError(output, ctx, Seq("pull", "alpine:latest"))
 
+        "a quoted registry rate limit preserves the target and detail" in {
+            val output =
+                "Error response from daemon: unknown: failed to resolve reference \"docker.io/library/alpine:latest\": " +
+                    "unexpected status from HEAD request to https://mirror.gcr.io/v2/library/alpine/manifests/latest: 429 Too Many Requests"
+            classify(output) match
+                case e: ContainerRegistryUnavailableException =>
+                    assert(e.target == "image alpine:latest")
+                    assert(e.detail == output)
+                case other => fail(s"expected a registry-unavailable failure, got $other")
+            end match
+        }
+
+        "a rate-limit token in an image name does not hide its absence" in {
+            val ref = "docker.io/library/toomanyrequests:latest"
+            backend.mapError(
+                s"Error response from daemon: failed to resolve reference \"$ref\": $ref: not found",
+                ResourceContext.Image(ref),
+                Seq("pull", ref)
+            ) match
+                case e: ContainerImageMissingException => assert(e.image.reference == ref)
+                case other                             => fail(s"expected a missing image, got $other")
+            end match
+        }
+
         // The shape the daemon gave on PR #2064's linux-x64 JVM run, through the docker CLI.
         "a reset connection to the token service is a registry fault" in {
             val ex = classify(
@@ -381,13 +428,16 @@ class ShellBackendTest extends kyo.BasePodTest:
 
         // Docker 29's containerd image store, as the docker CLI printed it on the Ubuntu 26.04 runner.
         "a reference the containerd store could not resolve is a missing image naming it" in {
-            val ex = classify(
+            val ref = "nonexistent-image-xyz-999:notatag"
+            val ex  = backend.mapError(
                 "Error response from daemon: failed to resolve reference \"docker.io/library/nonexistent-image-xyz-999:notatag\": " +
-                    "docker.io/library/nonexistent-image-xyz-999:notatag: not found"
+                    "docker.io/library/nonexistent-image-xyz-999:notatag: not found",
+                ResourceContext.Image(ref),
+                Seq("pull", ref)
             )
             ex match
                 case e: kyo.ContainerImageMissingException =>
-                    assert(e.image.reference == "docker.io/library/nonexistent-image-xyz-999:notatag", s"names the reference: ${e.image}")
+                    assert(e.image == ContainerImage("nonexistent-image-xyz-999", "notatag"), s"names the requested image: ${e.image}")
                 case other => fail(s"expected a missing image, got $other")
             end match
         }
