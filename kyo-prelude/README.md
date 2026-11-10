@@ -402,6 +402,8 @@ assert(smallForUser1.eval == Chunk(Order(1, 1, BigDecimal(10), Confirmed), Order
 
 > **Note:** `rechunk(n)` clamps `n` to at least 1; passing `0` or a negative number silently changes the chunk granularity to one element per chunk. There is no "leave the chunking alone" overload.
 
+`takeWhile` and `takeWhilePure` stop at the first rejected element. They emit the matching prefix of that chunk and finish without pulling another upstream chunk, so termination does not wait for a live source to produce more data.
+
 ### Composing streams: zip, concat, into
 
 `stream1.concat(stream2)` emits all of the first, then all of the second. `stream.zip(other)` emits pairs in lockstep and truncates to the shorter stream. `stream.into(pipe)` produces a new stream by running the pipe over this stream; `stream.into(sink)` produces the sink's value.
