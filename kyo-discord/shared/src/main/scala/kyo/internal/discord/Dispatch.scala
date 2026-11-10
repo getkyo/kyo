@@ -22,47 +22,48 @@ private[kyo] object Dispatch:
         handler: [A] => Discord.Event[A] => A < (Async & Abort[E | Discord.Event.Decline] & Env[Discord] & S)
     )(using Frame): Unit < (Async & Abort[Gateway.Failure | E] & S) =
         isolate.capture { state =>
-            // The first failure persists across races. A losing waiter must neither consume it nor interrupt its promise.
-            Fiber.Promise.init[E, Any].map { failures =>
-                failures.uninterruptible.map { failureSignal =>
-                    // Each running handler's interruption, by an id of its own, so the loop's end interrupts those still running.
-                    AtomicRef.init(Map.empty[Long, Unit < Sync]).map { running =>
-                        AtomicLong.init.map { ids =>
-                            def start(delivery: Gateway.Delivery): Unit < Sync =
-                                ids.incrementAndGet.map { id =>
-                                    Fiber.initUnscoped(isolate.isolate(state, Discord.run(discord)(handle(delivery, handler)))).map {
-                                        fiber =>
-                                            running.updateAndGet(_.updated(id, fiber.interrupt.unit)).andThen {
-                                                fiber.onComplete { result =>
-                                                    running.updateAndGet(_ - id).andThen {
-                                                        result match
-                                                            case Result.Failure(e)            => failures.completeDiscard(Result.succeed(e))
-                                                            case Result.Panic(_: Interrupted) => Kyo.unit
-                                                            case Result.Panic(t)              =>
-                                                                Log.error(s"Discord: the handler panicked on ${describe(delivery)}.", t)
-                                                            case Result.Success(_) => Kyo.unit
-                                                    }
-                                                }
+            // A channel, not a promise: the loop races a take on it each turn, and a take the race interrupts leaves it intact.
+            Channel.initUnscoped[E](1).map { failures =>
+                // Each running handler's interruption, by an id of its own, so the loop's end interrupts those still running.
+                AtomicRef.init(Map.empty[Long, Unit < Sync]).map { running =>
+                    AtomicLong.init.map { ids =>
+                        def start(delivery: Gateway.Delivery): Unit < Sync =
+                            ids.incrementAndGet.map { id =>
+                                Fiber.initUnscoped(isolate.isolate(state, Discord.run(discord)(handle(delivery, handler)))).map { fiber =>
+                                    running.updateAndGet(_.updated(id, fiber.interrupt.unit)).andThen {
+                                        fiber.onComplete { result =>
+                                            running.updateAndGet(_ - id).andThen {
+                                                result match
+                                                    case Result.Failure(e)            => Abort.run[Closed](failures.offer(e)).unit
+                                                    case Result.Panic(_: Interrupted) => Kyo.unit
+                                                    case Result.Panic(t)              =>
+                                                        Log.error(s"Discord: the handler panicked on ${describe(delivery)}.", t)
+                                                    case Result.Success(_) => Kyo.unit
                                             }
+                                        }
                                     }
                                 }
-                            def step(taken: Taken[E]): Loop.Outcome[Unit, Unit] < (Async & Abort[Gateway.Failure | E]) =
-                                taken match
-                                    case Taken.Event(event) =>
-                                        event match
-                                            case Result.Success(delivery) => start(delivery).andThen(Loop.continue)
-                                            // The session ended: cleanly, or with its failure.
-                                            case Result.Failure(_) => session.ended.get.andThen(Loop.done(()))
-                                            case Result.Panic(t)   => Abort.panic(t)
-                                    case Taken.HandlerFailure(failure) => Abort.fail(failure)
-                            val interruptAll = running.get.map(interrupts => Kyo.foreachDiscard(interrupts.values)(identity))
-                            Sync.ensure(interruptAll) {
-                                Loop.foreach {
-                                    Async.raceFirst(
-                                        Abort.run[Closed](session.events.take).map(Taken.Event(_)),
-                                        failureSignal.get.map(Taken.HandlerFailure(_))
-                                    ).map(step)
-                                }
+                            }
+                        def step(taken: Taken[E]): Loop.Outcome[Unit, Unit] < (Async & Abort[Gateway.Failure | E]) =
+                            taken match
+                                case Taken.Event(event) =>
+                                    event match
+                                        case Result.Success(delivery) => start(delivery).andThen(Loop.continue)
+                                        // The session ended: cleanly, or with its failure.
+                                        case Result.Failure(_) => session.ended.get.andThen(Loop.done(()))
+                                        case Result.Panic(t)   => Abort.panic(t)
+                                case Taken.HandlerFailure(failure) =>
+                                    failure match
+                                        case Result.Success(e) => Abort.fail(e)
+                                        case Result.Failure(_) => Loop.done(())
+                                        case Result.Panic(t)   => Abort.panic(t)
+                        val interruptAll = running.get.map(interrupts => Kyo.foreachDiscard(interrupts.values)(identity))
+                        Sync.ensure(interruptAll.andThen(failures.closeDiscard)) {
+                            Loop.foreach {
+                                Async.raceFirst(
+                                    Abort.run[Closed](session.events.take).map(Taken.Event(_)),
+                                    Abort.run[Closed](failures.take).map(Taken.HandlerFailure(_))
+                                ).map(step)
                             }
                         }
                     }
@@ -74,7 +75,7 @@ private[kyo] object Dispatch:
     /** What a turn of the loop took: the session's next event, or a handler's typed failure. */
     private enum Taken[+E]:
         case Event(event: Result[Closed, Gateway.Delivery])
-        case HandlerFailure(failure: E)
+        case HandlerFailure(failure: Result[Closed, E])
 
     /** One event: a dispatch's handler, or an interaction's handler raced against its deadline and its answer posted. */
     private def handle[E, S](using
