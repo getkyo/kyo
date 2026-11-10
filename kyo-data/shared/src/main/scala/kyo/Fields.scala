@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Record.*
 import scala.compiletime.*
+import scala.language.dynamics
 
 /** Reifies the structure of an intersection of `Name ~ Value` field types into runtime metadata and type-level operations.
   *
@@ -16,7 +17,14 @@ import scala.compiletime.*
   * @tparam A
   *   The field intersection type (e.g., `"name" ~ String & "age" ~ Int`) or a case class type
   */
-sealed abstract class Fields[A] extends Serializable:
+sealed abstract class Fields[A] extends Serializable with Dynamic:
+
+    /** The field of `A` named `name`, selected as a member: for `A = "name" ~ String & "age" ~ Int`, `fields.name` is
+      * `Field["name", String]`. A name `A` does not have fails to compile, as it does for `Record.selectDynamic`. The members of `Fields`
+      * itself, `fields` and `names`, take precedence over fields of those names.
+      */
+    def selectDynamic[Name <: String & Singleton](name: Name)(using h: Fields.Have[A, Name], tag: Tag[h.Value]): Field[Name, h.Value] =
+        Field(name, tag)
 
     /** Tuple representation of the fields: `"a" ~ Int & "b" ~ String` becomes `("a" ~ Int) *: ("b" ~ String) *: EmptyTuple`. */
     type AsTuple <: Tuple

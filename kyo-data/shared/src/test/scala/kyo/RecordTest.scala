@@ -120,6 +120,109 @@ class RecordTest extends kyo.test.Test[Any]:
         }
     }
 
+    "fromObject" - {
+        import RecordTest.*
+
+        "a method is a field taking a record of its parameters, a clause after another" in {
+            val shop = Record.fromObject(Shop)
+            assert(shop.find.apply("name" ~ "tea" & "limit" ~ 2) == Chunk("tea", "tea"))
+            assert(shop.add.apply("a" ~ 1 & "b" ~ 2) == 3)
+        }
+
+        "a val, and a def without parameters, take the empty record" in {
+            val shop = Record.fromObject(Shop)
+            assert((shop.version.apply(Record.empty), shop.answer.apply(Record.empty)) == (3, 42))
+        }
+
+        "a parameter with a default is left out of the record and takes its default" in {
+            val shop = Record.fromObject(Shop)
+            assert(shop.greet.apply("name" ~ "Bo") == "hi Bo")
+        }
+
+        "a field's type is its method's, from a record of the parameters to the result" in {
+            val shop                                                           = Record.fromObject(Shop)
+            val find: Record["name" ~ String & "limit" ~ Int] => Chunk[String] = shop.find
+            val greet: Record["name" ~ String] => String                       = shop.greet
+            val version: Record[Any] => Int                                    = shop.version
+            assert((find("name" ~ "a" & "limit" ~ 1), greet("name" ~ "Al"), version(Record.empty)) == (Chunk("a"), "hi Al", 3))
+        }
+
+        "a using clause is resolved where fromObject is called, and a member whose clause does not resolve is left out" in {
+            val without = Record.fromObject(Shop)
+            val within  =
+                given Separator = Separator("+")
+                Record.fromObject(Shop)
+            assert(within.joined.apply("parts" ~ Seq("a", "b")) == "a+b")
+            assert(without.fields.toSet == fields)
+            assert(within.fields.toSet == fields + "joined")
+        }
+
+        "an overloaded name, a method with type parameters, a var, a nested object, an override of toString and members that are not public are left out" in {
+            val shop = Record.fromObject(Shop)
+            assert((shop.fields.toSet, shop.size) == (fields, fields.size))
+            typeCheckFailure("""Record.fromObject(RecordTest.Shop).load""")("Fields.Have")
+            typeCheckFailure("""Record.fromObject(RecordTest.Shop).first""")("Fields.Have")
+        }
+
+        "an expression returning a singleton is evaluated once" in {
+            var evaluated         = 0
+            def shop(): Shop.type =
+                evaluated += 1
+                Shop
+            val record = Record.fromObject(shop())
+            assert(evaluated == 1)
+            assert(record.answer.apply(Record.empty) == 42)
+            assert(record.version.apply(Record.empty) == 3)
+            assert(evaluated == 1)
+        }
+
+        "a default depending on a preceding clause is omitted from the input record" in {
+            val record                             = Record.fromObject(CurriedDefaults)
+            val next: Record["start" ~ Int] => Int = record.next
+            assert(next("start" ~ 3) == 7)
+        }
+
+        "a default is evaluated once per call when a later default depends on it" in {
+            var evaluated = 0
+            val defaults  = new ChainedDefaults(() =>
+                evaluated += 1; evaluated
+            )
+            val record = Record.fromObject(defaults)
+            assert(evaluated == 0)
+            assert(record.next.apply(Record.empty) == (1, 2))
+            assert(evaluated == 1)
+            assert(record.next.apply(Record.empty) == (2, 3))
+            assert(evaluated == 2)
+        }
+
+        "a value that is not a stable path is evaluated once, and each call reads it" in {
+            var built              = 0
+            def counter(): Counter =
+                built += 1
+                Counter(10)
+            val record = Record.fromObject(counter())
+            assert((record.next.apply("step" ~ 1), record.next.apply("step" ~ 2), built) == (11, 12, 1))
+        }
+
+        "a by-name default retains the method's evaluation semantics" in {
+            var evaluated = 0
+            val defaults  = new ByNameDefaults(() =>
+                evaluated += 1; evaluated
+            )
+            val record = Record.fromObject(defaults)
+            assert(record.ignore.apply(Record.empty) == 42)
+            assert(evaluated == 0)
+            assert(record.twice.apply(Record.empty) == 3)
+            assert(evaluated == 2)
+        }
+
+        "a by-name parameter takes its value from the input record" in {
+            val record                              = Record.fromObject(ByNameParameter)
+            val twice: Record["value" ~ Int] => Int = record.twice
+            assert(twice("value" ~ 7) == 14)
+        }
+    }
+
     "map" - {
 
         "map values" in {
@@ -862,5 +965,48 @@ class RecordTest extends kyo.test.Test[Any]:
             )
         }
     }
+
+end RecordTest
+
+object RecordTest:
+
+    final case class Separator(text: String)
+
+    final class Counter(start: Int):
+        def next(step: Int): Int = start + step
+
+    object CurriedDefaults:
+        def next(start: Int)(increment: Int = start + 1): Int = start + increment
+
+    final class ChainedDefaults(value: () => Int):
+        def next(start: Int = value())(increment: Int = start + 1): (Int, Int) = (start, increment)
+
+    final class ByNameDefaults(value: () => Int):
+        def ignore(input: => Int = value()): Int = 42
+        def twice(input: => Int = value()): Int  = input + input
+
+    object ByNameParameter:
+        def twice(value: => Int): Int = value + value
+
+    // the members fromObject keeps from Shop when no Separator is in scope
+    val fields: Set[String] = Set("find", "add", "version", "answer", "greet")
+
+    object Shop:
+        def find(name: String, limit: Int): Chunk[String]          = Chunk.fill(limit)(name)
+        def add(a: Int)(b: Int): Int                               = a + b
+        val version: Int                                           = 3
+        def answer: Int                                            = 42
+        def greet(name: String, greeting: String = "hi"): String   = s"$greeting $name"
+        def joined(parts: Seq[String])(using separator: Separator) = parts.mkString(separator.text)
+        def load(id: Int): String                                  = s"#$id"
+        def load(name: String): String                             = name
+        def first[A](values: Seq[A]): A                            = values.head
+        var visits: Int                                            = 0
+        private def secret: Int                                    = 7
+        private[kyo] def internal: Int                             = secret
+        object Kinds:
+            val all: Set[String] = Set("tea")
+        override def toString: String = "Shop"
+    end Shop
 
 end RecordTest

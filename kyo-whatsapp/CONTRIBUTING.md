@@ -170,7 +170,7 @@ a new leaf fails to compile there until the table names it.
 compare leaves by equality and assert text with `contains`; a test that checks a secret stays
 out of a rendering builds the secret away from the construction line (`Seq(...).mkString`),
 since those lines are part of the message. A log line uses the leaf's one-line text
-(`WhatsAppDecodeException.show`), never `getMessage`.
+(`KyoException.show`), never `getMessage`.
 
 ## Values validated at construction
 
