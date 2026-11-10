@@ -2067,7 +2067,17 @@ When writing a custom schema for an opaque or wrapper type, you can also constru
 
 ## Exceptions
 
-Errors raised by the schema core and schema codecs extend the sealed `SchemaException` hierarchy. Format-specific helper APIs may define their own error types, for example YAML CST edit operations return `Yaml.Cst.EditException`. The most useful `SchemaException` subtypes:
+Errors raised by the schema core and schema codecs extend the sealed `SchemaException` hierarchy. Use `problem` to relay what went wrong to the author of the input, without advice about changing the schema configuration. The exception's full message keeps that advice and its cause for diagnostics:
+
+```scala doctest:scope=nested
+val failure = MissingFieldException(Seq("user"), "name")
+assert(failure.problem == "Missing required field 'name' at user")
+// The full message also advises adding the field to the input.
+```
+
+JSON parse failures retain a bounded snippet of the input and mark the failure with a caret. `ParseException.position` is the byte offset in the original JSON; `column` is the UTF-16 character index in the decoded snippet, or `-1` when a codec supplies no caret location. The snippet is cut on UTF-8 character boundaries.
+
+Format-specific helper APIs may define their own error types, for example YAML CST edit operations return `Yaml.Cst.EditException`. The most useful `SchemaException` subtypes:
 
 | Exception | Raised when |
 |-----------|-------------|
