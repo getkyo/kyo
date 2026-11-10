@@ -8,8 +8,8 @@ import kyo.internal.mime.Grammar.*
 /** A media type (RFC 2045 section 5.1, RFC 9110 section 8.3.1): a type and a subtype, each an RFC 2045 token held lowercased, and
   * parameters with lowercased names in the order written, each name once.
   *
-  * A value of this type has passed its checks: it is built by [[MediaType.init]] from parts, or by [[MediaType.parse]] from the text of
-  * a `Content-Type` value, with CFWS and comments removed, quoted strings resolved and RFC 2231
+  * A value of this type has passed its checks: it is a predefined constant, built by [[MediaType.init]] from parts, or read by
+  * [[MediaType.parse]] from a `Content-Type` value, with CFWS and comments removed, quoted strings resolved and RFC 2231
   * parameters merged. `render` writes it back as one line in a [[Parameters.Style]]. The `boundary` parameter never ends in white space
   * (RFC 2046 section 5.1.1), so a boundary written with it reads back equal.
   *
@@ -46,6 +46,99 @@ object MediaType:
     object Parameter:
         given Schema[Parameter] =
             Schema.derivedVia((name: String, value: String) => checkedParameter(name, value))
+
+    /** `image/png`. */
+    val ImagePng: MediaType = new MediaType("image", "png", Chunk.empty)
+
+    /** `image/jpeg`. */
+    val ImageJpeg: MediaType = new MediaType("image", "jpeg", Chunk.empty)
+
+    /** `image/gif`. */
+    val ImageGif: MediaType = new MediaType("image", "gif", Chunk.empty)
+
+    /** `image/webp`. */
+    val ImageWebp: MediaType = new MediaType("image", "webp", Chunk.empty)
+
+    /** `text/plain`. */
+    val TextPlain: MediaType = new MediaType("text", "plain", Chunk.empty)
+
+    /** `text/markdown`. */
+    val TextMarkdown: MediaType = new MediaType("text", "markdown", Chunk.empty)
+
+    /** `text/csv`. */
+    val TextCsv: MediaType = new MediaType("text", "csv", Chunk.empty)
+
+    /** `text/html`. */
+    val TextHtml: MediaType = new MediaType("text", "html", Chunk.empty)
+
+    /** `text/xml`. */
+    val TextXml: MediaType = new MediaType("text", "xml", Chunk.empty)
+
+    /** `text/css`. */
+    val TextCss: MediaType = new MediaType("text", "css", Chunk.empty)
+
+    /** `text/javascript`. */
+    val TextJavascript: MediaType = new MediaType("text", "javascript", Chunk.empty)
+
+    /** `application/json`. */
+    val ApplicationJson: MediaType = new MediaType("application", "json", Chunk.empty)
+
+    /** `application/xml`. */
+    val ApplicationXml: MediaType = new MediaType("application", "xml", Chunk.empty)
+
+    /** `application/yaml`. */
+    val ApplicationYaml: MediaType = new MediaType("application", "yaml", Chunk.empty)
+
+    /** `application/toml`. */
+    val ApplicationToml: MediaType = new MediaType("application", "toml", Chunk.empty)
+
+    /** `application/octet-stream`, bytes of no known type (RFC 2046 section 4.5.1). */
+    val ApplicationOctetStream: MediaType = new MediaType("application", "octet-stream", Chunk.empty)
+
+    /** `audio/aac`. */
+    val AudioAac: MediaType = new MediaType("audio", "aac", Chunk.empty)
+
+    /** `audio/amr`. */
+    val AudioAmr: MediaType = new MediaType("audio", "amr", Chunk.empty)
+
+    /** `audio/mpeg`. */
+    val AudioMpeg: MediaType = new MediaType("audio", "mpeg", Chunk.empty)
+
+    /** `audio/mp4`. */
+    val AudioMp4: MediaType = new MediaType("audio", "mp4", Chunk.empty)
+
+    /** `audio/ogg`. */
+    val AudioOgg: MediaType = new MediaType("audio", "ogg", Chunk.empty)
+
+    /** `video/mp4`. */
+    val VideoMp4: MediaType = new MediaType("video", "mp4", Chunk.empty)
+
+    /** `video/3gpp`. */
+    val Video3gpp: MediaType = new MediaType("video", "3gpp", Chunk.empty)
+
+    /** `application/pdf`. */
+    val ApplicationPdf: MediaType = new MediaType("application", "pdf", Chunk.empty)
+
+    /** `application/msword`. */
+    val ApplicationMsword: MediaType = new MediaType("application", "msword", Chunk.empty)
+
+    /** `application/vnd.ms-excel`. */
+    val ApplicationVndMsExcel: MediaType = new MediaType("application", "vnd.ms-excel", Chunk.empty)
+
+    /** `application/vnd.ms-powerpoint`. */
+    val ApplicationVndMsPowerpoint: MediaType = new MediaType("application", "vnd.ms-powerpoint", Chunk.empty)
+
+    /** `application/vnd.openxmlformats-officedocument.wordprocessingml.document`. */
+    val ApplicationVndOpenxmlformatsOfficedocumentWordprocessingmlDocument: MediaType =
+        new MediaType("application", "vnd.openxmlformats-officedocument.wordprocessingml.document", Chunk.empty)
+
+    /** `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`. */
+    val ApplicationVndOpenxmlformatsOfficedocumentSpreadsheetmlSheet: MediaType =
+        new MediaType("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet", Chunk.empty)
+
+    /** `application/vnd.openxmlformats-officedocument.presentationml.presentation`. */
+    val ApplicationVndOpenxmlformatsOfficedocumentPresentationmlPresentation: MediaType =
+        new MediaType("application", "vnd.openxmlformats-officedocument.presentationml.presentation", Chunk.empty)
 
     /** A media type from its parts, or the violation: a part that is not a token, or a name given twice. */
     def init(mainType: String, subType: String, parameters: (String, String)*)(using

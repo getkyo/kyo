@@ -150,6 +150,81 @@ class MediaTypeTest extends kyo.test.Test[Any]:
     }
 
     "construction" - {
+        "each image constant is the type its text reads as" in {
+            val constants = Chunk(MediaType.ImagePng, MediaType.ImageJpeg, MediaType.ImageGif, MediaType.ImageWebp)
+            assert(Chunk("image/png", "image/jpeg", "image/gif", "image/webp").map(MediaType.parse(_)) == constants.map(Result.succeed(_)))
+            assert(constants.map(_.render) == Chunk("image/png", "image/jpeg", "image/gif", "image/webp").map(Result.succeed(_)))
+        }
+        "each text constant is the type its text reads as" in {
+            val constants = Chunk(
+                MediaType.TextPlain,
+                MediaType.TextMarkdown,
+                MediaType.TextCsv,
+                MediaType.TextHtml,
+                MediaType.TextXml,
+                MediaType.TextCss,
+                MediaType.TextJavascript,
+                MediaType.ApplicationJson,
+                MediaType.ApplicationXml,
+                MediaType.ApplicationYaml,
+                MediaType.ApplicationToml
+            )
+            val texts = Chunk(
+                "text/plain",
+                "text/markdown",
+                "text/csv",
+                "text/html",
+                "text/xml",
+                "text/css",
+                "text/javascript",
+                "application/json",
+                "application/xml",
+                "application/yaml",
+                "application/toml"
+            )
+            assert(texts.map(MediaType.parse(_)) == constants.map(Result.succeed(_)))
+            assert(constants.map(_.render) == texts.map(Result.succeed(_)))
+        }
+        "the octet-stream constant is the type its text reads as" in {
+            assert(MediaType.parse("application/octet-stream") == Result.succeed(MediaType.ApplicationOctetStream))
+            assert(MediaType.ApplicationOctetStream.render == Result.succeed("application/octet-stream"))
+        }
+        "the audio, video, PDF and Office constants are the types their texts read as" in {
+            val constants = Chunk(
+                MediaType.AudioAac,
+                MediaType.AudioAmr,
+                MediaType.AudioMpeg,
+                MediaType.AudioMp4,
+                MediaType.AudioOgg,
+                MediaType.VideoMp4,
+                MediaType.Video3gpp,
+                MediaType.ApplicationPdf,
+                MediaType.ApplicationMsword,
+                MediaType.ApplicationVndMsExcel,
+                MediaType.ApplicationVndMsPowerpoint,
+                MediaType.ApplicationVndOpenxmlformatsOfficedocumentWordprocessingmlDocument,
+                MediaType.ApplicationVndOpenxmlformatsOfficedocumentSpreadsheetmlSheet,
+                MediaType.ApplicationVndOpenxmlformatsOfficedocumentPresentationmlPresentation
+            )
+            val texts = Chunk(
+                "audio/aac",
+                "audio/amr",
+                "audio/mpeg",
+                "audio/mp4",
+                "audio/ogg",
+                "video/mp4",
+                "video/3gpp",
+                "application/pdf",
+                "application/msword",
+                "application/vnd.ms-excel",
+                "application/vnd.ms-powerpoint",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            )
+            assert(texts.map(MediaType.parse(_)) == constants.map(Result.succeed(_)))
+            assert(constants.map(_.render) == texts.map(Result.succeed(_)))
+        }
         "checks tokens and duplicate names, and lowercases the type, subtype and names" in {
             assert(MediaType.init("Text", "Plain", "Charset" -> "UTF-8").map(_.render) ==
                 Result.succeed(Result.succeed("text/plain; charset=UTF-8")))
