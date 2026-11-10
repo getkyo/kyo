@@ -585,6 +585,59 @@ class SyncTest extends kyo.test.Test[Any]:
 
     "ensure under interruption" - {
 
+        "finalizer outcome" - {
+            "default interruption delivers the fiber's Interrupted cause" in {
+                for
+                    outcome <- AtomicRef.init[Maybe[Error[Any]]](Absent)
+                    entered <- Latch.init(1)
+                    blocker <- Promise.init[Int, Any]
+                    fiber   <- Fiber.initUnscoped(Sync.ensure(outcome.set)(entered.release.andThen(blocker.get)))
+                    _       <- entered.await
+                    _       <- fiber.interrupt
+                    result  <- fiber.getResult
+                    error   <- outcome.get
+                yield error match
+                    case Present(Panic(cause: Interrupted)) => assert(result == Result.Panic(cause))
+                    case other                              => fail(s"expected the interrupt cause, received $other")
+                end for
+            }
+
+            "custom panic interruption preserves the same cause" in {
+                val cause = new IllegalStateException("interrupt cause")
+                for
+                    outcome <- AtomicRef.init[Maybe[Error[Any]]](Absent)
+                    entered <- Latch.init(1)
+                    blocker <- Promise.init[Int, Any]
+                    fiber   <- Fiber.initUnscoped(Sync.ensure(outcome.set)(entered.release.andThen(blocker.get)))
+                    _       <- entered.await
+                    _       <- fiber.interrupt(Result.Panic(cause))
+                    result  <- fiber.getResult
+                    error   <- outcome.get
+                yield
+                    assert(result == Result.Panic(cause))
+                    assert(error == Present(Result.Panic(cause)))
+                end for
+            }
+
+            "a handler dropping the remainder still delivers a discard" in {
+                for
+                    outcome <- AtomicRef.init[Maybe[Error[Any]]](Absent)
+                    first   <- Stream[Int, Sync] {
+                        Sync.ensure(outcome.set)(Emit.value(Chunk(1)).andThen(Emit.value(Chunk(2))))
+                    }.take(1).run
+                    error <- outcome.get
+                yield
+                    assert(first == Chunk(1))
+                    error match
+                        case Present(Panic(cause)) =>
+                            assert(cause.getClass.getName == classOf[KyoException].getName)
+                            assert(cause.getMessage.contains("remainder discarded"))
+                        case other => fail(s"expected the discard cause, received $other")
+                    end match
+                end for
+            }
+        }
+
         // Holds only while nothing
         // deferred sits above the region, since the abandonment walk stops at one.
         "runs its finalizer for a fiber abandoned before its first slice" in {
