@@ -155,19 +155,19 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
 
         "plain class" in {
             typeCheckFailure("kyo.Schema.derived[kyo.MTOpaque]")(
-                "not a case class or sealed trait"
+                "not a case class, record or sealed trait"
             )
         }
 
         "open trait" in {
             typeCheckFailure("kyo.Schema.derived[kyo.MTOpenTrait]")(
-                "not a case class or sealed trait"
+                "not a case class, record or sealed trait"
             )
         }
 
         "primitive" in {
             typeCheckFailure("kyo.Schema.derived[Int]")(
-                "not a case class or sealed trait"
+                "not a case class, record or sealed trait"
             )
         }
 

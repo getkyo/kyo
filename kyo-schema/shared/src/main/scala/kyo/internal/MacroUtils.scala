@@ -117,18 +117,53 @@ private[internal] object MacroUtils:
         childPrefix.select(caseSym)
     end sumCaseReference
 
-    /** The type a case's schema is typed at: a case object's module class, otherwise the case's own reference. */
-    private[internal] def sumCaseType(using Quotes)(reference: quotes.reflect.TypeRepr): quotes.reflect.TypeRepr =
+    /** The type a case's schema is typed at: a case object's module class, an enum value's singleton type, otherwise the case's
+      * reference applied to its own type parameters as the sum `sumType` fixes them. A parameter is solved from the sum's arguments
+      * through the case's extends clause: `Used[R] extends Co[R]` under `Co[Int]` is `Used[Int]`. One the sum does not fix (`sealed
+      * trait Sub[A] extends Sum[A]` under `Sum[?]`, or a parameter the extends clause does not mention) is a wildcard: the bare
+      * constructor is not a type a Schema or an instance test can take.
+      */
+    private[internal] def sumCaseType(using
+        Quotes
+    )(
+        sumType: quotes.reflect.TypeRepr,
+        parent: quotes.reflect.Symbol,
+        reference: quotes.reflect.TypeRepr
+    ): quotes.reflect.TypeRepr =
         import quotes.reflect.*
-        reference match
-            case ref: TermRef if ref.termSymbol.flags.is(Flags.Module) => ref.widen
-            case applied: AppliedType                                  => applied
-            case other                                                 =>
-                // A case whose own type parameter the sum does not fix (`sealed trait Sub[A] extends Sum[A]` under `Sum[?]`) is
-                // referenced at wildcards: the bare constructor is not a type a Schema or an instance test can take.
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+        val resolved                   = reference match
+            // An enum value of a generic enum is a val of the sum's type, so its class's parameters are not the value's.
+            case ref: TermRef         => if ref.termSymbol.flags.is(Flags.Module) then ref.widen else ref
+            case applied: AppliedType => applied
+            case other                =>
                 val params = other.typeSymbol.declaredTypes.filter(_.isTypeParam)
-                if params.isEmpty then other else other.appliedTo(params.map(_ => TypeBounds.empty))
-        end match
+                if params.isEmpty then other
+                else
+                    val arguments = sumType.dealias match
+                        case AppliedType(_, args) => args
+                        case _                    => Nil
+                    def solve(solved: Map[Symbol, TypeRepr], pattern: TypeRepr, argument: TypeRepr): Map[Symbol, TypeRepr] =
+                        (pattern, argument) match
+                            case (TypeRef(_, _), _) if params.contains(pattern.typeSymbol) =>
+                                if solved.contains(pattern.typeSymbol) then solved else solved.updated(pattern.typeSymbol, argument)
+                            case (AppliedType(tycon, patterns), AppliedType(actual, actuals))
+                                if tycon =:= actual && patterns.size == actuals.size =>
+                                patterns.zip(actuals).foldLeft(solved)((acc, pair) => solve(acc, pair._1, pair._2))
+                            case _ => solved
+                    val solved = other.appliedTo(params.map(_.typeRef)).baseType(parent) match
+                        case AppliedType(_, patterns) if patterns.size == arguments.size =>
+                            patterns.zip(arguments).foldLeft(Map.empty[Symbol, TypeRepr])((acc, pair) => solve(acc, pair._1, pair._2))
+                        case _ => Map.empty[Symbol, TypeRepr]
+                    other.appliedTo(params.map(p => solved.getOrElse(p, TypeBounds.empty)))
+                end if
+        if !(resolved <:< sumType) then
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${sumType.show}: resolved variant ${resolved.show} is not a subtype of the requested sum. " +
+                    "Provide an explicit Schema for this specialization."
+            )
+        end if
+        resolved
     end sumCaseType
 
     /** Aborts unless every variant of the sum `sym` is one a tag-only representation can write as its name alone: a case object, an

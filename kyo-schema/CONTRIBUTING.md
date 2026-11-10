@@ -73,23 +73,13 @@ Every `Schema[A]` carries its `Structure.Type` lazily via `lazy val _structure` 
 
 **Trap (default equals compares function references)**: the default case-class `equals` on `Structure.Field` would compare wrapping `Function0` references and report `false` for structurally identical Fields. A hand-rolled `equals` forces both thunks and compares the structures via `.equals`. `Structure.Type` has no `CanEqual`; reach for `.equals` directly. New `Structure.Type` variants must support `.equals` [kyo-schema/shared/src/main/scala/kyo/Structure.scala:294-306].
 
-### Structural-emit + runtime-walk
+### Static product and sum emission
 
-The derivation macro is a **structural emitter**, not a per-type specializer. It walks `sym.caseFields` (for case classes) or `sym.children` (for sealed traits) and, for each field/variant, emits a thunk wrapping `scala.compiletime.summonInline[Schema[ft]]`. It assembles a runtime field/variant table consumed by `SchemaCodecRuntime`. **The macro never pattern-matches on a specific container or primitive type symbol**: every nested type resolves via `summonInline` at the inline-expansion phase, which sees forward-references to the in-flight `derived$Schema` and so handles recursion without any special-case in the macro [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:11-22] [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:315-322].
+The derivation macro walks case-class fields, a record's field intersection, or a sealed type's variants. Product emission shares one path for case classes and records: names and types determine the generated write/read operations; a case-class field uses its accessor, while a record field reads the value stored under its name. Decoding constructs the corresponding case class or record.
 
-The emission has **constant per-method bytecode**: `serializeWrite` / `serializeRead` each call a single runtime helper passing the precomputed field-entry table. The table itself uses `summonInline[Schema[ft]]` thunks that resolve at the inline-expansion phase, with the in-flight `derived$Schema` visible by forward-reference [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:367-373].
+Each distinct field schema is hoisted into a lazy binding shared by writing, reading and structural descriptions. Field-name bytes and defaults are also shared per schema instance. Recursive variants can refer to the enclosing sum's lazy schema. Keep these bindings shared when extending the emitter; duplicating their inline expansions increases generated class-file size.
 
-The JVM class-file limit drives this architecture: keeping per-derivation inline bytecode constant-sized is what allows test classes with many `derives Schema` to compile. **Reintroducing per-field branching back into the emitted methods is what gets a test class to exceed the limit** [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:7-14] [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:400-405].
-
-All per-field metadata is packed into ONE compile-time string literal `name<TAB>flags;...` that the runtime `ProductFieldsMeta` inflates into parallel arrays once at construction. The macro deliberately emits a single string constant rather than N field-meta values to keep emission small [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:26-37].
-
-The runtime helper walks the per-field thunk array lazily: a single `lazy val schemas: Array[Schema[Any]] = schemasBuilder()` forces the entire field-Schema array on first use; per-field schemas are then indexed by position in `writeProduct` / `readProduct`. The thunk indirection is what lets recursive Schemas reach their `derived$Schema` binding by forward-reference [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:84-117].
-
-### The write/read inner loops
-
-`SchemaCodecRuntime.writeProduct` reads field `i` via `product.productElement(i)`, special-cases `Maybe` and `Option` for omission, and otherwise emits `writer.fieldBytes(meta.nameBytes(i), meta.fieldIds(i))` followed by a recursive `SchemaSerializer.writeTo(schemas(i), raw, writer)`. This is the actual byte-loop the JIT sees [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:121-150].
-
-`SchemaCodecRuntime.readProduct` initialises every slot from `meta.defaults` / `Maybe.empty` / `None`, loops over `reader.hasNextField()`, matches names with `reader.matchField(meta.nameBytes(j))` (zero-allocation byte compare), and OR-s a `seen` bitmap against `meta.requiredMask` (after `reader.droppedFieldsMask(n)`) to enforce required fields [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:152-212].
+The generated writer emits fields directly through the codec bridge, with optional-field omission at each field. The reader initializes defaults and absent optionals, dispatches input fields by name, and tracks required fields in a Long bitmap. Both case classes and records therefore support at most 64 fields. See `emitProductSchemaStatic` and `emitSealedSchemaStatic` in [FocusMacro.scala](shared/src/main/scala/kyo/internal/FocusMacro.scala).
 
 ### Transform-aware dispatch: `hasTransforms`
 
@@ -704,7 +694,7 @@ When the wrapper has an invariant, use `.transformVia(construct)(from)` instead:
 
 ### Add `derives Schema` support for a user ADT
 
-There is no recipe. `case class Foo(...) derives Schema` or `sealed trait Bar derives Schema` is the entire surface; the macro walks `sym.caseFields` (case classes) or `sym.children` (sealed traits) and resolves each nested type via `summonInline[Schema[ft]]`, so any user `given Schema[X]` already in implicit scope plugs in without macro changes [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:315-340].
+There is no recipe. `case class Foo(...) derives Schema` or `sealed trait Bar derives Schema` is the entire surface; the macro walks `sym.caseFields` (case classes), a `Record[F]`'s fields (records) or `sym.children` (sealed traits) and resolves each nested type via `summonInline[Schema[ft]]`, so any user `given Schema[X]` already in implicit scope plugs in without macro changes [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:315-340].
 
 Two compile-time refusals to be aware of:
 
