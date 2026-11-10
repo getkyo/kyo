@@ -338,7 +338,21 @@ private[internal] object MacroUtils:
         val typeArgs  = tpe match
             case AppliedType(_, targs) => targs
             case _                     => List.empty
-        Select.overloaded(companion, "apply", typeArgs, args)
+        applyContextualArgs(Select.overloaded(companion, "apply", typeArgs, args))
     end constructCaseClass
+
+    /** Completes a constructor or companion call with the givens visible where it is expanded. */
+    private[internal] def applyContextualArgs(using Quotes)(call: quotes.reflect.Term): quotes.reflect.Term =
+        import quotes.reflect.*
+        call.tpe.widen match
+            case clause: MethodType if clause.isImplicit =>
+                val args = clause.paramTypes.map { paramType =>
+                    paramType.asType match
+                        case '[p] => '{ scala.compiletime.summonInline[p] }.asTerm
+                }
+                applyContextualArgs(call.appliedToArgs(args))
+            case _ => call
+        end match
+    end applyContextualArgs
 
 end MacroUtils
