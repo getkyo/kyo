@@ -274,6 +274,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
 
     /** Takes elements from the stream while the pure predicate is true.
       *
+      * Stops at the first rejected element without pulling another upstream chunk.
+      *
       * @param f
       *   The pure predicate function
       * @return
@@ -284,18 +286,19 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[VV, S] =
         Stream(
-            ArrowEffect.handleLoopState(tag, true, emit)([C] =>
-                (state, input) =>
-                    if !state then Loop.done(())
-                    else if input.isEmpty then Loop.continue(state, ())
+            ArrowEffect.handleLoop(tag, emit)([C] =>
+                input =>
+                    if input.isEmpty then Loop.continue(())
                     else
                         val c = input.takeWhile(f)
-                        Emit.valueWith(c)(Loop.continue(c.size == input.size, ()))
+                        Emit.valueWith(c)(if c.size == input.size then Loop.continue(()) else Loop.done(()))
             )
         )
     end takeWhilePure
 
     /** Takes elements from the stream while the effectful predicate is true.
+      *
+      * Stops at the first rejected element without pulling another upstream chunk.
       *
       * @param f
       *   The effectful predicate function
@@ -304,13 +307,11 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def takeWhile[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
-            ArrowEffect.handleLoopState(tag, true, emit)([C] =>
-                (state, input) =>
-                    if !state then Loop.done(())
-                    else
-                        Kyo.takeWhile(input)(f).map { c =>
-                            Emit.valueWith(c)(Loop.continue(c.size == input.size, ()))
-                        }
+            ArrowEffect.handleLoop(tag, emit)([C] =>
+                input =>
+                    Kyo.takeWhile(input)(f).map { c =>
+                        Emit.valueWith(c)(if c.size == input.size then Loop.continue(()) else Loop.done(()))
+                    }
             )
         )
     end takeWhile

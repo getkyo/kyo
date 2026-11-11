@@ -1013,6 +1013,25 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
     }
 
     "stream resource cleanup (#1398)" - {
+        for (name, pure) <- Seq("takeWhile" -> false, "takeWhilePure" -> true) do
+            s"$name releases after delivering its prefix without running the upstream tail" in {
+                AtomicRef.init(Chunk.empty[String]).map { log =>
+                    val stream = Stream:
+                        Sync.ensure(log.updateAndGet(_ :+ "release").unit):
+                            Emit.value(Chunk(1, 2, 3)).andThen(Abort.fail("upstream tail"))
+                    val selected =
+                        if pure then stream.takeWhilePure(_ < 3)
+                        else stream.takeWhile(v => Kyo.lift(v < 3))
+                    Abort.run[String](selected.tap(v => log.updateAndGet(_ :+ v.toString).unit).run).map { result =>
+                        log.get.map { entries =>
+                            assert(result == Result.succeed(Chunk(1, 2)))
+                            assert(entries == Chunk("1", "2", "release"))
+                        }
+                    }
+                }
+            }
+        end for
+
         "Scope.ensure runs after full stream consumption" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
