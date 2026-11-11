@@ -131,7 +131,16 @@ val items = HttpClient.getNdJson[StockPrice]("https://api.example.com/stream")
 
 `getSseText` is also available for SSE streams with plain text data.
 
-Both return a `Stream` directly. The connection is established and data is parsed when the stream is consumed:
+Use `postSseJson`, `postSseText` or `postNdJson` to send a JSON body and consume a streaming response. The request body's `Schema` determines its encoding:
+
+```scala
+// Sends the user as JSON and returns a stream of SSE events whose data is Post
+val posts = HttpClient.postSseJson[Post]("https://api.example.com/feed", User(1, "alice"))
+```
+
+A non-2xx response fails the stream with `HttpStatusException`. Its `headers` retain values such as `Retry-After` alongside the status and body.
+
+These methods return a `Stream` directly. The connection is established and data is parsed when the stream is consumed:
 
 ```scala
 // Emits HttpSseEvent[StockPrice] values, performs Async IO and can fail with HttpException

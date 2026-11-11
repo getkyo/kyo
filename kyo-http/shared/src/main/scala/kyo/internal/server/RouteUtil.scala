@@ -215,8 +215,8 @@ private[kyo] object RouteUtil:
             case Result.Success(resp) if !status.isSuccess =>
                 Result.succeed(resp.copy(rawBody = if body.isEmpty then Absent else Present(spanToString(body))))
             case Result.Error(_: HttpDecodeException) if !status.isSuccess =>
-                if body.isEmpty then Result.fail(HttpStatusException(status, method, url.toString))
-                else Result.fail(HttpStatusException(status, method, url.toString, spanToString(body)))
+                if body.isEmpty then Result.fail(HttpStatusException(status, method, url.toString, headers))
+                else Result.fail(HttpStatusException(status, method, url.toString, spanToString(body), headers))
             case other => other
         end match
     end decodeBufferedResponse
@@ -1164,7 +1164,8 @@ private[kyo] object RouteUtil:
 
     // SSE (the WHATWG event stream format): lines end with CR, LF or CRLF; a field is the text before the first colon, its value the text
     // after it minus one leading space; a line starting with a colon is a comment; an empty line dispatches the event, which needs at
-    // least one data line; the data lines join with LF; an event the stream ends inside is discarded.
+    // least one data line; the data lines join with LF; an empty event field leaves the default type; an event the stream ends inside is
+    // discarded.
 
     /** The bytes of the line in progress (as the pieces they arrived in, joined once the line ends), whether it ended on a CR whose LF
       * may still follow, whether it is the stream's first line (the one a byte order mark may precede), and the fields of the event in
@@ -1254,17 +1255,30 @@ private[kyo] object RouteUtil:
                 else line.substring(colon + 1)
             val next = field match
                 case "data"  => st.copy(data = Present(st.data.getOrElse(Chunk.empty).append(value)))
-                case "event" => st.copy(event = Present(value))
+                case "event" => st.copy(event = Maybe.when(value.nonEmpty)(value))
                 case "id"    => if value.indexOf('\u0000') < 0 then st.copy(id = Present(value)) else st
                 case "retry" =>
-                    // digits only, and few enough to be a millisecond count a Long holds (the spec ignores any other value)
-                    if value.nonEmpty && value.length <= 18 && value.forall(c => c >= '0' && c <= '9') then
-                        st.copy(retry = Present(Duration.fromNanos(value.toLong * 1000000L)))
-                    else st
+                    sseRetry(value).map(retry => st.copy(retry = Present(retry))).getOrElse(st)
                 case _ => st
             (next, Absent)
         end if
     end sseLine
+
+    private def sseRetry(value: String): Maybe[Duration] =
+        val maxMillis = Long.MaxValue / 1000000L
+        @annotation.tailrec
+        def loop(index: Int, millis: Long): Maybe[Duration] =
+            if index == value.length then
+                Present(if millis > maxMillis then Duration.Infinity else Duration.fromNanos(millis * 1000000L))
+            else
+                val digit = value.charAt(index) - '0'
+                if digit < 0 || digit > 9 then Absent
+                else
+                    // Keep validating after saturation: a non-digit anywhere invalidates the whole field.
+                    loop(index + 1, math.min(millis * 10 + digit, maxMillis + 1))
+                end if
+        if value.isEmpty then Absent else loop(0, 0L)
+    end sseRetry
 
     private def finishSse(state: SseFraming): (Chunk[HttpSseEvent[String]], Maybe[Result.Error[HttpException]]) = (Chunk.empty, Absent)
 

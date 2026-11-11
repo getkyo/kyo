@@ -26,6 +26,21 @@ class HttpExceptionTest extends BaseHttpTest:
             val ex = HttpStatusException(HttpStatus.BadRequest, "GET", "http://x/y?token=abc", "err")
             assert(ex.url == "http://x/y")
         }
+        "carries the response's headers, with or without a body" in {
+            val headers  = HttpHeaders.init(Seq("retry-after" -> "7"))
+            val withBody = HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", "slow down", headers)
+            val bodiless = HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", headers)
+            assert(withBody.headers.get("retry-after") == Present("7"))
+            assert(withBody.body == Maybe("slow down"))
+            assert(bodiless.headers.get("retry-after") == Present("7"))
+            assert(bodiless.body == Maybe.empty)
+        }
+        "leaves the message to the status and the body, never the headers" in {
+            // One construction site, so the rendered frame is the same and only the headers differ.
+            def refusal(headers: HttpHeaders) = HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", "slow down", headers)
+            assert(refusal(HttpHeaders.init(Seq("retry-after" -> "7"))).getMessage == refusal(HttpHeaders.empty).getMessage)
+            assert(HttpStatusException(HttpStatus.TooManyRequests, "POST", "http://x/y", "slow down").headers.get("retry-after") == Absent)
+        }
     }
 
     // Built here, away from the leaves: KyoException renders the source around its frame into getMessage, so a leaf that constructed the
@@ -63,6 +78,25 @@ class HttpExceptionTest extends BaseHttpTest:
             assert(HttpConnectionClosedException(Phase.BeforeHead) == HttpConnectionClosedException(Phase.BeforeHead))
             assert(HttpConnectionClosedException(Phase.BeforeHead) != HttpConnectionClosedException(Phase.BodyTruncated))
         }
+    }
+
+    // Built away from the leaves, as closedIn is.
+    private def onIpv6: Chunk[HttpException] = Chunk(
+        HttpConnectException("::1", 8080, new Exception("refused")),
+        HttpConnectTimeoutException("::1", 8080, 1.second),
+        HttpPoolExhaustedException("::1", 8080, 4, summon[Frame]),
+        HttpBindException("::", 8080, new Exception("in use"))
+    )
+
+    "a message naming an IPv6 host writes it in brackets before its port" in {
+        val sentences =
+            Chunk(
+                "Connection to [::1]:8080 failed.",
+                "Connection to [::1]:8080 timed out",
+                "connections to [::1]:8080 are in use.",
+                "bind to [::]:8080."
+            )
+        assert(onIpv6.map(_.getMessage).zip(sentences).forall((message, sentence) => message.contains(sentence)))
     }
 
 end HttpExceptionTest

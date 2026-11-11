@@ -1594,6 +1594,96 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 case p: Result.Panic     => throw p.exception
             end match
         }
+
+        /** Decodes `reads`, one network read each, through `route`'s streaming body. */
+        def decodeReads[V](
+            route: HttpRoute[Any, "body" ~ Stream[V, Async & Abort[HttpException]], Nothing],
+            reads: Array[Byte]*
+        )(using Frame, Tag[Emit[Chunk[V]]]): Chunk[V] < (Async & Abort[HttpException]) =
+            val stream = Stream.init(reads.map(Span.fromUnsafe(_)), chunkSize = 1)
+            Abort.get(RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, stream, "GET", HttpUrl.fromUri("/events")))
+                .map(_.fields.body.run)
+        end decodeReads
+
+        def utf8(s: String): Array[Byte] = s.getBytes("UTF-8")
+
+        val sseText = HttpRoute.getRaw("events").response(_.bodySseText)
+
+        "a line ends at CRLF" in {
+            decodeReads(sseText, utf8("data: a\r\n\r\ndata: b\r\n\r\n")).map(events => assert(events.map(_.data) == Chunk("a", "b")))
+        }
+
+        "a line ends at a bare CR" in {
+            decodeReads(sseText, utf8("data: a\r\rdata: b\r\r")).map(events => assert(events.map(_.data) == Chunk("a", "b")))
+        }
+
+        "a CRLF split across reads ends one line" in {
+            decodeReads(sseText, utf8("data: a\r"), utf8("\ndata: b\r"), utf8("\n\r\n")).map { events =>
+                assert(events.map(_.data) == Chunk("a\nb"))
+            }
+        }
+
+        "a frame without data, such as a keepalive comment, is not an event" in {
+            decodeReads(sseText, utf8(": keep-alive\n\nevent: ping\n\ndata: a\n\n")).map { events =>
+                assert(events == Chunk(HttpSseEvent("a", Absent, Absent, Absent)))
+            }
+        }
+
+        "a keepalive comment between JSON events is skipped" in {
+            val route = HttpRoute.getRaw("events").response(_.bodySseJson[User])
+            decodeReads(route, utf8(": ping\n\ndata: {\"name\":\"Alice\",\"age\":30}\n\n")).map { events =>
+                assert(events.map(_.data) == Chunk(User("Alice", 30)))
+            }
+        }
+
+        "only the one space after the colon is removed from a value" in {
+            decodeReads(sseText, utf8("data:  indented \n\ndata:x\n\nevent:  name\ndata: y\n\n")).map { events =>
+                assert(events.map(_.data) == Chunk(" indented ", "x", "y"))
+                assert(events.map(_.event) == Chunk(Absent, Absent, Present(" name")))
+            }
+        }
+
+        "a retry that is not a number of milliseconds is ignored" in {
+            decodeReads(sseText, utf8("retry: soon\ndata: a\n\nretry: 250\ndata: b\n\n")).map { events =>
+                assert(events == Chunk(HttpSseEvent("a", Absent, Absent, Absent), HttpSseEvent("b", Absent, Absent, Present(250.millis))))
+            }
+        }
+
+        "retry milliseconds saturate without overflow or digit-count limits" in {
+            val values = Chunk(
+                "0",
+                "9223372036854",
+                "9223372036855",
+                "999999999999999999",
+                "9999999999999999999999999999999",
+                "000000000000000000000000000250",
+                "999999999999999999x"
+            )
+            val wire = values.map(value => s"retry: $value\ndata: x\n\n").mkString
+            decodeReads(sseText, utf8(wire)).map { events =>
+                assert(events.map(_.retry) == Chunk(
+                    Present(Duration.Zero),
+                    Present(Duration.fromNanos(9223372036854000000L)),
+                    Present(Duration.Infinity),
+                    Present(Duration.Infinity),
+                    Present(Duration.Infinity),
+                    Present(250.millis),
+                    Absent
+                ))
+            }
+        }
+
+        "an empty event field leaves the default type" in {
+            decodeReads(sseText, utf8("event:\ndata: a\n\nevent: update\nevent:\ndata: b\n\n")).map { events =>
+                assert(events == Chunk(HttpSseEvent("a", Absent, Absent, Absent), HttpSseEvent("b", Absent, Absent, Absent)))
+            }
+        }
+
+        "a multibyte character split across reads arrives whole" in {
+            val bytes = utf8("data: café\n\n")
+            val split = bytes.indexOf(0xa9.toByte)
+            decodeReads(sseText, bytes.take(split), bytes.drop(split)).map(events => assert(events.map(_.data) == Chunk("café")))
+        }
     }
 
     // ==================== Streamed body framing ====================
@@ -2042,6 +2132,38 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 case other => fail(s"expected unquoted whitespace to fail with HttpMissingBoundaryException, got $other")
             end match
         }
+
+        /** Decodes `body` as a streamed multipart request with boundary `abc`, delivered in reads split at `splits`. */
+        def streamedParts(body: Array[Byte], splits: Int*)(using Frame): Chunk[HttpRequest.Part] < (Async & Abort[HttpException]) =
+            val route   = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val bounds  = (0 +: splits :+ body.length).sliding(2).toSeq
+            val stream  = Stream.init(bounds.map(b => Span.fromUnsafe(body.slice(b(0), b(1)))), chunkSize = 1)
+            val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=abc")
+            Abort.get(RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream, maxPartSize))
+                .map(_.fields.body.run)
+        end streamedParts
+
+        def ascii(s: String): Array[Byte] = s.getBytes("US-ASCII")
+
+        "a binary part arrives byte for byte, across reads" in {
+            val data = Array[Byte](0xff.toByte, 0, 0x80.toByte, 0xc3.toByte, '\n', ' ')
+            val body = ascii("--abc\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.bin\"\r\n\r\n") ++ data ++
+                ascii("\r\n--abc--\r\n")
+            streamedParts(body, body.length - 12, body.length - 9).map { parts =>
+                assert(parts.map(_.name) == Chunk("file"))
+                assert(parts.map(_.filename) == Chunk(Present("x.bin")))
+                assert(parts.head.data.toArray.toSeq == data.toSeq)
+            }
+        }
+
+        "a preamble before the first delimiter and an epilogue after the last are not parts" in {
+            val body = ascii("preamble\r\n--abc\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\none\r\n" +
+                "--abc\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\n two \r\n--abc--\r\nepilogue")
+            streamedParts(body, 3, 20).map { parts =>
+                assert(parts.map(_.name) == Chunk("a", "b"))
+                assert(parts.map(p => new String(p.data.toArray, "US-ASCII")) == Chunk("one", " two "))
+            }
+        }
     }
 
     // ==================== NDJSON line splitting ====================
@@ -2102,6 +2224,25 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
+        }
+
+        "a multibyte character split across reads arrives whole" in {
+            val route = HttpRoute.getRaw("events").response(_.bodyNdjson[User])
+            val bytes = "{\"name\":\"José\",\"age\":30}\n".getBytes("UTF-8")
+            val split = bytes.indexOf(0xa9.toByte)
+            val reads = Stream.init(Seq(Span.fromUnsafe(bytes.take(split)), Span.fromUnsafe(bytes.drop(split))), chunkSize = 1)
+            Abort.get(RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, reads, "GET", HttpUrl.fromUri("/events")))
+                .map(_.fields.body.run)
+                .map(users => assert(users == Chunk(User("José", 30))))
+        }
+
+        "a last line the stream ends without a newline is decoded" in {
+            val route = HttpRoute.getRaw("events").response(_.bodyNdjson[User])
+            val body  = "{\"name\":\"Alice\",\"age\":30}\r\n\n{\"name\":\"Bob\",\"age\":25}"
+            val reads = Stream.init(Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
+            Abort.get(RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, reads, "GET", HttpUrl.fromUri("/events")))
+                .map(_.fields.body.run)
+                .map(users => assert(users == Chunk(User("Alice", 30), User("Bob", 25))))
         }
     }
 
