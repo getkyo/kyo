@@ -101,6 +101,16 @@ class IsolateTest extends Test:
             typeCheckFailure("Isolate.derive[NotContextEffect, Any, Any]")(error)
         }
 
+        "an effect a kept effect is a subtype of needs no isolate" in {
+            val isolate                          = Isolate.derive[NotContextEffect, NotContextEffectSub, Any]
+            val value: Int < NotContextEffectSub = isolate.run(42)
+            assert(ArrowEffect.handleLoop(Tag[NotContextEffectSub], value)([C] => input => Loop.continue(input)).eval == 42)
+        }
+
+        "a kept effect does not cover its own subtypes" in {
+            typeCheckFailure("Isolate.derive[NotContextEffectSub, NotContextEffect, Any]")(error)
+        }
+
         "resolves implicitly for context effects" in {
             val i = summon[Isolate[TestEffect1, Any, TestEffect1]]
             val v = i.run(ContextEffect.suspend(Tag[TestEffect1]))
@@ -167,6 +177,34 @@ class IsolateTest extends Test:
         "a non-inheritable region is the scope's own value when nothing forks" in {
             val read: Int < Any = ContextEffect.suspend(Tag[Forking], -1)
             assert(ContextEffect.handleNonInheritable(Tag[Forking], 7)(read).eval == 7)
+        }
+    }
+
+    "crossing" - {
+        "a state captured inside a region is read by a run outside it" in {
+            val isolate         = summon[Isolate[Any, Any, Any]].crossing
+            val captured        = ContextEffect.handleInheritable(Tag[TestEffect1], 7)(isolate.capture(state => state)).eval
+            val read: Int < Any = ContextEffect.suspend(Tag[TestEffect1], -1)
+            assert(isolate.run(captured, read).eval == 7)
+        }
+
+        "each run of one captured state forks the region from the captured value" in {
+            val isolate  = summon[Isolate[Any, Any, Any]].crossing
+            var forks    = 0
+            val captured =
+                ContextEffect.handle(
+                    Tag[TestEffect1],
+                    (_: Maybe[Int]) => 7,
+                    fork = (parent: Int) =>
+                        forks += 1
+                        parent + forks
+                    ,
+                    join = (parent: Int, _: Int, _: Int) => parent
+                )(isolate.capture(state => state)).eval
+            val read: Int < Any = ContextEffect.suspend(Tag[TestEffect1], -1)
+            assert(isolate.run(captured, read).eval == 8)
+            assert(isolate.run(captured, read).eval == 9)
+            assert(forks == 2)
         }
     }
 

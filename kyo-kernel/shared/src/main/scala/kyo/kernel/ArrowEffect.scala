@@ -685,9 +685,9 @@ object ArrowEffect:
     /** Handles the first occurrence of an arrow effect and transforms the final result, leaving later occurrences unhandled.
       *
       * The continuation handed to `handle` is the remainder of `v`, carrying every region that sat between this handler and the operation, a
-      * bracket included. Those regions are re-installed each time the holder resumes the continuation, running against the live resource, and
-      * a bracket travelling with the remainder releases once, where the holder ends. A remainder that is never resumed releases at the exit
-      * of the scope enclosing this handler, or at the end of the evaluation.
+      * bracket included. The holder resumes the continuation at most once, while the enclosing resource-owning scope is still alive.
+      * Its regions are re-installed for that resumption, and a bracket travelling with the remainder releases once, where the holder ends.
+      * A remainder that is never resumed releases at the exit of the scope enclosing this handler, or at the end of the evaluation.
       *
       * @param effectTag
       *   Identifies which arrow effect to answer
@@ -699,7 +699,7 @@ object ArrowEffect:
       *   Function to transform the final result if no effect is found
       */
     @nowarn("msg=anonymous")
-    private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
+    inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
         inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =

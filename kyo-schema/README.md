@@ -85,6 +85,8 @@ case class Person(name: String, age: Int) derives Schema
 
 **Note:** nearly every method in this module takes an implicit `kyo.Frame` parameter used for source-location reporting in exceptions. The signatures shown throughout this document omit `(using Frame)` for readability; the compiler synthesizes it at the call site from the caller's frame.
 
+Case-class constructor parameters in `using` clauses are supplied from givens in the derivation scope. They stay off the wire, including parameters retained as `using val` members; only case fields are serialized. Decoding supplies the reader's `Frame` in that scope. Builders, conversions and focus setters resolve contextual parameters where their macros expand.
+
 ## Schemas: the single source of truth
 
 Every API in this module reads from a `Schema[A]`. Once you have one, serialization, navigation, validation, and conversion are methods you call on it:

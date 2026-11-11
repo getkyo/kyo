@@ -233,6 +233,14 @@ object Teams:
                 .map(answer => decoded[Out](route, if answer.trim.isEmpty then "null" else answer))
         }
 
+    /** The bytes of a file the Bot Connector holds, at the URL an attachment's `contentUrl` names, such as an image a person pasted into
+      * a message, read with the bot's token. The URL's origin must be one `TeamsConfig.serviceHosts` lists, as every call's is, and the
+      * file is a response body, so `TeamsConfig.maxResponseLength` bounds it. The request target must be percent-encoded ASCII;
+      * malformed targets and Unix socket URLs are refused before the bot's token is requested.
+      */
+    def download(url: HttpUrl)(using Frame): Span[Byte] < (Async & Abort[TeamsDownloadFailure] & Env[Teams]) =
+        Env.use[Teams](Connector.download[TeamsDownloadFailure](_, Routes.Download, url))
+
     /** The HTTP methods `custom` sends. */
     enum Method derives CanEqual:
         case Get, Post, Put, Patch, Delete
@@ -263,7 +271,7 @@ object Teams:
 
         /** Verifies a delivery's `authorization` header against the Bot Framework's signing keys, fetching them when the key cache says
           * so, and checks the two fields of `body` the token binds: the Activity's `channelId`, which the signing key must endorse and
-          * which must be `msteams`, and its `serviceUrl`, which must be the token's `serviceUrl` claim.
+          * which must be `msteams`, and its `serviceUrl`, which must be the token's `serviceurl` claim.
           */
         def verify(authorization: Maybe[String], body: Span[Byte])(using
             Frame
@@ -345,6 +353,7 @@ object Teams:
         inline val CreateConversation = "POST /v3/conversations"
         inline val Members            = "GET /v3/conversations/{conversationId}/pagedmembers"
         inline val Member             = "GET /v3/conversations/{conversationId}/members/{memberId}"
+        inline val Download           = "GET /v3/attachments/{attachmentId}/views/{viewId}"
     end Routes
 
     // Teams assigns every id, so an id is refused only when it is empty or longer than any Teams issues; its characters are kept, and a
@@ -880,6 +889,23 @@ object Teams:
         given Schema[TextFormat] = Schema.derived[TextFormat]
     end TextFormat
 
+    /** The layout hint for a message's attachments.
+      *
+      * `List` requests a vertical list; `Carousel` requests a horizontal carousel. A client that does not support a carousel may
+      * display a list instead. Omitting the hint from [[Message.Create]] keeps the channel's default layout.
+      *
+      * `Other` preserves an unrecognized name when a message is decoded and encoded again, so a new channel layout does not make
+      * the message unreadable. The schema reads and writes the Bot Framework's string names.
+      */
+    @tagOnly
+    sealed trait AttachmentLayout derives CanEqual
+    object AttachmentLayout:
+        @rename("list") case object List               extends AttachmentLayout
+        @rename("carousel") case object Carousel       extends AttachmentLayout
+        @catchAll final case class Other(name: String) extends AttachmentLayout
+        given Schema[AttachmentLayout] = Schema.derived[AttachmentLayout]
+    end AttachmentLayout
+
     /** How the Teams client shows a message. */
     @tagOnly
     sealed trait Importance derives CanEqual
@@ -1104,8 +1130,8 @@ object Teams:
     object Message:
         /** A message `send`, `reply` and `edit` send: text, cards and files, and the mentions the text holds.
           *
-          * `summary` is the text a notification shows, and `importance` how the client flags it. Its `Schema` is the Activity JSON
-          * Teams receives, a `message` with every absent field left out.
+          * `attachmentLayout` is how the client lays out the attachments, `summary` the text a notification shows, and `importance` how
+          * the client flags it. Its `Schema` is the Activity JSON Teams receives, a `message` with every absent field left out.
           */
         final case class Create(
             text: Maybe[String] = Absent,
@@ -1113,7 +1139,8 @@ object Teams:
             attachments: Chunk[Attachment] = Chunk.empty,
             entities: Chunk[Entity] = Chunk.empty,
             summary: Maybe[String] = Absent,
-            importance: Maybe[Importance] = Absent
+            importance: Maybe[Importance] = Absent,
+            attachmentLayout: Maybe[AttachmentLayout] = Absent
         ) derives CanEqual
 
         object Create:

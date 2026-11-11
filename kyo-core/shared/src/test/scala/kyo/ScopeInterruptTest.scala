@@ -383,31 +383,31 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "a peeled remainder running on a child fiber is not released under it when the peeling scope ends" in {
+    "a peeled remainder first resumed on a child after its scope ends is refused" in {
+        // Re-entry checks whether the bracket already closed; it cannot revoke a use already running on another fiber.
+        // The public peel confines its remainder with NoEscape. This private peel exercises the runtime refusal after release.
         for
-            released <- AtomicBoolean.init(false)
-            entered  <- Latch.init(1)
-            gate     <- Latch.init(1)
-            child    <- Scope.run {
+            released <- AtomicInt.init(0)
+            used     <- AtomicBoolean.init(false)
+            rest     <- Scope.run {
                 Emit.runFirst[Int] {
-                    Sync.ensure(released.set(true)) {
-                        Emit.value(1).andThen(entered.release).andThen(gate.await).andThen(released.get)
+                    Sync.ensure(released.incrementAndGet.unit) {
+                        Emit.value(1).andThen(used.set(true))
                     }
-                }.map { case (_, rest) =>
-                    Fiber.initUnscoped(Abort.run[Closed](Emit.run[Int](rest(())).map(_._2))).map { child =>
-                        entered.await.andThen(child)
-                    }
-                }
+                }.map(_._2)
             }
-            _      <- gate.release
+            atExit <- released.get
+            child  <- Fiber.initUnscoped(Emit.run[Int](rest(())).map(_._2))
             result <- child.getResult
-        yield result match
-            case Result.Success(Result.Success(true)) =>
-                fail("the child ran its use after the peeling scope released the resource under it")
-            case Result.Success(Result.Success(false)) | Result.Success(Result.Failure(_: Closed)) | Result.Panic(_: Closed) =>
-                succeed
-            case other =>
-                fail(s"unexpected outcome $other")
+            total  <- released.get
+            useRan <- used.get
+        yield
+            assert(atExit == 1)
+            assert(total == 1)
+            assert(!useRan)
+            result match
+                case Result.Panic(_: Closed) => succeed
+                case other                   => fail(s"expected a closed bracket, got $other")
         end for
     }
 

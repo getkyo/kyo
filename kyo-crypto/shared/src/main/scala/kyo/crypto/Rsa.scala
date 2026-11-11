@@ -1,6 +1,7 @@
 package kyo.crypto
 
 import kyo.*
+import kyo.internal.crypto.DerReader
 import kyo.internal.crypto.Exponentiation
 
 /** RSA public keys, built only through checks that bound what an exponentiation may cost and refuse what RFC 8017 rules out.
@@ -90,9 +91,18 @@ object Rsa:
 
         /** The key with `modulus` and `exponent`, or the first check they fail. */
         def apply(modulus: BigInt, exponent: BigInt): Result[KeyFailure, VerificationKey] =
+            checked(modulus, exponent) match
+                case Result.Success(key)     => Result.succeed(key)
+                case Result.Failure(failure) => Result.fail(KeyFailure.Bounds(failure))
+                case panic: Result.Panic     => panic
+
+        /** The checks of [[apply]], failing with the [[BoundsFailure]] itself: a key read as numbers out of another structure, such as a
+          * private key's public half, cannot fail [[KeyFailure]]'s encoding cases, and its reader wraps the failure in its own.
+          */
+        private[kyo] def checked(modulus: BigInt, exponent: BigInt): Result[BoundsFailure, VerificationKey] =
             checkBounds(modulus, exponent, MinModulusBits) match
                 case Absent           => Result.succeed(new VerificationKey(modulus, exponent))
-                case Present(failure) => Result.fail(KeyFailure.Bounds(failure))
+                case Present(failure) => Result.fail(failure)
     end VerificationKey
 
     /** A peer's RSA public key: under the two ceilings, at least [[MinEncryptionModulusBits]], odd modulus, odd exponent of at least 3.
@@ -172,19 +182,26 @@ object Rsa:
     def encryptionKeyFromPem(pem: String): Result[SpkiFailure, EncryptionKey] =
         if !pem.contains(PemHeader) then Result.fail(SpkiFailure.PemHeaderMissing)
         else
-            val body   = withoutWhitespace(pem.replace(PemHeader, "").replace(PemFooter, ""))
-            val padded =
-                body.length % 4 match
-                    case 2 => body + "=="
-                    case 3 => body + "="
-                    case _ => body
-            Base64.decode(padded) match
+            pemBody(pem, PemHeader, PemFooter) match
                 case Result.Success(der) => encryptionKeyFromSpki(der)
                 case Result.Failure(e)   => Result.fail(SpkiFailure.PemNotBase64(e))
                 case panic: Result.Panic => panic
-            end match
         end if
     end encryptionKeyFromPem
+
+    /** The decoded body of a PEM whose marker lines are `header` and `footer`: both removed, whitespace anywhere dropped, a final unit
+      * lacking its `=` padding padded, then base64. Whether `header` is present is the caller's check, made before, since each key type
+      * fails it with a failure of its own.
+      */
+    private[kyo] def pemBody(pem: String, header: String, footer: String): Result[Base64.Failure, Span[Byte]] =
+        val body   = withoutWhitespace(pem.replace(header, "").replace(footer, ""))
+        val padded =
+            body.length % 4 match
+                case 2 => body + "=="
+                case 3 => body + "="
+                case _ => body
+        Base64.decode(padded)
+    end pemBody
 
     /** The key a DER SubjectPublicKeyInfo holds (RFC 5280 section 4.1, with the RSAPublicKey of RFC 8017 appendix A.1.1 in its BIT
       * STRING). Checked as [[EncryptionKey]] states.
@@ -325,10 +342,10 @@ object Rsa:
 
     end SpkiFailure
 
-    /** Where the reader of a SubjectPublicKeyInfo stopped: the structure it walks is SEQUENCE, SEQUENCE (the algorithm identifier, skipped),
-      * BIT STRING, SEQUENCE, INTEGER, INTEGER, and each case names the step that did not find what it needs and the offset it was at.
-      * Tags are the byte values the encoding uses (`0x30` SEQUENCE, `0x03` BIT STRING, `0x02` INTEGER). Offsets count from the first byte
-      * of the DER.
+    /** Where a read of a key's DER stopped: each case names the step that did not find what it needs and the offset it was at. A
+      * SubjectPublicKeyInfo is read as SEQUENCE, SEQUENCE (the algorithm identifier, skipped), BIT STRING, SEQUENCE, INTEGER, INTEGER; a
+      * private key's structure is read with the same steps. Tags are the byte values the encoding uses (`0x30` SEQUENCE, `0x03` BIT
+      * STRING, `0x02` INTEGER). Offsets count from the first byte of the DER.
       *
       * The reader takes BER as well as DER and never compares a declared length with the bytes that follow, so only a structure that runs
       * out of data or shows the wrong tag stops it; a failure carries no part of the key.
@@ -354,7 +371,7 @@ object Rsa:
         /** The length at `offset` is indefinite, uses more than 4 octets, or exceeds `Int.MaxValue`. */
         case LengthUnsupported(offset: Int)
 
-        /** Skipping `count` bytes from `offset` would pass the end of the data. */
+        /** Skipping or reading `count` bytes from `offset` would pass the end of the data. */
         case SkipPastEnd(count: Int, offset: Int)
 
         /** The INTEGER at `offset` declares more bytes than remain. */
@@ -417,72 +434,5 @@ object Rsa:
         java.lang.System.arraycopy(raw, start, encoded, length - (raw.length - start), raw.length - start)
         encoded
     end bigEndian
-
-    /** A tag-length-value reader for the one structure [[encryptionKeyFromSpki]] walks. It reads lengths and never checks a declared length
-      * against the bytes that follow, takes long-form lengths the short form would fit, and reads an INTEGER's magnitude whatever its high
-      * bit: BER as much as DER, since a database server's key arrives in whichever encoding its tool wrote.
-      */
-    final private class DerReader(der: Array[Byte]):
-        private var pos: Int = 0
-
-        def readTag(tag: Int): Result[DerFailure, Unit] =
-            if pos >= der.length then Result.fail(DerFailure.EndOfData(tag))
-            else
-                val actual = der(pos) & 0xff
-                if actual != tag then Result.fail(DerFailure.UnexpectedTag(tag, actual, pos))
-                else
-                    pos += 1
-                    Result.unit
-                end if
-            end if
-        end readTag
-
-        def readLength(): Result[DerFailure, Int] =
-            if pos >= der.length then Result.fail(DerFailure.LengthEndOfData)
-            else
-                val first = der(pos) & 0xff
-                pos += 1
-                if (first & 0x80) == 0 then Result.succeed(first)
-                else
-                    val count = first & 0x7f
-                    if count == 0 || count > 4 || pos + count > der.length then Result.fail(DerFailure.LengthUnsupported(pos - 1))
-                    else
-                        var length = 0L
-                        var i      = 0
-                        while i < count do
-                            length = (length << 8) | (der(pos) & 0xff)
-                            pos += 1
-                            i += 1
-                        end while
-                        // Four bytes with the top bit set exceed Int.MaxValue; read as an Int they would be negative and move the reader
-                        // backwards.
-                        if length > Int.MaxValue then Result.fail(DerFailure.LengthUnsupported(pos - 1 - count))
-                        else Result.succeed(length.toInt)
-                    end if
-                end if
-            end if
-        end readLength
-
-        def skip(count: Int): Result[DerFailure, Unit] =
-            if pos.toLong + count > der.length then Result.fail(DerFailure.SkipPastEnd(count, pos))
-            else
-                pos += count
-                Result.unit
-        end skip
-
-        def readInteger(): Result[DerFailure, BigInt] =
-            readTag(0x02).flatMap { _ =>
-                readLength().flatMap { length =>
-                    if pos.toLong + length > der.length then Result.fail(DerFailure.IntegerExceedsData(pos))
-                    else
-                        val bytes = java.util.Arrays.copyOfRange(der, pos, pos + length)
-                        pos += length
-                        Result.succeed(BigInt(1, bytes))
-                    end if
-                }
-            }
-        end readInteger
-
-    end DerReader
 
 end Rsa
