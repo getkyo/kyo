@@ -8,10 +8,10 @@ import kyo.internal.dolt.DoltBranchScope
   * The type a caller holds whichever engine is underneath: `kyo-sql-dolt` opens a MySQL-wire server, `kyo-sql-doltlite` opens an embedded
   * file, and both supply a `private[kyo]` subclass. Everything portable is kyo-sql's and unchanged; what this type adds is version control.
   *
-  * A version-control commit is not a SQL commit. A transaction writes to the branch's WORKING SET; [[commit]] turns that working set into a
-  * commit in the history. The working set belongs to the BRANCH rather than to a connection, so once a transaction commits its writes are
-  * visible to every session on that branch and a [[commit]] from any of them captures the lot. A caller wanting a commit that holds exactly
-  * its own writes makes them on a branch of its own, which is what [[onBranch]] is for.
+  * A SQL transaction writes to the branch's WORKING SET; [[commit]] records that working set in the version-control history. The embedded
+  * engine also ends an enclosing SQL transaction at that call. The working set belongs to the BRANCH rather than to a connection, so once
+  * a transaction commits its writes are visible to every session on that branch and a [[commit]] from any of them captures the lot. A caller
+  * wanting a commit that holds exactly its own writes makes them on a branch of its own, which is what [[onBranch]] is for.
   *
   * The records these operations answer with live on the companion, so they read as this type's vocabulary: [[Dolt.Commit]], [[Dolt.Ref]],
   * [[Dolt.Merge]] and the rest.
@@ -31,6 +31,9 @@ abstract class Dolt private[kyo] (runtime: Runtime[?]) extends SqlClient(runtime
       *
       * `all` stages every changed table first, which is `git commit -a`. Passing false commits only what [[add]] staged. Committing nothing
       * is an error rather than a silent no-op.
+      *
+      * The embedded engine also ends an enclosing SQL transaction here. Its writes are committed at this call and cannot be rolled back
+      * by a later failure in the transaction body. Keep a version-control commit at the end of that body.
       */
     def commit(message: String, all: Boolean = true)(using Frame): Dolt.Commit < (Async & Abort[SqlException])
 
@@ -70,8 +73,10 @@ abstract class Dolt private[kyo] (runtime: Runtime[?]) extends SqlClient(runtime
     /** Merges `from` into the current branch and answers what happened. A [[Dolt.Merge.Conflicted]] result leaves the conflicts in the
       * branch's working set: resolve them with [[resolveConflicts]] and [[commit]], or discard them with a hard [[reset]].
       *
-      * Note: the embedded engine never keeps a conflict past a transaction, so there a conflicted merge is rolled back after its conflicts
-      * are read: the answer is the same [[Dolt.Merge.Conflicted]], and the branch is left as it was before the merge.
+      * The embedded engine retains conflicts only inside the transaction that produced them. Inside an outer `transaction`, resolve and
+      * commit them in that body; outside one, conflicts are read and the merge is aborted, leaving the branch unchanged. A conflict inside
+      * a savepoint is discarded by the engine and fails with `DoltLiteNestedMergeConflictException`. A successful merge that commits also
+      * ends the embedded engine's SQL transaction, as [[commit]] does.
       */
     def merge(from: Dolt.Ref)(using Frame): Dolt.Merge < (Async & Abort[SqlException])
 

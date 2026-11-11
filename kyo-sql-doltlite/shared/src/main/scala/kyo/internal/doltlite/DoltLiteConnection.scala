@@ -76,8 +76,22 @@ final private[kyo] class DoltLiteConnection(
     def beginTransaction(isolation: Maybe[SqlClient.IsolationLevel], readOnly: Boolean)(using Frame): Unit < (Async & Abort[SqlException]) =
         reconciled(underlying.beginTransaction(isolation, readOnly))
 
-    def commitTransaction(using Frame): Unit < (Async & Abort[SqlException])   = underlying.commitTransaction
-    def rollbackTransaction(using Frame): Unit < (Async & Abort[SqlException]) = underlying.rollbackTransaction
+    def commitTransaction(using Frame): Unit < (Async & Abort[SqlException]) =
+        endedByEngine(underlying.commitTransaction, "cannot commit - no transaction is active")
+
+    def rollbackTransaction(using Frame): Unit < (Async & Abort[SqlException]) =
+        endedByEngine(underlying.rollbackTransaction, "cannot rollback - no transaction is active")
+
+    /** A version-control commit or successful merge can end the SQL transaction itself. Accept only the engine's
+      * exact report that it already ended; a genuine commit or rollback failure must still reach the caller.
+      */
+    private def endedByEngine(close: Unit < (Async & Abort[SqlException]), report: String)(using
+        Frame
+    ): Unit < (Async & Abort[SqlException]) =
+        Abort.recover[SqlException] {
+            case e: SqlServerErrorException if e.sqlState == "HY000" && e.serverMessage == report => Kyo.unit
+            case e                                                                                => Abort.fail(e)
+        }(close)
 
     def savepoint(name: String)(using Frame): Unit < (Async & Abort[SqlException])           = underlying.savepoint(name)
     def releaseSavepoint(name: String)(using Frame): Unit < (Async & Abort[SqlException])    = underlying.releaseSavepoint(name)
