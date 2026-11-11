@@ -26,6 +26,28 @@ class KyoExceptionTest extends kyo.test.Test[Any]:
             val ex  = new KyoException("just the msg")
             val msg = ex.getMessage
             assert(msg.contains("just the msg"), s"expected 'just the msg' in '$msg'")
+            if !kyo.internal.Environment.isDevelopment then
+                assert(msg == "just the msg")
+        }
+    }
+
+    "show" - {
+        "renders a nested KyoException without development frames" in {
+            val inner = new KyoException("inner", "detail")
+            assert(new KyoException("outer", inner).show == "outer KyoException: inner detail")
+        }
+
+        "is the message and a String cause" in {
+            assert(new KyoException("outer", "hint text").show == "outer hint text")
+        }
+        "names a Throwable cause's class and message" in {
+            assert(new KyoException("outer", new java.io.IOException("inner")).show == "outer IOException: inner")
+        }
+        "is the message alone without a cause" in {
+            assert(new KyoException("just the msg").show == "just the msg")
+        }
+        "is the message alone with an empty String cause" in {
+            assert(new KyoException("just the msg", "").show == "just the msg")
         }
     }
 end KyoExceptionTest

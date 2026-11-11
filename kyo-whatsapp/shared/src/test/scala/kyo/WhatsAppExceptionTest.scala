@@ -197,6 +197,7 @@ class WhatsAppExceptionTest extends BaseWhatsAppTest:
         import WhatsAppDecodeException.Part
         val e = WhatsAppDecodeException("webhook", Part.Notification, Failure.Parse, Chunk("entry", "0"), Present(46))
         assert(e.getMessage.contains("WhatsApp webhook notification did not decode: the JSON does not parse at entry.0, position 46."))
+        assert(e.show == "WhatsApp webhook notification did not decode: the JSON does not parse at entry.0, position 46.")
         assert(e.getCause == null)
     }
 

@@ -849,8 +849,11 @@ val randomId: UUID < Sync =
 val randomIdText: String < Sync =
     UUID.v4String
 
-val timeOrderedId: UUID < Sync =
+val timeOrderedId: UUID.V7 < Sync =
     UUID.v7
+
+val timestampMillis: Long < Sync =
+    UUID.v7.map(_.unixTimestampMillis)
 
 val generator: UUIDGenerator =
     UUIDGenerator.live
@@ -860,6 +863,8 @@ val scopedId: UUID < Sync =
 ```
 
 `UUIDGenerator.live`, the default generator, uses cryptographic platform entropy. Its version 7 implementation combines secure entropy with the Kyo clock and preserves strict monotonic ordering per generator instance when the clock repeats or moves backward. Entropy and clock failures remain `Sync` panics; the live generator never falls back to `Random`, timestamps alone, or process counters.
+
+`UUID.v7` and `UUIDGenerator.v7` return `UUID.V7`, which is also a `UUID` and always carries a timestamp. Custom `UUIDGenerator` implementations must return `UUID.V7` from `v7`; `UUID.V7.init` constructs fixed values, and `UUID.V7.from` refines existing UUIDs.
 
 `UUID.v4`, `UUID.v4String`, and `UUID.v7` delegate to the currently scoped generator. `UUID.v4String` generates a version 4 value and renders its canonical lowercase text. The equivalent capability-first entry points are `UUIDGenerator.v4`, `UUIDGenerator.v7`, and `UUIDGenerator.let`.
 

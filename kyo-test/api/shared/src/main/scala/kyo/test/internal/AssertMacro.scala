@@ -52,18 +52,38 @@ object AssertMacro:
       */
     def evaluated(scope: AssertScope): Unit = scope.recordEvaluated()
 
+    /** The source of the `assert(...)` call an inline `assert` is expanding at, for the diagram of a failure off the power path:
+      * the call's lines, the ones after the first dedented by their common indentation, so a call written over several lines
+      * reads as written. Empty where the call's file has no source at hand. The splice holds no user code, so `-Xcheck-macros`
+      * has nothing of the caller's to re-check.
+      */
+    inline def source: String = ${ sourceImpl }
+
+    private def sourceImpl(using Quotes): Expr[String] =
+        import quotes.reflect.*
+        def indentation(line: String) = line.takeWhile(_ == ' ').length
+        val text                      = Position.ofMacroExpansion.sourceCode.getOrElse("").linesIterator.toList match
+            case first :: rest =>
+                // The first line starts at the call, so only the lines after it carry indentation to drop.
+                val common = rest.filter(_.exists(_ != ' ')).map(indentation).minOption.getOrElse(0)
+                first :: rest.map(line => line.drop(math.min(common, indentation(line))))
+            case Nil => Nil
+        Expr(text.mkString("\n"))
+    end sourceImpl
+
     /** Builds the failure from an assert whose condition was false, records it into the leaf, and throws.
       *
       * Recording before the throw is what lets a failure raised by a detached or leaked fiber reach the
       * leaf sink even when its throw never returns to the joined body.
       *
-      * The source text comes from the frame the assert already carries, so the path that does not compile
-      * in the power-assert instrumentation needs no macro of its own. The frame's marker sits at the end
-      * of the `assert(...)` call it was taken at, so the text before it, last line, is that call.
+      * The diagram is `source`, the `assert(...)` call as written. Where the call's file had no source, the
+      * frame stands in: its marker sits at the end of the call it was taken at, so the last line before it
+      * is the call's last line.
       */
-    def raise(msg: Maybe[String], frame: Frame, scope: AssertScope): Nothing =
+    def raise(msg: Maybe[String], source: String, frame: Frame, scope: AssertScope): Nothing =
         val sourceText =
-            frame.snippet.split("📍")(0).linesIterator.toList.lastOption.getOrElse("").trim
+            if source.nonEmpty then source
+            else frame.snippet.split("📍")(0).linesIterator.toList.lastOption.getOrElse("").trim
         val diagram =
             msg match
                 case Maybe.Present(m) if m.nonEmpty => s"$sourceText\n// message: $m"
