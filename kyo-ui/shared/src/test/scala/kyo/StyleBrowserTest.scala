@@ -5,6 +5,50 @@ import kyo.UI.foreach
 
 class StyleBrowserTest extends UITest:
 
+    "a rule under a container query applies by its container's width, not the page's" in {
+        val look = Stylesheet
+            .rule("box", Style.containerType(_.inlineSize))
+            .container(Stylesheet.ContainerQuery.maxWidth(399.5.px))(Stylesheet.rule("inner", Style.position(_.absolute)))
+        withUI(UI.div(
+            UI.stylesheet(look),
+            UI.div(UI.span("narrow").cssClass("inner").id("narrow")).cssClass("box").style(Style.width(399.25.px)),
+            UI.div(UI.span("wide").cssClass("inner").id("wide")).cssClass("box").style(Style.width(399.75.px))
+        )) {
+            for
+                narrow <- Browser.eval("getComputedStyle(document.getElementById('narrow')).position")
+                wide   <- Browser.eval("getComputedStyle(document.getElementById('wide')).position")
+            yield assert(narrow == "absolute" && wide == "static")
+        }
+    }
+
+    "component stylesheet text cannot close its style element" in {
+        val sheet = Stylesheet
+            .vars("payload" -> "\"</StYlE><span id='escaped-css'>bad</span>\"")
+            .rule("proof", Style.color(Style.Color.blue))
+        withUI(UI.div(UI.stylesheet(sheet), UI.span("proof").cssClass("proof").id("proof")).id("style-host")) {
+            Browser.eval("""[
+                document.getElementById('escaped-css') === null,
+                document.querySelector('#style-host > style').sheet.cssRules.length,
+                getComputedStyle(document.getElementById('proof')).color
+            ].join('|')""").map { result =>
+                assert(result == "true|2|rgb(59, 130, 246)")
+            }
+        }
+    }
+
+    "component color schemes resolve nested dynamic colors" in {
+        val ink  = Style.Color.lightDark(Style.Color.black, Style.Color.white)
+        val tint = Style.Color.mix(ink, Style.Color.black, 50)
+        withUI(UI.div(
+            UI.span("light").id("light").style(Style.colorScheme(_.light).color(ink)),
+            UI.span("dark").id("dark").style(Style.colorScheme(_.dark).color(ink)),
+            UI.span("mix").id("mix").style(Style.colorScheme(_.dark).color(tint))
+        )) {
+            Browser.eval("""['light', 'dark', 'mix'].map(id => getComputedStyle(document.getElementById(id)).color).join('|')""")
+                .map { result => assert(result == "rgb(0, 0, 0)|rgb(255, 255, 255)|color(srgb 0.5 0.5 0.5)") }
+        }
+    }
+
     // ---- Merged from HoverTest ----
 
     "hover on button does not crash" in {
