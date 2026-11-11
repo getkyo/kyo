@@ -267,43 +267,138 @@ class NioTransportTest extends Test:
     // host name resolution
     // -----------------------------------------------------------------------
 
-    /** Calls `start` with a host only [[ParkingResolverProvider]] answers, and reports whether `start` returned while that host's lookup was
-      * still parked: a transport that resolves on the calling carrier cannot return before the resolver answers. The lookup is released
-      * afterwards, so whatever `start` began completes.
-      */
-    private def startWhileResolving[A](name: String)(start: String => A)(using Frame, kyo.test.AssertScope): (Boolean, A) < Async =
-        val host     = name + ParkingResolverProvider.Domain
-        val lookup   = ParkingResolverProvider.lookup(host)
-        val returned = new java.util.concurrent.atomic.AtomicBoolean(false)
-        for
-            starting <- Fiber.initUnscoped(Sync.defer {
-                val started = start(host)
-                returned.set(true)
-                started
-            })
-            parked <- awaitCondition(10.seconds)(lookup.started.getCount == 0)
-            early = returned.get()
-            _     = lookup.released.countDown()
-            a <- starting.get
-        yield
-            assert(parked, s"the transport never asked the resolver for $host")
-            (early, a)
-        end for
+    /** Own the invocation before awaiting it, then release its successful value even if the test fails before consuming it. */
+    private def acquireAttempt[A](start: => Fiber.Unsafe[A, Abort[NetException]])(release: A => Unit < Async)(using
+        Frame
+    ): Fiber.Unsafe[A, Abort[NetException]] < (Async & Scope) =
+        // Unsafe: transport methods return raw fibers; own both the invocation and its eventual value before awaiting either.
+        Scope.acquireRelease(Fiber.initUnscoped(Sync.Unsafe.defer(start))) { starting =>
+            starting.getResult.map {
+                case Result.Success(pending) =>
+                    pending.safe.getResult.map {
+                        case Result.Success(value) => release(value)
+                        case _                     => Kyo.unit
+                    }
+                case _ => Kyo.unit
+            }
+        }.map { starting =>
+            // Consumer interruption must not erase either result before the owning finalizer receives it.
+            starting.uninterruptible.map(_.get).map(pending => Sync.Unsafe.defer(pending.uninterruptible()))
+        }
+    end acquireAttempt
+
+    // Unsafe: transport resources expose raw close operations; the listener's descriptor must leave its driver before that driver closes.
+    private def closeListener(listener: kyo.net.Listener)(using Frame): Unit < Async =
+        Sync.Unsafe.defer {
+            listener.close()
+            listener.released.safe.get
+        }
+
+    private def closeConnection(connection: kyo.net.Connection)(using Frame): Unit < Sync =
+        Sync.Unsafe.defer(connection.close())
+
+    /** Observe the call returning and the lookup entering before opening the resolver gate. */
+    private def startWhileResolving[A](name: String)(start: String => Fiber.Unsafe[
+        A,
+        Abort[NetException]
+    ])(release: A => Unit < Async)(using
+        Frame
+    ): (Boolean, Fiber.Unsafe[A, Abort[NetException]]) < (Async & Scope) =
+        Sync.Unsafe.defer {
+            val host = ParkingResolverProvider.host(name)
+            (host, ParkingResolverProvider.lookup(host))
+        }.map { (host, lookup) =>
+            // The native gate must open on interruption before Scope's finalizers join the owned invocation and its result.
+            Sync.ensure(Sync.defer(lookup.released.countDown())) {
+                for
+                    pending <- acquireAttempt(start(host))(release)
+                    _       <- lookup.started.safe.get
+                    parked  <- Sync.defer(!lookup.resolutionComplete.get())
+                    _       <- Sync.defer(lookup.released.countDown())
+                yield (parked, pending)
+            }
+        }
     end startWhileResolving
 
     "host name resolution" - {
+        "interrupting a blocked startup releases the native resolver gate" in {
+            for
+                lookupStarted <- Promise.init[ParkingResolverProvider.Lookup, Any]
+                valueReleased <- Latch.init(1)
+                caller        <- Scope.acquireRelease(Fiber.initUnscoped(Scope.run {
+                    startWhileResolving("interrupt-blocked-start") { host =>
+                        val lookup = ParkingResolverProvider.lookup(host)
+                        lookupStarted.unsafe.completeDiscard(Result.succeed(lookup))
+                        // deviation: this deliberately blocking JDK call exercises interruption before the transport-style start returns.
+                        discard(java.net.InetAddress.getByName(host))
+                        Fiber.Unsafe.fromResult(Result.succeed(()))
+                    }(_ => valueReleased.release).unit
+                }))(caller => caller.interrupt.andThen(caller.getResult).unit)
+                lookup   <- lookupStarted.get
+                _        <- lookup.started.safe.get
+                _        <- caller.interrupt
+                _        <- caller.getResult
+                _        <- valueReleased.await
+                terminal <- Sync.defer((lookup.released.getCount, lookup.resolutionComplete.get()))
+            yield assert(terminal == (0L, true))
+        }
+
+        "an interrupted consumer releases its unconsumed connection and listening descriptor" in {
+            for
+                connectionClosed <- Promise.init[kyo.net.Connection, Any]
+                listenerFreed    <- Promise.init[Boolean, Any]
+                consumerReady    <- Latch.init(1)
+                consumer         <- Scope.acquireRelease(Fiber.initUnscoped(Scope.run {
+                    mkTransport().map { transport =>
+                        acquireAttempt(transport.listen("127.0.0.1", 0, 50)(_ => ())) { listener =>
+                            closeListener(listener).andThen(Sync.Unsafe.defer(listener.released.done())).map { released =>
+                                listenerFreed.complete(Result.succeed(released)).unit
+                            }
+                        }.map(_.safe.get).map { listener =>
+                            startWhileResolving("interrupt-connect")(host => transport.connect(host, listener.port)) { connection =>
+                                closeConnection(connection).andThen(connectionClosed.complete(Result.succeed(connection))).unit
+                            }.andThen(consumerReady.release).andThen(Async.never)
+                        }
+                    }
+                }))(consumer => consumer.interrupt.andThen(consumer.getResult).unit)
+                _          <- consumerReady.await
+                _          <- consumer.interrupt
+                _          <- consumer.getResult
+                connection <- connectionClosed.get
+                released   <- listenerFreed.get
+                open       <- Sync.Unsafe.defer(connection.isOpen)
+            yield assert((open, released) == (false, true))
+        }
+
+        "repeated startup probes use fresh resolver gates" in {
+            given Frame = Frame.internal
+            mkTransport().map { transport =>
+                acquireAttempt(transport.listen("127.0.0.1", 0, 50)(_ => ()))(closeListener).map(_.safe.get).map { listener =>
+                    Kyo.foreachDiscard(0 until 2) { index =>
+                        startWhileResolving("repeat-connect")(host => transport.connect(host, listener.port))(closeConnection).map {
+                            (early, connecting) =>
+                                connecting.safe.get.map { conn =>
+                                    assert(early, s"lookup $index completed before the call returned")
+                                    assert(conn.isOpen)
+                                    succeed
+                                }
+                        }
+                    }.map(_ => succeed)
+                }
+            }
+        }
+
         "connect returns while the host name is still resolving, then connects to the address it resolves to" in {
             given Frame = Frame.internal
             mkTransport().map { transport =>
-                transport.listen("127.0.0.1", 0, 50)(_ => ()).safe.get.map { listener =>
-                    startWhileResolving("connect")(host => transport.connect(host, listener.port)).map { (early, connecting) =>
-                        connecting.safe.get.map { conn =>
-                            assert(early, "connect resolved its host on the calling carrier, holding it for the whole lookup")
-                            assert(conn.isOpen)
-                            conn.close()
-                            listener.close()
-                            succeed
-                        }
+                acquireAttempt(transport.listen("127.0.0.1", 0, 50)(_ => ()))(closeListener).map(_.safe.get).map { listener =>
+                    startWhileResolving("connect")(host => transport.connect(host, listener.port))(closeConnection).map {
+                        (early, connecting) =>
+                            connecting.safe.get.map { conn =>
+                                assert(early, "connect resolved its host on the calling carrier, holding it for the whole lookup")
+                                assert(conn.isOpen)
+                                succeed
+                            }
                     }
                 }
             }
@@ -312,18 +407,17 @@ class NioTransportTest extends Test:
         "connectTls returns while the host name is still resolving, then completes the handshake" in {
             given Frame = Frame.internal
             mkTransport().map { transport =>
-                transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(_ => ()).safe.get.map { listener =>
-                    startWhileResolving("connect-tls") { host =>
-                        transport.connectTls(host, listener.port, NetTlsConfig(trustAll = true))
-                    }.map { (early, connecting) =>
-                        connecting.safe.get.map { conn =>
-                            assert(early, "connectTls resolved its host on the calling carrier, holding it for the whole lookup")
-                            assert(conn.isOpen)
-                            conn.close()
-                            listener.close()
-                            succeed
+                acquireAttempt(transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(_ => ()))(closeListener).map(_.safe.get).map {
+                    listener =>
+                        startWhileResolving("connect-tls") { host =>
+                            transport.connectTls(host, listener.port, NetTlsConfig(trustAll = true))
+                        }(closeConnection).map { (early, connecting) =>
+                            connecting.safe.get.map { conn =>
+                                assert(early, "connectTls resolved its host on the calling carrier, holding it for the whole lookup")
+                                assert(conn.isOpen)
+                                succeed
+                            }
                         }
-                    }
                 }
             }
         }
@@ -331,11 +425,10 @@ class NioTransportTest extends Test:
         "listen returns while the host name is still resolving, then binds the address it resolves to" in {
             given Frame = Frame.internal
             mkTransport().map { transport =>
-                startWhileResolving("listen")(host => transport.listen(host, 0, 50)(_ => ())).map { (early, binding) =>
+                startWhileResolving("listen")(host => transport.listen(host, 0, 50)(_ => ()))(closeListener).map { (early, binding) =>
                     binding.safe.get.map { listener =>
                         assert(early, "listen resolved its host on the calling carrier, holding it for the whole lookup")
                         assert(listener.port > 0)
-                        listener.close()
                         succeed
                     }
                 }
@@ -345,12 +438,11 @@ class NioTransportTest extends Test:
         "listenTls returns while the host name is still resolving, then binds the address it resolves to" in {
             given Frame = Frame.internal
             mkTransport().map { transport =>
-                startWhileResolving("listen-tls")(host => transport.listenTls(host, 0, 50, serverTlsConfig)(_ => ())).map {
+                startWhileResolving("listen-tls")(host => transport.listenTls(host, 0, 50, serverTlsConfig)(_ => ()))(closeListener).map {
                     (early, binding) =>
                         binding.safe.get.map { listener =>
                             assert(early, "listenTls resolved its host on the calling carrier, holding it for the whole lookup")
                             assert(listener.port > 0)
-                            listener.close()
                             succeed
                         }
                 }
