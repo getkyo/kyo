@@ -114,6 +114,97 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    "program paths report permission denied for a non-executable file" in {
+        assumeUnix("No execute permission bit on Windows")
+        Path.run {
+            for
+                dir <- Path.tempDir("kyo-cmd-denied")
+                _   <- Scope.ensure(Path.run(dir.removeAll))
+                script = dir / "script.sh"
+                _      <- script.write("#!/bin/sh\necho no\n")
+                result <- Abort.run[CommandException](Command(script.toString).waitFor)
+            yield result match
+                case Result.Failure(PermissionDeniedException(cmd)) => assert(cmd == script.toString)
+                case other                                          => fail(s"Expected PermissionDeniedException, got: $other")
+        }
+    }
+
+    "program paths report permission denied for a directory" in {
+        assumeUnix("Directory execution differs on Windows")
+        Path.run {
+            for
+                dir    <- Path.tempDir("kyo-cmd-folder")
+                _      <- Scope.ensure(Path.run(dir.removeAll))
+                result <- Abort.run[CommandException](Command(dir.toString).waitFor)
+            yield result match
+                case Result.Failure(PermissionDeniedException(cmd)) => assert(cmd == dir.toString)
+                case other                                          => fail(s"Expected PermissionDeniedException, got: $other")
+        }
+    }
+
+    "program paths resolve relative executables from cwd" in {
+        assumeUnix()
+        Path.run {
+            for
+                dir <- Path.tempDir("kyo-cmd-relative")
+                _   <- Scope.ensure(Path.run(dir.removeAll))
+                script = dir / "script.sh"
+                _      <- script.write("#!/bin/sh\nprintf relative")
+                _      <- Command("chmod", "+x", script.toString).waitForSuccess
+                result <- Command("./script.sh").cwd(dir).text
+            yield assert(result == "relative")
+        }
+    }
+
+    "program paths preserve absolute executables with a different cwd" in {
+        assumeUnix()
+        Path.run {
+            for
+                dir <- Path.tempDir("kyo-cmd-absolute")
+                _   <- Scope.ensure(Path.run(dir.removeAll))
+                script = dir / "script.sh"
+                _      <- script.write("#!/bin/sh\nprintf absolute")
+                _      <- Command("chmod", "+x", script.toString).waitForSuccess
+                here   <- Path.cwd
+                result <- Command(script.toString).cwd(here).text
+            yield assert(result == "absolute")
+        }
+    }
+
+    "program paths report permission denied relative to cwd" in {
+        assumeUnix("No execute permission bit on Windows")
+        Path.run {
+            for
+                dir    <- Path.tempDir("kyo-cmd-relative-denied")
+                _      <- Scope.ensure(Path.run(dir.removeAll))
+                _      <- (dir / "script.sh").write("#!/bin/sh\necho no\n")
+                result <- Abort.run[CommandException](Command("./script.sh").cwd(dir).waitFor)
+            yield result match
+                case Result.Failure(PermissionDeniedException(cmd)) => assert(cmd == "./script.sh")
+                case other                                          => fail(s"Expected PermissionDeniedException, got: $other")
+        }
+    }
+
+    "program paths are not resolved from the caller's directory when cwd differs" in {
+        assumeUnix()
+        Path.run {
+            for
+                dir  <- Path.tempDir("kyo-cmd-missing")
+                _    <- Scope.ensure(Path.run(dir.removeAll))
+                here <- Path.cwd
+                name <- Random.nextStringAlphanumeric(16)
+                program = s"./kyo-cmd-$name.sh"
+                script  = here / s"kyo-cmd-$name.sh"
+                _      <- Scope.ensure(Path.run(script.remove))
+                _      <- script.write("#!/bin/sh\nprintf wrong")
+                _      <- Command("chmod", "+x", script.toString).waitForSuccess
+                result <- Abort.run[CommandException](Command(program).cwd(dir).text)
+            yield result match
+                case Result.Failure(ProgramNotFoundException(cmd)) => assert(cmd == program)
+                case other                                         => fail(s"Expected ProgramNotFoundException, got: $other")
+        }
+    }
+
     "missing cwd raises WorkingDirectoryNotFoundException" in {
         val missingDir = Path / "kyo-nonexistent-cwd-xyzzy-99" / "sub"
         Abort.run[CommandException] {
