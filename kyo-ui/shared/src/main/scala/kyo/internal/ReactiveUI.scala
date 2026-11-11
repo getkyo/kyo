@@ -218,22 +218,24 @@ private[kyo] object ReactiveUI:
                         child match
                             case _: Reactive[?] | _: Foreach[?, ?] =>
                                 for rui <- normalizeAt(child, childPath, childSvg, childContext, childParentContext)
-                                yield (Seq(rui), Seq.empty[(Int, Handler)])
+                                yield (Seq(rui), rui.handle)
                             case childElem: Element if collectSignalRef(childElem).nonEmpty =>
                                 // Element with SignalRef-bound attributes is reactive over those signals;
                                 // normalize it so subscribeNode wires updates.
                                 for rui <- normalizeAt(childElem, childPath, childSvg, childContext, childParentContext)
-                                yield (Seq(rui), Seq.empty[(Int, Handler)])
+                                yield (Seq(rui), rui.handle)
                             case _ =>
                                 for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg, childContext, childParentContext)
-                                yield (innerKids, Seq((i, innerHandle)))
+                                yield (innerKids, innerHandle)
                         end match
                     }
                 yield
+                    // Every region at any depth is handed up for `subscribeScoped`, but an event is routed only through
+                    // the child at the target's index, so it reaches each element between the target and this one.
                     val reactiveChildren = childWalks.flatMap(_._1)
-                    val staticHandlers   = childWalks.flatMap(_._2)
+                    val childHandlers    = childWalks.map(_._2)
                     val handle: Handler  = (targetPath, event) =>
-                        dispatch(elem, basePath, targetPath, event, reactiveChildren, staticHandlers)
+                        dispatch(elem, basePath, targetPath, event, childHandlers)
                     (reactiveChildren, handle)
                 end for
 
@@ -283,50 +285,34 @@ private[kyo] object ReactiveUI:
         myPath: Seq[String],
         targetPath: Seq[String],
         event: UIEvent,
-        reactiveChildren: Seq[ReactiveUI],
-        staticHandlers: Seq[(Int, Handler)]
+        childHandlers: Seq[Handler]
     )(using Frame): Boolean < Async =
         if targetPath == myPath then
             dispatchToElement(elem, event, isTarget = true)
         else if targetPath.startsWith(myPath) && targetPath.size > myPath.size then
-            val childSegment = targetPath(myPath.size)
-            val childIdx     = childSegment.toIntOption
-
-            // Find the reactive child whose path is a prefix of (or equals) targetPath. Matching by
-            // `lastOption.contains(childSegment)` is incorrect when reactive children are nested
-            // multiple levels deep; their last segment may collide with a sibling's index at the
-            // current level. Using prefix-match correctly routes only when the target lies inside.
-            val reactiveChild = reactiveChildren.find(rc => targetPath.startsWith(rc.path))
+            val childIdx = targetPath(myPath.size).toIntOption
 
             for
-                // Disabled-target (Form submit suppression), Button-target (only Button clicks submit
-                // forms), and Select-target (Enter on Select must not submit) all resolve through any
-                // Reactive/Foreach boundary wrapping the target, so signal-typed setters do not hide it.
+                // Disabled-target (Form submit suppression) and Button-target (only Button clicks submit
+                // forms) both resolve through any Reactive/Foreach boundary wrapping the target, so
+                // signal-typed setters do not hide it.
                 targetDisabled <- event match
                     case _: UIEvent.Click => isTargetDisabled(elem, myPath, targetPath)
                     case _                => Kyo.lift(false)
                 targetIsButton <- event match
                     case _: UIEvent.Click => isTargetButton(elem, myPath, targetPath)
                     case _                => Kyo.lift(false)
-                targetIsSelect <- event match
-                    case _: UIEvent.KeyDown => isTargetSelect(elem, myPath, targetPath)
-                    case _                  => Kyo.lift(false)
                 bubble = dispatchToElement(
                     elem,
                     event,
                     isTarget = false,
                     disabledTarget = targetDisabled,
-                    submitOrigin = targetIsButton,
-                    selectTarget = targetIsSelect
+                    submitOrigin = targetIsButton
                 )
-                result <- Maybe.fromOption(reactiveChild) match
-                    case Present(child) =>
-                        safeDispatch(child.handle, targetPath, event).map(keep => if keep then bubble else false)
-                    case Absent =>
-                        Maybe.fromOption(childIdx).flatMap(i => Maybe.fromOption(staticHandlers.find(_._1 == i)).map(_._2))
-                            .fold(Kyo.lift(false))(childHandle =>
-                                safeDispatch(childHandle, targetPath, event).map(keep => if keep then bubble else false)
-                            )
+                result <- Maybe.fromOption(childIdx.flatMap(childHandlers.lift))
+                    .fold(Kyo.lift(false))(childHandle =>
+                        safeDispatch(childHandle, targetPath, event).map(keep => if keep then bubble else false)
+                    )
             yield result
             end for
         else
@@ -372,38 +358,6 @@ private[kyo] object ReactiveUI:
             case Present(Bound.Const(b)) => b
             case Present(Bound.Ref(ref)) => ref.get
             case _                       => false
-
-    /** Toggle checked and auto-set SignalRef if bound. Returns the new value. */
-    private def toggleChecked(checked: Maybe[Bound[Boolean]])(using Frame): Boolean < Sync =
-        checked match
-            case Present(Bound.Ref(ref)) =>
-                ref.getAndUpdate(!_).map(!_)
-            case Present(Bound.Const(b)) => !b
-            case _                       => true
-
-    /** Cycle a Select to the next or previous option. Updates SignalRef and fires onChange. */
-    private def cycleSelectOption(sel: Select, forward: Boolean)(using Frame): Unit < Async =
-        val options = sel.children.toSeq.collect { case opt: Opt => opt }
-        val values  = options.flatMap(_.value.toList)
-        if values.isEmpty then Kyo.lift(())
-        else
-            for
-                current <- sel.value match
-                    case Present(Bound.Ref(ref)) => ref.get
-                    case Present(Bound.Const(s)) => Kyo.lift(s)
-                    case _                       => Kyo.lift("")
-                currentIdx = values.indexOf(current).max(0)
-                nextIdx    =
-                    if forward then (currentIdx + 1)    % values.size
-                    else (currentIdx - 1 + values.size) % values.size
-                newValue = values(nextIdx)
-                _ <- sel.value match
-                    case Present(Bound.Ref(ref)) => ref.set(newValue)
-                    case _                       => Kyo.lift(())
-                _ <- invokeWith(sel.onChange, newValue)
-            yield ()
-        end if
-    end cycleSelectOption
 
     private def formatDouble(v: Double): String = NumberFormat.double(v)
 
@@ -482,9 +436,6 @@ private[kyo] object ReactiveUI:
     private def isTargetButton(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
         targetSatisfies(elem, myPath, targetPath, _.isInstanceOf[Button])
 
-    private def isTargetSelect(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
-        targetSatisfies(elem, myPath, targetPath, _.isInstanceOf[Select])
-
     /** Bubble-continue value after an element handled `event`: `false` (consume) only when the element set
       * `stopPropagation(true)` AND actually declared a handler for this event's type (`declared`). The result flows up the
       * dispatch recursion, so a `false` makes every element ABOVE this one skip its own handler.
@@ -500,8 +451,7 @@ private[kyo] object ReactiveUI:
         event: UIEvent,
         isTarget: Boolean,
         disabledTarget: Boolean = false,
-        submitOrigin: Boolean = false,
-        selectTarget: Boolean = false
+        submitOrigin: Boolean = false
     )(
         using Frame
     ): Boolean < Async =
@@ -556,45 +506,8 @@ private[kyo] object ReactiveUI:
                         modifiers = e.keyboard.modifiers,
                         targetId = e.keyboard.targetId
                     )
-                    val keyHandler = invokeWith(attrs.onKeyDown, kbEvent)
-                    // Enter/Space on button/anchor triggers onClick (browser behavior)
-                    val activateClick = if isTarget && (e.keyboard.key == "Enter" || e.keyboard.key == " ") then
-                        elem match
-                            case _: Button => invoke(attrs.onClick)
-                            case _: Anchor => invoke(attrs.onClick)
-                            case _         => Kyo.lift(())
-                    else Kyo.lift(())
-                    // Enter/Space on checkbox/radio triggers onChange (browser behavior)
-                    val activateToggle = if isTarget && (e.keyboard.key == "Enter" || e.keyboard.key == " ") then
-                        elem match
-                            case cb: Checkbox =>
-                                toggleChecked(cb.checked).map(newVal => invokeWith(cb.onChange, newVal))
-                            case rb: Radio =>
-                                val autoSet = rb.checked match
-                                    case Present(Bound.Ref(ref)) => ref.set(true)
-                                    case _                       => Kyo.lift(())
-                                autoSet.andThen(invokeWith(rb.onChange, true))
-                            case _ => Kyo.lift(())
-                    else Kyo.lift(())
-                    // ArrowDown/ArrowUp/Space/Enter on Select cycles through options (browser behavior)
-                    val selectCycle =
-                        if isTarget &&
-                            (e.keyboard.key == "ArrowDown" || e.keyboard.key == "ArrowUp" || e.keyboard.key == " " ||
-                                e.keyboard.key == "Enter")
-                        then
-                            elem match
-                                case sel: Select => cycleSelectOption(sel, forward = e.keyboard.key != "ArrowUp")
-                                case _           => Kyo.lift(())
-                        else Kyo.lift(())
-                    // Enter key bubbling to Form triggers onSubmit (browser behavior)
-                    // Enter on Select should NOT submit; it interacts with the dropdown
-                    val formSubmit = if !isTarget && e.keyboard.key == "Enter" && !selectTarget then
-                        elem match
-                            case f: Form => invoke(f.onSubmit)
-                            case _       => Kyo.lift(())
-                    else Kyo.lift(())
-                    keyHandler.andThen(activateClick).andThen(activateToggle).andThen(selectCycle).andThen(formSubmit)
-                        .andThen(keepBubbling(elem, attrs.onKeyDown.nonEmpty))
+                    // Default actions arrive separately as click, change or submit events from the browser.
+                    invokeWith(attrs.onKeyDown, kbEvent).andThen(keepBubbling(elem, attrs.onKeyDown.nonEmpty))
             case e: UIEvent.KeyUp =>
                 val kbEvent = UI.KeyboardEvent(
                     key = Keyboard.fromString(e.keyboard.key),

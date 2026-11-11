@@ -127,6 +127,22 @@ class AnchorTest extends UITest:
         }
     }
 
+    "Enter clicks an anchor once when a keydown handler is above it" in {
+        val app: UI < Async =
+            for log <- Signal.initRef("")
+            yield UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+                UI.a.href(Href.Fragment("")).id("a").onClick(log.getAndUpdate(_ + "C").unit)("Go"),
+                log.map(v => UI.span(s"log:$v").id("log"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.press(Selector.id("a"), Key.Enter)
+                _ <- Browser.press(Selector.id("a"), Key('x'))
+                _ <- Browser.assertText(Selector.id("log"), "log:KCK")
+            yield ()
+        }
+    }
+
     "a modified click on an anchor with onClick keeps the browser's default and still runs the handler" in {
         // A window listener runs after the page's delegated listener, so it sees whether that one took the
         // default; it then cancels the navigation itself so the test page stays put.

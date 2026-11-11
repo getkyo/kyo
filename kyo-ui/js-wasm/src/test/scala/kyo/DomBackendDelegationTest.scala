@@ -446,4 +446,95 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "Enter activates local checkboxes and radios exactly once through change events" in {
+        for
+            order   <- AtomicRef.init(Chunk.empty[String])
+            barrier <- Latch.init(1)
+            ready = new DomTestEnv.MountReady
+            ui    = UI.div
+                .onKeyDown(_ => order.getAndUpdate(_.appended("key")).unit)
+                .onKeyUp(_ => barrier.release)(
+                    UI.checkbox.id("keyboard-checkbox").onChange(v => order.getAndUpdate(_.appended(s"checkbox:$v")).unit),
+                    UI.radio.id("keyboard-radio").onChange(v => order.getAndUpdate(_.appended(s"radio:$v")).unit)
+                )
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _     <- Scope.ensure(fiber.interrupt.andThen(fiber.getResult).unit)
+            _     <- assertEventually(Sync.defer(ready.installed))
+            _     <- Sync.defer {
+                for id <- Seq("keyboard-checkbox", "keyboard-radio") do
+                    val target = dom.document.getElementById(id)
+                    val event  = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                        "keydown",
+                        scalajs.Dynamic.literal(key = "Enter", bubbles = true, cancelable = true)
+                    )
+                    discard(target.asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
+                end for
+                val barrierEvent = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                    "keyup",
+                    scalajs.Dynamic.literal(key = "Escape", bubbles = true)
+                )
+                discard(dom.document.getElementById("keyboard-radio").asInstanceOf[scalajs.Dynamic].dispatchEvent(barrierEvent))
+            }
+            _       <- barrier.await
+            result  <- order.get
+            checked <- Sync.defer {
+                val checkbox = dom.document.getElementById("keyboard-checkbox").asInstanceOf[dom.HTMLInputElement]
+                val radio    = dom.document.getElementById("keyboard-radio").asInstanceOf[dom.HTMLInputElement]
+                (checkbox.checked, radio.checked)
+            }
+        yield
+            assert(result == Chunk("checkbox:true", "key", "radio:true", "key"))
+            assert(checked == (true, true))
+    }
+
+    "textarea submission respects shift composition disabled state and form validation" in {
+        for
+            order   <- AtomicRef.init(Chunk.empty[String])
+            barrier <- Latch.init(1)
+            ready = new DomTestEnv.MountReady
+            ui    = UI.div.onKeyUp(_ => barrier.release)(
+                UI.form.onSubmit(order.getAndUpdate(_.appended("submit")).unit)(
+                    UI.textarea.submitOnEnter.id("keyboard-textarea").onKeyDown(_ => order.getAndUpdate(_.appended("key")).unit)
+                )
+            )
+            fiber     <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _         <- Scope.ensure(fiber.interrupt.andThen(fiber.getResult).unit)
+            _         <- assertEventually(Sync.defer(ready.installed))
+            prevented <- Sync.defer {
+                val target = dom.document.getElementById("keyboard-textarea").asInstanceOf[dom.HTMLTextAreaElement]
+                def key(options: scalajs.Object): Boolean =
+                    val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)("keydown", options)
+                    discard(target.asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
+                    event.defaultPrevented.asInstanceOf[Boolean]
+                end key
+                val shift             = key(scalajs.Dynamic.literal(key = "Enter", shiftKey = true, bubbles = true, cancelable = true))
+                val composing         = key(scalajs.Dynamic.literal(key = "Enter", isComposing = true, bubbles = true, cancelable = true))
+                val legacyComposition = key(scalajs.Dynamic.literal(key = "Enter", keyCode = 229, bubbles = true, cancelable = true))
+                target.disabled = true
+                val disabled = key(scalajs.Dynamic.literal(key = "Enter", bubbles = true, cancelable = true))
+                target.disabled = false
+                target.required = true
+                val invalid = key(scalajs.Dynamic.literal(key = "Enter", bubbles = true, cancelable = true))
+                target.value = "message"
+                val cancelled = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                    "keydown",
+                    scalajs.Dynamic.literal(key = "Enter", bubbles = true, cancelable = true)
+                )
+                discard(cancelled.preventDefault())
+                discard(target.asInstanceOf[scalajs.Dynamic].dispatchEvent(cancelled))
+                val valid = key(scalajs.Dynamic.literal(key = "Enter", bubbles = true, cancelable = true))
+                val end   = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                    "keyup",
+                    scalajs.Dynamic.literal(key = "Escape", bubbles = true)
+                )
+                discard(target.asInstanceOf[scalajs.Dynamic].dispatchEvent(end))
+                Chunk(shift, composing, legacyComposition, disabled, invalid, valid)
+            }
+            _      <- barrier.await
+            result <- order.get
+        yield
+            assert(prevented == Chunk(false, false, false, false, true, true))
+            assert(result == Chunk("key", "key", "key", "key", "key", "key", "key", "submit"))
+    }
+
 end DomBackendDelegationTest

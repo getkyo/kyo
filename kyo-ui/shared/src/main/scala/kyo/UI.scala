@@ -1498,6 +1498,13 @@ object UI:
             type Self = Textarea
             def withAttrs(a: Attrs): Textarea = copy(attrs = a)
 
+            /** Enter submits this textarea's form after validating it, and Shift+Enter keeps the line break. Without a form, Enter
+              * keeps its normal behavior. An Enter that confirms input-method composition does not submit.
+              *
+              * The browser reads the emitted attribute synchronously, before forwarding the keydown to application handlers.
+              */
+            def submitOnEnter: Textarea = withAttrs(attrs.copy(dataAttrs = attrs.dataAttrs.updated("kyo-submit-enter", "1")))
+
             def value: Maybe[Bound[String]]            = textInputAttrs.value
             def placeholder: Maybe[String]             = textInputAttrs.placeholder
             def readOnly: Maybe[Boolean]               = textInputAttrs.readOnly

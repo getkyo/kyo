@@ -119,6 +119,25 @@ class TypedEventTest extends kyo.test.Test[Any]:
         yield assert(result == Chunk("child", "parent"))
     }
 
+    "bubbling: a keydown inside a region two plain elements deep reaches the handler of each element above it, from the target out" in {
+        for
+            order <- AtomicRef.init(Chunk.empty[String])
+            text  <- Signal.initRef("inside")
+            heard = (name: String) => (_: UI.KeyboardEvent) => order.getAndUpdate(_.appended(name)).unit
+            ui    = UI.div.onKeyDown(heard("outer"))(
+                UI.div.onKeyDown(heard("middle"))(
+                    UI.div.onKeyDown(heard("inner"))(
+                        text.map(t => UI.span(t).onKeyDown(heard("target")))
+                    )
+                )
+            )
+            dispatch <- makeDispatch(ui)
+            target = Seq("0", "0", "0")
+            _      <- dispatch(target, UIEvent.KeyDown(target, KeyboardEventData("Escape", UI.Modifiers.none, Absent)))
+            result <- order.get
+        yield assert(result == Chunk("target", "inner", "middle", "outer"))
+    }
+
     // ---- renamed KeyboardEvent carries key and Modifiers ----
 
     "renamed KeyboardEvent: onKeyDown fires correctly for KeyDown with ctrl=true" in {
@@ -273,6 +292,104 @@ class TypedEventTest extends kyo.test.Test[Any]:
         yield
             assert(!blocked)
             assert(allowed)
+    }
+
+    // ---- a posted Space runs only the keydown handlers; the browser clicks or toggles on its release ----
+
+    "a Space keydown on a button runs the keydown handler above it and not the button's click" in {
+        for
+            log <- AtomicRef.init("")
+            ui = UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+                UI.button("Go").onClick(log.getAndUpdate(_ + "C").unit)
+            )
+            dispatch <- makeDispatch(ui)
+            _        <- dispatch(Seq("0"), UIEvent.KeyDown(Seq("0"), KeyboardEventData(" ", UI.Modifiers.none, Absent)))
+            result   <- log.get
+        yield assert(result == "K")
+    }
+
+    "a Space keydown on a checkbox runs the keydown handler above it and leaves the checkbox as it was" in {
+        for
+            log     <- AtomicRef.init("")
+            checked <- Signal.initRef(false)
+            ui = UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+                UI.checkbox.checked(checked).onChange(on => log.getAndUpdate(_ + (if on then "T" else "F")).unit)
+            )
+            dispatch <- makeDispatch(ui)
+            _        <- dispatch(Seq("0"), UIEvent.KeyDown(Seq("0"), KeyboardEventData(" ", UI.Modifiers.none, Absent)))
+            result   <- log.get
+            on       <- checked.get
+        yield
+            assert(result == "K")
+            assert(!on)
+    }
+
+    "a Space keydown on a radio runs the keydown handler above it and leaves the radio as it was" in {
+        for
+            log     <- AtomicRef.init("")
+            checked <- Signal.initRef(false)
+            ui = UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+                UI.radio.checked(checked).onChange(on => log.getAndUpdate(_ + (if on then "T" else "F")).unit)
+            )
+            dispatch <- makeDispatch(ui)
+            _        <- dispatch(Seq("0"), UIEvent.KeyDown(Seq("0"), KeyboardEventData(" ", UI.Modifiers.none, Absent)))
+            result   <- log.get
+            on       <- checked.get
+        yield
+            assert(result == "K")
+            assert(!on)
+    }
+
+    "a plain ancestor can stop an event leaving a keyed reactive region" in {
+        for
+            order <- AtomicRef.init(Chunk.empty[String])
+            items <- Signal.initRef(Chunk("a", "b"))
+            record = (name: String) => (_: UI.KeyboardEvent) => order.getAndUpdate(_.appended(name)).unit
+            ui     = UI.div.onKeyDown(record("outer"))(
+                UI.div.onKeyDown(record("boundary")).stopPropagation(true)(
+                    items.foreachKeyed(identity)(name => UI.button(name).onKeyDown(record(name)))
+                )
+            )
+            dispatch <- makeDispatch(ui)
+            target = Seq("0", "0", "b")
+            _      <- dispatch(target, UIEvent.KeyDown(target, KeyboardEventData("Escape", UI.Modifiers.none, Absent)))
+            _      <- items.set(Chunk("b", "a"))
+            _      <- dispatch(target, UIEvent.KeyDown(target, KeyboardEventData("Escape", UI.Modifiers.none, Absent)))
+            result <- order.get
+        yield assert(result == Chunk("b", "boundary", "b", "boundary"))
+    }
+
+    "an absent child index does not bubble to ancestor handlers" in {
+        for
+            order <- AtomicRef.init(Chunk.empty[String])
+            ui = UI.div.onKeyDown(_ => order.getAndUpdate(_.appended("outer")).unit)(UI.span("child"))
+            dispatch <- makeDispatch(ui)
+            _        <- Kyo.foreach(Chunk("-1", "1", "not-an-index")) { index =>
+                val target = Seq(index)
+                dispatch(target, UIEvent.KeyDown(target, KeyboardEventData("Escape", UI.Modifiers.none, Absent)))
+            }
+            result <- order.get
+        yield assert(result == Chunk.empty[String])
+    }
+
+    "a select keydown leaves option selection to the browser change event" in {
+        for
+            order    <- AtomicRef.init(Chunk.empty[String])
+            selected <- Signal.initRef("a")
+            ui = UI.div.onKeyDown(_ => order.getAndUpdate(_.appended("key")).unit)(
+                UI.select(UI.option("A").value("a"), UI.option("B").value("b"))
+                    .value(selected).onChange(value => order.getAndUpdate(_.appended(value)).unit)
+            )
+            dispatch <- makeDispatch(ui)
+            _        <- dispatch(Seq("0"), UIEvent.KeyDown(Seq("0"), KeyboardEventData("ArrowDown", UI.Modifiers.none, Absent)))
+            before   <- selected.get
+            _        <- dispatch(Seq("0"), UIEvent.Change(Seq("0"), "b"))
+            after    <- selected.get
+            result   <- order.get
+        yield
+            assert(before == "a")
+            assert(after == "b")
+            assert(result == Chunk("key", "b"))
     }
 
 end TypedEventTest

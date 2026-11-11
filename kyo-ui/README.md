@@ -352,6 +352,8 @@ Input elements share three capability traits.
 
 `TextInput`: text-shaped fields with a string value, placeholder, and Input + Change handlers. Setters common to all `TextInput` variants: `.value(v: String)`, `.value(ref: SignalRef[String])`, `.placeholder(v: String)`, `.readOnly(v: Boolean)`, `.disabled(v: Boolean)`, `.onInput(f: String => Unit < Async)`, `.onChange(f: String => Unit < Async)`. Implementations: `UI.input`, `UI.passwordInput`, `UI.emailInput`, `UI.telInput`, `UI.urlInput`, `UI.searchInput`, `UI.numberInput`, `UI.textarea`.
 
+Enter in a textarea inserts a line break. Use `UI.textarea.submitOnEnter` for a message box: Enter validates and submits its form, while Shift+Enter inserts a line break. Enter used to confirm input-method composition does not submit. Outside a form, Enter keeps its normal behavior.
+
 `PickerInput`: picker-shaped fields with a string value, disabled, and a Change handler (no placeholder, no onInput). Implementations: `UI.dateInput`, `UI.timeInput`, `UI.colorInput`, `UI.select`, `UI.dropdown(options*)`.
 
 `BooleanInput`: boolean-shaped fields with `.checked`, disabled, and a `Boolean => Unit < Async` Change handler. Implementations: `UI.checkbox`, `UI.radio`.
@@ -434,7 +436,7 @@ A few things to notice in this block:
 - `Signal.initRef` returns `< Sync`. Allocating three of them happens in a `for` comprehension.
 - `valid` is a `Signal[Boolean]` derived from two refs with `combineLatest` and `map`. It is read-only.
 - `.disabled(valid.map(!_))` uses the `Signal[Boolean]` overload, so the button is wrapped in a `Reactive`. That is the right behavior here: when validity flips, the button's disabled attribute flips.
-- `Form.onSubmit(action)` fires on Enter inside a child input AND on a button click inside the form (no event-type discrimination needed). The action runs with `Async` available.
+- `Form.onSubmit(action)` handles submission from a child input, a `.submitOnEnter` textarea, or a button inside the form. The action runs with `Async` available. Adding an `onKeyDown` handler does not repeat the control's click, change, or submit action.
 
 > **Note:** `Form.onSubmit` is a `Form`-specific extra, not an `Interactive` event. The handler is `=> Unit < Async`, same shape as `onClick`. Buttons inside a `Form` submit it; a `Button` outside a `Form` does not.
 

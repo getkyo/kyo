@@ -314,4 +314,76 @@ class TextareaTest extends UITest:
         }
     }
 
+    private def keyLog(textarea: UI.Ast.Textarea)(using Frame): UI < Async =
+        for log <- Signal.initRef("")
+        yield UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+            UI.form.onSubmit(log.getAndUpdate(_ + "S").unit)(textarea),
+            log.map(v => UI.span(s"log:$v").id("log"))
+        )
+
+    "Enter and Shift+Enter in a textarea break the line and never submit its form" in {
+        withUI(keyLog(UI.textarea.id("t"))) {
+            for
+                _     <- Browser.fill(Selector.id("t"), "hi")
+                _     <- Browser.press(Selector.id("t"), Key.Enter)
+                _     <- Browser.press(Selector.id("t"), Key.Enter, KeyModifiers(shift = true))
+                _     <- Browser.assertText(Selector.id("log"), "log:KK")
+                value <- Browser.evalJson[String]("document.getElementById('t').value")
+            yield assert(value == "hi\n\n")
+        }
+    }
+
+    "submitOnEnter: Enter submits the form once, after its keydown, without a line break; Shift+Enter breaks the line" in {
+        withUI(keyLog(UI.textarea.id("t").submitOnEnter)) {
+            for
+                _     <- Browser.assertAttribute(Selector.id("t"), "data-kyo-submit-enter", "1")
+                _     <- Browser.fill(Selector.id("t"), "hi")
+                _     <- Browser.press(Selector.id("t"), Key.Enter, KeyModifiers(shift = true))
+                _     <- Browser.press(Selector.id("t"), Key.Enter)
+                _     <- Browser.assertText(Selector.id("log"), "log:KKS")
+                value <- Browser.evalJson[String]("document.getElementById('t').value")
+            yield assert(value == "hi\n")
+        }
+    }
+
+    "submitOnEnter outside a form keeps Enter's line break" in {
+        withUI(UI.div(UI.textarea.id("t").submitOnEnter)) {
+            for
+                _     <- Browser.fill(Selector.id("t"), "hi")
+                _     <- Browser.press(Selector.id("t"), Key.Enter)
+                value <- Browser.evalJson[String]("document.getElementById('t').value")
+            yield assert(value == "hi\n")
+        }
+    }
+
+    "submitOnEnter respects composition cancellation disabled state and validation" in {
+        withUI(keyLog(UI.textarea.id("t").submitOnEnter)) {
+            for
+                prevented <- Browser.evalJson[Chunk[Boolean]]("""(() => {
+                    const t = document.getElementById('t');
+                    const key = (options = {}, cancel = false) => {
+                        const e = new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true, ...options});
+                        if (cancel) e.preventDefault();
+                        t.dispatchEvent(e);
+                        return e.defaultPrevented;
+                    };
+                    const shift = key({shiftKey:true});
+                    const composing = key({isComposing:true});
+                    const legacy = key({keyCode:229});
+                    t.disabled = true;
+                    const disabled = key();
+                    t.disabled = false;
+                    t.required = true;
+                    const invalid = key();
+                    t.value = 'message';
+                    const cancelled = key({}, true);
+                    const valid = key();
+                    key({key:'Escape'});
+                    return [shift, composing, legacy, disabled, invalid, cancelled, valid];
+                })()""")
+                _ <- Browser.assertText(Selector.id("log"), "log:KKKKKKKSK")
+            yield assert(prevented == Chunk(false, false, false, false, true, true, true))
+        }
+    }
+
 end TextareaTest

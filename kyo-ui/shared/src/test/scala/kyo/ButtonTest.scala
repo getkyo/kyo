@@ -297,6 +297,22 @@ class ButtonTest extends UITest:
         }
     }
 
+    "Enter clicks a button once when a keydown handler is above it" in {
+        val app: UI < Async =
+            for log <- Signal.initRef("")
+            yield UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+                UI.button("Go").id("b").onClick(log.getAndUpdate(_ + "C").unit),
+                log.map(v => UI.span(s"log:$v").id("log"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.press(Selector.id("b"), Key.Enter)
+                _ <- Browser.press(Selector.id("b"), Key('x'))
+                _ <- Browser.assertText(Selector.id("log"), "log:KCK")
+            yield ()
+        }
+    }
+
     "pressKey Space on button fires onClick" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)

@@ -122,6 +122,22 @@ class RadioTest extends UITest:
         }
     }
 
+    "Enter checks a radio once when a keydown handler is above it" in {
+        val app: UI < Async =
+            for log <- Signal.initRef("")
+            yield UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+                UI.radio.id("r").onChange(on => log.getAndUpdate(_ + (if on then "T" else "F")).unit),
+                log.map(v => UI.span(s"log:$v").id("log"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.press(Selector.id("r"), Key.Enter)
+                _ <- Browser.press(Selector.id("r"), Key('x'))
+                _ <- Browser.assertText(Selector.id("log"), "log:TKK")
+            yield ()
+        }
+    }
+
     "pressKey Space checks" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)

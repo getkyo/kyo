@@ -4,6 +4,28 @@ import kyo.Browser.*
 
 class SelectTest extends UITest:
 
+    "a native select keydown changes its value once with an ancestor key handler" in {
+        val app =
+            for log <- Signal.initRef("")
+            yield UI.div.onKeyDown(_ => log.getAndUpdate(_ + "K").unit)(
+                UI.select(
+                    UI.option("Alpha").value("a"),
+                    UI.option("Beta").value("b"),
+                    UI.option("Gamma").value("c")
+                ).id("native-select").onChange(v => log.getAndUpdate(_ + v).unit),
+                log.map(v => UI.span(s"log:$v").id("keyboard-log"))
+            )
+        withUI(app) {
+            for
+                _     <- Browser.evalJson[Int]("document.getElementById('native-select').size = 3")
+                _     <- Browser.press(Selector.id("native-select"), Key.ArrowDown)
+                _     <- Browser.press(Selector.id("native-select"), Key.Escape)
+                _     <- Browser.assertText(Selector.id("keyboard-log"), "log:KbK")
+                value <- Browser.evalJson[String]("document.getElementById('native-select').value")
+            yield assert(value == "b")
+        }
+    }
+
     "select exists" in {
         withUI(UI.div(
             UI.select(UI.option("Alpha").value("a"), UI.option("Beta").value("b")).id("s")
