@@ -78,7 +78,7 @@ Neither introduces a suspension. For an ordinary value both expand to the value 
 
 ### Nesting, and flatten
 
-The refusal above is what `CanLift` is for, and it works by asking whether the type being lifted is a computation. At a concrete type it can answer, and a computation is rejected. Inside a generic function it cannot: the type parameter is abstract, there is nothing to test, and the lift fires. So nesting is not something the conversion offers, it is what happens where the constraint cannot see what it is looking at:
+The refusal above is what `CanLift` is for. It rejects computations and types that can contain them, including `Int | (String < Any)` and opaque types with a computation as their lower bound. `Any` remains an explicit exception for untyped values. Inside a generic function the type parameter is abstract and the lift still fires, so nesting can happen where the constraint cannot see the concrete type:
 
 ```scala
 def wrap[A](a: A): A < Any = a
@@ -192,19 +192,20 @@ A required read cannot be reached without a binding: the effect is in the row, a
 
 A handler supplies the implementation an effect declaration left out, and removes that effect from the row as it does. Two words recur from here on. The function a handler runs at each operation is its clause. The computation a handler wraps, up to the result it answers with, is its region, and the run of a region from entry to end is its extent.
 
-Four shapes are provided: `handleCont` hands the clause the continuation to apply at most once, `handleContRepeated` hands it the continuation to apply as many times as it likes, `handleLoop` hands it only the operation's input, and `handleLoopState` threads a value from one occurrence to the next. Reach for the most convenient shape that still gives you the control you need, because handing the clause less also gives the evaluator more room.
+Four shapes handle the full computation: `handleCont` hands the clause the continuation to apply at most once, `handleContRepeated` hands it the continuation to apply as many times as it likes, `handleLoop` hands it only the operation's input, and `handleLoopState` threads a value from one occurrence to the next. `handleFirst` instead answers one operation and can return its remainder as a value. Reach for the most convenient shape that still gives you the control you need, because handing the clause less also gives the evaluator more room.
 
 | Handler | What the clause gets, and when to reach for it |
 | --- | --- |
 | `ArrowEffect.handleCont` | The input and the continuation as an `Arrow`. Apply it once to resume, or never to discard the rest. |
 | `ArrowEffect.handleContRepeated` | The same, for a clause that applies the continuation more than once: branching, backtracking, retrying the rest. |
+| `ArrowEffect.handleFirst` | The first operation's input and its remainder, which the caller may hold and resume once. Later occurrences remain unhandled. |
 | `ArrowEffect.handleLoop` | Only the input. Control flows through `Loop.Outcome`: `Loop.continue(answer)` answers this occurrence, `Loop.done(value)` ends the region. |
 | `ArrowEffect.handleLoopState` | The input and a state value threaded from one occurrence to the next. |
 | `ContextEffect.handleInheritable` | A value bound for the extent, inherited unchanged by a fork (a computation started from inside this one to run on its own fiber or branch). |
 | `ContextEffect.handleNonInheritable` | The same, except a fork starts the region over rather than inheriting the value, for a value tied to one execution. |
 | `ContextEffect.handle` | A value bound for the extent, with `fork` and `join` deciding what a fork starts from and what this scope keeps afterwards. |
 
-Every `ArrowEffect` handler above takes an optional `done` clause, which transforms the region's result, and an optional `recover` clause, which answers a failure, covered under [failure and resources](#recovery-is-a-clause-not-a-wrapper). `handleCont`, `handleLoop`, and `handleLoopState` each also have a `*With` variant that fuses what happens after the region into the handler itself, covered under [fusing the region's continuation](#the-with-variants-fusing-the-regions-continuation).
+The four full handlers take an optional `done` clause, which transforms the region's result, and an optional `recover` clause, which answers a failure, covered under [failure and resources](#recovery-is-a-clause-not-a-wrapper). `handleFirst` requires a `done` clause for a body with no occurrence and has no recovery overload. `handleCont`, `handleLoop`, and `handleLoopState` each also have a `*With` variant that fuses what happens after the region into the handler itself, covered under [fusing the region's continuation](#the-with-variants-fusing-the-regions-continuation).
 
 ### `handleCont`: the continuation in hand
 
@@ -245,6 +246,23 @@ The resources are where a second `handleCont` application goes wrong visibly. Be
 Under `handleCont` those regions travel with the continuation and close at their own end where it resumes, so a bracket releases in place, before the steps that follow it. That is the right behavior for a continuation applied once, and it is why `handleCont` is single-shot: a second application would re-enter a bracket the first one already released. If the clause drops the continuation instead, the handler releases what the regions owe when its own region ends.
 
 `handleContRepeated` holds what those regions owe instead of letting them close, so every application runs against a live resource and each release runs once, where the handler's own region ends. Holding keeps a resource open longer than a single resumption needs, so use `handleContRepeated` only for a clause that really resumes more than once. [A released scope, entered again](#a-released-scope-entered-again) shows both sides.
+
+### `handleFirst`: holding the remainder
+
+`handleFirst` answers one occurrence and lets its clause return the remainder as a value. This is the entry point for handlers that expose one step at a time, such as a batching effect:
+
+```scala
+def peel(v: Int < Ask): (Int < Ask) < Any =
+    ArrowEffect.handleFirst(Tag[Ask], v)(
+        [C] => (_, cont) => Kyo.lift(cont(10)),
+        value => Kyo.lift(value: Int < Ask)
+    )
+
+val remainder = peel(Ask.get.map(a => Ask.get.map(b => a + b))).eval
+assert(Ask.run(1)(remainder).eval == 11)
+```
+
+The remainder is resumed at most once. It carries the regions surrounding the captured operation, including brackets, so it must be consumed while the enclosing scope that owns those resources is still alive. An unconsumed remainder is released when that scope exits or evaluation ends; [re-entering a released scope](#a-released-scope-entered-again) is refused.
 
 ### `handleLoop`: one answer per occurrence
 
@@ -669,7 +687,7 @@ assert(Result.catching[Closed](refused.eval).isFailure)
 assert(once.closings == Chunk(Maybe.empty[Throwable]))
 ```
 
-The same refusal reaches any computation resumed after the region that owned it has ended: a parked computation resumed a second time, or a peeled remainder consumed after the computation that peeled it finished. A peel (`ArrowEffect.handleFirst`, the `private[kyo]` form behind `Stream.splitAtWith` and `Batch.run`) answers one operation and hands the rest of the region out as a value.
+The same refusal reaches any computation resumed after the region that owned it has ended: a parked computation resumed a second time, or a peeled remainder consumed after the computation that peeled it finished. A peel (`ArrowEffect.handleFirst`, also used by `Stream.splitAtWith` and `Batch.run`) answers one operation and hands the rest of the region out as a value.
 
 The `Closed` carries no stack trace at all, which is why its message names the `Bracket` call site the resource was opened at, and why the message explains itself rather than leaving the reader a frame to chase. It says which of the two ways released the scope, and what to change in each case. For an extent that ran to its end and was replayed: resume through `handleContRepeated`, acquire inside the branch so every resumption gets a resource of its own, or put the bracket outside the handler so its extent is not what gets replayed. For an owning scope that exited with a peeled remainder still unconsumed: consume the remainder inside the scope that peeled it, or use a confined form such as `Stream.splitAtWith`, whose callback the remainder cannot escape.
 
@@ -826,7 +844,7 @@ When a computation forks onto a fiber or a parallel branch, it leaves the evalua
 
 `Remove` and `Restore` differ on purpose: `restore` decides what the crossing hands back, which need not be what `capture` read. That is what lets a fork capture a stateful effect, run with a copy of its state, and restore only the final value rather than every intermediate update.
 
-Most effects supply their instance implicitly, and an intersection is derived from the components. For a lone `ContextEffect` the derived instance passes the value straight through, because bindings cross by a mechanism of their own that every isolate composes with, covered under [what the bindings themselves decide](#what-the-bindings-themselves-decide):
+Most effects supply their instance implicitly, and an intersection is derived from the components. For a lone `ContextEffect` the derived instance passes the computation straight through. Context bindings are captured only when the caller adds `.crossing`, covered under [what the bindings themselves decide](#what-the-bindings-themselves-decide):
 
 ```scala
 val levelIsolate: Isolate[Level, Any, Level] = Isolate.derive[Level, Any, Level]
@@ -857,7 +875,7 @@ val byPhases: Int < (Level & Say) =
 assert(runLevel(2)(runSay(byPhases)).eval == ((Chunk("level 2"), 2)))
 ```
 
-For the `Level` binding above both `Remove` and `Restore` are `Level` and the phases pass the value straight through, as the derived instance for a `ContextEffect` always does: the binding itself crosses by the mechanism every isolate composes with, so the three phases have nothing left to do.
+For the `Level` binding above both `Remove` and `Restore` are `Level` and the phases pass the computation straight through. This use stays inside `runLevel`, reading its existing binding without forking it.
 
 `Say` is worth noticing in that example. It was never mentioned by the isolate, and it crossed untouched: the operation suspended inside the isolation, stayed pending through all three phases, and was answered by the handler outside. An isolate manages state; it does not handle arbitrary operations.
 
@@ -905,9 +923,25 @@ assert(runLevel(5)(finished).eval == 5)
 
 > **Note:** derivation composes one instance per component effect, or fails compilation with a message listing four ways to proceed, from handling the effects before the operation to writing an instance by hand. `ContextEffect` components are filtered out of that fold on purpose, because bindings cross by the mechanism of their own that the next section describes.
 
+An effect already available through `Keep` needs no isolate of its own. Derivation checks subtyping in the same direction as effect rows: keeping `Async` covers `Sync`, and keeping `Abort[Throwable]` covers `Abort[IllegalStateException]`. The reverse direction is not sufficient.
+
+### `crossing`: capturing context for a later run
+
+Use `.crossing` when capturing inside one context and running elsewhere. It composes the context snapshot with the isolate's other state management. Capture and run must use the same returned instance:
+
+```scala
+val capturedIsolate = Isolate.derive[Level, Any, Any].crossing
+val capturedState   = runLevel(7)(capturedIsolate.capture(state => state)).eval
+
+assert(capturedIsolate.run(capturedState, level).eval == 7)
+assert(capturedIsolate.run(capturedState, level.map(_ * 2)).eval == 14)
+```
+
+Each run forks from the captured context. Higher-level spawning operations, such as `Fiber.init`, add this layer themselves; an isolate used in place leaves the current bindings alone.
+
 ### What the bindings themselves decide
 
-Bindings cross by a mechanism of their own, composed in front of whatever isolate a crossing names, and it is where `ContextEffect.handle`'s remaining parameters come back. It reads what is bound where the fork happens and puts two questions to every binding it finds, and both are answered on the call that installed the binding. Writing a binding and writing its crossing behavior are the same call.
+`Isolate.crossing` composes the context mechanism in front of the isolate, and it is where `ContextEffect.handle`'s remaining parameters come back. It reads what is bound where the fork happens and puts two questions to every binding it finds, and both are answered on the call that installed the binding. Writing a binding and writing its crossing behavior are the same call.
 
 The first is `fork`, which computes the value a forked computation starts with from the value the parent holds. A binding always crosses; `fork` only decides with what. What `handleInheritable` installs is the parent's own value, so the binding is inherited unchanged. A value that must not travel answers with a neutral one of its own type instead, which is why `kyo.Local` keeps its per-local "do not inherit" choice inside the value it binds rather than in this strategy.
 

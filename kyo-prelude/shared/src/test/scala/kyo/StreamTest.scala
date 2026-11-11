@@ -291,6 +291,29 @@ class StreamTest extends kyo.test.Test[Any]:
             assert(Var.runTuple(0)(taken).eval == (4, Seq(1, 2, 3)))
         }
 
+        "ends without pulling the chunk after the one the predicate failed in" in {
+            val stream = Stream.init(Seq(1, 2, 3)).concat(Stream(Var.update[Int](_ + 1).andThen(Emit.value(Chunk(4)))))
+            val taken  = stream.takeWhile(v => Kyo.lift(v < 3)).run
+            assert(Var.runTuple(0)(taken).eval == (0, Seq(1, 2)))
+        }
+
+        "a first-element rejection does not run a failing upstream tail" in {
+            val stream = Stream(Emit.value(Chunk(1)).andThen(Abort.fail("upstream tail")))
+            assert(Abort.run[String](stream.takeWhile(v => Kyo.lift(v < 1)).run).eval == Result.succeed(Chunk.empty[Int]))
+        }
+
+        "full and empty chunks continue before the rejecting chunk ends the stream" in {
+            val stream = Stream(
+                Emit.value(Chunk(1, 2))
+                    .andThen(Emit.value(Chunk.empty[Int]))
+                    .andThen(Emit.value(Chunk(3, 4)))
+                    .andThen(Var.update[Int](_ + 1))
+                    .andThen(Emit.value(Chunk(5)))
+            )
+            val taken = stream.takeWhile(v => Kyo.lift(v < 4)).run
+            assert(Var.runTuple(0)(taken).eval == (0, Chunk(1, 2, 3)))
+        }
+
         "stack safety" in {
             assert(
                 Stream.init(Seq.fill(n)(1)).takeWhile(_ == 1).run.eval ==
@@ -325,6 +348,28 @@ class StreamTest extends kyo.test.Test[Any]:
                 Stream.init(Seq.empty[Int]).takeWhilePure(_ => true).run.eval ==
                     Seq.empty
             )
+        }
+
+        "ends without pulling the chunk after the one the predicate failed in" in {
+            val stream = Stream.init(Seq(1, 2, 3)).concat(Stream(Var.update[Int](_ + 1).andThen(Emit.value(Chunk(4)))))
+            val taken  = stream.takeWhilePure(_ < 3).run
+            assert(Var.runTuple(0)(taken).eval == (0, Seq(1, 2)))
+        }
+
+        "a first-element rejection does not run a failing upstream tail" in {
+            val stream = Stream(Emit.value(Chunk(1)).andThen(Abort.fail("upstream tail")))
+            assert(Abort.run[String](stream.takeWhilePure(_ < 1).run).eval == Result.succeed(Chunk.empty[Int]))
+        }
+
+        "full and empty chunks continue before the rejecting chunk ends the stream" in {
+            val stream = Stream(
+                Emit.value(Chunk(1, 2))
+                    .andThen(Emit.value(Chunk.empty[Int]))
+                    .andThen(Emit.value(Chunk(3, 4)))
+                    .andThen(Var.update[Int](_ + 1))
+                    .andThen(Emit.value(Chunk(5)))
+            )
+            assert(Var.runTuple(0)(stream.takeWhilePure(_ < 4).run).eval == (0, Chunk(1, 2, 3)))
         }
 
         "stack safety" in {
