@@ -93,7 +93,7 @@ class SlackLiveTest extends kyo.test.Test[Any]:
         target(realOnly).map(t => v(t, t.credentials))
 
     "connecting opens Socket Mode and delivers hello first" in {
-        live(realOnly = Present(NoConnectionInfo))((_, c) => connectAndReceiveFirst(c)).map { first =>
+        live()((_, c) => connectAndReceiveFirst(c)).map { first =>
             // Slack chooses the connection count and the app id: the case and a count of at least one are compared.
             val connections = first match
                 case hello: SlackEnvelope.Hello => Present(hello.numConnections)
@@ -180,7 +180,7 @@ class SlackLiveTest extends kyo.test.Test[Any]:
     "a slash command arrives with its command and channel, and its trigger opens a modal that updateView replaces" in {
         live() { (t, c) =>
             interactive(t).andThen {
-                receiving(t, c, bare) { (client, received) =>
+                receiving(c, bare) { (client, received) =>
                     for
                         ran     <- command(t, c, received, "view")
                         opened  <- Slack.run(client)(Slack.openView(ran.triggerId, modal("opened")))
@@ -201,7 +201,7 @@ class SlackLiveTest extends kyo.test.Test[Any]:
                                 case _: SlackEnvelope.SlashCommand =>
                                     SlackAck.CommandResponse(SlackAck.CommandResponse.Visibility.InChannel, text)
                                 case other => answer(other)
-                    receiving(t, c, reply) { (client, received) =>
+                    receiving(c, reply) { (client, received) =>
                         for
                             _      <- command(t, c, received, "respond")
                             posted <- Slack.run(client)(postedWith(c, text))
@@ -216,7 +216,7 @@ class SlackLiveTest extends kyo.test.Test[Any]:
         live() { (t, c) =>
             interactive(t).andThen {
                 marker.map { text =>
-                    receiving(t, c, bare) { (client, received) =>
+                    receiving(c, bare) { (client, received) =>
                         for
                             ran    <- command(t, c, received, "url")
                             url    <- Abort.get(ran.responseUrl)
@@ -232,7 +232,7 @@ class SlackLiveTest extends kyo.test.Test[Any]:
     "sendEphemeral to the person who ran a slash command answers the message's timestamp" in {
         live() { (t, c) =>
             interactive(t).andThen {
-                receiving(t, c, bare) { (client, received) =>
+                receiving(c, bare) { (client, received) =>
                     for
                         ran <- command(t, c, received, "ephemeral")
                         ts  <- Slack.run(client)(Slack.sendEphemeral(SlackMessage(c.channel, "kyo-slack live suite: only you"), ran.user))
@@ -246,7 +246,7 @@ class SlackLiveTest extends kyo.test.Test[Any]:
         live(realOnly = Present("chat.postEphemeral stores its message in the channel's history")) { (t, c) =>
             interactive(t).andThen {
                 marker.map { text =>
-                    receiving(t, c, bare) { (client, received) =>
+                    receiving(c, bare) { (client, received) =>
                         for
                             ran <- command(t, c, received, "ephemeral")
                             ts  <- Slack.run(client)(Slack.sendEphemeral(SlackMessage(c.channel, text), ran.user))
@@ -261,7 +261,7 @@ class SlackLiveTest extends kyo.test.Test[Any]:
     "a button press arrives as BlockActions with its action and the message it was in" in {
         live() { (t, c) =>
             interactive(t).andThen {
-                receiving(t, c, bare) { (client, received) =>
+                receiving(c, bare) { (client, received) =>
                     for
                         ts    <- Slack.run(client)(Slack.send(buttonMessage(c)))
                         acted <- act(t, c, "press the Press button above")(_.presses(ts, PressBlock, PressAction, PressValue))
@@ -285,7 +285,7 @@ class SlackLiveTest extends kyo.test.Test[Any]:
         live(realOnly = Present("its block_actions carry no response_url")) { (t, c) =>
             interactive(t).andThen {
                 marker.map { text =>
-                    receiving(t, c, bare) { (client, received) =>
+                    receiving(c, bare) { (client, received) =>
                         for
                             ts    <- Slack.run(client)(Slack.send(buttonMessage(c)))
                             acted <- act(t, c, "press the Press button above")(_.presses(ts, PressBlock, PressAction, PressValue))
@@ -313,7 +313,7 @@ class SlackLiveTest extends kyo.test.Test[Any]:
                     case other => answer(other)
         live() { (t, c) =>
             interactive(t).andThen {
-                receiving(t, c, reply) { (client, received) =>
+                receiving(c, reply) { (client, received) =>
                     for
                         ran    <- command(t, c, received, "submit")
                         opened <- Slack.run(client)(Slack.openView(ran.triggerId, modal("submit me")))
@@ -373,30 +373,21 @@ class SlackLiveTest extends kyo.test.Test[Any]:
         }
 
     /** Runs `f` with a client on `c` whose receive loop records every envelope, answers it with `reply`, and has delivered hello. */
-    private def receiving[A](t: Target, c: Credentials, reply: [X] => SlackEnvelope[X] => X)(
+    private def receiving[A](c: Credentials, reply: [X] => SlackEnvelope[X] => X)(
         f: (Slack, Channel[SlackEnvelope[?]]) => A < (Async & Scope & Abort[Any])
     )(using Frame): A < (Async & Scope & Abort[Any]) =
-        // hello marks the connection as up before the leaf asks the person to act; the emulator's hello lacks `connection_info`, so
-        // the module delivers it as an unknown frame, and on the container that frame is the same mark.
-        val connected: PartialFunction[SlackEnvelope[?], Unit] = t match
-            case Target.Real(_)     => { case _: SlackEnvelope.Hello => () }
-            case Target.Emulator(_) => {
-                case _: SlackEnvelope.Hello                               => ()
-                case f: SlackEnvelope.UnknownFrame if f.`type` == "hello" => ()
-            }
         for
             received <- Channel.init[SlackEnvelope[?]](64)
             client   <- c.init
             _        <- Fiber.init(Abort.run[SlackException](Slack.run(client)(Slack.receive([Y] =>
                 (env: SlackEnvelope[Y]) => Abort.run[Closed](received.put(env)).andThen(reply[Y](env))
             ))))
-            _ <- untilFirst(received)(connected)
+            // hello marks the connection as up before the leaf asks the person to act.
+            _ <- untilFirst(received) { case _: SlackEnvelope.Hello => () }
             a <- f(client, received)
         yield a
         end for
     end receiving
-
-    private val NoConnectionInfo = "its hello carries no connection_info, so the module delivers it as an unknown frame"
 
     /** The bare answer of every envelope. */
     private val bare: [X] => SlackEnvelope[X] => X = [X] => (env: SlackEnvelope[X]) => answer(env)

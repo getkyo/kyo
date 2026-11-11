@@ -167,7 +167,7 @@ val logSkipped = Slack.run(config)(Slack.receive([A] =>
 ))
 ```
 
-An `EventsApi` frame's payload holds a `SlackEvent`, the Events API event ADT, beside its `eventId`. Its typed cases are `Message`, `AppMention`, `ReactionAdded`, `AppHomeOpened`, and `MemberJoinedChannel`, with the same `Unknown` forward-safety case. A `Message` carries an optional `threadTs`, which is how you tell a top-level message from a threaded reply:
+An `EventsApi` frame's payload holds a `SlackEvent`, the Events API event ADT, beside its `eventId`. Its typed cases are `Message`, `AppMention`, `ReactionAdded`, `AppHomeOpened`, and `MemberJoinedChannel`, with the same `Unknown` forward-safety case. A `Message` carries an optional `threadTs`, which is how you tell a top-level message from a threaded reply, and the `files` a `file_share` post shares, each a `SlackFile` with its id, its name, its media type, its size and its `url` (Slack's `url_private`), all but the id `Absent` where Slack sends none:
 
 ```scala
 import kyo.*
@@ -177,17 +177,17 @@ val byEvent = Slack.run(config)(Slack.receive([A] =>
         env match
             case e: SlackEnvelope.EventsApi =>
                 e.payload.event match
-                    case SlackEvent.AppMention(channel, user, text, ts)        => SlackAck.Ack
-                    case SlackEvent.Message(channel, user, text, ts, threadTs) => SlackAck.Ack
-                    case _                                                     => SlackAck.Ack
+                    case SlackEvent.AppMention(channel, user, text, ts)               => SlackAck.Ack
+                    case SlackEvent.Message(channel, user, text, ts, threadTs, files) => SlackAck.Ack
+                    case _                                                            => SlackAck.Ack
             case _: SlackEnvelope.Acknowledged => SlackAck.Ack
             case _: SlackEnvelope.Plain        => Kyo.unit
 ))
 ```
 
-> **Note:** a `message` event missing any of `channel`, `user`, `text`, or `ts` (the `message_changed` and `message_deleted` subtypes, for example) arrives as `SlackEvent.Unknown("message", eventJson)`, with the event's raw JSON as a `SlackRawJson` and a warn log, not as `SlackEvent.Message`. Every other event and interaction kind follows the same rule. A field Slack may leave out is a `Maybe` instead: `AppHomeOpened.tab` is `Absent` when the person did not open a tab, and a submitted view's `state` when the modal sent no state.
+> **Note:** a `SlackEvent.Message` is a person's post: a `message` event with no `subtype`, or one of `thread_broadcast`, `file_share` and `me_message`. Any other subtype, Slack's notice of a join, a leave, a topic or a pin, or a change such as `message_changed` and `message_deleted`, arrives as `SlackEvent.Unknown("message", eventJson)` with the event's raw JSON as a `SlackRawJson`. A post missing any of `channel`, `user`, `text`, or `ts` arrives the same way, with a warn log. Every other event and interaction kind follows that rule. A field Slack may leave out is a `Maybe` instead: `AppHomeOpened.tab` is `Absent` when the person did not open a tab, and a submitted view's `state` when the modal sent no state.
 
-These types model what Slack sends, and only kyo-slack decodes them, from Slack's own frames. None of the inbound types (events, interactions, envelopes, commands, `Slack.Identity`) has a `Schema`; summoning one is a compile error that names the type. Log or store the fields you need.
+Typed event cases such as `SlackEvent.Message` have a `Schema` for their Slack payload. The event, interaction and envelope roots have no `Schema`: use `Slack.receive` to decode and dispatch complete frames. Commands and `Slack.Identity` also refuse derivation; log or store the fields you need.
 
 A `SlashCommand` frame holds a `SlackCommand`: the `command` name, the typed `text`, the originating `channel` and `user`, a `triggerId` for opening a modal, and the `responseUrl` Slack sent, a `Maybe[SlackResponseUrl]` that is `Absent` when Slack sent none. The whole URL is a credential: anyone who holds it can post to the conversation, so a `SlackResponseUrl` renders as `SlackResponseUrl(<redacted>)`, `value` is the one way to read it, and a `SlackCommand` has no `Schema`. The immediate reply is `SlackAck.CommandResponse`; a later one goes through the url, as [Answering through a response_url](#answering-through-a-response_url) shows. You match on `command` to route the slash command:
 
@@ -218,7 +218,7 @@ val replyInThread = Slack.run(config)(Slack.receive([A] =>
         env match
             case e: SlackEnvelope.EventsApi =>
                 e.payload.event match
-                    case SlackEvent.Message(channel, user, text, ts, _)
+                    case SlackEvent.Message(channel, user, text, ts, _, _)
                         if channel == deploysChannel && user != deployBotUser && text.startsWith("deploy ") =>
                         Slack.send(SlackMessage(channel, "Queued, I will post here when it is out", threadTs = Present(ts)))
                             .andThen(SlackAck.Ack)
@@ -252,6 +252,28 @@ val announced: SlackTs < (Async & Abort[SlackSendFailure]) =
 ```
 
 `Slack.identity` confirms the bot token and returns a `Slack.Identity` (the bot's `userId`, `teamId`, `botId`, and workspace `url`, an `HttpUrl`). An answer missing any of the four fails with `SlackDecodeException`, whose `path` names the field, and so does an empty id or a `url` that is not absolute. Its `userId` is what a handler filters its own messages by.
+
+`Slack.download` reads the bytes at a file's `url` with the bot token. Slack sends a file from a Slack Connect workspace as its id alone until the app asks `files.info`, which `Slack.file` does, answering the `SlackFile` whole. The token goes only to an origin `config.fileHosts` lists, `https://files.slack.com` by default: a url on any other scheme, host or port fails with `SlackRefusedUrlException` and nothing is sent. Redirects are not followed, so the token reaches no other host, and the body is bounded by `maxResponseLength`. The deploy bot reads the log a person shares:
+
+```scala
+import kyo.*
+
+def bytesOf(file: SlackFile): Maybe[Span[Byte]] < (Async & Abort[SlackFileFailure | SlackDownloadFailure] & Env[Slack]) =
+    val whole = if file.url.nonEmpty then Kyo.lift(file) else Slack.file(file.id)
+    whole.map(_.url match
+        case Present(url) => Slack.download(url).map(bytes => Maybe(bytes))
+        case Absent       => Kyo.lift(Maybe.empty[Span[Byte]]))
+end bytesOf
+```
+
+`Slack.upload` shares files in a channel in one message, with a text and in a thread when you give them, and answers the message's `SlackTs`. It takes Slack's three steps: `files.getUploadURLExternal` for each file, a POST of its bytes to the `upload_url` Slack answers, with no token and only to an origin `config.fileHosts` lists, then `files.completeUploadExternal`. Slack answers the last without the message's ts, so `upload` reads `files.info` every `config.shareInterval` until the file shows shared in the channel, and fails with `SlackShareTimeoutException` once another read would start past `config.shareTimeout`. The deploy bot shares a deploy's log under the post that announced it:
+
+```scala
+import kyo.*
+
+def shareLog(announcement: SlackTs, log: Span[Byte]): SlackTs < (Async & Abort[SlackUploadFailure] & Env[Slack]) =
+    Slack.upload(deploysChannel, Chunk(SlackUpload("deploy.log", log)), Present("The staging deploy log"), Present(announcement))
+```
 
 For the long tail of the Web API that this module does not model directly, `Slack.custom` is the escape hatch. You give it a `SlackMethod` and a request body whose type has a `Schema`, and it answers the response type you ask for, which also has a `Schema`. The deploy bot marks its announcement with a rocket:
 
@@ -410,7 +432,7 @@ val stopOnDrop = config.reconnect(SlackConfig.Reconnect.Off)
 
 > **Caution:** delivery is at least once. Across an `Overlap` rotation, an id Slack re-pushes is acked but not delivered twice. An id whose handler panicked is delivered again. The dedup window covers two connection generations: after two rotations an id falls out of it, and a re-push of that id is delivered again. A handler with side effects should tolerate a repeat, deduplicating an event by its `eventId`; `Meta.retryAttempt` marks a Slack retry.
 
-`keepAliveInterval` (default `Present(30.seconds)`) sets the WebSocket ping interval; Socket Mode defines no application keepalive beyond it. Each Web API request is bounded by `requestTimeout` and its connection by `connectTimeout` (both `10.seconds` by default), and an answer longer than `maxResponseLength` (default `16.mb`) is refused. The two timeouts and `ackDeadline` must be positive and finite: `SlackConfig.init` with `Duration.Zero` or `Duration.Infinity` in any of them fails with `SlackInvalidConfigException`, naming the setting and the value. `maxResponseLength` is never refused; the client narrows it where it is used, zero to one byte and past `Int.MaxValue` bytes to `Int.MaxValue`. `baseUrl` (default `https://slack.com/api`) must be an absolute http or https url on a host in printable ASCII, with no user info, no query and no trailing slash. A setter named after a bounded setting runs the same check and answers a `Result`; the tokens, `reconnect` and `maxResponseLength` have no bounds, so their setters answer the config:
+`keepAliveInterval` (default `Present(30.seconds)`) sets the WebSocket ping interval; Socket Mode defines no application keepalive beyond it. Each Web API request is bounded by `requestTimeout` and its connection by `connectTimeout` (both `10.seconds` by default), and an answer longer than `maxResponseLength` (default `16.mb`) is refused. `Slack.upload` reads `files.info` every `shareInterval` (default `500.millis`) for up to `shareTimeout` (default `30.seconds`). The two timeouts, `ackDeadline`, `shareInterval` and `shareTimeout` must be positive and finite: `SlackConfig.init` with `Duration.Zero` or `Duration.Infinity` in any of them fails with `SlackInvalidConfigException`, naming the setting and the value. `maxResponseLength` is never refused; the client narrows it where it is used, zero to one byte and past `Int.MaxValue` bytes to `Int.MaxValue`. `baseUrl` (default `https://slack.com/api`) must be an absolute http or https url on a host in printable ASCII, with no user info, no query and no trailing slash. `fileHosts` (default `SlackConfig.FileHosts`, `https://files.slack.com`) lists the origins `Slack.download` sends the token to and `Slack.upload` sends a file's bytes to, each held to the same check, which `init` names by its position. A setter named after a bounded setting runs the same check and answers a `Result`; the tokens, `reconnect` and `maxResponseLength` have no bounds, so their setters answer the config:
 
 ```scala
 import kyo.*
@@ -480,6 +502,9 @@ Every failure is a leaf of the sealed `SlackException`, each a case class that c
 | `Slack.updateView` | `Abort[SlackUpdateViewFailure]` |
 | `Slack.publishView` | `Abort[SlackPublishViewFailure]` |
 | `Slack.custom` | `Abort[SlackCustomFailure]` |
+| `Slack.file` | `Abort[SlackFileFailure]` |
+| `Slack.download` | `Abort[SlackDownloadFailure]` |
+| `Slack.upload` | `Abort[SlackUploadFailure]` |
 | `Slack.respondEphemeral` | `Abort[SlackRespondEphemeralFailure]` |
 | `Slack.respondInChannel` | `Abort[SlackRespondInChannelFailure]` |
 | `Slack.replaceOriginal` | `Abort[SlackReplaceOriginalFailure]` |
@@ -487,7 +512,7 @@ Every failure is a leaf of the sealed `SlackException`, each a case class that c
 
 `Slack.run` adds no failure of its own: building a client opens nothing. `E` on `receive` is whatever the handler can fail with, inferred from it. A handler that calls `Slack.send` puts `SlackSendFailure` in `E`, and a handler failure ends the loop with that failure. When the handler's branches fail with different traits, Scala infers their common parent, so `E` is `SlackException`, as in [Putting it together](#putting-it-together). Give the handler a declared type naming the union when you want the row kept narrow.
 
-Slack answers most failures as `{"ok":false,"error":code}`. Those land under the category `SlackApiException`, which exposes `method`, `code`, and Slack's `messages` (its `response_metadata.messages`, often naming the offending argument). A code a caller can act on has its own leaf on the operations whose Slack documentation lists it: `SlackChannelNotFoundException` on the three `chat` calls, `SlackExpiredTriggerIdException` on `openView`, `SlackMessageNotFoundException` on `edit`, and so on. The credential leaves (`SlackInvalidAuthException`, `SlackNotAuthedException`, `SlackTokenRevokedException`, `SlackTokenExpiredException`, `SlackAccountInactiveException`, `SlackNotAllowedTokenTypeException`, and `SlackMissingScopeException` with the `needed` and `provided` scopes) are on every row but the four `response_url` ones, which send no token. Any other code, including a code whose leaf belongs to a different operation, is `SlackOtherApiException`, carrying the code as a string. A rate limit, by HTTP 429 or by the code `ratelimited` or `rate_limited`, is `SlackRateLimitException` on every row, whose `retryAfter` is the delay Slack sent (`Duration.Infinity` if it exceeds what a `Duration` holds), or `Absent` when it sent none it could mean.
+Slack answers most failures as `{"ok":false,"error":code}`. Those land under the category `SlackApiException`, which exposes `method`, `code`, and Slack's `messages` (its `response_metadata.messages`, often naming the offending argument). A code a caller can act on has its own leaf on the operations whose Slack documentation lists it: `SlackChannelNotFoundException` on the three `chat` calls and `upload`, `SlackExpiredTriggerIdException` on `openView`, `SlackMessageNotFoundException` on `edit`, and so on. The credential leaves (`SlackInvalidAuthException`, `SlackNotAuthedException`, `SlackTokenRevokedException`, `SlackTokenExpiredException`, `SlackAccountInactiveException`, `SlackNotAllowedTokenTypeException`, and `SlackMissingScopeException` with the `needed` and `provided` scopes) are on every row but the four `response_url` ones, which send no token, and `download`'s, whose answer is a file's bytes and never Slack's envelope. Any other code, including a code whose leaf belongs to a different operation, is `SlackOtherApiException`, carrying the code as a string. A rate limit, by HTTP 429 or by the code `ratelimited` or `rate_limited`, is `SlackRateLimitException` on every row, whose `retryAfter` is the delay Slack sent (`Duration.Infinity` if it exceeds what a `Duration` holds), or `Absent` when it sent none it could mean.
 
 A rate limit is not retried for you: the call fails with `SlackRateLimitException`, and waiting `retryAfter` and calling again is the caller's choice. You recover by running `Abort.run` over the call with its trait and matching the leaf you can act on. The deploy bot falls back to #deploys when the requested channel is gone, and waits out a rate limit once:
 
@@ -513,11 +538,12 @@ def announce(channel: SlackId.ChannelId): SlackTs < (Async & Abort[SlackSendFail
 
 The other leaves name what failed outside Slack's own answer:
 
-- `SlackTransportException`, on every row: the HTTP or WebSocket call failed before an answer could be read. `method` names the call (the Web API method, `apps.connections.open`, `socket-connect`, or `response_url`), `kind` says what failed (`Connect`, `Dns`, `Tls`, `ConnectTimeout`, `Timeout`, `Protocol`, `ConnectionClosed`, `WebSocketHandshake`, `PoolExhausted`, `PayloadTooLarge`), with the `host` and `port` it went to and the elapsed `timeout` for a timeout. It holds no kyo-http failure, since every one names the request's url and a `response_url`'s path is its credential; for a connection that could not be made, kyo-net's failure, which names only a host and port, is its `cause`.
-- `SlackRefusedUrlException`, on the four `response_url` rows and on `init` and `receive`: a url Slack supplied (a `response_url`, or the socket url `apps.connections.open` answered) is not an absolute url of its scheme on a host in printable ASCII, so nothing was sent to it.
-- `SlackUnexpectedStatusException`, on every row: a non-2xx answer with no Slack body, such as an HTML error page from Slack's edge.
-- `SlackDecodeException`, on every row: a response body that did not decode; `part` says whether the `ok`/`error` envelope or the method's result failed, `failure` names kyo-schema's decode leaf (`Parse`, `MissingField`, ...), `path` the field it reports (a missing field's name included), and `position` where a parse stopped. It has no cause: kyo-schema's exceptions quote the body, and Slack's answer can hold a credential. An answer whose types are right and whose values are not is this failure too: an `auth.test` answer with an empty id, and an `apps.connections.open` answer without its url.
+- `SlackTransportException`, on every row: the HTTP or WebSocket call failed before an answer could be read. `method` names the call (the Web API method, `apps.connections.open`, `socket-connect`, `response_url`, `file-download`, or `file-upload` for the POST of a file's bytes), `kind` says what failed (`Connect`, `Dns`, `Tls`, `ConnectTimeout`, `Timeout`, `Protocol`, `ConnectionClosed`, `WebSocketHandshake`, `PoolExhausted`, `PayloadTooLarge`), with the `host` and `port` it went to and the elapsed `timeout` for a timeout. It holds no kyo-http failure, since every one names the request's url and a `response_url`'s path is its credential; for a connection that could not be made, kyo-net's failure, which names only a host and port, is its `cause`.
+- `SlackRefusedUrlException`, on the four `response_url` rows and on `init`, `receive`, `download` and `upload`: a url Slack supplied (a `response_url`, the socket url `apps.connections.open` answered, a file's `url`, or the `upload_url` `files.getUploadURLExternal` answered) is not an absolute url of its scheme on a host in printable ASCII, or a file's `url` or an `upload_url` is on an origin `fileHosts` does not list, so nothing was sent to it.
+- `SlackUnexpectedStatusException`, on every row: a non-2xx answer with no Slack body, such as an HTML error page from Slack's edge. On `download` and on the POST of a file's bytes in `upload`, any non-2xx answer but a 429, a redirect included.
+- `SlackDecodeException`, on every row but `download`'s: a response body that did not decode; `part` says whether the `ok`/`error` envelope or the method's result failed, `failure` names kyo-schema's decode leaf (`Parse`, `MissingField`, ...), `path` the field it reports (a missing field's name included), and `position` where a parse stopped. It has no cause: kyo-schema's exceptions quote the body, and Slack's answer can hold a credential. An answer whose types are right and whose values are not is this failure too: an `auth.test` answer with an empty id, and an `apps.connections.open` answer without its url.
 - `SlackLinkDisabledException`, on `receive`: the `link_disabled` end-of-link from the previous section.
+- `SlackShareTimeoutException`, on `upload`: the files were uploaded and completed, and `files.info` did not show the first one shared in the channel within `shareTimeout`, naming the file, the channel and the timeout.
 
 A leaf's message names the method and what failed, never a token, a `response_url`, or the wrapped cause's message. Four leaves are never on an operation's row, because they are the failures of building a value, each the `Result` of an `init`: `SlackInvalidRawBlockException`, `SlackInvalidConfigException`, `SlackInvalidTokenException`, and `SlackInvalidMethodException`.
 

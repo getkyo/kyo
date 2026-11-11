@@ -3,7 +3,7 @@ package kyo
 /** Typed error hierarchy for kyo-slack: a sealed base over `KyoException` with flat leaves, one per
   * failure a caller can tell apart.
   *
-  * The leaves fall into four groups:
+  * The leaves fall into five groups:
   *   - the transport and the response: [[kyo.SlackTransportException]] (the HTTP or WebSocket call
   *     failed), [[kyo.SlackRefusedUrlException]] (a url Slack supplied that the module will not send
   *     to), [[kyo.SlackUnexpectedStatusException]] (a non-2xx answer with no Slack body),
@@ -11,6 +11,7 @@ package kyo
   *   - Slack's own `{"ok":false}` answers: the category [[kyo.SlackApiException]], with a leaf per
   *     error code a caller can act on and [[kyo.SlackOtherApiException]] carrying any other code;
   *   - the Socket Mode connection: [[kyo.SlackLinkDisabledException]];
+  *   - an upload's wait for the message that shares it: [[kyo.SlackShareTimeoutException]];
   *   - an invalid value, the failure of its `init` and never on an `Abort` row:
   *     [[kyo.SlackInvalidRawBlockException]], [[kyo.SlackInvalidConfigException]],
   *     [[kyo.SlackInvalidTokenException]] and [[kyo.SlackInvalidMethodException]].
@@ -99,12 +100,21 @@ sealed trait SlackReplaceOriginalFailure extends SlackException
 /** What `Slack.deleteOriginal` can fail with: the POST to a `response_url` and Slack's answer to it. */
 sealed trait SlackDeleteOriginalFailure extends SlackException
 
+/** What `Slack.file` can fail with. */
+sealed trait SlackFileFailure extends SlackException
+
+/** What `Slack.download` can fail with: the GET of a file's url and its answer. */
+sealed trait SlackDownloadFailure extends SlackException
+
+/** What `Slack.upload` can fail with: its three steps, the reads of the file's shares, and the wait for them. */
+sealed trait SlackUploadFailure extends SlackException
+
 // --- Transport and response ---
 
 /** A Slack call failed at the transport, before Slack's answer could be read.
   *
   * `method` is the Web API method, `apps.connections.open`, `socket-connect` for opening the Socket Mode
-  * WebSocket, or `response_url`. `host` and `port` are those the call went to, and `timeout` is the bound that
+  * WebSocket, `response_url`, `file-download` for a file's bytes, or `file-upload` for the bytes an upload sends. `host` and `port` are those the call went to, and `timeout` is the bound that
   * elapsed for a `ConnectTimeout` or a `Timeout`. The leaf holds no kyo-http failure, since those name the
   * request's url, and a `response_url`'s path is its credential. For a connection that could not be made
   * (`Connect`, `Dns`, `Tls`, `ConnectTimeout`), kyo-net's failure, which names a host and port and never a
@@ -124,7 +134,8 @@ final case class SlackTransportException(
     with SlackIdentityFailure with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure
     with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
     with SlackRespondEphemeralFailure with SlackRespondInChannelFailure with SlackReplaceOriginalFailure
-    with SlackDeleteOriginalFailure:
+    with SlackDeleteOriginalFailure
+    with SlackFileFailure with SlackDownloadFailure with SlackUploadFailure:
     // Not passed to `KyoException`'s constructor: it would embed the cause's message, formatted per
     // environment, into this leaf's `getMessage`, which states only what failed.
     override def getCause(): Throwable = cause.fold(null)(identity)
@@ -158,16 +169,19 @@ end SlackTransportException
 
 /** A url Slack supplied that the module will not send to: a `response_url`, or the Socket Mode url
   * `apps.connections.open` answered, that is not an absolute url of its scheme (http or https for a
-  * `response_url`, wss for the socket) on a host in printable ASCII. kyo-http resolves a url with no scheme
+  * `response_url`, wss for the socket) on a host in printable ASCII, or a file's url or an upload's `upload_url` whose origin
+  * `SlackConfig.fileHosts` does not list. kyo-http resolves a url with no scheme
   * against a base url and sends a unix-socket url to a local socket, so either would reach a place the url
-  * does not name, and a `ws` socket url would send its ticket in clear. `method` is `response_url` or
-  * `socket-connect`. The leaf copies nothing of the url, which is the credential.
+  * does not name, a `ws` socket url would send its ticket in clear, and a file's url can name any host its app
+  * chose, which the bot token must not reach. `method` is `response_url`, `socket-connect`, `file-download` or `file-upload`.
+  * The leaf copies nothing of the url, which is the credential.
   */
 final case class SlackRefusedUrlException(method: String)(using Frame)
     extends SlackException(s"Slack $method: the url Slack supplied is not one the module sends to, so nothing was sent.")
     with SlackInitFailure with SlackReceiveFailure
     with SlackRespondEphemeralFailure with SlackRespondInChannelFailure with SlackReplaceOriginalFailure
     with SlackDeleteOriginalFailure
+    with SlackDownloadFailure with SlackUploadFailure
 
 /** Slack answered a non-2xx status with a body that is not a Slack response, such as an HTML error
   * page from its edge. A non-2xx answer that does carry `{"ok":false,...}` is a [[kyo.SlackApiException]].
@@ -179,6 +193,7 @@ final case class SlackUnexpectedStatusException(method: String, status: HttpStat
     with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
     with SlackRespondEphemeralFailure with SlackRespondInChannelFailure with SlackReplaceOriginalFailure
     with SlackDeleteOriginalFailure
+    with SlackFileFailure with SlackDownloadFailure with SlackUploadFailure
 
 /** A Slack response body did not decode. `part` says whether the `ok`/`error` envelope or the method's
   * result failed.
@@ -210,6 +225,7 @@ final case class SlackDecodeException(
     with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
     with SlackRespondEphemeralFailure with SlackRespondInChannelFailure with SlackReplaceOriginalFailure
     with SlackDeleteOriginalFailure
+    with SlackFileFailure with SlackUploadFailure
 
 object SlackDecodeException:
     /** kyo-schema's decode leaf that rejected the body, by kind. */
@@ -290,6 +306,14 @@ final case class SlackRateLimitException(method: String, retryAfter: Maybe[Durat
     with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
     with SlackRespondEphemeralFailure with SlackRespondInChannelFailure with SlackReplaceOriginalFailure
     with SlackDeleteOriginalFailure
+    with SlackFileFailure with SlackDownloadFailure with SlackUploadFailure
+
+/** `Slack.upload` uploaded its files and completed the upload into `channel`, and `files.info` did not show `file` shared there
+  * within `timeout`, `SlackConfig.shareTimeout`. The files are on Slack; the share may still appear after the wait.
+  */
+final case class SlackShareTimeoutException(file: SlackId.FileId, channel: SlackId.ChannelId, timeout: Duration)(using Frame)
+    extends SlackException(s"Slack did not show the file ${file.value} shared in ${channel.value} within ${timeout.show}.")
+    with SlackUploadFailure
 
 // --- Slack's {"ok":false} answers ---
 
@@ -314,7 +338,8 @@ final case class SlackInvalidAuthException(method: String, messages: Chunk[Strin
     extends SlackApiException(SlackApiException.describe(method, "invalid_auth", messages))
     with SlackInitFailure with SlackReceiveFailure
     with SlackIdentityFailure with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure
-    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure:
+    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
+    with SlackFileFailure with SlackUploadFailure:
     def code: String = "invalid_auth"
 end SlackInvalidAuthException
 
@@ -323,7 +348,8 @@ final case class SlackNotAuthedException(method: String, messages: Chunk[String]
     extends SlackApiException(SlackApiException.describe(method, "not_authed", messages))
     with SlackInitFailure with SlackReceiveFailure
     with SlackIdentityFailure with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure
-    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure:
+    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
+    with SlackFileFailure with SlackUploadFailure:
     def code: String = "not_authed"
 end SlackNotAuthedException
 
@@ -332,7 +358,8 @@ final case class SlackTokenRevokedException(method: String, messages: Chunk[Stri
     extends SlackApiException(SlackApiException.describe(method, "token_revoked", messages))
     with SlackInitFailure with SlackReceiveFailure
     with SlackIdentityFailure with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure
-    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure:
+    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
+    with SlackFileFailure with SlackUploadFailure:
     def code: String = "token_revoked"
 end SlackTokenRevokedException
 
@@ -341,7 +368,8 @@ final case class SlackTokenExpiredException(method: String, messages: Chunk[Stri
     extends SlackApiException(SlackApiException.describe(method, "token_expired", messages))
     with SlackInitFailure with SlackReceiveFailure
     with SlackIdentityFailure with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure
-    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure:
+    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
+    with SlackFileFailure with SlackUploadFailure:
     def code: String = "token_expired"
 end SlackTokenExpiredException
 
@@ -350,7 +378,8 @@ final case class SlackAccountInactiveException(method: String, messages: Chunk[S
     extends SlackApiException(SlackApiException.describe(method, "account_inactive", messages))
     with SlackInitFailure with SlackReceiveFailure
     with SlackIdentityFailure with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure
-    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure:
+    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
+    with SlackFileFailure with SlackUploadFailure:
     def code: String = "account_inactive"
 end SlackAccountInactiveException
 
@@ -359,7 +388,8 @@ final case class SlackNotAllowedTokenTypeException(method: String, messages: Chu
     extends SlackApiException(SlackApiException.describe(method, "not_allowed_token_type", messages))
     with SlackInitFailure with SlackReceiveFailure
     with SlackIdentityFailure with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure
-    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure:
+    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
+    with SlackFileFailure with SlackUploadFailure:
     def code: String = "not_allowed_token_type"
 end SlackNotAllowedTokenTypeException
 
@@ -374,7 +404,8 @@ final case class SlackMissingScopeException(method: String, needed: Chunk[String
     )
     with SlackInitFailure with SlackReceiveFailure
     with SlackIdentityFailure with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure
-    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure:
+    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
+    with SlackFileFailure with SlackUploadFailure:
     def code: String = "missing_scope"
 end SlackMissingScopeException
 
@@ -382,21 +413,24 @@ end SlackMissingScopeException
 final case class SlackInvalidArgumentsException(method: String, messages: Chunk[String])(using Frame)
     extends SlackApiException(SlackApiException.describe(method, "invalid_arguments", messages))
     with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure
-    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure:
+    with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
+    with SlackFileFailure with SlackUploadFailure:
     def code: String = "invalid_arguments"
 end SlackInvalidArgumentsException
 
 /** `channel_not_found`: the channel passed does not exist or is not visible to the bot. */
 final case class SlackChannelNotFoundException(method: String, messages: Chunk[String])(using Frame)
     extends SlackApiException(SlackApiException.describe(method, "channel_not_found", messages))
-    with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure:
+    with SlackSendFailure with SlackSendEphemeralFailure with SlackEditFailure
+    with SlackUploadFailure:
     def code: String = "channel_not_found"
 end SlackChannelNotFoundException
 
 /** `not_in_channel`: the bot is not a member of the channel passed. */
 final case class SlackNotInChannelException(method: String, messages: Chunk[String])(using Frame)
     extends SlackApiException(SlackApiException.describe(method, "not_in_channel", messages))
-    with SlackSendFailure with SlackSendEphemeralFailure:
+    with SlackSendFailure with SlackSendEphemeralFailure
+    with SlackUploadFailure:
     def code: String = "not_in_channel"
 end SlackNotInChannelException
 
@@ -513,6 +547,7 @@ final case class SlackOtherApiException(method: String, code: String, messages: 
     with SlackOpenViewFailure with SlackUpdateViewFailure with SlackPublishViewFailure with SlackCustomFailure
     with SlackRespondEphemeralFailure with SlackRespondInChannelFailure with SlackReplaceOriginalFailure
     with SlackDeleteOriginalFailure
+    with SlackFileFailure with SlackUploadFailure
 
 // --- Socket Mode connection ---
 
@@ -560,17 +595,26 @@ object SlackInvalidConfigException:
     enum Problem derives CanEqual:
         case KeepAliveInterval(value: Duration)
         case AckDeadline(value: Duration)
+        case ShareInterval(value: Duration)
+        case ShareTimeout(value: Duration)
         case RequestTimeout(value: Duration)
         case ConnectTimeout(value: Duration)
         case BaseUrl(problem: UrlProblem)
 
+        /** The origin at `position` in `fileHosts`. */
+        case FileHost(position: Int, problem: UrlProblem)
+
         private[kyo] def show: String =
             this match
-                case KeepAliveInterval(value) => s"keepAliveInterval must be a positive, finite duration; got ${value.show}"
-                case AckDeadline(value)       => s"ackDeadline must be a positive, finite duration; got ${value.show}"
-                case RequestTimeout(value)    => s"requestTimeout must be a positive, finite duration; got ${value.show}"
-                case ConnectTimeout(value)    => s"connectTimeout must be a positive, finite duration; got ${value.show}"
-                case BaseUrl(problem)         => s"baseUrl must be an absolute http or https url on a host: ${problem.show}"
+                case KeepAliveInterval(value)    => s"keepAliveInterval must be a positive, finite duration; got ${value.show}"
+                case AckDeadline(value)          => s"ackDeadline must be a positive, finite duration; got ${value.show}"
+                case ShareInterval(value)        => s"shareInterval must be a positive, finite duration; got ${value.show}"
+                case ShareTimeout(value)         => s"shareTimeout must be a positive, finite duration; got ${value.show}"
+                case RequestTimeout(value)       => s"requestTimeout must be a positive, finite duration; got ${value.show}"
+                case ConnectTimeout(value)       => s"connectTimeout must be a positive, finite duration; got ${value.show}"
+                case BaseUrl(problem)            => s"baseUrl must be an absolute http or https url on a host: ${problem.show}"
+                case FileHost(position, problem) =>
+                    s"fileHosts($position) must be an absolute http or https url on a host: ${problem.show}"
     end Problem
 
     /** Why a url is not one the module sends to. */

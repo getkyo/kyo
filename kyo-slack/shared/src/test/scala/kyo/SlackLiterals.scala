@@ -31,6 +31,9 @@ object SlackLiterals:
         ackDeadline: Duration = 2500.millis,
         reconnect: SlackConfig.Reconnect = SlackConfig.Reconnect.Overlap,
         baseUrl: HttpUrl = SlackConfig.SlackApi,
+        fileHosts: Chunk[HttpUrl] = SlackConfig.FileHosts,
+        shareInterval: Duration = 500.millis,
+        shareTimeout: Duration = 30.seconds,
         requestTimeout: Duration = 10.seconds,
         connectTimeout: Duration = 10.seconds,
         maxResponseLength: ByteSize = 16.mb
@@ -44,7 +47,10 @@ object SlackLiterals:
             baseUrl,
             requestTimeout,
             connectTimeout,
-            maxResponseLength
+            maxResponseLength,
+            fileHosts,
+            shareInterval,
+            shareTimeout
         ))
 
 end SlackLiterals
