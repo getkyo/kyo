@@ -125,17 +125,13 @@ private[kyo] object ReactiveUI:
                 )
 
             case ui =>
-                // Catch-all for static leaf nodes: Text, Fragment, KeyedChild.
-                // All interactive types extend Element (handled above) and all reactive types are
-                // Reactive or Foreach (also handled above). If a new UI subtype is added, the
-                // exhaustiveness checker will NOT warn here; any new type that is interactive must
-                // be added as an explicit case above before this catch-all.
-                ReactiveUI(
+                for (kids, hdl) <- walkStatic(ui, path, svg, regionIdentity, parentContext)
+                yield ReactiveUI(
                     path,
                     Signal.initConst(ui),
                     isConst = true,
-                    Seq.empty,
-                    (_, _) => true,
+                    kids,
+                    hdl,
                     ReactiveRegion.from(regionIdentity, svg),
                     regionIdentity,
                     parentContext,
@@ -264,6 +260,9 @@ private[kyo] object ReactiveUI:
                                 .fold(false: Boolean < Async)(h => h(targetPath, event))
                         else true
                     (allKids, handle)
+
+            case KeyedChild(_, child) =>
+                walkStatic(child, basePath, svg, context, parentContext, discoverRootBound)
 
             case _: Reactive[?] | _: Foreach[?, ?] =>
                 // When walkStatic is called with a Reactive or Foreach as the top-level node

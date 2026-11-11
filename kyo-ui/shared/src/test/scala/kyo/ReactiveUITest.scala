@@ -87,6 +87,22 @@ class ReactiveUITest extends UITest:
 
     // ---- Browser-level reactive behaviour ----
 
+    "static fragment root keeps server events and signal updates wired" in {
+        val app: UI < Async =
+            for value <- Signal.initRef("initial")
+            yield UI.fragment(
+                UI.button("Update").id("fragment-update").onClick(value.set("updated")),
+                value.map(text => UI.span(text).id("fragment-value"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("fragment-value"), "initial")
+                _ <- Browser.click(Selector.id("fragment-update"))
+                _ <- Browser.assertText(Selector.id("fragment-value"), "updated")
+            yield ()
+        }
+    }
+
     "reactive span updates on signal change" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
