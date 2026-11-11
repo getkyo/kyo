@@ -116,7 +116,9 @@ final private[runner] class SbtRunner(
         // The summary is written before the end-of-run checks, which fail by throwing, so a leak report never hides the counts.
         val summary =
             parsedArgs match
-                case Args.Result.Error(msg) => msg
+                // sbt accepts an empty task list and a returned error string as success. Fail at its end-of-run boundary,
+                // including the controller whose tasks() is never called and whose done() sbt reads outside the fork.
+                case Args.Result.Error(msg) => throw new IllegalArgumentException(s"kyo-test: CLI error: $msg")
                 case Args.Result.Help       => ""
                 case Args.Result.Ok(_)      =>
                     if !tasksRequested.get() then ""
@@ -194,9 +196,10 @@ final private[runner] class SbtRunner(
                 end match
             end if
             // Runs regardless of every suite's leakCheck settings (LeakCheck.detect above already settled the scheduler via
-            // awaitSchedulerIdle when any category ran; StrandedOpCheck's own two-sample settle window is independent of that and runs
-            // unconditionally, since a stranded op is never acceptable suite behavior).
-            StrandedOpCheck.detect(allowlist, settleNanos = 200_000_000L) match
+            // awaitSchedulerIdle when any category ran; StrandedOpCheck's own settle window is independent of that and runs
+            // unconditionally, since a stranded op is never acceptable suite behavior). Its budget is a ceiling sized for the slowest
+            // runner, as the leak check's idle budget is: a fork pays it only while a component stays frozen with work pending.
+            StrandedOpCheck.detect(allowlist, settleNanos = 200_000_000L, budgetNanos = 30_000_000_000L) match
                 case kyo.Maybe.Present(report) => throw new StrandedOpCheck.Detected(report)
                 case kyo.Maybe.Absent          => ()
             end match
