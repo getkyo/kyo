@@ -28,13 +28,41 @@ object UUID:
     /** The max UUID, `ffffffff-ffff-ffff-ffff-ffffffffffff`, with all 128 bits set to one. */
     val max: UUID = Repr(-1L, -1L)
 
-    private[kyo] def fromLongs(mostSignificantBits: Long, leastSignificantBits: Long): UUID =
+    /** The UUID with these 128 bits, for a fixed well-known value; a fresh or derived UUID comes from `v5`, `v7` or `parse`. */
+    def fromLongs(mostSignificantBits: Long, leastSignificantBits: Long): UUID =
         Repr(mostSignificantBits, leastSignificantBits)
+
+    /** A version 7 UUID: its first 48 bits are the Unix millisecond it was made at, so it holds that instant and sorts by it.
+      *
+      * A `V7` is a `UUID`, and every UUID operation applies to it; its [[V7.unixTimestampMillis]] is total where a UUID's is a `Maybe`. A
+      * fresh one comes from `UUID.v7` in kyo-core, one of given bits from [[V7.init]], and a UUID read elsewhere is refined by [[V7.from]].
+      */
+    opaque type V7 <: UUID = Repr
+
+    object V7:
+
+        /** The version 7 UUID of a Unix millisecond, with RFC 9562's 12 bits of `rand_a` taken from `counter` and its 62 bits of `rand_b`
+          * from `random`. The bits of an argument past its field's width are dropped.
+          */
+        def init(unixTimestampMillis: Long, counter: Int, random: Long): V7 =
+            Repr(
+                ((unixTimestampMillis & 0xffffffffffffL) << 16) | 0x7000L | (counter & 0xfffL),
+                (random & 0x3fffffffffffffffL) | 0x8000000000000000L
+            )
+
+        /** The UUID as a version 7 UUID, or `Absent` when its version is another. */
+        def from(uuid: UUID): Maybe[V7] =
+            if uuid.version == 7 then Present(uuid) else Absent
+
+        extension (self: V7)
+            /** The Unix timestamp in milliseconds this UUID holds. */
+            def unixTimestampMillis: Long = (self.msb >>> 16) & 0xffffffffffffL
+    end V7
 
     /** The RFC 9562 variant encoded in a UUID's variant bits.
       *
-      * The variant occupies the most significant bits of octet 8. `RFC` is the variant used by every UUID version this module
-      * constructs (v5, v8Sha256); the others are recognized for inspection of foreign UUIDs but never produced here.
+      * The variant occupies the most significant bits of octet 8. `RFC` is the variant used by every UUID version kyo constructs (v4, v5,
+      * v7, v8Sha256); the others are recognized for inspection of foreign UUIDs but never produced here.
       */
     enum Variant derives CanEqual:
         /** Reserved for backward compatibility with the obsolete NCS format (top bit `0`). */
@@ -253,9 +281,7 @@ object UUID:
 
         /** Returns the Unix timestamp in milliseconds embedded in a version 7 UUID, or `Absent` for any other version. */
         def unixTimestampMillis: Maybe[Long] =
-            if self.version == 7 then
-                Maybe((self.msb >>> 16) & 0xffffffffffffL)
-            else Absent
+            V7.from(self).map(V7.unixTimestampMillis)
 
         /** Compares this UUID to `that` using unsigned bytewise ordering of the 128-bit value, matching RFC 9562's ordering. */
         def compare(that: UUID): Int =
