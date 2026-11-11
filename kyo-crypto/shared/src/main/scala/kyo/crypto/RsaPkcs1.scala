@@ -43,8 +43,10 @@ object RsaPkcs1:
             case Present(recovered) => java.util.Arrays.equals(recovered, encode(Sha256.hashArray(message), key.sizeInBytes))
             case Absent             => false
 
-    /** EMSA-PKCS1-v1_5 for SHA-256: `0x00 0x01 PS 0x00 DigestInfo`, with `PS` the `0xff` bytes that fill `length`. */
-    private def encode(digest: Array[Byte], length: Int): Array[Byte] =
+    /** EMSA-PKCS1-v1_5 for SHA-256: `0x00 0x01 PS 0x00 DigestInfo`, with `PS` the `0xff` bytes that fill `length`. A signature is
+      * computed over the block a verification recovers, so both build it here.
+      */
+    private[kyo] def encode(digest: Array[Byte], length: Int): Array[Byte] =
         val infoLength = Sha256DigestInfoPrefix.length + digest.length
         // length is at least 256 because Rsa.VerificationKey enforces MinModulusBits; below infoLength + 11 the fill range is invalid.
         val encoded = new Array[Byte](length)
