@@ -68,6 +68,17 @@ class RsaSpkiTest extends kyo.test.Test[Any]:
             val bad = "-----BEGIN PUBLIC KEY-----\nMIIBI\n-----END PUBLIC KEY-----\n"
             assert(Rsa.encryptionKeyFromPem(bad) == Result.fail(SpkiFailure.PemNotBase64(Base64.Failure.BadLength(5))))
         }
+
+        "pemBody decodes the body between the markers it is handed, unpadded and spaced as encryptionKeyFromPem takes it" in {
+            val header  = "-----BEGIN RSA PRIVATE KEY-----"
+            val footer  = "-----END RSA PRIVATE KEY-----"
+            val body    = pemOf(testPubDer :+ 0x7f.toByte).replace("PUBLIC KEY", "RSA PRIVATE KEY")
+            val decoded = Rsa.pemBody(body.replace("=", "").replace("\n", " \t\r\n"), header, footer).map(_.toArray.toSeq)
+            assert(decoded == Result.succeed((testPubDer :+ 0x7f.toByte).toSeq))
+            assert(Rsa.pemBody(s"$header\n!!!!\n$footer\n", header, footer).map(_.toArray.toSeq) ==
+                Result.fail(Base64.Failure.IllegalCharacter(0)))
+            assert(Rsa.pemBody(testPubPem, header, footer).map(_.toArray.toSeq) == Result.fail(Base64.Failure.IllegalCharacter(0)))
+        }
     }
 
     "DER" - {
