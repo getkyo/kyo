@@ -77,16 +77,18 @@ private[kyo] object DomBackend:
 
     private def mountInto(ui: UI, container: dom.Element, diagnostics: MountDiagnostics)(using Frame): Unit < (Async & Scope) =
         for
-            _       <- DomStyleSheet.injectBase()
-            root    <- ReactiveUI.normalize(ui, Seq.empty)
-            html    <- HtmlRenderer.render(ui, Seq.empty)
-            _       <- Sync.defer(container.innerHTML = html)
-            regions <- DomReactiveRegions.init(container)
-            _       <- applyJsProps(container)
-            _       <- Sync.defer(seedEnter(container, Set.empty))
-            _       <- Sync.defer(seedFocusAuto(container, Set.empty))
-            _       <- Sync.defer(beginAnimationsSync(container))
-            exchange = LocalExchange(regions, diagnostics)
+            _          <- DomStyleSheet.injectBase()
+            animations <- DomAnimations.init
+            root       <- ReactiveUI.normalize(ui, Seq.empty)
+            html       <- HtmlRenderer.render(ui, Seq.empty)
+            _          <- Sync.defer(container.innerHTML = html)
+            regions    <- DomReactiveRegions.init(container)
+            _          <- applyJsProps(container)
+            _          <- Sync.defer(seedEnter(container, Set.empty))
+            _          <- Sync.defer(seedFocusAuto(container, Set.empty))
+            // Unsafe: the native frame is requested inside this suspended step and owned by the mount scope.
+            _ <- Sync.Unsafe.defer(animations.begin(container))
+            exchange = LocalExchange(regions, diagnostics, animations)
             dispatch <- ReactiveUI.subscribe(root, exchange)
             // A subscription interrupt is asynchronous. Stop accepting publications before the Scope begins
             // interrupting region fibers, so an already-woken observer cannot publish into the registry after its
@@ -175,11 +177,12 @@ private[kyo] object DomBackend:
     final private case class RangeFocus(path: Maybe[String], rootIndex: Int, childIndexes: Seq[Int])
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
-    private class LocalExchange(regions: DomReactiveRegions, diagnostics: MountDiagnostics) extends UIExchange:
+    private class LocalExchange(regions: DomReactiveRegions, diagnostics: MountDiagnostics, animations: DomAnimations) extends UIExchange:
 
         private var open = true
 
-        private[kyo] def close(using Frame): Unit < Sync = Sync.defer { open = false }
+        private[kyo] def close(using Frame): Unit < Sync =
+            Sync.ensure(animations.close)(Sync.defer { open = false })
 
         // In-process: the update is a DOM write, not bytes on a wire, so this replaces the region whole
         // (morphing where it can) rather than diffing it. `previous` is what the server-side exchange
@@ -270,10 +273,10 @@ private[kyo] object DomBackend:
             )
         end prepareRangePatch
 
-        private def finishRangePatch(state: RangePatchState, newElements: Seq[dom.Element]): Unit =
+        private def finishRangePatch(state: RangePatchState, newElements: Seq[dom.Element])(using AllowUnsafe): Unit =
             newElements.foreach { element =>
                 applyJsPropsSync(element)
-                beginAnimationsSync(element)
+                animations.begin(element)
             }
             state.active.flatMap(resolveFocus(newElements, _)).foreach { target =>
                 discard(target.asInstanceOf[scalajs.js.Dynamic].focus())
@@ -289,7 +292,8 @@ private[kyo] object DomBackend:
         end finishRangePatch
 
         private def replaceSvg(region: ReactiveRegion.SvgElement, html: String)(using Frame): Unit < Sync =
-            Sync.defer {
+            // Unsafe: replacement and its native post-write callbacks share one suspended DOM publication.
+            Sync.Unsafe.defer {
                 val pathAttr  = region.path.mkString(".")
                 val finalHtml = HtmlRenderer.wrapReactiveRegion(region, html)
                 val element   = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
@@ -304,7 +308,7 @@ private[kyo] object DomBackend:
                     val updated = Maybe(document.querySelector(s"""[data-kyo-path="$pathAttr"]""")).toList
                     updated.foreach { newElement =>
                         applyJsPropsSync(newElement)
-                        beginAnimationsSync(newElement)
+                        animations.begin(newElement)
                     }
                     activePath.foreach(path => restoreSvgFocus(path, selectionStart, selectionEnd))
                     seedEnter(updated, oldEnter)
@@ -520,28 +524,6 @@ private[kyo] object DomBackend:
             i += 1
         end while
     end applyJsPropsSync
-
-    /** Start every freshly-inserted SMIL animation under `root`.
-      *
-      * Chart transition `<animate>` elements use `begin="indefinite"` so they do not auto-play against the
-      * shared SVG document timeline (which would make a post-load update snap to the frozen `to` value).
-      * Calling `beginElement()` after the node is inserted starts the tween relative to now. The call is
-      * deferred one animation frame so the SMIL engine has registered the newly inserted elements; a node
-      * that was already replaced again by then throws and is ignored.
-      */
-    private def beginAnimationsSync(root: dom.Element): Unit =
-        val anims = root.querySelectorAll("animate,animateTransform,animateMotion")
-        if anims.length > 0 then
-            discard(dom.window.requestAnimationFrame { (_: Double) =>
-                var i = 0
-                while i < anims.length do
-                    try anims(i).asInstanceOf[scalajs.js.Dynamic].beginElement()
-                    catch case _: Throwable => ()
-                    i += 1
-                end while
-            })
-        end if
-    end beginAnimationsSync
 
     /** True when `start` or any of its ancestors below `document.body` declares event type `t` in `data-kyo-ev`.
       *

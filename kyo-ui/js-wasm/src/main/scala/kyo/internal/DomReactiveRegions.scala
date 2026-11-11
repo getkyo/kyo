@@ -30,9 +30,10 @@ final private[kyo] class DomReactiveRegions private (
     )(
         before: (Seq[dom.Element], Seq[dom.Element]) => A
     )(
-        after: (A, Seq[dom.Element]) => Unit
+        after: (A, Seq[dom.Element]) => (AllowUnsafe ?=> Unit)
     )(using Frame): Unit < Sync =
-        Sync.defer {
+        // Unsafe: native post-write callbacks run inside the same suspended publication as the DOM replacement.
+        Sync.Unsafe.defer {
             ensureOpen()
             if !ReactiveRegion.isValidHtmlId(regionId) then fail(s"Malformed reactive range id: $regionId")
             val endpoints = ranges.getOrElse(regionId, fail(s"Unknown reactive range: $regionId"))
@@ -99,8 +100,8 @@ final private[kyo] class DomReactiveRegions private (
     )(
         before: (Seq[dom.Element], Seq[dom.Element]) => A
     )(
-        after: (A, Seq[dom.Element]) => Unit
-    )(using Frame): Unit =
+        after: (A, Seq[dom.Element]) => (AllowUnsafe ?=> Unit)
+    )(using Frame, AllowUnsafe): Unit =
         val incoming = DomReactiveRegions.scan(document, fragment)
         val removed  = ranges.iterator.collect {
             case (id, nested) if id != regionId && intersects(range, nested.start) => id
@@ -161,7 +162,7 @@ final private[kyo] class DomReactiveRegions private (
                     roots
             ranges.addAll(incoming)
             discard(inserted.addAll(incomingMarkup))
-            after(state, insertedRoots)
+            after(state, insertedRoots)(using summon[AllowUnsafe])
         end if
     end replaceContent
 
