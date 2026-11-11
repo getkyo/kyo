@@ -3,7 +3,7 @@ package kyo
 class UUIDGeneratorTest extends kyo.test.Test[Any]:
 
     private val v4Fixed = parse("00112233-4455-4677-a899-aabbccddeeff")
-    private val v7Fixed = parse("00000000-03e8-7000-8000-000000000001")
+    private val v7Fixed = UUID.V7.init(1000L, 0, 1L)
 
     private def parse(value: String): UUID =
         UUID.parse(value).getOrThrow
@@ -20,11 +20,11 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
             entropy = Chunk.from(entropyBytes.flatten.toArray)
         )
 
-    final private class FixedGenerator(val v4Value: UUID, val v7Value: UUID) extends UUIDGenerator:
-        def v4(using Frame): UUID < Sync = Sync.defer(v4Value)
-        def v7(using Frame): UUID < Sync = Sync.defer(v7Value)
+    final private class FixedGenerator(val v4Value: UUID, val v7Value: UUID.V7) extends UUIDGenerator:
+        def v4(using Frame): UUID < Sync    = Sync.defer(v4Value)
+        def v7(using Frame): UUID.V7 < Sync = Sync.defer(v7Value)
 
-    final private class RecordingGenerator(v4Value: UUID, v7Value: UUID) extends UUIDGenerator:
+    final private class RecordingGenerator(v4Value: UUID, v7Value: UUID.V7) extends UUIDGenerator:
         var v4Calls = 0
         var v7Calls = 0
 
@@ -34,7 +34,7 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
                 v4Value
             }
 
-        def v7(using Frame): UUID < Sync =
+        def v7(using Frame): UUID.V7 < Sync =
             Sync.defer {
                 v7Calls += 1
                 v7Value
@@ -44,13 +44,13 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
     "capability API" - {
         "declares only Sync on generator operations and preserves the scoped computation effects" in {
             val generatorV4: UUID < Sync                   = UUIDGenerator.live.v4
-            val generatorV7: UUID < Sync                   = UUIDGenerator.live.v7
+            val generatorV7: UUID.V7 < Sync                = UUIDGenerator.live.v7
             val companionV4: UUID < Sync                   = UUIDGenerator.v4
-            val companionV7: UUID < Sync                   = UUIDGenerator.v7
+            val companionV7: UUID.V7 < Sync                = UUIDGenerator.v7
             val companionLet: Int < (Abort[String] & Sync) =
                 UUIDGenerator.let(UUIDGenerator.live)(Abort.fail("expected"))
             val extensionV4: UUID < Sync                   = UUID.v4
-            val extensionV7: UUID < Sync                   = UUID.v7
+            val extensionV7: UUID.V7 < Sync                = UUID.v7
             val extensionLet: Int < (Abort[String] & Sync) =
                 UUID.let(UUIDGenerator.live)(Abort.fail("expected"))
 
@@ -139,9 +139,6 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
                 assert(generatedV4.variant == UUID.Variant.RFC)
                 assert(generatedV7.version == 7)
                 assert(generatedV7.variant == UUID.Variant.RFC)
-                generatedV7.unixTimestampMillis match
-                    case Present(_) => succeed("live version 7 UUID contains its timestamp")
-                    case Absent     => fail("live version 7 UUID did not contain its timestamp")
             end for
         }
 
@@ -152,7 +149,7 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
                 for
                     _         <- control.set(Instant.Epoch + controlledMillis.millis)
                     generated <- UUID.v7
-                yield assert(generated.unixTimestampMillis == Maybe(controlledMillis))
+                yield assert(generated.unixTimestampMillis == controlledMillis)
             }
         }
     }
@@ -305,7 +302,7 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
                 assert(generated.show == "01020304-0506-7647-a889-aacbec0d2e4f")
                 assert(generated.version == 7)
                 assert(generated.variant == UUID.Variant.RFC)
-                assert(generated.unixTimestampMillis == Maybe(0x010203040506L))
+                assert(generated.unixTimestampMillis == 0x010203040506L)
         }
 
         "uses a later observed timestamp with a freshly sampled payload" in {
@@ -361,7 +358,7 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
                 assert(first.show == "00000000-03e8-7000-8000-000000000000")
                 assert(second.show == "00000000-03e8-7000-8000-000000000001")
                 assert(third.show == "00000000-03e8-7000-8000-000000000002")
-                assert(Chunk(first, second, third).map(_.unixTimestampMillis) == Chunk.fill(3)(Maybe(1000L)))
+                assert(Chunk(first, second, third).map(_.unixTimestampMillis) == Chunk.fill(3)(1000L))
             end for
         }
 
@@ -377,7 +374,7 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
             yield
                 assert(exhausted.show == "00000000-03e8-7fff-bfff-ffffffffffff")
                 assert(advanced.show == "00000000-03e9-7000-8000-00000000002a")
-                assert(advanced.unixTimestampMillis == Maybe(1001L))
+                assert(advanced.unixTimestampMillis == 1001L)
                 assert(exhausted.compare(advanced) < 0)
             end for
         }
@@ -394,7 +391,7 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
             yield
                 assert(before.show == "ffffffff-ffff-7fff-bfff-fffffffffffe")
                 assert(atMax.show == "ffffffff-ffff-7fff-bfff-ffffffffffff")
-                assert(atMax.unixTimestampMillis == Maybe(0xffffffffffffL))
+                assert(atMax.unixTimestampMillis == 0xffffffffffffL)
             end for
         }
 

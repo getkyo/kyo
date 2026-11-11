@@ -201,10 +201,7 @@ final case class WhatsAppDecodeException(
 )(using Frame)
     extends WhatsAppException(WhatsAppDecodeException.show(method, part, failure, path, position))
     with WhatsAppSendFailure with WhatsAppSendTemplateFailure with WhatsAppMarkReadFailure with WhatsAppCustomFailure
-    with WhatsAppUploadFailure with WhatsAppResolveUrlFailure with WhatsAppDeleteFailure with WhatsAppWebhookDecodeFailure:
-    /** The message as one line, without the source rendering `getMessage` adds in development. */
-    private[kyo] def show: String = WhatsAppDecodeException.show(method, part, failure, path, position)
-end WhatsAppDecodeException
+    with WhatsAppUploadFailure with WhatsAppResolveUrlFailure with WhatsAppDeleteFailure with WhatsAppWebhookDecodeFailure
 
 object WhatsAppDecodeException:
 
