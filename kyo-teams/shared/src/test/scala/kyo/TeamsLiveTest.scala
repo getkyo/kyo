@@ -134,6 +134,27 @@ class TeamsLiveTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a message with text and two images laid out as a carousel is one activity, and is updated" in withTarget() {
+        (target, config, reference) =>
+            // A 1x1 PNG.
+            val pixel               = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+            def image(name: String) =
+                val json = s"""{"contentType":"image/png","contentUrl":"data:image/png;base64,$pixel","name":"$name"}"""
+                Teams.Attachment.Other("image/png", Teams.RawJson(Json.decode[Structure.Value](json).getOrThrow))
+            val message = Teams.Message.Create(
+                text = Present("kyo-teams live suite: carousel"),
+                attachments = Chunk(image("first.png"), image("second.png")),
+                attachmentLayout = Present(Teams.AttachmentLayout.Carousel)
+            )
+            Teams.run(config) {
+                for
+                    sent    <- Teams.send(reference, message)
+                    updated <- Teams.edit(reference, sent, message.copy(text = Present("kyo-teams live suite: carousel edit")))
+                    _       <- if target == Target.OnTeams then Teams.delete(reference, sent) else Kyo.unit
+                yield assert(updated == sent)
+            }
+    }
+
     "members reads the conversation's first page, and member reads one of them back" in withTarget() { (_, config, reference) =>
         Teams.run(config) {
             Teams.members(reference).map { page =>
@@ -189,7 +210,7 @@ class TeamsLiveTest extends kyo.test.Test[Any]:
                     val kid = Maybe.fromOption(Json.decode[TeamsLiveTest.KeySet](keys).getOrThrow.keys
                         .collectFirst { case key if key.endorsements.contains("msteams") => key.kid }).getOrElse("")
                     val claims =
-                        s"""{"iss":"https://api.botframework.com","aud":"$id","exp":253402300799,"serviceUrl":"https://smba.trafficmanager.net/amer/"}"""
+                        s"""{"iss":"https://api.botframework.com","aud":"$id","exp":253402300799,"serviceurl":"https://smba.trafficmanager.net/amer/"}"""
                     def segment(text: String) = Base64.encodeUrl(Utf8.encode(text))
                     val token                 = Chunk(
                         segment(s"""{"alg":"RS256","kid":"$kid"}"""),

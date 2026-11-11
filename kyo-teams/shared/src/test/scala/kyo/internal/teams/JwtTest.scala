@@ -136,7 +136,7 @@ class JwtTest extends kyo.test.Test[Any]:
         }
     }
 
-    "iss, aud, exp and serviceUrl are required, in that order; nbf is not" in {
+    "iss, aud, exp and serviceurl are required, in that order, serviceurl in the lowercase the Bot Framework issues; nbf is not" in {
         withLocal { local =>
             refusals(
                 local,
@@ -145,6 +145,7 @@ class JwtTest extends kyo.test.Test[Any]:
                 bearer(unsigned(local.claims(aud = ""))),
                 bearer(unsigned(local.claims(exp = ""))),
                 bearer(unsigned(local.claims(serviceUrl = ""))),
+                bearer(unsigned(local.claims(serviceUrl = "").stripSuffix("}") + s""","serviceUrl":"$signedServiceUrl"}""")),
                 bearer(unsigned(local.claims(nbf = "")))
             ).map { result =>
                 assert(result == (
@@ -153,6 +154,7 @@ class JwtTest extends kyo.test.Test[Any]:
                         malformed(Problem.MissingClaim(Claim.Issuer)),
                         malformed(Problem.MissingClaim(Claim.Audience)),
                         malformed(Problem.MissingClaim(Claim.Expiry)),
+                        malformed(Problem.MissingClaim(Claim.ServiceUrl)),
                         malformed(Problem.MissingClaim(Claim.ServiceUrl)),
                         Result.fail(TeamsSignatureMismatchException())
                     ),

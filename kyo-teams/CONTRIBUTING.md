@@ -25,9 +25,9 @@ Everything else in the module serves two properties. A change that weakens eithe
 
 Anyone holding the bot's access token may act as the bot. The token is therefore sent only to a service URL whose origin `TeamsConfig.serviceHosts` lists, and that is checked before every request (`Teams.scala`, the `Teams` scaladoc).
 
-The check is the first step of `Connector.call`, before `teams.tokens.get` is reached. A refused URL fetches no token and sends nothing (`Connector.scala`, `Connector.call`). An origin matches on scheme and host, ASCII case-insensitively, and on the exact port (`ServiceUrls.scala`, `ServiceUrls`).
+The check is the first step of `Connector.authorized`, shared by `call` and `download`, before `teams.tokens.get` is reached. A refused URL fetches no token and sends nothing. An origin matches on scheme and host, ASCII case-insensitively, and on the exact port (`ServiceUrls.scala`, `ServiceUrls`). `download` also refuses Unix socket overrides and unsendable request targets before reaching this path, because its raw `HttpUrl` has not passed `Teams.ServiceUrl.init`.
 
-A well-formed `Teams.ServiceUrl`, whether from `init`, from its `Schema`, or inside a stored `ConversationReference`, is not yet a URL the module sends to. Every outbound request must go through `Connector.call`. A new path that calls kyo-http directly skips the allowlist and leaks the token. `TeamsTest` "a service URL whose origin serviceHosts does not list is refused before a token is requested or anything is sent" pins that a refused send reaches the peer with no request at all.
+A well-formed `Teams.ServiceUrl`, whether from `init`, from its `Schema`, or inside a stored `ConversationReference`, is not yet a URL the module sends to. Every outbound request must go through `Connector.call` or `Connector.download`. A new path that calls kyo-http directly skips the allowlist and leaks the token. `TeamsTest` "a service URL whose origin serviceHosts does not list is refused before a token is requested or anything is sent" pins that refused verbs and downloads reach the peer with no request at all.
 
 The module also owns the whole kyo-http configuration of a request that carries a credential. `Connector.requestConfig` builds a complete `HttpClientConfig` from the `TeamsConfig`: no redirects, no kyo-http retry, no auto filters, the config's `tls` and `transport` (`Connector.scala`, `Connector.requestConfig`). `transportWith` installs it with `HttpClient.let` and `HttpClient.withConfig` (`Connector.scala`, `Connector.transportWith`). So no caller filter, TLS setting or redirect policy reaches a request with a token in it. A new setting that changes how a credential-carrying request is sent belongs in `requestConfig`; a knob read anywhere else does not reach the request.
 
@@ -43,7 +43,7 @@ The module also owns the whole kyo-http configuration of a request that carries 
 6. `current`: the time is inside the skew window.
 7. `teams.keys.get(kid)`: the key, which may fetch.
 8. `signed`: the RS256 signature under that key.
-9. `bound`: the body's `channelId` is endorsed by the key and is `msteams`, and its `serviceUrl` equals the token's `serviceUrl` claim as an exact string (`Jwt.scala`, `Jwt.bound`).
+9. `bound`: the body's `channelId` is endorsed by the key and is `msteams`, and its `serviceUrl` equals the token's `serviceurl` claim as an exact string (`Jwt.scala`, `Jwt.bound`). The claim's name is lowercase on the wire, as the Bot Framework's SDKs read it (`AuthenticationConstants.ServiceUrlClaim` in botbuilder-dotnet), though Microsoft's authentication article spells it `serviceUrl`; JSON keys are case-sensitive, so `Wire.JwtClaims` renames it.
 
 The order is load-bearing in two ways. A forged token reaches a key fetch only with a plausible issuer, audience and lifetime, so moving `teams.keys.get` earlier lets an unauthenticated caller drive key-set fetches. The body is parsed only under a verified signature, so reading it before `signed` parses attacker-controlled bytes pre-authentication. The key cache's throttle on unknown key ids assumes the issuer, audience and lifetime filter already ran (`KeyCache.scala`, the `KeyCache` scaladoc).
 
@@ -55,14 +55,13 @@ Verification cannot be turned off. Microsoft's guidance is "Implementers shouldn
 
 ### One request path out
 
-Each outbound verb is an `Env.use[Teams]` around `Connector.call[<Op>Failure]` with its `Routes` constant, method, service URL and path segments, followed by `decoded[...]` of the 2xx body (`Teams.scala`, `Teams.send`). `custom` reaches the same `call` with a caller-built `Path`, so it inherits the allowlist, the token and the error mapping.
+JSON verbs use `Env.use[Teams]` around `Connector.call[<Op>Failure]` with their `Routes` constant, method, service URL and path segments, followed by `decoded[...]` of the 2xx body (`Teams.scala`, `Teams.send`). `custom` reaches the same `call` with a caller-built `Path`. `download` passes its URL to `Connector.download` and returns the 2xx bytes unchanged. Both paths use `authorized`, sharing the allowlist, token, transport configuration, retries and error mapping; only an error body is decoded as text for a download.
 
-`Connector.call` does, in order (`Connector.scala`, `Connector.call`):
+`call` first joins the raw segments under the service URL. `ServiceUrls.join` percent-encodes each segment, so segments go to `call` unencoded. The shared `Connector.authorized` then does, in order:
 
 1. The allowlist check.
-2. Joining the raw segments under the service URL. `ServiceUrls.join` percent-encodes each segment, so segments go to `call` unencoded.
-3. Per attempt: the token from `TokenCache`, a bearer header, and the request under `transport` with `failOnError = false`, so the module maps the status, `Retry-After` and body itself.
-4. A 2xx answers the body. Otherwise `retry` may send again, and when it does not, `failure` turns the status and body into the operation's leaf.
+2. Per attempt: the token from `TokenCache`, a bearer header, and the request under `transport` with `failOnError = false`, so the module maps the status, `Retry-After` and body itself.
+3. A 2xx answers the body. Otherwise `retry` may send again, and when it does not, `failure` turns the status and body into the operation's leaf.
 
 Retry is opt-in. It applies only to Bot Connector calls answered 412, 429, 502, 503 or 504. The wait is the longer of the schedule's delay and `Retry-After`, capped at `retryMaxDelay`. A `Retry-After` above that cap fails at once instead of waiting (`Connector.scala`, `Connector.retry`). The token request and the key fetches never retry: they call `transport` directly, not `call`.
 
@@ -248,7 +247,7 @@ A new outbound leaf goes through `withTarget`. A leaf the Playground does not re
 
 ## Pre-submission checklist (kyo-teams)
 
-- [ ] Every outbound request goes through `Connector.call`, or for the token and keys through `Connector.transport`.
+- [ ] Every outbound request goes through `Connector.call` or `Connector.download`, or for the token and keys through `Connector.transport`.
 - [ ] `Jwt.verify`'s order is unchanged, or a new check sits where Microsoft's order puts it, before the key fetch when it can.
 - [ ] No `case _` was added to a match the compiler keeps closed.
 - [ ] A new leaf mixes in exactly the traits of the operations that can produce it, and a named API leaf has its `within` arm and its table row.
