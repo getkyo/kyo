@@ -43,6 +43,8 @@ class TestBaseTest extends AsyncFreeSpec with NonImplicitAssertions:
     // Use MacrotaskExecutor (global on JS) so Future chains work on all platforms without SerialExecutionContext conflicts.
     implicit override val executionContext: ExecutionContext = scala.concurrent.ExecutionContext.global
 
+    private val powerAssertOn = kyo.test.internal.AssertMacro.powerAssertCompiledIn
+
     // Install the next registration context, as the runner does, so a next suite that registers no leaf (a hook-reader) can still be
     // instantiated outside the runner.
     private def installContexts(): Unit =
@@ -77,6 +79,64 @@ class TestBaseTest extends AsyncFreeSpec with NonImplicitAssertions:
             result match
                 case _: TestResult.Failed => succeed
                 case other                => fail(s"Expected Failed, got $other")
+        }
+    }
+
+    "- a failing assert written over several lines reports the whole call" in {
+        runLeaf {
+            new kyo.test.Test[Any]:
+                "multi-line" in assert(
+                    List(1, 2, 3).sum ==
+                        7
+                )
+        }.map { case (_, result) =>
+            result match
+                case TestResult.Failed(diagram, _, _, _) =>
+                    // The power path heads the diagram with the condition's source instead of the call's.
+                    if powerAssertOn then
+                        assert(diagram.contains("List(1, 2, 3).sum ==") && diagram.contains("7"), s"got:\n$diagram")
+                    else
+                        assert(diagram == "assert(\n    List(1, 2, 3).sum ==\n        7\n)", s"got:\n$diagram")
+                    end if
+                    succeed
+                case other => fail(s"Expected Failed, got $other")
+        }
+    }
+
+    "- a failing single-line assert preserves its source" in {
+        runLeaf {
+            new kyo.test.Test[Any]:
+                "single-line" in assert(List(1, 2, 3).sum == 7)
+        }.map { case (_, result) =>
+            result match
+                case TestResult.Failed(diagram, _, _, _) =>
+                    if powerAssertOn then assert(diagram.contains("List(1, 2, 3).sum == 7"), s"got:\n$diagram")
+                    else assert(diagram == "assert(List(1, 2, 3).sum == 7)", s"got:\n$diagram")
+                    succeed
+                case other => fail(s"Expected Failed, got $other")
+        }
+    }
+
+    "- a failing multi-line assert preserves its explicit message" in {
+        runLeaf {
+            new kyo.test.Test[Any]:
+                "message" in assert(
+                    List(1, 2, 3).sum == 7,
+                    "wrong sum"
+                )
+        }.map { case (_, result) =>
+            result match
+                case TestResult.Failed(diagram, _, _, _) =>
+                    if powerAssertOn then
+                        assert(diagram.contains("List(1, 2, 3).sum == 7") && diagram.contains("wrong sum"), s"got:\n$diagram")
+                    else
+                        assert(
+                            diagram == "assert(\n    List(1, 2, 3).sum == 7,\n    \"wrong sum\"\n)\n// message: wrong sum",
+                            s"got:\n$diagram"
+                        )
+                    end if
+                    succeed
+                case other => fail(s"Expected Failed, got $other")
         }
     }
 

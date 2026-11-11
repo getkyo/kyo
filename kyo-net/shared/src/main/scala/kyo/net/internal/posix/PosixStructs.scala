@@ -219,11 +219,11 @@ private[net] object SockAddr:
     /** Byte size of `struct sockaddr_in6` (AF_INET6). */
     val inet6Size: Int = 28
 
-    /** Byte size of `struct sockaddr_un` (AF_UNIX): 2-byte family + 108-byte `sun_path`. */
-    val unixSize: Int = 110
-
     /** Length of the `sun_path` array inside `struct sockaddr_un`. */
-    val sunPathMax: Int = 108
+    val sunPathMax: Int = if PosixConstants.isMacOrBsd then 104 else 108
+
+    /** Byte size of `struct sockaddr_un` (AF_UNIX): the 2-byte header followed by `sun_path`. */
+    val unixSize: Int = 2 + sunPathMax
 
     /** Resolve the well-known loopback host NAMES to their loopback IP literal, or pass any other `host` through unchanged.
       *
@@ -247,9 +247,9 @@ private[net] object SockAddr:
 
     /** Encode an IPv4 `sockaddr_in` for `host:port`.
       *
-      * Layout (16 bytes): `sin_family` (2 bytes, host order), `sin_port` (2 bytes, network order), `sin_addr` (4 bytes, network order),
-      * 8 bytes of zero padding. `host` must be dotted-quad ("127.0.0.1"); name resolution is the caller's job. Returns the buffer and its
-      * length, or `Absent` if `host` is not a valid IPv4 literal.
+      * Layout (16 bytes): the family header (2 bytes, see `putFamily`), `sin_port` (2 bytes, network order), `sin_addr` (4 bytes,
+      * network order), 8 bytes of zero padding. `host` must be dotted-quad ("127.0.0.1"); name resolution is the caller's job. Returns the
+      * buffer and its length, or `Absent` if `host` is not a valid IPv4 literal.
       */
     def encodeInet4(family: Int, host: String, port: Int)(using AllowUnsafe): Maybe[(Buffer[Byte], Int)] =
         parseIpv4(host).flatMap(addr => encodeInet4Raw(family, addr, port))
@@ -262,7 +262,7 @@ private[net] object SockAddr:
         else
             val buf = Buffer.alloc[Byte](inet4Size)
             zero(buf, inet4Size)
-            putFamily(buf, family)
+            putFamily(buf, family, inet4Size)
             putPortNetOrder(buf, 2, port)
             buf.copyFromArray(addr, 0, 4, 4)
             Maybe((buf, inet4Size))
@@ -271,9 +271,9 @@ private[net] object SockAddr:
 
     /** Encode an IPv6 `sockaddr_in6` for `host:port`.
       *
-      * Layout (28 bytes): `sin6_family` (2 bytes, host order), `sin6_port` (2 bytes, network order), `sin6_flowinfo` (4 bytes, zero),
-      * `sin6_addr` (16 bytes, network order), `sin6_scope_id` (4 bytes, zero). `host` must be an IPv6 literal ("::1"). Returns `Absent` if
-      * `host` is not a valid IPv6 literal.
+      * Layout (28 bytes): the family header (2 bytes, see `putFamily`), `sin6_port` (2 bytes, network order), `sin6_flowinfo` (4 bytes,
+      * zero), `sin6_addr` (16 bytes, network order), `sin6_scope_id` (4 bytes, zero). `host` must be an IPv6 literal ("::1"). Returns
+      * `Absent` if `host` is not a valid IPv6 literal.
       */
     def encodeInet6(family: Int, host: String, port: Int)(using AllowUnsafe): Maybe[(Buffer[Byte], Int)] =
         parseIpv6(host).flatMap(addr => encodeInet6Raw(family, addr, port))
@@ -286,7 +286,7 @@ private[net] object SockAddr:
         else
             val buf = Buffer.alloc[Byte](inet6Size)
             zero(buf, inet6Size)
-            putFamily(buf, family)
+            putFamily(buf, family, inet6Size)
             putPortNetOrder(buf, 2, port)
             buf.copyFromArray(addr, 0, 8, 16)
             Maybe((buf, inet6Size))
@@ -295,8 +295,8 @@ private[net] object SockAddr:
 
     /** Encode a Unix-domain `sockaddr_un` for `path`.
       *
-      * Layout (110 bytes): `sun_family` (2 bytes, host order) followed by `sun_path` (`char[108]`, NUL-terminated). Returns `Absent` when
-      * the UTF-8 encoding of `path` does not fit in the 108-byte `sun_path` (leaving room for the NUL terminator).
+      * The family header (2 bytes, see `putFamily`) is followed by the NUL-terminated `sun_path` (104 bytes on macOS/BSD, 108 on Linux).
+      * Returns `Absent` when the UTF-8 encoding of `path` leaves no room for the NUL terminator.
       */
     def encodeUnix(family: Int, path: String)(using AllowUnsafe): Maybe[(Buffer[Byte], Int)] =
         val bytes = path.getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -304,7 +304,7 @@ private[net] object SockAddr:
         else
             val buf = Buffer.alloc[Byte](unixSize)
             zero(buf, unixSize)
-            putFamily(buf, family)
+            putFamily(buf, family, unixSize)
             buf.copyFromArray(bytes, 0, 2, bytes.length)
             Maybe((buf, unixSize))
         end if
@@ -317,12 +317,17 @@ private[net] object SockAddr:
             i += 1
     end zero
 
-    /** Write the address family into the first 2 bytes in host byte order. The socket API treats `sa_family_t` as host-order, unlike the
-      * port and address which are network-order.
+    /** Write the 2-byte header every `struct sockaddr` starts with. On macOS and the BSDs it is `sa_len`, the structure's size, then
+      * `sa_family`, one byte each; on Linux it is `sa_family` alone, in host order. Written the Linux way on macOS, the family reads as 0,
+      * which `bind` refuses for IPv6 with EAFNOSUPPORT.
       */
-    private def putFamily(buf: Buffer[Byte], family: Int)(using AllowUnsafe): Unit =
-        buf.set(0, (family & 0xff).toByte)
-        buf.set(1, ((family >> 8) & 0xff).toByte)
+    private def putFamily(buf: Buffer[Byte], family: Int, size: Int)(using AllowUnsafe): Unit =
+        if PosixConstants.isMacOrBsd then
+            buf.set(0, size.toByte)
+            buf.set(1, family.toByte)
+        else
+            buf.set(0, (family & 0xff).toByte)
+            buf.set(1, ((family >> 8) & 0xff).toByte)
 
     /** Write a 16-bit port in network byte order (big-endian) at `offset`. */
     private def putPortNetOrder(buf: Buffer[Byte], offset: Int, port: Int)(using AllowUnsafe): Unit =

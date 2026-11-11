@@ -185,6 +185,44 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
         assert(summary == "", s"expected no summary, got: $summary")
     }
 
+    Seq(false, true).foreach { forked =>
+        Seq(
+            Seq("--filter", "a third run attempts") -> "unknown argument: '--filter'",
+            Seq("--parallel=invalid")               -> "invalid value for --parallel: 'invalid' (expected an integer)"
+        ).foreach { (arguments, diagnostic) =>
+            test(s"malformed arguments ${arguments.mkString(" ")} fail without suite tasks, forked=$forked") {
+                val runner = new SbtRunner(arguments.toArray, Array.empty, getClass.getClassLoader, forked)
+                // No executable task can construct this suite or run its body.
+                assert(runner.tasks(Array(taskDefFor(classOf[NextConstructorFailSuite]))).isEmpty): Unit
+                val failure = intercept[IllegalArgumentException](runner.done())
+                assert(failure.getMessage == s"kyo-test: CLI error: $diagnostic"): Unit
+            }
+        }
+
+        test(s"malformed arguments fail even when the controller was never asked for tasks, forked=$forked") {
+            val runner  = new SbtRunner(Array("--filter"), Array.empty, getClass.getClassLoader, forked)
+            val failure = intercept[IllegalArgumentException](runner.done())
+            assert(failure.getMessage == "kyo-test: CLI error: unknown argument: '--filter'"): Unit
+        }
+
+        test(s"help succeeds without suite tasks, forked=$forked") {
+            val runner = new SbtRunner(Array("--help"), Array.empty, getClass.getClassLoader, forked)
+            assert(runner.tasks(Array(taskDefFor(classOf[NextConstructorFailSuite]))).isEmpty): Unit
+            assert(runner.done() == ""): Unit
+        }
+    }
+
+    Seq(Seq("--count"), Seq("--list"), Seq("--count", "--filter=no-such-leaf")).foreach { arguments =>
+        test(s"discovery ${arguments.mkString(" ")} succeeds without executing a failing leaf") {
+            val runner  = new SbtRunner(arguments.toArray, Array.empty, getClass.getClassLoader, forked = false)
+            val handler = new CapturingEventHandler
+            runner.tasks(Array(taskDefFor(classOf[NextFailingSuite])))(0).execute(handler, loggers)
+            assert(handler.events == Nil): Unit
+            assert(runner.done() ==
+                "kyo-test: 0 tests, 0 passed, 0 failed, 0 cancelled, 0 pending, 0 ignored, 0 timed out, 0 skipped"): Unit
+        }
+    }
+
     // sbt scores a selected suite by the events it emits, and a suite with none counts as passed with Total 0. Each way a
     // selection can run nothing must therefore fail on its own.
 
