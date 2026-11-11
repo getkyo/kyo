@@ -53,6 +53,9 @@ private[kyo] object DomTestEnv:
             js.Dynamic.global.globalThis.Element = window.Element
             js.Dynamic.global.globalThis.HTMLElement = window.HTMLElement
             js.Dynamic.global.globalThis.Node = window.Node
+            // Node has its own Event; a jsdom target refuses one from another realm, so events are the window's too.
+            js.Dynamic.global.globalThis.Event = window.Event
+            js.Dynamic.global.globalThis.CustomEvent = window.CustomEvent
         end if
     end install
 

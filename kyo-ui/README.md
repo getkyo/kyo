@@ -507,6 +507,8 @@ val sortBy: UI < Async =
     )
 ```
 
+The select's initial value chooses the matching option, including when its options come from a signal. Replacing a reactive option list preserves the current selection while that value remains available. Changing which option declares `.selected(true)` takes effect instead. When an update changes the selection, a bound `SignalRef` follows the browser's value and `onChange` runs. A disabled select still reconciles its binding, but does not call its handler. A list that previously had no selection leaves the browser's initial choice alone.
+
 `Dropdown` takes its options up front at construction as `(String, String)*` pairs, NOT as children:
 
 ```scala

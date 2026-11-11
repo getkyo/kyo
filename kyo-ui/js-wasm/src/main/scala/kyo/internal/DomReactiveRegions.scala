@@ -36,6 +36,7 @@ final private[kyo] class DomReactiveRegions private (
         after: (A, Seq[dom.Element]) => Unit
     )(using Frame): Unit < Sync =
         Sync.Unsafe.defer {
+            // Unsafe: the range operation mutates the document and its scoped registry.
             ensureOpen()
             if !ReactiveRegion.isValidHtmlId(regionId) then fail(s"Malformed reactive range id: $regionId")
             val endpoints = ranges.getOrElse(regionId, fail(s"Unknown reactive range: $regionId"))
@@ -125,6 +126,14 @@ final private[kyo] class DomReactiveRegions private (
         if !unchanged && !tryMorph(oldElements, newElements, incoming.isEmpty) then
             val incomingMarkup = incoming.iterator.map((id, nested) => id -> serializeBetween(nested)).toSeq
             val state          = before(oldElements, newElements)
+            // A <select>'s value is its own state: new option elements reset the selection to the first, so it is kept across the swap.
+            val select = liveHost match
+                case DomReactiveRegions.LiveHost.Siblings(parent: dom.Element) =>
+                    // closest("select") names an HTML select in this HTML range.
+                    Maybe(parent.closest("select")).map(_.asInstanceOf[dom.html.Select]).filter(_.selectedIndex >= 0)
+                case _ => Absent
+            val selections = select.toList.map(element => (element, element.value, selectedDefaultValue(element))) ++
+                replacedSelections(oldElements, newElements)
             range.deleteContents()
             removed.foreach { id =>
                 discard(ranges.remove(id))
@@ -171,8 +180,58 @@ final private[kyo] class DomReactiveRegions private (
             ranges.addAll(incoming)
             discard(inserted.addAll(incomingMarkup))
             after(state, insertedRoots)
+            selections.foreach { (element, value, previousDefault) =>
+                if previousDefault == selectedDefaultValue(element) &&
+                    (0 until element.options.length).exists(i => element.options(i).value == value)
+                then
+                    element.value = value
+                end if
+                if element.value != value then
+                    discard(element.dispatchEvent(new dom.CustomEvent(
+                        "change",
+                        new dom.CustomEventInit:
+                            bubbles = true
+                            detail = js.Dynamic.literal(kyoSelectPreviousValue = value)
+                    )))
+                end if
+            }
         end if
     end replaceContent
+
+    // A bound select's own observer can replay after its options changed. An unchanged value declaration must not clear the
+    // native fallback or undo a live choice when that replay replaces the entire select rather than only its options.
+    private def replacedSelections(oldRoots: Seq[dom.Element], newRoots: Seq[dom.Element])(using
+        AllowUnsafe
+    )
+        : Seq[(dom.html.Select, String, Maybe[String])] =
+        val previous = selectsIn(oldRoots)
+        val incoming = selectsIn(newRoots)
+        previous.flatMap { old =>
+            Maybe(old.getAttribute("data-kyo-path")).toList.flatMap { path =>
+                val matches = incoming.filter(_.getAttribute("data-kyo-path") == path)
+                if old.selectedIndex >= 0 && previous.count(_.getAttribute("data-kyo-path") == path) == 1 && matches.size == 1 then
+                    val fresh = matches.head
+                    if fresh.id == old.id && Maybe(fresh.getAttribute("value")) == Maybe(old.getAttribute("value")) then
+                        fresh.removeAttribute("data-kyo-prop-value")
+                        Seq((fresh, old.value, selectedDefaultValue(old)))
+                    else Seq.empty
+                    end if
+                else Seq.empty
+                end if
+            }
+        }
+    end replacedSelections
+
+    private def selectsIn(roots: Seq[dom.Element])(using AllowUnsafe): Seq[dom.html.Select] =
+        roots.flatMap { root =>
+            val descendants = root.querySelectorAll("select")
+            (Seq(root) ++ (0 until descendants.length).map(descendants(_))).collect {
+                // Unsafe: the HTML namespace and SELECT tag determine this DOM interface.
+                case element if element.namespaceURI == "http://www.w3.org/1999/xhtml" && element.tagName == "SELECT" =>
+                    element.asInstanceOf[dom.html.Select]
+            }
+        }
+    end selectsIn
 
     private def sameContent(endpoints: DomReactiveRegions.Endpoints, content: dom.Node)(using AllowUnsafe): Boolean =
         @scala.annotation.tailrec
@@ -225,6 +284,19 @@ final private[kyo] class DomReactiveRegions private (
                 case _ => true
         end if
     end sameElementState
+
+    // The last selected attribute declares a single select's default. A changed declaration must take
+    // effect; an unchanged one must not undo a live choice when the option nodes are replaced.
+    private def selectedDefaultValue(select: dom.html.Select)(using AllowUnsafe): Maybe[String] =
+        var index                = select.options.length - 1
+        var value: Maybe[String] = Absent
+        while index >= 0 && value.isEmpty do
+            val option = select.options(index)
+            if option.defaultSelected then value = Present(option.value)
+            index -= 1
+        end while
+        value
+    end selectedDefaultValue
 
     private[kyo] def size(using Frame): Int < Sync =
         Sync.defer(ranges.size)

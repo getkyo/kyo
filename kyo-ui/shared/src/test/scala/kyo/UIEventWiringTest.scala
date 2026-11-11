@@ -1471,4 +1471,48 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         yield assert(counts == Chunk(0, 1), s"toggles after a click on the removed item and then on the remaining one: $counts")
     }
 
+    Chunk(false, true).foreach { disabled =>
+        s"option reconciliation updates a disabled=$disabled binding without accepting disabled user input" in {
+            for
+                value <- Signal.initRef("b")
+                calls <- AtomicInt.init(0)
+                ui = select(option("X").value("x")).value(value).disabled(disabled).onChange(_ => calls.incrementAndGet.unit)
+                _ <- withSubscription(ui, ReactiveUI.DragSessionLimits()) { subscription =>
+                    for
+                        _         <- subscription.handle(Seq.empty, UIEvent.Change(Seq.empty, "user"))
+                        userValue <- value.get
+                        userCalls <- calls.get
+                        _         <- value.set("b")
+                        _         <- calls.set(0)
+                        event     = UIEvent.SelectOptionsChange(Seq.empty, "b", "x")
+                        decoded   = Json.decode[UIEvent](Json.encode[UIEvent](event)).getOrThrow
+                        validated = DragProtocol.validateEventAndDomain(decoded, DragProtocol.Limits.default)
+                            .getOrElse(fail("option reconciliation event must validate"))
+                        _             <- subscription.handleValidated(decoded.path, validated)
+                        fallback      <- value.get
+                        fallbackCalls <- calls.get
+                        _             <- value.set("newer")
+                        _             <- subscription.handleValidated(decoded.path, validated)
+                        latest        <- value.get
+                        latestCalls   <- calls.get
+                    yield
+                        assert(userValue == (if disabled then "b" else "user"))
+                        assert(userCalls == (if disabled then 0 else 1))
+                        assert(fallback == "x")
+                        assert(fallbackCalls == (if disabled then 0 else 1))
+                        assert(latest == "newer")
+                        assert(latestCalls == fallbackCalls)
+                }
+            yield ()
+        }
+    }
+
+    "option reconciliation validates both values before dispatch" in {
+        val limits   = DragProtocol.Limits.default.copy(maxTextLength = 2)
+        val accepted = UIEvent.SelectOptionsChange(Seq.empty, "", "x")
+        assert(DragProtocol.validateEventAndDomain(accepted, limits).isSuccess)
+        assert(DragProtocol.validateEventAndDomain(UIEvent.SelectOptionsChange(Seq.empty, "old", "x"), limits).isFailure)
+        assert(DragProtocol.validateEventAndDomain(UIEvent.SelectOptionsChange(Seq.empty, "b", "new"), limits).isFailure)
+    }
+
 end UIEventWiringTest

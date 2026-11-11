@@ -45,6 +45,123 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
         yield assert(same)
     }
 
+    Chunk(("empty-valued", "", false), ("disabled", "b", true), ("ordinary", "b", false)).foreach {
+        (label, initialValue, disabled) =>
+            s"local select reconciles a removed $label selection through event delegation" in {
+                Kyo.foreachDiscard(0 until (if label == "empty-valued" then 128 else 1)) { attempt =>
+                    Scope.run {
+                        for
+                            rows     <- Signal.initRef(Chunk("a", initialValue, "c"))
+                            value    <- Signal.initRef(initialValue)
+                            snapshot <- AtomicRef.init("waiting")
+                            calls    <- AtomicInt.init(0)
+                            ui = UI.div(
+                                UI.select(rows.foreach(v => UI.option(v).value(v).id(s"option-$v")))
+                                    .id("selection").value(value).disabled(disabled).onChange(_ => calls.incrementAndGet.unit),
+                                UI.button("read binding").id("read-binding").onClick(value.get.map(v => snapshot.set(s"observed:$v")))
+                            )
+                            ready = new DomTestEnv.MountReady
+                            _ <- Scope.acquireRelease(Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready))))(fiber =>
+                                fiber.interrupt.andThen(fiber.getResult).unit
+                            )
+                            _       <- assertEventually(Sync.defer(ready.installed))
+                            initial <- Sync.defer {
+                                val select = dom.document.getElementById("selection").asInstanceOf[dom.html.Select]
+                                (select.value, select.selectedIndex)
+                            }
+                            _ <- rows.set(Chunk("x", "y"))
+                            _ <- assertEventually(Sync.defer(dom.document.getElementById("option-y") != null))
+                            // The single-consumer event queue handles the fallback before this independent read.
+                            _     <- click("read-binding")
+                            _     <- assertEventually(snapshot.get.map(_.startsWith("observed:")))
+                            bound <- snapshot.get
+                            page  <- Sync.defer(dom.document.getElementById("selection").asInstanceOf[dom.html.Select].value)
+                            count <- calls.get
+                        yield
+                            assert(initial == (initialValue, 1), s"attempt=$attempt initial=$initial bound=$bound page=$page count=$count")
+                            assert(
+                                (bound, page) == ("observed:x", "x"),
+                                s"attempt=$attempt initial=$initial bound=$bound page=$page count=$count"
+                            )
+                            assert(count == (if disabled then 0 else 1))
+                    }
+                }
+            }
+    }
+
+    "local whole-select replacement reconciles a removed empty-valued selection" in {
+        Scope.run {
+            for
+                rows     <- Signal.initRef(Chunk("a", "", "c"))
+                value    <- Signal.initRef("")
+                snapshot <- AtomicRef.init("waiting")
+                calls    <- AtomicInt.init(0)
+                ui = UI.div(
+                    rows.map(options =>
+                        UI.select(options.map(v => UI.option(v).value(v).id(s"whole-option-$v"))*)
+                            .id("whole-selection").value(value).onChange(_ => calls.incrementAndGet.unit)
+                    ),
+                    UI.button("read binding").id("read-whole-binding").onClick(value.get.map(v => snapshot.set(s"observed:$v")))
+                )
+                ready = new DomTestEnv.MountReady
+                _ <- Scope.acquireRelease(Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready))))(fiber =>
+                    fiber.interrupt.andThen(fiber.getResult).unit
+                )
+                _               <- assertEventually(Sync.defer(ready.installed))
+                initial         <- Sync.defer(dom.document.getElementById("whole-selection").asInstanceOf[dom.html.Select].selectedIndex)
+                _               <- rows.set(Chunk("a", "", "c", "d"))
+                _               <- assertEventually(Sync.defer(dom.document.getElementById("whole-option-d") != null))
+                _               <- click("read-whole-binding")
+                _               <- assertEventually(snapshot.get.map(_.startsWith("observed:")))
+                retainedBinding <- snapshot.get
+                retainedPage    <- Sync.defer(dom.document.getElementById("whole-selection").asInstanceOf[dom.html.Select].value)
+                retainedCalls   <- calls.get
+                _               <- snapshot.set("waiting")
+                _               <- rows.set(Chunk("x", "y"))
+                _               <- assertEventually(Sync.defer(dom.document.getElementById("whole-option-y") != null))
+                _               <- click("read-whole-binding")
+                _               <- assertEventually(snapshot.get.map(_.startsWith("observed:")))
+                bound           <- snapshot.get
+                page            <- Sync.defer(dom.document.getElementById("whole-selection").asInstanceOf[dom.html.Select].value)
+                count           <- calls.get
+                _               <- value.set("y")
+                _ <- assertEventually(Sync.defer(dom.document.getElementById("whole-selection").asInstanceOf[dom.html.Select].value == "y"))
+                programmaticBinding <- value.get
+                programmaticCalls   <- calls.get
+            yield
+                assert(initial == 1)
+                assert((retainedBinding, retainedPage, retainedCalls) == ("observed:", "", 0))
+                assert((bound, page, count) == ("observed:x", "x", 1), s"bound=$bound page=$page count=$count")
+                assert((programmaticBinding, programmaticCalls) == ("y", 1))
+        }
+    }
+
+    "local selected declaration changes reconcile the binding" in {
+        Scope.run {
+            for
+                flag     <- Signal.initRef(false)
+                value    <- Signal.initRef("a")
+                snapshot <- AtomicRef.init("waiting")
+                ui = UI.div(
+                    UI.select(UI.option("A").value("a"), UI.option("B").value("b").id("beta").selected(flag))
+                        .id("selection").value(value),
+                    UI.button("read").id("read").onClick(value.get.map(v => snapshot.set(s"observed:$v")))
+                )
+                ready = new DomTestEnv.MountReady
+                _ <- Scope.acquireRelease(Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready))))(fiber =>
+                    fiber.interrupt.andThen(fiber.getResult).unit
+                )
+                _       <- assertEventually(Sync.defer(ready.installed))
+                _       <- flag.set(true)
+                _       <- assertEventually(Sync.defer(dom.document.getElementById("beta").hasAttribute("selected")))
+                _       <- click("read")
+                _       <- assertEventually(snapshot.get.map(_.startsWith("observed:")))
+                binding <- snapshot.get
+                page    <- Sync.defer(dom.document.getElementById("selection").asInstanceOf[dom.html.Select].value)
+            yield assert((binding, page) == ("observed:b", "b"))
+        }
+    }
+
     "local mount preserves direct table row topology through events and repeated updates" in {
         for
             rows <- Signal.initRef(Chunk("A"))
