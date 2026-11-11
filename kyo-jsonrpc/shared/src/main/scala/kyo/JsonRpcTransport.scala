@@ -26,10 +26,10 @@ trait JsonRpcTransport:
       *
       * Aborts `Closed` when the connection is gone, and [[JsonRpcError]] when the envelope cannot be
       * put on the wire at all: a [[JsonRpcMalformedMessage]], which only ever comes from decoding a
-      * peer's garbage and so is unsendable by construction, or extras carrying a reserved key. Both
-      * are failures of the value handed in rather than of the connection, and neither can be
-      * retried, but both are reachable from runtime data, so they are reported rather than silently
-      * dropped.
+      * peer's garbage and so is unsendable by construction, a response carrying both result and error,
+      * or extras carrying a reserved key. These are failures of the value handed in rather than of the
+      * connection. They cannot be retried, but are reachable from runtime data, so they are reported
+      * rather than silently dropped.
       */
     def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError])
     def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]]

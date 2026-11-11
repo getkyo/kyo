@@ -86,10 +86,16 @@ private[kyo] object JsonRpcEnvelopeSchema:
                 result: Maybe[Structure.Value],
                 error: Maybe[JsonRpcError]
             )(using Frame): Chunk[(String, Structure.Value)] =
-                (result, error) match
-                    case (Present(r), Absent) => base :+ ("result" -> r)
-                    case (Absent, Present(e)) => base :+ ("error"  -> Structure.encode(e))
-                    case _                    => base :+ ("result" -> result.getOrElse(Structure.Value.Null))
+                error match
+                    case Absent     => base :+ ("result" -> result.getOrElse(Structure.Value.Null))
+                    case Present(e) =>
+                        result match
+                            case Absent     => base :+ ("error" -> Structure.encode(e))
+                            case Present(r) =>
+                                throw JsonRpcInvalidRequestError(
+                                    Structure.Value.Record(base ++ Chunk("result" -> r, "error" -> Structure.encode(e))),
+                                    Chunk.empty
+                                )
 
             private def withExtras(
                 base: Chunk[(String, Structure.Value)],
@@ -143,8 +149,11 @@ private[kyo] object JsonRpcEnvelopeSchema:
                         def getStr(key: String): Maybe[String] =
                             Maybe.fromOption(fields.iterator.collectFirst { case (k, Structure.Value.Str(s)) if k == key => s })
 
+                        def getRaw(key: String): Maybe[Structure.Value] =
+                            Maybe.fromOption(fields.iterator.collectFirst { case (k, v) if k == key => v })
+
                         def getVal(key: String): Maybe[Structure.Value] =
-                            Maybe.fromOption(fields.iterator.collectFirst { case (k, v) if k == key => v }).flatMap:
+                            getRaw(key).flatMap:
                                 case Structure.Value.Null => Absent
                                 case v                    => Present(v)
 
@@ -162,9 +171,9 @@ private[kyo] object JsonRpcEnvelopeSchema:
                                 if unknown.isEmpty then Absent else Present(Structure.Value.Record(unknown))
 
                         val methodOpt = getStr("method")
-                        val idRaw     = Maybe.fromOption(fields.iterator.collectFirst { case (k, v) if k == "id" => v })
-                        val resultOpt = getVal("result")
-                        val errorOpt  = getVal("error")
+                        val idRaw     = getRaw("id")
+                        val resultOpt = getRaw("result")
+                        val errorOpt  = getRaw("error")
 
                         val hasId     = idRaw.isDefined
                         val idMaybe   = idRaw.flatMap(decodeId)

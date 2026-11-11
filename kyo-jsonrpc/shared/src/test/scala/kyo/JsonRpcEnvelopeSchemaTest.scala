@@ -21,6 +21,33 @@ class JsonRpcEnvelopeSchemaTest extends JsonRpcTest:
     private val strict: Schema[JsonRpcEnvelope]  = internal.codec.JsonRpcEnvelopeSchema.strict
     private val lenient: Schema[JsonRpcEnvelope] = internal.codec.JsonRpcEnvelopeSchema.lenient
 
+    "null response values retain field presence" - {
+        "a null result is a success and round trips" in {
+            val raw      = Record(Chunk("jsonrpc" -> Str("2.0"), "id" -> Integer(1L), "result" -> Null))
+            val expected = JsonRpcResponse(JsonRpcId.Num(1L), Present(Null), Absent, Absent)
+            assert(decode(raw, strict) == expected)
+            assert(decode(raw, lenient) == expected)
+            Abort.run[JsonRpcError](encode(expected, strict)).map(result => assert(getSuccess(result) == raw))
+        }
+
+        "a result beside an error is malformed even when either value is null" in {
+            val error = Record(Chunk("code" -> Integer(-32603L), "message" -> Str("peer failure")))
+            Chunk((Null, error), (Str("ok"), Null), (Null, Null)).foreach { (result, failure) =>
+                val raw      = Record(Chunk("id" -> Integer(1L), "result" -> result, "error" -> failure))
+                val expected = JsonRpcMalformedMessage(Present(JsonRpcId.Num(1L)), "response has both result and error", raw)
+                assert(decode(raw, strict) == expected)
+                assert(decode(raw, lenient) == expected)
+            }
+        }
+
+        "a null error is malformed rather than a missing field" in {
+            val raw      = Record(Chunk("id" -> Integer(1L), "error" -> Null))
+            val expected = JsonRpcMalformedMessage(Present(JsonRpcId.Num(1L)), "error field is not a Record", raw)
+            assert(decode(raw, strict) == expected)
+            assert(decode(raw, lenient) == expected)
+        }
+    }
+
     // Structure.encode is pure but throws a JsonRpcError for the unencodable cases (a Malformed
     // message, or a Lenient reserved-extras key); Abort.catching reifies that so tests that expected a
     // Result from the old codec keep destructuring Success/Failure exactly as before.

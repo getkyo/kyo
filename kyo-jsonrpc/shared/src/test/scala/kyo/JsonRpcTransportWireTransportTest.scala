@@ -4,6 +4,32 @@ import kyo.Maybe.Absent
 
 class JsonRpcTransportWireTransportTest extends JsonRpcTest:
 
+    "null results and peer error details survive JSON framing" in {
+        Scope.run {
+            Channel.init[Chunk[Byte]](2).map { channel =>
+                val wire = new JsonRpcWireTransport:
+                    def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) = channel.put(bytes)
+                    def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]]     = channel.stream()
+                    def close(using Frame): Unit < Async                                      = channel.close.unit
+                val id      = JsonRpcId.Num(1L)
+                val data    = Present(Structure.Value.Str("peer details"))
+                val success = JsonRpcResponse.success(id, Structure.Value.Null)
+                val failure = JsonRpcResponse.failure(id, JsonRpcPeerError(-32602, "unknown model", data))
+                JsonRpcTransport.fromWire(wire, JsonRpcFramer.lineDelimited).map { transport =>
+                    transport.send(success).andThen(transport.send(failure)).andThen(transport.incoming.take(2).run).map { responses =>
+                        assert(responses.head == success)
+                        assert(responses.size == 2)
+                        responses.last match
+                            case JsonRpcResponse(`id`, Absent, Present(e), Absent) =>
+                                assert((e.code, e.message, e.data) == (-32602, "unknown model", data))
+                            case other => fail(s"expected the peer error response, got $other")
+                        end match
+                    }
+                }
+            }
+        }
+    }
+
     "empty wire transport produces no bytes" in {
         val wire   = JsonRpcWireTransport.empty
         val result = wire.incoming.run

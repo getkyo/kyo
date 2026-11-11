@@ -201,6 +201,8 @@ end talk
 
 `call` adds `Abort[JsonRpcError | Closed]` to its effect row. `JsonRpcError` covers protocol-level failures (the peer rejected the call, decoded the wrong type, etc.); `Closed` covers the case where the transport went away before the response arrived.
 
+Standard errors received from a peer decode as `JsonRpcPeerError`, retaining the peer's `code`, `message` and `data`. Match its code to distinguish errors such as method not found (`-32601`). Locally raised errors keep their specific types, such as `JsonRpcMethodNotFoundError`.
+
 > **Note:** `notify` does not add `Abort[JsonRpcError]`. JSON-RPC notifications have no response by definition; the framework cannot surface a remote failure for them. Use `call` if you need to know whether the peer acted on the message.
 
 `sendUnmatched` is for the cases where the framework's id allocator must not own the outbound id. Two patterns reach for it. The first is protocol passthrough, where one peer is forwarding a request whose id it already received from a third party; the framework should not allocate a fresh id, and it should not register the local handler as a pending caller waiting for the response (the response will be routed back to the original third party). The second is foreign-id replies, where the peer needs to send a "request" frame whose id is dictated by the protocol rather than by the local id strategy. `sendUnmatched` writes the envelope and returns; no `Pending` entry is created.
