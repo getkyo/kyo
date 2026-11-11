@@ -1587,40 +1587,32 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
         // A scope cannot tell a remainder nobody will resume from one someone
         // still intends to resume, so it releases at its own exit: one release, and the late consumer refused.
-        "a rest from splitAt carried to another fiber is released at the peeling scope's exit, and consuming it there is refused" in {
+        "a rest from splitAt first consumed on another fiber after the peeling scope exits is refused" in {
             AtomicInt.init(0).map { released =>
-                Latch.init(1).map { entered =>
-                    Latch.init(1).map { gate =>
-                        Promise.init[Stream[Int, Async], Any].map { handoff =>
-                            val stream: Stream[Int, Async] = Stream:
-                                Sync.ensure(released.incrementAndGet.unit):
-                                    Emit.valueWith(Chunk(1))(entered.release.andThen(gate.await).andThen(Emit.value(Chunk(2))))
-                            for
-                                peeler <- Fiber.initUnscoped {
-                                    Env.run(0) {
-                                        stream.splitAt(1).map { (head, rest) =>
-                                            handoff.complete(Result.succeed(rest)).andThen(entered.await).andThen(head)
-                                        }
-                                    }
-                                }
-                                consumer <- Fiber.initUnscoped(handoff.get.map(_.run))
-                                _        <- entered.await
-                                head     <- peeler.get
-                                atExit   <- released.get
-                                _        <- gate.release
-                                res      <- consumer.getResult
-                                total    <- released.get
-                            yield
-                                val rendered = res.toString
-                                assert(head == Chunk(1))
-                                assert(atExit == 1, s"the peeling scope released $atExit on its way out")
-                                assert(total == 1, s"released $total times in all")
-                                assert(res.isPanic, rendered)
-                                assert(rendered.contains("released when the scope that owned it ended"), rendered)
-                                assert(rendered.contains("Stream.splitAtWith"), rendered)
-                            end for
-                        }
-                    }
+                AtomicBoolean.init(false).map { used =>
+                    val stream: Stream[Int, Async] = Stream:
+                        Sync.ensure(released.incrementAndGet.unit):
+                            Emit.valueWith(Chunk(1))(used.set(true).andThen(Emit.value(Chunk(2))))
+                    for
+                        peeler   <- Fiber.initUnscoped(Env.run(0)(stream.splitAt(1)))
+                        split    <- peeler.get
+                        atExit   <- released.get
+                        consumer <- Fiber.initUnscoped(split._2.run)
+                        res      <- consumer.getResult
+                        total    <- released.get
+                        useRan   <- used.get
+                    yield
+                        val rendered = res.toString
+                        assert(split._1 == Chunk(1))
+                        assert(atExit == 1, s"the peeling scope released $atExit on its way out")
+                        assert(total == 1, s"released $total times in all")
+                        assert(!useRan)
+                        res match
+                            case Result.Panic(_: Closed) => succeed
+                            case other                   => fail(s"expected a closed bracket, got $other")
+                        assert(rendered.contains("released when the scope that owned it ended"), rendered)
+                        assert(rendered.contains("Stream.splitAtWith"), rendered)
+                    end for
                 }
             }
         }
