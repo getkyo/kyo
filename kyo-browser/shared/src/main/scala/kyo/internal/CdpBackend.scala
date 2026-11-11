@@ -337,6 +337,12 @@ private[kyo] object CdpBackend:
     private[kyo] def printToPDF(backend: CdpBackend)(using Frame): PrintToPdfResult < (Async & Abort[BrowserReadException]) =
         backend.send[CdpNoParams, PrintToPdfResult]("Page.printToPDF", CdpNoParams())
 
+    /** The caller owns the object and decides whether its context disappearing is an expected lifecycle transition. */
+    private[kyo] def runtimeCallFunctionOn(backend: CdpBackend, params: CallFunctionOnParams)(using
+        Frame
+    ): EvalResult < (Async & Abort[BrowserReadException]) =
+        backend.send[CallFunctionOnParams, EvalResult]("Runtime.callFunctionOn", params)
+
     /** Translates the destroyed-execution-context CDP error ("Cannot find context with specified id"),
       * raised when a stale iframe executionContextId is passed to Runtime.evaluate, into the typed
       * [[BrowserIFrameInvalidException]]. Shared by every Runtime.evaluate-family path so a destroyed

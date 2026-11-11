@@ -187,54 +187,24 @@ class MutationSettlementTest extends kyo.BrowserTest:
         }
     }
 
-    // ---- `awaitQuiescence` Malformed propagation through `afterAction` ----
-    //
-    // To force a Malformed reply we corrupt the in-page settlement state so the JS coroutine throws when it
-    // reads `window.__kyoMutCount`. CDP returns an `exceptionDetails` payload (no `result.value`); the Scala
-    // `extractStringValue` falls back to `""`; `parseSettlementValue("")` returns Malformed; settlement raises
-    // a `BrowserProtocolErrorException` (a `BrowserConnectionException`). Behavioural assertion on Abort shape.
-    //
-    // Pre-install: we set `window.__kyoMutObs` to a non-null marker BEFORE the click runs. Install's idempotent
-    // branch sees a pre-existing observer and skips the reset of `__kyoMutCount` (the 'shared' install path).
-    // We then redefine `__kyoMutCount` as a throwing getter, so when `awaitQuiescence` reads it the IIFE
-    // rejects with an exception.
-
-    "awaitQuiescence Malformed propagates through afterAction as BrowserProtocolErrorException" in {
+    "settlement script failures propagate as BrowserProtocolErrorException" in {
         withBrowserOnLocalhost {
             Browser.eval(
                 """document.body.innerHTML = '<button id="b">click</button>';
-                  |window.__kyoMutObs = { disconnect: () => {} };
-                  |window.__kyoMutObsRef = 0;
-                  |window.__kyoMutLast = Date.now();
-                  |Object.defineProperty(window, '__kyoMutCount', {
+                  |Object.defineProperty(window, '_kyoPostQ', {
                   |  configurable: true,
-                  |  get: function() { throw new Error('kyo-test-corruption'); }
+                  |  get: function() { throw new Error('kyo-test-corruption: Cannot find context with specified id'); }
                   |});
                   |'ok'
                 """.stripMargin
             ).andThen {
-                Browser.withConfig(
-                    _.mutationSettlementTimeout(500.millis)
-                        .retrySchedule(Schedule.fixed(50.millis).maxDuration(500.millis))
-                ) {
-                    Abort.run[BrowserConnectionException | BrowserAssertionException] {
-                        Browser.click(Selector.id("b"))
-                    }.map { result =>
-                        // Behavioural assertion on Abort SHAPE: the corrupted page state surfaces as a typed
-                        // BrowserProtocolErrorException (a BrowserConnectionException). The method tag reflects
-                        // the actual failure surface: either MutationSettlement.awaitQuiescence (if the IIFE
-                        // returned a wire-shape we can't decode) or Runtime.evaluate (if the IIFE threw and the
-                        // eval-result envelope surfaced via internalEvalFailed). Both are valid Malformed-style
-                        // propagation paths; the contract is "typed Abort, not silent degrade".
-                        result match
-                            case Result.Failure(ex: BrowserProtocolErrorException) =>
-                                assert(
-                                    ex.method == "MutationSettlement.awaitQuiescence" || ex.method == "Runtime.evaluate",
-                                    s"expected method tag MutationSettlement.awaitQuiescence or Runtime.evaluate, got '${ex.method}'"
-                                )
-                            case other =>
-                                fail(s"expected BrowserProtocolErrorException from awaitQuiescence Malformed propagation, got $other")
-                    }
+                Abort.run[BrowserConnectionException | BrowserAssertionException] {
+                    Browser.click(Selector.id("b"))
+                }.map {
+                    case Result.Failure(error: BrowserProtocolErrorException) =>
+                        assert(error.getMessage.contains("kyo-test-corruption"))
+                    case other =>
+                        fail(s"expected a typed settlement script failure, got $other")
                 }
             }
         }
@@ -371,127 +341,92 @@ class MutationSettlementTest extends kyo.BrowserTest:
         }
     }
 
-    // ---- 'shared' install path: concurrent `afterAction` ----
-    //
-    // Two parallel clicks in the same tab share a single window-level observer. The second `installObserver`
-    // sees `window.__kyoMutObs` already exists, increments `__kyoMutObsRef`, and reuses the running observer
-    // (the 'shared' branch in installObserver). Both `Async.zip` arms must complete cleanly; the assertion is
-    // that neither arm raises, proving the ref-count handshake correctly admits the overlapping caller.
-
-    "'shared' install path: two concurrent afterAction calls succeed via Async.zip" in {
-        // Targets the "shared install" branch in `installObserver`: exercised when one `afterAction` overlaps
-        // another in the same tab. We invoke `MutationSettlement.afterAction` directly (it is `private[kyo]`
-        // and accessible from this `kyo.internal` test) with a simple `Browser.eval` payload as the "action".
-        // This isolates the shared-install ref-count handshake from `Browser.click`'s CDP DOM-resolution
-        // machinery (which serialises poorly across concurrent fibers in the SAME tab, unrelated to settlement).
-        //
-        // Each action triggers a one-shot post-action mutation in its own subtree so `awaitQuiescence` actually
-        // engages (sawMutation=true → quiescence-window path) rather than falling through `firstGrace`.
-        // `Async.zip` is the explicit synchronisation primitive.
+    "overlapping actions settle independently" in {
         withBrowserOnLocalhost {
             Browser.eval(
-                """document.body.innerHTML = '<div id="a"><span>0</span></div><div id="b"><span>0</span></div>' +
-                  |  '<div id="r1"></div><div id="r2"></div>';
+                """document.body.innerHTML = '<div id="a"></div><div id="b"></div>';
                   |'ok'
                 """.stripMargin
             ).andThen {
-                // Build per-arm `afterAction` wrappers, each rooted at a different subtree. The first call
-                // installs `__kyoMutObs`; the second sees it and takes the 'shared' branch (`installObserver`'s
-                // idempotent path that just bumps `__kyoMutObsRef`).
-                def arm(scopeId: String, mutationTarget: String, label: String)(using Frame) =
-                    MutationSettlement.afterAction(
-                        Browser.eval(
-                            s"""(() => {
-                                |  setTimeout(() => {
-                                |    document.getElementById('$mutationTarget').textContent = '$label';
-                                |  }, 30);
-                                |})(); 'ok'
-                            """.stripMargin
-                        ).unit
-                    )(scopeSelector = Present(Selector.id(scopeId)))
+                Latch.init(2).map { installed =>
+                    def arm(target: String, label: String)(using Frame) =
+                        MutationSettlement.afterAction(
+                            installed.release.andThen(installed.await).andThen {
+                                Browser.eval(s"document.getElementById('$target').textContent = '$label'").unit
+                            }
+                        )(scopeSelector = Present(Selector.id(target)))
 
-                Browser.use { tab =>
-                    Async.zip(
-                        Browser.runOn(tab)(arm("a", "r1", "1")),
-                        Browser.runOn(tab)(arm("b", "r2", "2"))
-                    ).map { (_, _) =>
-                        // Behavioural: both arms returned without raising; the shared-install handshake
-                        // admitted the overlapping caller. DOM-side: both post-mutation values are visible.
-                        for
-                            r1 <- Browser.eval("document.getElementById('r1').textContent")
-                            r2 <- Browser.eval("document.getElementById('r2').textContent")
-                        yield
-                            assert(r1 == "1", s"expected #r1 == '1' after concurrent afterAction, got '$r1'")
-                            assert(r2 == "2", s"expected #r2 == '2' after concurrent afterAction, got '$r2'")
-                        end for
+                    Browser.use { tab =>
+                        Async.zip(
+                            Browser.runOn(tab)(arm("a", "1")),
+                            Browser.runOn(tab)(arm("b", "2"))
+                        ).andThen {
+                            for
+                                first  <- Browser.eval("document.getElementById('a').textContent")
+                                second <- Browser.eval("document.getElementById('b').textContent")
+                            yield
+                                assert(first == "1")
+                                assert(second == "2")
+                            end for
+                        }
                     }
                 }
             }
         }
     }
 
-    // ---- `scopeSelector = Present(s)` subtree-only observation ----
-    //
-    // The observer is rooted at `document.querySelector(scopeSelector)`; mutations OUTSIDE that subtree must
-    // NOT extend settlement. The click handler synchronously schedules many one-shot setTimeout mutations (no
-    // setInterval) that fire OUTSIDE the click target's subtree, spread across a 3-second window, well past
-    // the default 2-second `mutationSettlementTimeout`. With proper subtree scoping, settlement falls through
-    // the firstGrace path (no in-scope mutations) and returns cleanly within ~firstGrace+overhead. With a
-    // document-rooted observer, settlement would see the staggered out-of-scope mutations and raise
-    // `BrowserAssertionTimedOutException` at the deadline. Negative assertion: click MUST succeed.
-
-    "scopeSelector = Present(s): out-of-scope mutations do NOT trigger settlement" in {
-        // NOTE on JS setup: same as the other browser scenarios; set innerHTML first, then install handlers
-        // via top-level eval (innerHTML-injected `<script>` tags don't execute per HTML5 spec).
+    "scopeSelector = Present(s): sibling mutations still require quiescence" in {
+        // scopeSelector does not restrict observation: action handlers commonly update sibling elements.
+        // Mutate only after polling starts, so this checks observation independently of action-time mutation accounting.
         withBrowserOnLocalhost {
-            Browser.eval(
-                """document.body.innerHTML = '<button id="trigger">go</button>' +
-                  |  '<div id="outside"></div>';
-                  |window.__outsideMutations = 0;
-                  |document.getElementById("trigger").onclick = () => {
-                  |  for (let i = 0; i < 60; i++) {
-                  |    setTimeout(() => {
-                  |      const s = document.createElement("span");
-                  |      s.textContent = String(i);
-                  |      document.getElementById("outside").appendChild(s);
-                  |      window.__outsideMutations++;
-                  |    }, 50 + i * 50);
-                  |  }
-                  |};
-                  |'ok'
-                """.stripMargin
-            ).andThen {
-                // Default config: mutationSettlementTimeout=2s, firstGrace=100ms. The click target is `#trigger`,
-                // so the scoped observer roots at the button; out-of-scope `#outside` churn is invisible.
-                for
-                    _ <- Browser.click(Selector.id("trigger"))
-                    // DOM-side check: at least one out-of-scope mutation has fired by now (the first one is at
-                    // 50ms post-click; even at firstGrace exit the click handler has already scheduled them).
-                    // After the click returns and we read this counter, some have certainly run, but the
-                    // settlement was NOT extended by them.
-                    outsideCount <- Browser.eval("String(window.__outsideMutations)")
-                yield
-                    val n = outsideCount.toIntOption.getOrElse(0)
-                    // The deterministic contract is the Abort SHAPE: `Browser.click` returned WITHOUT raising.
-                    // A document-rooted observer would have seen the staggered out-of-scope mutations, never
-                    // quiesced, and raised BrowserAssertionTimedOutException, aborting this for-comprehension
-                    // before the `yield`. Reaching here means out-of-scope mutations were correctly ignored.
-                    // No wall-clock assertion: an absolute elapsed bound cannot distinguish "didn't settle-wait"
-                    // from "slow host" and false-fails under load.
-                    // DOM-side proof the page WAS active (otherwise the test could pass trivially against an
-                    // inert page). At least one outside mutation must have happened by the time `outsideCount`
-                    // is read; since they start at t=50ms and the click takes >= 100ms (firstGrace), a sane
-                    // lower bound is 1.
-                    assert(
-                        n >= 1,
-                        s"expected at least one out-of-scope mutation to have fired (proving the test is non-trivially active), got $n"
-                    )
-                end for
+            Browser.use { tab =>
+                Scope.run {
+                    for
+                        _ <- Browser.eval("""document.body.innerHTML = '<button id="trigger">go</button><div id="outside"></div>';
+                            let now = 1;
+                            let next = 0;
+                            const timers = new Map();
+                            let polling;
+                            window.settlementPolling = new Promise(resolve => { polling = resolve; });
+                            Object.defineProperty(performance, 'now', { configurable: true, value: () => now });
+                            window.setTimeout = (callback, delay) => {
+                                const id = ++next;
+                                timers.set(id, { callback, at: now + Number(delay) });
+                                if (delay === 10) polling('polling');
+                                return id;
+                            };
+                            window.clearTimeout = id => timers.delete(id);
+                            window.advanceSettlement = () => {
+                                now = 1001;
+                                for (const [id, timer] of timers) {
+                                    if (timer.at <= now) { timers.delete(id); timer.callback(); }
+                                }
+                                return 'advanced';
+                            };
+                            'ready'""")
+                        waiting <- Fiber.init(Abort.run[BrowserReadException](Browser.runOn(tab) {
+                            Browser.withConfig(
+                                _.mutationQuiescenceWindow(2.seconds)
+                                    .mutationSettlementTimeout(1.second)
+                                    .mutationPollInterval(10.millis)
+                            ) {
+                                MutationSettlement.afterAction(Kyo.unit)(Present(Selector.id("trigger")))
+                            }
+                        }))
+                        _      <- BrowserEval.evalJsAwaiting("window.settlementPolling")
+                        _      <- Browser.eval("document.getElementById('outside').textContent = 'changed'; 'changed'")
+                        _      <- Browser.eval("window.advanceSettlement()")
+                        result <- waiting.get
+                    yield result match
+                        case Result.Failure(error: BrowserAssertionTimedOutException) =>
+                            assert(error == BrowserAssertionTimedOutException.notQuiesced(2.seconds, 1000, 1, 1.second))
+                        case other => fail(s"expected the sibling mutation to require quiescence, got $other")
+                }
             }
         }
     }
 
-    "two parallel Browser.click on the same tab share a single observer install" in {
+    "two parallel Browser.click on the same tab settle successfully" in {
         // Resolver concurrency contract: two parallel `Browser.click` calls on the same tab must both run
         // end-to-end without their resolution state colliding. The Resolver pipeline must use a handle that
         // is stable across DOM mutations (i.e. `Runtime.evaluate(returnByValue=false)` → `objectId` →

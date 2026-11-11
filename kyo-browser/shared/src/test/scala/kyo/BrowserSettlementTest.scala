@@ -4,6 +4,265 @@ class BrowserSettlementTest extends BrowserTest:
 
     override def timeout = 90.seconds
 
+    private val controlledSettlementClockJs = """(() => {
+                            let now = 0;
+                            let next = 0;
+                            const timers = new Map();
+                            let armed;
+                            let disconnected;
+                            window.settlementDisconnected = new Promise(resolve => { disconnected = resolve; });
+                            const OriginalObserver = window.MutationObserver;
+                            window.MutationObserver = class extends OriginalObserver {
+                                disconnect() { super.disconnect(); disconnected('disconnected'); }
+                            };
+                            window.settlementArmed = new Promise(resolve => { armed = resolve; });
+                            Object.defineProperty(performance, 'now', { configurable: true, value: () => now });
+                            window.setTimeout = (callback, delay) => {
+                                const id = ++next;
+                                timers.set(id, { callback, at: now + Math.max(0, Number(delay) | 0) });
+                                armed('armed');
+                                return id;
+                            };
+                            window.clearTimeout = id => timers.delete(id);
+                            window.advanceSettlement = () => {
+                                now = 1000;
+                                for (const [id, timer] of timers) {
+                                    if (timer.at <= now) { timers.delete(id); timer.callback(); }
+                                }
+                                return 'advanced';
+                            };
+                            window.pendingSettlementTimers = () => timers.size;
+                            window._kyoPostQ = new Promise(resolve => { window.finishPostQueue = resolve; });
+                            return 'installed';
+                        })()"""
+
+    "settlement cannot report success when a pending post queue reaches its deadline" in {
+        withBrowserOnLocalhost {
+            Browser.use { tab =>
+                Scope.run {
+                    for
+                        _       <- Browser.eval(controlledSettlementClockJs)
+                        waiting <- Fiber.init(Abort.run[BrowserReadException](Browser.runOn(tab)(Browser.waitForStable(1.second))))
+                        _       <- internal.BrowserEval.evalJsAwaiting("window.settlementArmed")
+                        _       <- Browser.eval("window.advanceSettlement()")
+                        result  <- waiting.get
+                    yield result match
+                        case Result.Failure(error: BrowserAssertionTimedOutException) =>
+                            assert(error.actual.contains(s"deadline ${1.second.toNanos}"))
+                        case other => fail(s"expected a settlement timeout for the pending post queue, got $other")
+                    end for
+                }
+            }
+        }
+    }
+
+    "a settlement deadline beyond the browser timer range does not expire early" in {
+        withBrowserOnLocalhost {
+            Browser.use { tab =>
+                Scope.run {
+                    for
+                        _       <- Browser.eval(controlledSettlementClockJs)
+                        waiting <-
+                            Fiber.init(Abort.run[BrowserReadException](Browser.runOn(tab)(Browser.waitForStable(2147483648L.millis))))
+                        _      <- internal.BrowserEval.evalJsAwaiting("window.settlementArmed")
+                        _      <- Browser.eval("window.advanceSettlement()")
+                        _      <- Browser.eval("window.finishPostQueue(); 'drained'")
+                        result <- waiting.get
+                    yield assert(result == Result.succeed(()))
+                }
+            }
+        }
+    }
+
+    "cancelling settlement disconnects its observer and clears its pending timers" in {
+        withBrowserOnLocalhost {
+            Browser.use { tab =>
+                Scope.run {
+                    for
+                        _       <- Browser.eval(controlledSettlementClockJs)
+                        waiting <- Fiber.init(Abort.run[BrowserReadException](Browser.runOn(tab)(Browser.waitForStable(1.second))))
+                        _       <- internal.BrowserEval.evalJsAwaiting("window.settlementArmed")
+                        _       <- waiting.interruptAwait
+                        _       <- internal.BrowserEval.evalJsAwaiting("window.settlementDisconnected")
+                        pending <- Browser.eval("String(window.pendingSettlementTimers())")
+                    yield assert(pending == "0", s"settlement left $pending timers armed after cancellation")
+                }
+            }
+        }
+    }
+
+    "waitForStable observes a document before it has a body" in {
+        withBrowserOnLocalhost {
+            for
+                _    <- Browser.eval("document.body.remove(); 'removed'")
+                _    <- Browser.waitForStable(5.seconds)
+                body <- Browser.eval("String(document.body)")
+            yield assert(body == "null")
+        }
+    }
+
+    "settlement cleanup cannot disconnect an observer in a replacement document" in {
+        withBrowserOnLocalhost {
+            Browser.use { tab =>
+                Scope.run {
+                    for
+                        oldInstalled <- Latch.init(1)
+                        oldFinish    <- Latch.init(1)
+                        newInstalled <- Latch.init(1)
+                        newFinish    <- Latch.init(1)
+                        oldWait      <- Fiber.init(Abort.run[BrowserReadException](Browser.runOn(tab) {
+                            internal.MutationSettlement.afterAction(
+                                oldInstalled.release.andThen(oldFinish.await).andThen(
+                                    Abort.fail(BrowserProtocolErrorException("test action", "old action ended"))
+                                )
+                            )(Absent)
+                        }))
+                        _ <- oldInstalled.await
+                        _ <- Browser.goto(page("""<body>replacement<script>
+                            window.activeObservers = 0;
+                            const OriginalObserver = window.MutationObserver;
+                            window.MutationObserver = class extends OriginalObserver {
+                                observe(...args) { super.observe(...args); window.activeObservers++; }
+                                disconnect() { super.disconnect(); window.activeObservers--; }
+                            };
+                        </script></body>"""))
+                        newWait <- Fiber.init(Abort.run[BrowserReadException](Browser.runOn(tab) {
+                            internal.MutationSettlement.afterAction(
+                                newInstalled.release.andThen(newFinish.await).andThen(
+                                    Abort.fail(BrowserProtocolErrorException("test action", "new action ended"))
+                                )
+                            )(Absent)
+                        }))
+                        _          <- newInstalled.await
+                        _          <- oldFinish.release
+                        oldResult  <- oldWait.get
+                        active     <- Browser.eval("String(window.activeObservers)")
+                        _          <- newFinish.release
+                        newResult  <- newWait.get
+                        afterClose <- Browser.eval("String(window.activeObservers)")
+                    yield
+                        oldResult match
+                            case Result.Failure(error: BrowserProtocolErrorException) => assert(error.error == "old action ended")
+                            case other => fail(s"expected the old action's failure, got $other")
+                        newResult match
+                            case Result.Failure(error: BrowserProtocolErrorException) => assert(error.error == "new action ended")
+                            case other => fail(s"expected the new action's failure, got $other")
+                        assert(active == "1", s"old document cleanup disconnected the new observer: $active")
+                        assert(afterClose == "0")
+                    end for
+                }
+            }
+        }
+    }
+
+    "removing an iframe during settlement preserves its typed context error" in {
+        withBrowserOnLocalhostIframe(
+            """<body><iframe id="frame" src="{iframe-src}"></iframe></body>""",
+            "<body>child</body>"
+        ) {
+            Browser.use { tab =>
+                Scope.run {
+                    for
+                        frame     <- Browser.iframe(Browser.Selector.id("frame"))
+                        installed <- Latch.init(1)
+                        finish    <- Latch.init(1)
+                        waiting   <- Fiber.init(Abort.run[BrowserReadException](Browser.runOn(tab) {
+                            Browser.withIFrame(frame) {
+                                internal.MutationSettlement.afterAction(installed.release.andThen(finish.await))(Absent)
+                            }
+                        }))
+                        _      <- installed.await
+                        _      <- Browser.eval("document.getElementById('frame').remove(); 'removed'")
+                        _      <- finish.release
+                        result <- waiting.get
+                    yield result match
+                        case Result.Failure(BrowserIFrameInvalidException(reason)) =>
+                            assert(reason == BrowserIFrameInvalidException.Reason.ContextDestroyed)
+                        case other => fail(s"expected the removed iframe's context error, got $other")
+                }
+            }
+        }
+    }
+
+    "dismissing a navigation dialog settles the original document" in {
+        withBrowserOnLocalhost {
+            for
+                original <- Browser.url
+                _        <- Browser.eval("""document.body.innerHTML = '<button id="focus">activate</button><select id="choice"><option value="">stay</option><option value="go">go</option></select>';
+                    document.getElementById('choice').onchange = () => location.assign('/json/list');
+                    window.onbeforeunload = e => { e.preventDefault(); e.returnValue = ''; };
+                    'ready'""")
+                _ <- Browser.click(Browser.Selector.id("focus"))
+                _ <- Browser.withDialogs.dismiss {
+                    Browser.select(Browser.Selector.id("choice"), "go")
+                }
+                current <- Browser.url
+            yield assert(current == original)
+        }
+    }
+
+    private def navigationResult(action: Unit < (Browser & Abort[BrowserReadException]))(using Frame) =
+        Scope.run {
+            for
+                requested <- Latch.init(1)
+                response  <- Latch.init(1)
+                result    <-
+                    val initial = HttpRoute.getRaw("/").response(_.bodyBinary).handler { _ =>
+                        HttpResponse.ok(Span.fromUnsafe("""<html><body>
+                            <form action="/result"><input id="q" name="q"></form>
+                            <input id="s"><select id="o"><option value="">stay</option><option value="new">new</option></select>
+                            <script>
+                                document.getElementById('s').onkeydown = e => {
+                                    if (e.key === 'Enter') { e.preventDefault(); location.assign('/result?q=' + e.target.value); }
+                                };
+                                document.getElementById('o').onchange = e => location.assign('/result?q=' + e.target.value);
+                            </script></body></html>""".getBytes("UTF-8"))).addHeader("Content-Type", "text/html")
+                    }
+                    val destination = HttpRoute.getRaw("/result").response(_.bodyBinary).handler { _ =>
+                        requested.release.andThen(response.await).andThen {
+                            HttpResponse.ok(Span.fromUnsafe("""<html><body><h1 id="result">pending</h1>
+                                <script>requestAnimationFrame(() => requestAnimationFrame(() => {
+                                    document.getElementById('result').textContent = 'painted';
+                                }));</script></body></html>""".getBytes("UTF-8"))).addHeader("Content-Type", "text/html")
+                        }
+                    }
+                    withLocalhostServer(initial, destination) { (host, port) =>
+                        withBrowser {
+                            Scope.ensure(response.release).andThen {
+                                Browser.use { tab =>
+                                    for
+                                        _      <- Browser.goto(s"http://$host:$port/")
+                                        moving <- Fiber.init(Browser.runOn(tab)(action))
+                                        _      <- requested.await
+                                        _      <- response.release
+                                        _      <- moving.get
+                                        url    <- Browser.url
+                                        text   <- Browser.text(Browser.Selector.id("result"))
+                                    yield (url.stripPrefix(s"http://$host:$port"), text)
+                                }
+                            }
+                        }
+                    }
+            yield result
+        }
+
+    "form submission settles the replacement document and its first frame" in {
+        navigationResult(
+            Browser.fill(Browser.Selector.id("q"), "scala").andThen(Browser.press(Browser.Key.Enter))
+        ).map(result => assert(result == ("/result?q=scala", "painted")))
+    }
+
+    "Enter handler navigation settles the replacement document and its first frame" in {
+        navigationResult(
+            Browser.fill(Browser.Selector.id("s"), "scala").andThen(Browser.press(Browser.Key.Enter))
+        ).map(result => assert(result == ("/result?q=scala", "painted")))
+    }
+
+    "select handler navigation settles the replacement document and its first frame" in {
+        navigationResult(Browser.select(Browser.Selector.id("o"), "new"))
+            .map(result => assert(result == ("/result?q=new", "painted")))
+    }
+
     // ---- goto with explicit settle ----
 
     "goto with explicit Settle.DomContentLoaded returns after DOMContentLoaded" in {
@@ -328,6 +587,35 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
+    "click whose handler navigates while settlement is waiting returns on the new page" in {
+        // A framework handler that navigates after a round trip (kyo-ui's UI.navigate over its WebSocket) replaces the
+        // document while mutation settlement is still evaluating on it. The button has no navigation intent the actionability
+        // gate could see, so the click takes the settlement path. The navigation starts from the post queue settlement awaits,
+        // so it always lands inside that evaluation.
+        withBrowserOnLocalhost {
+            Browser.eval("window.location.host").map { host =>
+                val target  = s"http://$host/json"
+                val install =
+                    s"""(() => {
+                       |  const b = document.createElement('button');
+                       |  b.id = 'b';
+                       |  b.textContent = 'go';
+                       |  b.addEventListener('click', () => {
+                       |    window._kyoPostQ = { then() { window.location.assign('$target'); } };
+                       |  });
+                       |  document.body.appendChild(b);
+                       |  return 'ok';
+                       |})()""".stripMargin
+                for
+                    _   <- Browser.eval(install)
+                    _   <- Browser.click(Browser.Selector.id("b"))
+                    url <- Browser.url
+                yield assert(url == target, s"expected the click to return on '$target' but the page is '$url'")
+                end for
+            }
+        }
+    }
+
     // fill that triggers a debounced validation awaits the validation tick.
     // The oninput handler defers a DOM mutation by 50ms; the validation output div gets populated asynchronously after the
     // fill completes. With mutation settlement the first read of the validation text observes 'valid'.
@@ -481,7 +769,7 @@ class BrowserSettlementTest extends BrowserTest:
 
     // Nested mutations within the quiescence window reset the timer.
     // The onclick schedules three mutations at t=10ms, t=30ms, t=70ms. Each mutation arrives within the previous 50ms quiescence
-    // window, resetting the observer's __kyoMutLast. With a 50ms window, quiescence is reached no earlier than t=70+50=120ms.
+    // window, updating the observer's last-mutation time. With a 50ms window, quiescence is reached no earlier than t=70+50=120ms.
     // The click should return around 120-200ms post-action, NOT at t=60ms (10+50), which would be the wrong "first mutation then
     // wait the window" behavior that ignores later mutations within the same burst.
     "nested mutations within the quiescence window reset the timer" in {
@@ -508,34 +796,32 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    // The observer is removed after settlement: no leaks.
-    // After a click completes, the release scope exits and the ref count drops to 0, disconnecting the observer and deleting the
-    // window-level state. `window.__kyoMutObs === undefined` should read 'true'.
-    "MutationObserver and window state are cleaned up after settlement" in {
-        val p = page(
-            """<body>
-                <button id="b" onclick="document.getElementById('b').textContent = '1'">0</button>
-            </body>"""
-        )
-        withBrowser {
+    "settlement disconnects every observer it installs" in {
+        withBrowserOnLocalhost {
             for
-                _      <- Browser.goto(p)
-                _      <- Browser.click(Browser.Selector.id("b"))
-                leaked <- Browser.eval("String(typeof window.__kyoMutObs === 'undefined')")
-                ref    <- Browser.eval("String(typeof window.__kyoMutObsRef === 'undefined')")
-                last   <- Browser.eval("String(typeof window.__kyoMutLast === 'undefined')")
+                _ <- Browser.eval("""document.body.innerHTML = '<button id="b">0</button>';
+                    const OriginalObserver = window.MutationObserver;
+                    window.observerInstalls = 0;
+                    window.observerDisposals = 0;
+                    window.MutationObserver = class extends OriginalObserver {
+                        observe(...args) { super.observe(...args); window.observerInstalls++; }
+                        disconnect() { super.disconnect(); window.observerDisposals++; }
+                    };
+                    document.getElementById('b').onclick = () => {
+                        document.getElementById('b').textContent = '1';
+                    };
+                    'installed'""")
+                _        <- Browser.click(Browser.Selector.id("b"))
+                counts   <- Browser.eval("JSON.stringify([window.observerInstalls, window.observerDisposals])")
+                contents <- Browser.text(Browser.Selector.id("b"))
             yield
-                assert(leaked == "true", s"expected window.__kyoMutObs to be deleted after settlement but was still defined (got $leaked)")
-                assert(ref == "true", s"expected window.__kyoMutObsRef to be deleted after settlement (got $ref)")
-                assert(last == "true", s"expected window.__kyoMutLast to be deleted after settlement (got $last)")
+                assert(counts == "[1,1]")
+                assert(contents == "1")
             end for
         }
     }
 
-    // Concurrent observers on different subtrees don't interfere.
-    // Two sequential back-to-back clicks on elements in different subtrees. Both should return cleanly without deadlocking or
-    // observing stale state from the previous observer. Uses the ref-count path: first click installs, cleans up; second click
-    // installs fresh, cleans up.
+    // Consecutive clicks must settle their own changes without retaining the previous action's state.
     "back-to-back clicks on different subtrees each settle independently" in {
         val p = page(
             """<body>
@@ -558,12 +844,9 @@ class BrowserSettlementTest extends BrowserTest:
                 leftTxt  <- Browser.text(Browser.Selector.id("left"))
                 _        <- Browser.click(Browser.Selector.id("right"))
                 rightTxt <- Browser.text(Browser.Selector.id("right"))
-                // After both settlement cycles complete, cleanup must be complete: no leaked observer state.
-                leaked <- Browser.eval("String(typeof window.__kyoMutObs === 'undefined')")
             yield
                 assert(leftTxt == "L1", s"expected left subtree settled to 'L1' but got '$leftTxt'")
                 assert(rightTxt == "R1", s"expected right subtree settled to 'R1' but got '$rightTxt'")
-                assert(leaked == "true", s"expected cleanup after both back-to-back clicks but observer state remained (got $leaked)")
             end for
         }
     }
@@ -1230,176 +1513,72 @@ class BrowserSettlementTest extends BrowserTest:
 
     // ── data-kyo-internal filter + waitForStable + settleForCapture ──
 
-    // Test 1: injecting a data-kyo-internal node leaves __kyoMutCount unchanged.
-    // The observer is installed via a no-op afterAction call so __kyoMutCount and the
-    // observer exist; subsequent mutations inside the tagged subtree are filtered out
-    // and must not change the counter.
-    "data-kyo-internal mutations do not arm the settlement gate" in {
-        withBrowser {
-            onPage("<body><div id='real'>initial</div></body>") {
-                // Install the observer via a no-op afterAction so __kyoMutCount is initialized.
-                kyo.internal.MutationSettlement.afterAction(Browser.eval("'noop'"))(Absent).andThen {
-                    // Read the count right after the no-op action settled.
-                    Browser.eval("String(window.__kyoMutCount || 0)").map { beforeStr =>
-                        val before = beforeStr.toLong
-                        // Inject a data-kyo-internal subtree and mutate it several times.
-                        Browser.eval("""(() => {
-                            const d = document.createElement('div');
-                            d.setAttribute('data-kyo-internal', 'overlay');
-                            d.id = 'overlay';
-                            document.body.appendChild(d);
-                            d.textContent = 'x';
-                            d.textContent = 'y';
-                            d.textContent = 'z';
-                            const child = document.createElement('span');
-                            child.textContent = 'child';
-                            d.appendChild(child);
-                            return 'done';
-                        })()""").andThen {
-                            Browser.eval("String(window.__kyoMutCount || 0)").map { afterStr =>
-                                val after = afterStr.toLong
-                                assert(
-                                    after == before,
-                                    s"expected __kyoMutCount to remain $before after data-kyo-internal mutations but got $after"
-                                )
+    private def settleFilteredMutation(mutation: String)(using Frame) =
+        withBrowserOnLocalhost {
+            Browser.use { tab =>
+                Scope.run {
+                    for
+                        _ <- Browser.eval("""document.body.innerHTML =
+                            '<div id="real">initial</div><div id="overlay" data-kyo-internal="overlay">overlay</div>'; 'ready'""")
+                        _       <- Browser.eval(controlledSettlementClockJs)
+                        _       <- Browser.eval("window._kyoPostQ = Promise.resolve(); 'ready'")
+                        waiting <- Fiber.init(Abort.run[BrowserReadException](Browser.runOn(tab) {
+                            Browser.withConfig(
+                                _.mutationQuiescenceWindow(2.seconds).mutationSettlementTimeout(1.second)
+                            ) {
+                                internal.MutationSettlement.afterAction(
+                                    Browser.eval(mutation).unit
+                                )(Present(Browser.Selector.id("overlay")))
                             }
-                        }
-                    }
+                        }))
+                        _      <- internal.BrowserEval.evalJsAwaiting("window.settlementArmed")
+                        _      <- Browser.eval("window.advanceSettlement()")
+                        result <- waiting.get
+                    yield result
                 }
             }
         }
-    }
 
-    // Test 2: real DOM mutations still arm the gate after the filter is applied.
-    // Proves the filter is narrow: untagged elements still increment __kyoMutCount.
-    // Strategy: use evalJsAwaiting (awaitPromise=true) to flush microtasks after the DOM mutation
-    // so the MutationObserver callback fires (MutationObserver delivers as a microtask; a
-    // synchronous eval cannot observe the post-callback count because microtasks run after the
-    // current script task, not between its statements). The async eval yields via setTimeout(0)
-    // to let the callback run, then reads the updated count.
-    "real DOM mutations still arm the gate after the data-kyo-internal filter" in {
-        withBrowser {
-            onPage("<body><div id='real'>initial</div></body>") {
-                // The action installs the observer, triggers a real DOM mutation, then yields via
-                // setTimeout(0) inside an async block so the MutationObserver microtask fires.
-                // Returns "before,after" counts for assertion.
-                val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
-                    const before = window.__kyoMutCount || 0;
-                    document.getElementById('real').textContent = 'changed';
-                    await new Promise(r => setTimeout(r, 0));
-                    const after = window.__kyoMutCount || 0;
-                    return String(before) + ',' + String(after);
-                })()""")
-                kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
-                    val parts  = result.split(",")
-                    val before = parts(0).toLong
-                    val after  = parts(1).toLong
-                    assert(
-                        after > before,
-                        s"expected __kyoMutCount to increase from $before after an untagged mutation but got $after (filter must not suppress untagged mutations)"
-                    )
-                }
-            }
+    "data-kyo-internal mutations do not arm the settlement gate" in {
+        settleFilteredMutation("document.getElementById('overlay').textContent = 'changed'").map { result =>
+            assert(result == Result.succeed(()))
         }
     }
 
-    // Test 2b: APPENDING a data-kyo-internal root to document.body does NOT arm the gate.
-    // This is the overlay-injection case: the childList record's target is the UNTAGGED parent (document.body) and the
-    // tagged node is in addedNodes, so the original target-ancestor-only filter would have armed the gate. The extended
-    // filter treats a childList record as transparent when every added/removed node is (or is within) a tagged subtree.
-    // evalJsAwaiting flushes the MutationObserver microtask (via setTimeout(0)) before reading the post-callback count.
+    "synchronous sibling mutations retain their quiet-window requirement" in {
+        settleFilteredMutation("document.getElementById('real').textContent = 'changed'").map {
+            case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+            case other => fail(s"expected an untagged mutation to require quiescence, got $other")
+        }
+    }
+
     "appending a data-kyo-internal node does not arm the settlement gate" in {
-        withBrowser {
-            onPage("<body><div id='real'>initial</div></body>") {
-                val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
-                    const before = window.__kyoMutCount || 0;
-                    const d = document.createElement('div');
-                    d.setAttribute('data-kyo-internal', 'overlay');
-                    d.id = 'kyo-overlay-root';
-                    const child = document.createElement('span');
-                    child.textContent = 'box';
-                    d.appendChild(child);
-                    document.body.appendChild(d);
-                    await new Promise(r => setTimeout(r, 0));
-                    const after = window.__kyoMutCount || 0;
-                    return String(before) + ',' + String(after);
-                })()""")
-                kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
-                    val parts  = result.split(",")
-                    val before = parts(0).toLong
-                    val after  = parts(1).toLong
-                    assert(
-                        after == before,
-                        s"expected __kyoMutCount to remain $before after appending a data-kyo-internal node but got $after"
-                    )
-                }
-            }
+        settleFilteredMutation("""(() => {
+            const node = document.createElement('div');
+            node.setAttribute('data-kyo-internal', 'overlay');
+            node.textContent = 'overlay';
+            document.body.appendChild(node);
+            return 'appended';
+        })()""").map { result =>
+            assert(result == Result.succeed(()))
         }
     }
 
-    // Test 2c: REMOVING a data-kyo-internal root from document.body does NOT arm the gate.
-    // The childList record's target is document.body (untagged) and the tagged node is in removedNodes. A detached removed
-    // tagged element still satisfies closest('[data-kyo-internal]') on itself, so the extended filter treats the removal as
-    // transparent. Pre-seeds the tagged root before the observer is installed so the only mutation under measurement is the
-    // removal.
     "removing a data-kyo-internal node does not arm the settlement gate" in {
-        withBrowser {
-            onPage("<body><div id='real'>initial</div></body>") {
-                // Pre-seed the tagged overlay root before installing the observer.
-                Browser.eval("""(() => {
-                    const d = document.createElement('div');
-                    d.setAttribute('data-kyo-internal', 'overlay');
-                    d.id = 'kyo-overlay-root';
-                    document.body.appendChild(d);
-                    return 'seeded';
-                })()""").andThen {
-                    val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
-                        const before = window.__kyoMutCount || 0;
-                        const d = document.getElementById('kyo-overlay-root');
-                        document.body.removeChild(d);
-                        await new Promise(r => setTimeout(r, 0));
-                        const after = window.__kyoMutCount || 0;
-                        return String(before) + ',' + String(after);
-                    })()""")
-                    kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
-                        val parts  = result.split(",")
-                        val before = parts(0).toLong
-                        val after  = parts(1).toLong
-                        assert(
-                            after == before,
-                            s"expected __kyoMutCount to remain $before after removing a data-kyo-internal node but got $after"
-                        )
-                    }
-                }
-            }
+        settleFilteredMutation("document.getElementById('overlay').remove(); 'removed'").map { result =>
+            assert(result == Result.succeed(()))
         }
     }
 
-    // Test 2d: appending a NON-tagged node STILL arms the gate (regression guard for the childList filter extension).
-    // Proves the extended filter is narrow: a childList record whose added node is untagged increments __kyoMutCount.
     "appending a non-tagged node still arms the settlement gate" in {
-        withBrowser {
-            onPage("<body><div id='real'>initial</div></body>") {
-                val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
-                    const before = window.__kyoMutCount || 0;
-                    const d = document.createElement('div');
-                    d.id = 'plain-node';
-                    d.textContent = 'plain';
-                    document.body.appendChild(d);
-                    await new Promise(r => setTimeout(r, 0));
-                    const after = window.__kyoMutCount || 0;
-                    return String(before) + ',' + String(after);
-                })()""")
-                kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
-                    val parts  = result.split(",")
-                    val before = parts(0).toLong
-                    val after  = parts(1).toLong
-                    assert(
-                        after > before,
-                        s"expected __kyoMutCount to increase from $before after appending an untagged node but got $after (the filter must not suppress untagged insertions)"
-                    )
-                }
-            }
+        settleFilteredMutation("""(() => {
+            const node = document.createElement('div');
+            node.textContent = 'plain';
+            document.body.appendChild(node);
+            return 'appended';
+        })()""").map {
+            case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+            case other => fail(s"expected an untagged insertion to require quiescence, got $other")
         }
     }
 
