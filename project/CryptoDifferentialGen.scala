@@ -7,6 +7,7 @@ import java.security.SecureRandom
 import java.security.Signature
 import java.security.interfaces.RSAPrivateCrtKey
 import java.security.interfaces.RSAPublicKey
+import java.security.spec.RSAKeyGenParameterSpec
 import java.security.spec.RSAPublicKeySpec
 import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
@@ -25,10 +26,15 @@ import sbt.*
   *
   * Every random choice comes from a `java.util.Random` or a `SHA1PRNG` seeded with fixed values, so a rerun under the same JDK writes the
   * same file. One line per case, `kind` then `field=value` pairs, byte values in lowercase hex.
+  *
+  * kyo-crypto-signing's set, `kyo-crypto-signingJVM/generateSigningVectors`, is written the same way: RSA private keys the JDK generated,
+  * each as its PKCS#1 and PKCS#8 DER, and the JDK's RS256 signatures under them.
   */
 object CryptoDifferentialGen {
 
     val generateJdkVectors = taskKey[Unit]("Regenerate kyo-crypto's jdk-differential vector set from the running JDK")
+
+    val generateSigningVectors = taskKey[Unit]("Regenerate kyo-crypto-signing's jdk-differential vector set from the running JDK")
 
     final private case class Line(kind: String, fields: Seq[(String, String)]) {
         def render: String = (kind +: fields.map { case (k, v) => s"$k=$v" }).mkString(" ")
@@ -199,15 +205,82 @@ object CryptoDifferentialGen {
             )
         }
 
-        val lines = (digests ++ hmacs ++ pbkdf2s ++ Seq(rsaKey) ++ rs256s ++ oaeps ++ ed25519s).map(_.render)
-        val text  = lines.mkString("", "\n", "\n")
+        writeSet(dir, "kyo-cryptoJVM/generateJdkVectors", digests ++ hmacs ++ pbkdf2s ++ Seq(rsaKey) ++ rs256s ++ oaeps ++ ed25519s, log)
+    }
+
+    /** Three keys, each with the JDK's RS256 signatures of messages at the edges of SHA-256's blocks: an 8192-bit key, the largest
+      * `Rsa.MaxModulusBits` admits, and two 2048-bit keys whose public exponents, 3 and the largest prime below 2^64, are the smallest and
+      * largest `Rsa` admits.
+      */
+    def writeSigning(dir: File, log: Logger): Unit = {
+        val random = new java.util.Random(0x7369676eL)
+
+        def bytes(n: Int): Array[Byte] = { val b = new Array[Byte](n); random.nextBytes(b); b }
+
+        val keys = Seq(
+            ("8192", 8192, RSAKeyGenParameterSpec.F4, 3L),
+            ("2048-e3", 2048, BigInteger.valueOf(3), 4L),
+            ("2048-e64", 2048, BigInteger.ONE.shiftLeft(64).subtract(BigInteger.valueOf(59)), 5L)
+        )
+
+        val lines = keys.flatMap { case (name, bits, exponent, seed) =>
+            val generator = KeyPairGenerator.getInstance("RSA")
+            generator.initialize(new RSAKeyGenParameterSpec(bits, exponent), prng(seed))
+            val pair       = generator.generateKeyPair()
+            val publicKey  = pair.getPublic.asInstanceOf[RSAPublicKey]
+            val privateKey = pair.getPrivate.asInstanceOf[RSAPrivateCrtKey]
+            val pkcs8      = privateKey.getEncoded
+            val key        = Line(
+                "rsa-signing-key",
+                Seq(
+                    "name"  -> name,
+                    "n"     -> hexOf(publicKey.getModulus),
+                    "e"     -> hexOf(publicKey.getPublicExponent),
+                    "pkcs1" -> hex(pkcs1Of(pkcs8)),
+                    "pkcs8" -> hex(pkcs8)
+                )
+            )
+            val signatures = Seq(0, 1, 55, 56, 64, 1000).map { size =>
+                val msg    = bytes(size)
+                val signer = Signature.getInstance("SHA256withRSA")
+                signer.initSign(privateKey)
+                signer.update(msg)
+                Line("rs256-sign", Seq("key" -> name, "msg" -> hex(msg), "sig" -> hex(signer.sign())))
+            }
+            key +: signatures
+        }
+
+        writeSet(dir, "kyo-crypto-signingJVM/generateSigningVectors", lines, log)
+    }
+
+    /** The RSAPrivateKey a PKCS#8 PrivateKeyInfo holds, the contents of its OCTET STRING: past the outer SEQUENCE's header, the version and
+      * the algorithm identifier.
+      */
+    private def pkcs1Of(pkcs8: Array[Byte]): Array[Byte] = {
+        def header(at: Int): (Int, Int) = {
+            val first = pkcs8(at + 1) & 0xff
+            if (first < 0x80) (first, at + 2)
+            else {
+                val count = first & 0x7f
+                ((0 until count).foldLeft(0)((length, i) => (length << 8) | (pkcs8(at + 2 + i) & 0xff)), at + 2 + count)
+            }
+        }
+        val (_, version)                        = header(0)
+        val (versionLength, versionContent)     = header(version)
+        val (algorithmLength, algorithmContent) = header(versionContent + versionLength)
+        val (keyLength, key)                    = header(algorithmContent + algorithmLength)
+        java.util.Arrays.copyOfRange(pkcs8, key, key + keyLength)
+    }
+
+    private def writeSet(dir: File, task: String, lines: Seq[Line], log: Logger): Unit = {
+        val text = lines.map(_.render).mkString("", "\n", "\n")
         IO.createDirectory(dir)
         IO.write(dir / "cases.txt", text, StandardCharsets.UTF_8)
         val digest  = hex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)))
         val version = System.getProperty("java.vendor") + " " + System.getProperty("java.runtime.version")
         IO.write(
             dir / "MANIFEST",
-            s"""source generated by project/CryptoDifferentialGen.scala (kyo-cryptoJVM/generateJdkVectors) with $version
+            s"""source generated by project/CryptoDifferentialGen.scala ($task) with $version
                |license generated from the JDK's answers; no third-party content
                |file cases.txt $digest cases.txt
                |""".stripMargin,

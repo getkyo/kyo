@@ -451,6 +451,7 @@ lazy val kyoJVM: Project = project
         `kyo-scheduler-finagle`.jvm,
         `kyo-scheduler-pekko`.jvm,
         `kyo-crypto`.jvm,
+        `kyo-crypto-signing`.jvm,
         `kyo-data`.jvm,
         `kyo-charset`.jvm,
         `kyo-mime`.jvm,
@@ -556,6 +557,7 @@ lazy val kyoJS = project
     .aggregate(
         `kyo-scheduler`.js,
         `kyo-crypto`.js,
+        `kyo-crypto-signing`.js,
         `kyo-data`.js,
         `kyo-charset`.js,
         `kyo-mime`.js,
@@ -642,6 +644,7 @@ lazy val kyoNative = project
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
         `kyo-crypto`.native,
+        `kyo-crypto-signing`.native,
         `kyo-data`.native,
         `kyo-charset`.native,
         `kyo-mime`.native,
@@ -732,6 +735,7 @@ lazy val kyoWasm = project
         `kyo-config`.wasm,
         `kyo-stats-registry`.wasm,
         `kyo-crypto`.wasm,
+        `kyo-crypto-signing`.wasm,
         `kyo-data`.wasm,
         `kyo-charset`.wasm,
         `kyo-mime`.wasm,
@@ -1003,6 +1007,35 @@ lazy val `kyo-crypto` =
         .jvmConfigure(_.settings(
             doctestSources                           := Seq(baseDirectory.value / ".." / "README.md"),
             CryptoDifferentialGen.generateJdkVectors := CryptoDifferentialGen.write(
+                baseDirectory.value / ".." / "shared" / "src" / "test" / "vectors" / "jdk-differential",
+                streams.value.log
+            )
+        ))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-crypto-signing` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-crypto` % "compile->compile;test->test")
+        .in(file("kyo-crypto-signing"))
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            Test / sourceGenerators += Def.task {
+                TestVectorsGen.generate(
+                    baseDirectory.value / ".." / "shared" / "src" / "test" / "vectors",
+                    (Test / sourceManaged).value,
+                    "kyo.internal.signing",
+                    "TestVectors"
+                )
+            }.taskValue
+        )
+        .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.settings(
+            doctestSources                               := Seq(baseDirectory.value / ".." / "README.md"),
+            CryptoDifferentialGen.generateSigningVectors := CryptoDifferentialGen.writeSigning(
                 baseDirectory.value / ".." / "shared" / "src" / "test" / "vectors" / "jdk-differential",
                 streams.value.log
             )

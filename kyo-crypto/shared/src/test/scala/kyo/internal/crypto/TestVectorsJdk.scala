@@ -19,8 +19,11 @@ object TestVectorsJdk:
 
     private val kinds = Set("sha1", "sha256", "sha512", "md5", "hmac", "pbkdf2", "rsa-key", "rs256", "oaep", "ed25519")
 
-    lazy val cases: Seq[Case] =
-        TestVectors.text(set, "cases.txt").linesIterator.filter(_.nonEmpty).map { line =>
+    lazy val cases: Seq[Case] = parse(TestVectors.text(set, "cases.txt"), kinds)
+
+    /** The cases of a `jdk-differential` file, another module's among them, each of a kind in `kinds`. */
+    def parse(text: String, kinds: Set[String]): Seq[Case] =
+        text.linesIterator.filter(_.nonEmpty).map { line =>
             val parts = line.split(' ').toSeq
             if !kinds.contains(parts.head) then throw new IllegalStateException(s"unknown jdk-differential kind: ${parts.head}")
             Case(

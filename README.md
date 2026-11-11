@@ -309,6 +309,7 @@ What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you 
 | [kyo-prelude](kyo-prelude/README.md)         | ✅  | ✅  | ✅     | ✅   | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`     |
 | [kyo-data](kyo-data/README.md)               | ✅  | ✅  | ✅     | ✅   | Low-allocation data types: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`|
 | [kyo-crypto](kyo-crypto/README.md)           | ✅  | ✅  | ✅     | ✅   | Pure-Scala digests, HMAC, PBKDF2, RS256 and Ed25519 verification, RSA-OAEP, name-based UUIDs, one implementation per platform |
+| [kyo-crypto-signing](kyo-crypto-signing/README.md) | ✅  | ✅  | ✅     | ✅   | RS256 signing with PEM private keys, message blinding and signature verification before release |
 | [kyo-kernel](kyo-kernel/README.md)           | ✅  | ✅  | ✅     | ✅   | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations     |
 | [kyo-scheduler](kyo-scheduler/README.md)     | ✅  | ✅  | ✅     | ✅   | Adaptive work-stealing pool with automatic blocking detection and admission control                        |
 

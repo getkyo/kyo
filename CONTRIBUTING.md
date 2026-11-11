@@ -218,6 +218,7 @@ If you want to contribute a new method or type, feel free to:
 | ----------------- | --------------------------------------------------------- |
 | `kyo-data`        | Data structures (`Chunk`, `Maybe`, `Result`, etc.)        |
 | `kyo-crypto`      | Digests, MACs, key derivation, signature verification     |
+| `kyo-crypto-signing` | RSA private-key signing with blinding and fault checks |
 | `kyo-prelude`     | Effect types without `Sync` (`Abort`, `Env`, `Var`, etc.) |
 | `kyo-core`        | Methods requiring `Sync`                                  |
 | `kyo-system`      | File system, OS process, and environment methods          |

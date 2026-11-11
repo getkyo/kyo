@@ -10,6 +10,12 @@ import kyo.crypto.Rsa.DerFailure
 final private[kyo] class DerReader(der: Array[Byte]):
     private var pos: Int = 0
 
+    /** Bytes not yet consumed by this reader. */
+    def remaining: Int = der.length - pos
+
+    /** Whether the next byte is `tag`, without consuming it. */
+    def hasTag(tag: Int): Boolean = pos < der.length && (der(pos) & 0xff) == tag
+
     def readTag(tag: Int): Result[DerFailure, Unit] =
         if pos >= der.length then Result.fail(DerFailure.EndOfData(tag))
         else
