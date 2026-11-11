@@ -1,6 +1,7 @@
 package kyo.internal.mcp
 
 import kyo.*
+import kyo.schema.rename
 
 /** Wires the MCP client handshake and wraps the underlying [[JsonRpcHandler]] in a concrete
   * [[McpClient.Unsafe]] implementation.
@@ -41,16 +42,26 @@ private[kyo] object McpClientEngine:
 
     // Wire types for list methods.
     final private case class ListRequest(cursor: Maybe[String] = Absent) derives Schema
-    final private case class ToolsListResponse(tools: Chunk[McpHandler.ToolMeta], nextCursor: Maybe[String] = Absent)
-        derives Schema
-    final private case class ResourcesListResponse(resources: Chunk[McpHandler.ResourceMeta], nextCursor: Maybe[String] = Absent)
-        derives Schema
+    final private case class ToolsListResponse(
+        tools: Chunk[McpHandler.ToolMeta],
+        nextCursor: Maybe[String] = Absent,
+        @rename("_meta") meta: Maybe[Structure.Value] = Absent
+    ) derives Schema
+    final private case class ResourcesListResponse(
+        resources: Chunk[McpHandler.ResourceMeta],
+        nextCursor: Maybe[String] = Absent,
+        @rename("_meta") meta: Maybe[Structure.Value] = Absent
+    ) derives Schema
     final private case class ResourceTemplatesListResponse(
         resourceTemplates: Chunk[McpHandler.ResourceTemplateMeta],
-        nextCursor: Maybe[String] = Absent
+        nextCursor: Maybe[String] = Absent,
+        @rename("_meta") meta: Maybe[Structure.Value] = Absent
     ) derives Schema
-    final private case class PromptsListResponse(prompts: Chunk[McpHandler.PromptMeta], nextCursor: Maybe[String] = Absent)
-        derives Schema
+    final private case class PromptsListResponse(
+        prompts: Chunk[McpHandler.PromptMeta],
+        nextCursor: Maybe[String] = Absent,
+        @rename("_meta") meta: Maybe[Structure.Value] = Absent
+    ) derives Schema
 
     // Wire types for completion/complete.
     final private case class CompleteRequest(ref: McpHandler.CompletionRef, argument: McpHandler.CompletionArg) derives Schema
@@ -256,7 +267,7 @@ private[kyo] object McpClientEngine:
             ): McpClient.Page[McpHandler.ToolMeta] < (Async & Abort[McpListFailure]) =
                 recoverClosed(
                     handler.call[ListRequest, ToolsListResponse]("tools/list", ListRequest(cursor.map(_.asString)))
-                        .map(r => McpClient.Page(r.tools, r.nextCursor.map(McpCursor.fromWire)))
+                        .map(r => McpClient.Page(r.tools, r.nextCursor.map(McpCursor.fromWire), r.meta))
                         .handle(Abort.recover[JsonRpcError] { e =>
                             Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                         })
@@ -304,7 +315,7 @@ private[kyo] object McpClientEngine:
             ): McpClient.Page[McpHandler.ResourceMeta] < (Async & Abort[McpListFailure]) =
                 recoverClosed(
                     handler.call[ListRequest, ResourcesListResponse]("resources/list", ListRequest(cursor.map(_.asString)))
-                        .map(r => McpClient.Page(r.resources, r.nextCursor.map(McpCursor.fromWire)))
+                        .map(r => McpClient.Page(r.resources, r.nextCursor.map(McpCursor.fromWire), r.meta))
                         .handle(Abort.recover[JsonRpcError] { e =>
                             Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                         })
@@ -318,7 +329,7 @@ private[kyo] object McpClientEngine:
                         "resources/templates/list",
                         ListRequest(cursor.map(_.asString))
                     )
-                        .map(r => McpClient.Page(r.resourceTemplates, r.nextCursor.map(McpCursor.fromWire)))
+                        .map(r => McpClient.Page(r.resourceTemplates, r.nextCursor.map(McpCursor.fromWire), r.meta))
                         .handle(Abort.recover[JsonRpcError] { e =>
                             Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                         })
@@ -340,7 +351,7 @@ private[kyo] object McpClientEngine:
             ): McpClient.Page[McpHandler.PromptMeta] < (Async & Abort[McpListFailure]) =
                 recoverClosed(
                     handler.call[ListRequest, PromptsListResponse]("prompts/list", ListRequest(cursor.map(_.asString)))
-                        .map(r => McpClient.Page(r.prompts, r.nextCursor.map(McpCursor.fromWire)))
+                        .map(r => McpClient.Page(r.prompts, r.nextCursor.map(McpCursor.fromWire), r.meta))
                         .handle(Abort.recover[JsonRpcError] { e =>
                             Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                         })

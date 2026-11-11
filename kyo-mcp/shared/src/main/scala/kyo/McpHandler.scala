@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.schema.rename
+
 /** Unified route + handler for an MCP endpoint.
   *
   * An `McpHandler[In, Out, +E]` pairs the declarative metadata (name, schemas, capability hints,
@@ -211,7 +213,7 @@ object McpHandler:
         content: Chunk[McpContent],
         isError: Boolean,
         structuredContent: Maybe[Structure.Value],
-        meta: Maybe[Structure.Value] = Absent
+        @rename("_meta") meta: Maybe[Structure.Value] = Absent
     ) derives Schema, CanEqual
 
     object ToolOutcome:
@@ -347,7 +349,7 @@ object McpHandler:
     final case class PromptOutcome(
         description: Maybe[String],
         messages: Chunk[PromptMessage],
-        meta: Maybe[Structure.Value] = Absent
+        @rename("_meta") meta: Maybe[Structure.Value] = Absent
     ) derives Schema, CanEqual
 
     object PromptOutcome:

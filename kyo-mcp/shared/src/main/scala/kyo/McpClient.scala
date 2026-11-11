@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.schema.rename
+
 /** Live MCP client handle managing one peer over a [[JsonRpcTransport]].
   *
   * Obtain via `McpClient.init` (Scope-managed) or `McpClient.initUnscoped` (manual close).
@@ -20,9 +22,11 @@ object McpClient:
       *
       * @tparam A the item type
       */
-    final case class Page[+A](items: Chunk[A], nextCursor: Maybe[McpCursor], meta: Maybe[Structure.Value] = Absent) derives CanEqual:
+    final case class Page[+A](items: Chunk[A], nextCursor: Maybe[McpCursor], @rename("_meta") meta: Maybe[Structure.Value] = Absent)
+        derives CanEqual:
         /** Returns `true` when there are no further pages. */
         def isLast: Boolean = nextCursor.isEmpty
+    end Page
 
     object Page:
         /** Returns an empty page with no cursor. */

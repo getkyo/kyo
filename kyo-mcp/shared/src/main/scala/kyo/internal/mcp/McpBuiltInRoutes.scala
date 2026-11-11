@@ -1,6 +1,7 @@
 package kyo.internal.mcp
 
 import kyo.*
+import kyo.schema.rename
 
 /** Eight built-in `JsonRpcRoute` instances that aggregate user-registered handlers from `McpCatalog`.
   *
@@ -41,7 +42,7 @@ private[kyo] object McpBuiltInRoutes:
     final private case class ToolCallParams(
         name: String,
         arguments: Structure.Value = Structure.Value.Record(Chunk.empty),
-        meta: Maybe[Structure.Value] = Absent
+        @rename("_meta") meta: Maybe[Structure.Value] = Absent
     ) derives Schema
     final private case class ToolCallResponse(
         content: Chunk[McpContent],
@@ -50,16 +51,21 @@ private[kyo] object McpBuiltInRoutes:
     ) derives Schema
 
     // Wire shapes for resources/read dispatcher.
-    final private case class ResourceReadParams(uri: String) derives Schema
+    final private case class ResourceReadParams(uri: String, @rename("_meta") meta: Maybe[Structure.Value] = Absent) derives Schema
     final private case class ResourceReadResponse(contents: Chunk[McpHandler.ResourceContents]) derives Schema
 
     // Wire shapes for prompts/get dispatcher.
-    final private case class PromptGetParams(name: String, arguments: Map[String, String] = Map.empty) derives Schema
+    final private case class PromptGetParams(
+        name: String,
+        arguments: Map[String, String] = Map.empty,
+        @rename("_meta") meta: Maybe[Structure.Value] = Absent
+    ) derives Schema
 
     final private case class CompleteParams(
         ref: McpHandler.CompletionRef,
         argument: McpHandler.CompletionArg,
-        context: Maybe[McpHandler.CompletionArg.Context] = Absent
+        context: Maybe[McpHandler.CompletionArg.Context] = Absent,
+        @rename("_meta") meta: Maybe[Structure.Value] = Absent
     ) derives Schema
     final private case class CompleteResult(completion: McpHandler.CompletionOutcome) derives Schema
 
@@ -76,10 +82,11 @@ private[kyo] object McpBuiltInRoutes:
     private def withCtx[A, S](
         jrCtx: JsonRpcRoute.Context,
         serverRef: Fiber.Promise[McpServer.Unsafe, Any],
-        method: String
+        method: String,
+        meta: Maybe[Structure.Value]
     )(body: => A < S)(using Frame): A < (S & Async) =
         val _ = method
-        serverRef.get.map(srv => Mcp.local.let(Present(Mcp.RequestContext(jrCtx, srv.safe)))(body))
+        serverRef.get.map(srv => Mcp.local.let(Present(Mcp.RequestContext(jrCtx, srv.safe, meta)))(body))
     end withCtx
 
     def toolsList(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
@@ -108,7 +115,7 @@ private[kyo] object McpBuiltInRoutes:
                         case Result.Success(in) =>
                             JsonRpcRoute.applyMappingsAtBoundary(
                                 "tools/call",
-                                withCtx(jrCtx, serverRef, "tools/call")(carrier.toolHandler(in)),
+                                withCtx(jrCtx, serverRef, "tools/call", params.meta)(carrier.toolHandler(in)),
                                 carrier.errorMappings
                             )
                         case Result.Failure(e) => Abort.fail(McpInvalidArgumentException("tools/call", "arguments", e.getMessage))
@@ -121,7 +128,7 @@ private[kyo] object McpBuiltInRoutes:
                         case Result.Success(in) =>
                             JsonRpcRoute.applyMappingsAtBoundary(
                                 "tools/call",
-                                withCtx(jrCtx, serverRef, "tools/call") {
+                                withCtx(jrCtx, serverRef, "tools/call", params.meta) {
                                     carrier.toolHandler(in).map { out =>
                                         val outSchema = carrier.outSchema.asInstanceOf[Schema[Any]]
                                         McpHandler.ToolOutcome(
@@ -166,7 +173,7 @@ private[kyo] object McpBuiltInRoutes:
                             val registeredMime = carrier.resourceMeta.mimeType
                             JsonRpcRoute.applyMappingsAtBoundary(
                                 "resources/read",
-                                withCtx(jrCtx, serverRef, "resources/read") {
+                                withCtx(jrCtx, serverRef, "resources/read", params.meta) {
                                     carrier.resourceHandler().map(bodies =>
                                         ResourceReadResponse(bodies.map(McpHandlerLift.stampBody(registeredUri, registeredMime, _)))
                                     )
@@ -188,7 +195,7 @@ private[kyo] object McpBuiltInRoutes:
                                     val matched  = new McpHandler.ResourceMatch(uri, bindings)
                                     JsonRpcRoute.applyMappingsAtBoundary(
                                         "resources/read",
-                                        withCtx(jrCtx, serverRef, "resources/read") {
+                                        withCtx(jrCtx, serverRef, "resources/read", params.meta) {
                                             carrier.resourceTemplateHandler(matched).map(bodies =>
                                                 ResourceReadResponse(bodies.map(McpHandlerLift.stampBody(uri, regMime, _)))
                                             )
@@ -233,7 +240,7 @@ private[kyo] object McpBuiltInRoutes:
                 case (Some(carrier), _) =>
                     JsonRpcRoute.applyMappingsAtBoundary(
                         "prompts/get",
-                        withCtx(jrCtx, serverRef, "prompts/get")(carrier.promptHandler(params.arguments)),
+                        withCtx(jrCtx, serverRef, "prompts/get", params.meta)(carrier.promptHandler(params.arguments)),
                         carrier.errorMappings
                     )
                 case (_, Some(carrier)) =>
@@ -245,7 +252,7 @@ private[kyo] object McpBuiltInRoutes:
                         case Result.Success(in) =>
                             JsonRpcRoute.applyMappingsAtBoundary(
                                 "prompts/get",
-                                withCtx(jrCtx, serverRef, "prompts/get")(carrier.typedPromptHandler(in)),
+                                withCtx(jrCtx, serverRef, "prompts/get", params.meta)(carrier.typedPromptHandler(in)),
                                 carrier.errorMappings
                             )
                         case Result.Failure(e) =>
@@ -291,7 +298,7 @@ private[kyo] object McpBuiltInRoutes:
                 case Some(carrier) =>
                     JsonRpcRoute.applyMappingsAtBoundary(
                         "completion/complete",
-                        withCtx(jrCtx, serverRef, "completion/complete") {
+                        withCtx(jrCtx, serverRef, "completion/complete", params.meta) {
                             carrier.completionHandler(params.argument, params.context).map(r => CompleteResult(r))
                         },
                         carrier.errorMappings
