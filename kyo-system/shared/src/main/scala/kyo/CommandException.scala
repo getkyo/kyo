@@ -4,11 +4,13 @@ package kyo
 
 /** Typed exception hierarchy for command launch failures.
   *
-  * These exceptions represent errors detectable ''before'' any OS process is created. Every `Command` execution method (`spawn`, `text`,
+  * These exceptions represent failures to launch the requested program. Every `Command` execution method (`spawn`, `text`,
   * `waitFor`, `waitForSuccess`) carries `Abort[CommandException]` so callers are forced to handle or propagate launch failures:
   *   - [[ProgramNotFoundException]] — the executable does not exist on `$PATH` or at the given path
   *   - [[PermissionDeniedException]] — the caller lacks execute permission for the program
   *   - [[WorkingDirectoryNotFoundException]] — the requested working directory does not exist
+  *   - [[ProcessGroupUnsupportedException]] — a [[Command.processGroup]] command on a host without process groups (Windows)
+  *   - [[ProcessLaunchException]]: the host cannot acquire the resources needed to launch the program
   *
   * {{{
   * Abort.recover[CommandException] {
@@ -54,6 +56,26 @@ case class WorkingDirectoryNotFoundException(path: kyo.Path)(using Frame)
         s"Working directory does not exist: $path"
     ) derives CanEqual
 
+/** Raised when a [[Command.processGroup]] command is spawned on a host without process groups: Windows, where no signal reaches a group.
+  *
+  * @param command
+  *   The program name or path that was to lead a group of its own
+  */
+case class ProcessGroupUnsupportedException(command: String)(using Frame)
+    extends CommandException(
+        s"Cannot start '$command' in a process group of its own: this host has no process groups."
+    ) derives CanEqual
+
 object CommandException:
     given Render[CommandException] with
         def asString(value: CommandException): String = value.getMessage
+
+/** Raised when the host cannot acquire the resources needed to launch a process.
+  *
+  * @param command
+  *   The requested program
+  * @param errno
+  *   The operating system's error number
+  */
+case class ProcessLaunchException(command: String, errno: Int)(using Frame)
+    extends CommandException(s"Unable to launch '$command': operating system error $errno") derives CanEqual

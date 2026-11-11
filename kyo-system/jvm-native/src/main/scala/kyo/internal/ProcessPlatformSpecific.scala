@@ -9,26 +9,47 @@ import java.util.concurrent.TimeUnit
 import kyo.*
 import scala.jdk.CollectionConverters.*
 
+// --- InputFeeds — the stop actions of a process's stdin feeds ---
+
+/** The stop actions of the fibers feeding a process's stdin. Retained so a feed ends with the process rather than running on after it,
+  * which is what an unheld feed does.
+  */
+final private[kyo] class InputFeeds:
+
+    private val stops = new java.util.concurrent.ConcurrentLinkedQueue[() => Unit]()
+
+    def register(stop: () => Unit)(using AllowUnsafe): Unit = discard(stops.add(stop))
+
+    /** Stops every feed. Idempotent, and safe to call after the process has already exited: a feed can still be parked reading its source
+      * even when the child is gone.
+      */
+    def stopAll()(using AllowUnsafe): Unit =
+        var stop = stops.poll()
+        while stop != null do
+            stop()
+            stop = stops.poll()
+        end while
+    end stopAll
+
+end InputFeeds
+
 // --- JvmProcessUnsafe — concrete Process.Unsafe backed by java.lang.Process ---
 
 final private[kyo] class JvmProcessUnsafe(private[internal] val jp: JProcess) extends Process.Unsafe:
 
-    // Stop actions for the fibers feeding this process's stdin. Retained so a feed ends with the
-    // process rather than running on after it, which is what an unheld feed does.
-    private val inputFeeds = new java.util.concurrent.ConcurrentLinkedQueue[() => Unit]()
+    private[internal] val feeds = new InputFeeds
 
-    private[internal] def registerInputFeed(stop: () => Unit): Unit = discard(inputFeeds.add(stop))
+    override def stopInputFeeds()(using AllowUnsafe): Unit = feeds.stopAll()
 
-    /** Stops every stdin feed. Idempotent, and safe to call after the process has already exited:
-      * a feed can still be parked reading its source even when the child is gone.
-      */
-    override def stopInputFeeds()(using AllowUnsafe): Unit =
-        var stop = inputFeeds.poll()
-        while stop != null do
-            stop()
-            stop = inputFeeds.poll()
-        end while
-    end stopInputFeeds
+    override private[kyo] def closeStreams()(using AllowUnsafe): Unit =
+        try jp.getInputStream.close()
+        finally
+            try jp.getErrorStream.close()
+            finally
+                // The child has been joined. A buffered write attempted after its exit can make close's flush report EPIPE or
+                // "Stream closed"; java.io still closes the underlying pipe in its finally block.
+                try jp.getOutputStream.close()
+                catch case _: IOException => ()
 
     def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Any] =
         val p = Promise.Unsafe.init[ExitCode, Any]()
@@ -91,7 +112,8 @@ final private[kyo] class JvmCommandUnsafe(
     val stdoutSink: StdioSink = StdioSink.Pipe,
     val stderrSink: StdioSink = StdioSink.Pipe,
     val redirectError: Boolean = false,
-    val pipeTo: Maybe[Command.Unsafe] = Absent
+    val pipeTo: Maybe[Command.Unsafe] = Absent,
+    val processGroup: Boolean = false
 ) extends Command.Unsafe:
 
     // --- Builder methods — all return new instances ---
@@ -158,7 +180,35 @@ final private[kyo] class JvmCommandUnsafe(
     def withAndThen(that: Command.Unsafe): JvmCommandUnsafe =
         copy(pipeTo = Present(that))
 
+    def withProcessGroup: JvmCommandUnsafe =
+        copy(processGroup = true)
+
     // --- Internal helpers ---
+
+    /** The failure for a working directory that does not exist, checked before a spawn. */
+    private def missingWorkDir(using Frame): Maybe[CommandException] =
+        workDir.flatMap { path =>
+            val nio = path.unsafe match
+                case n: NioPathUnsafe => n.jpath
+                case other            => java.nio.file.Paths.get(other.show)
+            if java.nio.file.Files.exists(nio) then Absent else Present(WorkingDirectoryNotFoundException(path))
+        }
+
+    /** Starts the feed this command's stdin source needs into the spawned process's stdin, held by `feeds`. */
+    private def feedStdin(feeds: InputFeeds, processStdin: OutputStream)(using AllowUnsafe, Frame): Unit =
+        stdinStream match
+            case Present(s) => feeds.register(feedStream(s, processStdin))
+            case Absent     =>
+                stdinSource match
+                    case Process.Input.FromStream(is)               => feeds.register(feedInputStream(is, processStdin))
+                    case Process.Input.Inherit | Process.Input.Pipe => ()
+        end match
+    end feedStdin
+
+    /** The `sh -c` command line a pipeline runs as, each argument quoted. */
+    private def shellCommand(chain: Seq[JvmCommandUnsafe]): String =
+        def shellEscape(a: String): String = "'" + a.replace("'", "'\\''") + "'"
+        chain.map(_.args.map(shellEscape).mkString(" ")).mkString(" | ")
 
     /** Flattens the pipeline chain into a sequence of commands in order (head = leftmost). */
     private def pipelineChain: Seq[JvmCommandUnsafe] =
@@ -180,17 +230,7 @@ final private[kyo] class JvmCommandUnsafe(
         AllowUnsafe,
         Frame
     ): Result[CommandException, JProcessBuilder] =
-        // Validate working directory up-front
-        val wdError = workDir match
-            case Present(path) =>
-                val nio = path.unsafe match
-                    case n: NioPathUnsafe => n.jpath
-                    case other            => java.nio.file.Paths.get(other.show)
-                if !java.nio.file.Files.exists(nio) then Present(WorkingDirectoryNotFoundException(path))
-                else Absent
-            case Absent => Absent
-
-        wdError match
+        missingWorkDir match
             case Present(err) => Result.fail(err)
             case _            =>
                 val pb = new JProcessBuilder(args.toSeq.asJava)
@@ -331,39 +371,20 @@ final private[kyo] class JvmCommandUnsafe(
 
     /** Drains a Stream[Byte, Sync] into a process's stdin on a carrier fiber, closing when done.
       *
-      * The stream is evaluated eagerly (it is Sync-only), then the bytes are written on a carrier fiber so that the caller (spawn) is not
-      * blocked by the write. Returns the stop action for the same reason as [[feedInputStream]].
+      * Each chunk is written before requesting the next, so an unbounded source is not collected during acquisition.
+      * Returns the stop action for the same reason as [[feedInputStream]].
       */
     private def feedStream(stream: Stream[Byte, Sync], processStdin: OutputStream)(using AllowUnsafe, Frame): () => Unit =
-        val chunk = Abort.run[Nothing](Sync.Unsafe.run(stream.run)).eval.getOrThrow
-        val bytes = chunk.toArray
         // Unsafe: spawns the pump from outside the effect system, where spawn() runs.
         val feed = Fiber.Unsafe.init {
-            Sync.defer {
-                try
-                    processStdin.write(bytes)
-                    processStdin.close()
-                catch
-                    case _: IOException          => ()
-                    case _: InterruptedException => ()
-            }
+            Abort.run[Throwable] {
+                stream.foreachChunk(chunk => Sync.defer(processStdin.write(chunk.toArray)))
+            }.andThen(Sync.defer(closeQuietly(processStdin)))
         }
         () =>
             discard(feed.interrupt())
             closeQuietly(processStdin)
     end feedStream
-
-    /** Reads all bytes from an InputStream and closes it. */
-    private def readAll(is: InputStream): Array[Byte] =
-        val baos = new java.io.ByteArrayOutputStream()
-        val buf  = new Array[Byte](8192)
-        var n    = is.read(buf)
-        while n >= 0 do
-            baos.write(buf, 0, n)
-            n = is.read(buf)
-        is.close()
-        baos.toByteArray
-    end readAll
 
     /** Validates that the command can be found before attempting to spawn.
       *
@@ -409,7 +430,49 @@ final private[kyo] class JvmCommandUnsafe(
 
     // --- Effectful operations ---
 
-    def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
+    override private[kyo] def acquire()(using Frame): Process.Unsafe < (Async & Scope & Abort[CommandException]) =
+        if !processGroup then super.acquire()
+        else if Platform.isWindows then Abort.fail(ProcessGroupUnsupportedException(args.headMaybe.getOrElse("")))
+        else
+            Sync.Unsafe.defer {
+                missingWorkDir match
+                    case Present(error) => Abort.fail(error)
+                    case Absent         =>
+                        val chain       = pipelineChain
+                        val piped       = chain.length > 1
+                        val program     = if piped then Chunk("sh", "-c", shellCommand(chain)) else args
+                        val input       = if stdinStream.isDefined then Process.Input.Pipe else stdinSource
+                        val output      = if piped then StdioSink.Pipe else stdoutSink
+                        val errors      = if piped then StdioSink.Pipe else stderrSink
+                        val mergeErrors = if piped then chain.last.redirectError else redirectError
+                        val inputMask   = if input == Process.Input.Inherit then 0 else 1
+                        val outputMask  = if output == StdioSink.Pipe then 2 else 0
+                        val errorMask   = if mergeErrors then 8 else if errors == StdioSink.Pipe then 4 else 0
+                        val mask        = inputMask | outputMask | errorMask
+                        ProcessSupervisor.init(args.headMaybe.getOrElse(""), mask) { (executable, endpoint) =>
+                            new JvmCommandUnsafe(
+                                Chunk(executable, endpoint, "", mask.toString) ++ program,
+                                workDir,
+                                envMode,
+                                Process.Input.Inherit,
+                                Absent,
+                                if output == StdioSink.Pipe then StdioSink.Inherit else output,
+                                if errors == StdioSink.Pipe || mergeErrors then StdioSink.Inherit else errors
+                            ).spawnRaw()
+                        }.map { process =>
+                            Sync.defer {
+                                val feeds = new InputFeeds
+                                feedStdin(feeds, process.stdinJava)
+                                process.registerInputFeed(() => feeds.stopAll())
+                                process
+                            }
+                        }
+                end match
+            }
+        end if
+    end acquire
+
+    private[kyo] def spawnRaw()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
         // Every child's stdin is a pipe this process may write after the child is gone; the write must fail, not kill us.
         ProcessSignalPlatform.ignoreBrokenPipes()
         // Validate program exists before spawning — on Scala Native, ProcessBuilder.start()
@@ -427,16 +490,7 @@ final private[kyo] class JvmCommandUnsafe(
                             try
                                 val jp   = ProcessSpawnPlatform.start(pb)
                                 val proc = new JvmProcessUnsafe(jp)
-                                // Feed stdin if needed
-                                stdinStream match
-                                    case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
-                                    case Absent     =>
-                                        stdinSource match
-                                            case Process.Input.FromStream(is) =>
-                                                proc.registerInputFeed(feedInputStream(is, jp.getOutputStream))
-                                            case Process.Input.Inherit => ()
-                                            case Process.Input.Pipe    => ()
-                                end match
+                                feedStdin(proc.feeds, jp.getOutputStream)
                                 Result.succeed(proc)
                             catch
                                 case e: IOException => Result.fail(translateIOException(e, args.headMaybe.getOrElse("")))
@@ -445,11 +499,8 @@ final private[kyo] class JvmCommandUnsafe(
                     // kernel handles inter-process piping directly. This avoids the pump-per-stage
                     // deadlocks on Scala Native, where blocking I/O off the calling thread is
                     // unreliable.
-                    def shellEscape(a: String): String = "'" + a.replace("'", "'\\''") + "'"
-                    val shellCmd                       = chain.map(_.args.map(shellEscape).mkString(" ")).mkString(" | ")
-
                     val firstCmd = chain.head
-                    val pb       = new JProcessBuilder("sh", "-c", shellCmd)
+                    val pb       = new JProcessBuilder("sh", "-c", shellCommand(chain))
 
                     firstCmd.envMode match
                         case EnvMode.Inherit      => ()
@@ -475,16 +526,7 @@ final private[kyo] class JvmCommandUnsafe(
                     try
                         val jp   = ProcessSpawnPlatform.start(pb)
                         val proc = new JvmProcessUnsafe(jp)
-                        firstCmd.stdinStream match
-                            case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
-                            case Absent     =>
-                                firstCmd.stdinSource match
-                                    case Process.Input.FromStream(is) =>
-                                        proc.registerInputFeed(feedInputStream(is, jp.getOutputStream))
-                                    case Process.Input.Inherit => ()
-                                    case Process.Input.Pipe    => ()
-                                end match
-                        end match
+                        firstCmd.feedStdin(proc.feeds, jp.getOutputStream)
                         Result.succeed(proc)
                     catch
                         case e: IOException =>
@@ -492,83 +534,7 @@ final private[kyo] class JvmCommandUnsafe(
                     end try
                 end if
         end match
-    end spawn
-
-    def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]] =
-        val p = Promise.Unsafe.init[String, Abort[CommandException]]()
-        spawn() match
-            case Result.Failure(err) =>
-                p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex) =>
-                p.completeDiscard(Result.panic(ex))
-            case Result.Success(proc: JvmProcessUnsafe) =>
-                // Drained while the process runs, and completed at end of stream rather than at exit.
-                //
-                // Reading only after onExit deadlocks any child that writes more than the pipe
-                // buffer, roughly 64KB: the child blocks on write, so it never exits, so onExit
-                // never fires, so the read that would unblock it never starts. Process.scala
-                // documents this hazard for the stdout-plus-stderr case; it was reproduced here on
-                // a single stream.
-                //
-                // End of stream is the right completion point for this operation: it yields the
-                // output text and does not report exit status, and the child closes stdout when it
-                // exits. The onExit handler remains only to surface a spawn failure, and completing
-                // an already-completed promise is a no-op, so whichever arrives first wins.
-                val out = proc.jp.getInputStream
-                // Unsafe: bridges a blocking pipe read from outside the effect system. The carrier
-                // parks in the read and the scheduler's `BlockingMonitor` drains that worker's
-                // queue to the others; the read ends at end of stream, which the child reaches by
-                // exiting.
-                discard(Fiber.Unsafe.init {
-                    Sync.defer {
-                        try p.completeDiscard(Result.succeed(new String(readAll(out), StandardCharsets.UTF_8)))
-                        catch case e: IOException => p.completeDiscard(Result.panic(e))
-                    }
-                })
-                discard(proc.jp.onExit().whenComplete { (_, error) =>
-                    if error != null then p.completeDiscard(Result.panic(error))
-                })
-        end match
-        p
-    end text
-
-    def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Abort[CommandException]] =
-        val p = Promise.Unsafe.init[ExitCode, Abort[CommandException]]()
-        spawn() match
-            case Result.Failure(err) =>
-                p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex) =>
-                p.completeDiscard(Result.panic(ex))
-            case Result.Success(proc: JvmProcessUnsafe) =>
-                discard(proc.jp.onExit().whenComplete { (exitedProcess, error) =>
-                    if error != null then
-                        p.completeDiscard(Result.panic(error))
-                    else
-                        p.completeDiscard(Result.succeed(ExitCode(exitedProcess.exitValue())))
-                })
-        end match
-        p
-    end waitFor
-
-    def waitForSuccess()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[CommandException | ExitCode]] =
-        val p = Promise.Unsafe.init[Unit, Abort[CommandException | ExitCode]]()
-        spawn() match
-            case Result.Failure(err) =>
-                p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex) =>
-                p.completeDiscard(Result.panic(ex))
-            case Result.Success(proc: JvmProcessUnsafe) =>
-                discard(proc.jp.onExit().whenComplete { (exitedProcess, error) =>
-                    if error != null then
-                        p.completeDiscard(Result.panic(error))
-                    else
-                        val code = ExitCode(exitedProcess.exitValue())
-                        if code.isSuccess then p.completeDiscard(Result.succeed(()))
-                        else p.completeDiscard(Result.fail(code))
-                })
-        end match
-        p
-    end waitForSuccess
+    end spawnRaw
 
     private def copy(
         args: Chunk[String] = this.args,
@@ -579,7 +545,8 @@ final private[kyo] class JvmCommandUnsafe(
         stdoutSink: StdioSink = this.stdoutSink,
         stderrSink: StdioSink = this.stderrSink,
         redirectError: Boolean = this.redirectError,
-        pipeTo: Maybe[Command.Unsafe] = this.pipeTo
+        pipeTo: Maybe[Command.Unsafe] = this.pipeTo,
+        processGroup: Boolean = this.processGroup
     ): JvmCommandUnsafe =
         new JvmCommandUnsafe(
             args,
@@ -590,7 +557,8 @@ final private[kyo] class JvmCommandUnsafe(
             stdoutSink,
             stderrSink,
             redirectError,
-            pipeTo
+            pipeTo,
+            processGroup
         )
 
 end JvmCommandUnsafe

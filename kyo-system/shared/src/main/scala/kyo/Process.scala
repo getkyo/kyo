@@ -51,15 +51,13 @@ object Process:
           *
           * The underlying `InputStream` is registered with the enclosing `Scope` and closed when the scope ends.
           */
-        def stdout(using Frame): Stream[Byte, Sync & Scope] =
-            Stream(Sync.Unsafe.defer(StreamCoreExtensions.streamFromJavaInputStream(self.unsafe.stdoutJava).emit))
+        def stdout(using Frame): Stream[Byte, Async & Scope] = self.unsafe.stdoutStream
 
         /** Returns the process's standard error as a byte stream.
           *
           * The underlying `InputStream` is registered with the enclosing `Scope` and closed when the scope ends.
           */
-        def stderr(using Frame): Stream[Byte, Sync & Scope] =
-            Stream(Sync.Unsafe.defer(StreamCoreExtensions.streamFromJavaInputStream(self.unsafe.stderrJava).emit))
+        def stderr(using Frame): Stream[Byte, Async & Scope] = self.unsafe.stderrStream
 
         /** Suspends the current fiber until the process exits, then returns its `ExitCode`.
           *
@@ -122,9 +120,23 @@ object Process:
         def destroy(using Frame): Unit < Sync =
             Sync.Unsafe.defer(self.unsafe.destroy())
 
-        /** Forcibly terminates the process (SIGKILL on Unix). */
+        /** Forcibly terminates the process (SIGKILL on Unix). Processes it started keep running; see [[destroyTree]]. */
         def destroyForcibly(using Frame): Unit < Sync =
             Sync.Unsafe.defer(self.unsafe.destroyForcibly())
+
+        /** Terminates the processes this handle owns and waits for cleanup.
+          *
+          * A [[Command.processGroup]] command owns its original process group, including members left after the leader exits. Its output
+          * readers finish at the buffered prefix. A command without a group owns the directly launched process and its pipeline stages.
+          * Detached processes and recipients of transferred descriptors retain their own lifetimes.
+          *
+          * Standard streams remain available for reading buffered output; [[close]] also releases those streams.
+          */
+        def destroyTree(using Frame): Unit < Async =
+            Sync.Unsafe.defer(self.unsafe.destroyTree().safe.get)
+
+        /** Releases an unscoped process and its standard streams, awaiting cleanup before returning. */
+        def close(using Frame): Unit < Async = self.unsafe.close()
 
         /** Returns the underlying `Unsafe` implementation for direct use in unsafe contexts. */
         def unsafe: Process.Unsafe = self
@@ -229,6 +241,17 @@ object Process:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe extends Serializable:
 
+        private[kyo] def stdoutStream(using Frame): Stream[Byte, Async & Scope] =
+            Stream(Sync.Unsafe.defer(StreamCoreExtensions.streamFromJavaInputStream(stdoutJava).emit))
+
+        private[kyo] def stderrStream(using Frame): Stream[Byte, Async & Scope] =
+            Stream(Sync.Unsafe.defer(StreamCoreExtensions.streamFromJavaInputStream(stderrJava).emit))
+
+        private[kyo] def close()(using Frame): Unit < Async =
+            kyo.internal.ProcessStreams.finish(Sync.Unsafe.defer(stopInputFeeds())) {
+                kyo.internal.ProcessStreams.finish(Sync.Unsafe.defer(destroyTree().safe.get))(Sync.Unsafe.defer(closeStreams()))
+            }
+
         /** Suspends until the process exits and completes the returned `Fiber.Unsafe` with the exit code. */
         def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Any]
 
@@ -246,6 +269,13 @@ object Process:
           */
         def stopInputFeeds()(using AllowUnsafe): Unit = ()
 
+        /** Closes all standard streams after process cleanup. Each stream is attempted even if an earlier close fails. */
+        private[kyo] def closeStreams()(using AllowUnsafe): Unit =
+            try stdoutJava.close()
+            finally
+                try stderrJava.close()
+                finally stdinJava.close()
+
         /** Non-blocking poll. Returns `Absent` if still running. */
         def exitCode()(using AllowUnsafe): Maybe[ExitCode]
 
@@ -254,6 +284,17 @@ object Process:
 
         /** Forcibly kills the process (SIGKILL / equivalent). */
         def destroyForcibly()(using AllowUnsafe): Unit
+
+        /** Terminates and joins the processes owned by this handle. Group-backed processes release through their supervisor. */
+        def destroyTree()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+            Fiber.Unsafe.init {
+                kyo.internal.ProcessStreams.finish(Sync.defer(stopInputFeeds())) {
+                    Sync.defer {
+                        if isAlive() then destroyForcibly()
+                        waitFor().uninterruptible().safe.get.unit
+                    }
+                }
+            }
 
         /** Returns `true` if the process is still running. */
         def isAlive()(using AllowUnsafe): Boolean

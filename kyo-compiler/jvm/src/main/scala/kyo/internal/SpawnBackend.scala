@@ -170,7 +170,7 @@ private[kyo] object SpawnBackend:
         // `Abort.get` with no kernel `.map` a stop could park on. `.map(_.safe)` and `mapError` are pure `Result` ops.
         Sync.Unsafe.defer {
             Abort.get(
-                Command(args*).inheritStderr.unsafe.spawn()
+                Command(args*).inheritStderr.unsafe.spawnRaw()
                     .map(_.safe)
                     .mapError(e => CompilerWorkerSpawnException(config.toolchain.scalaVersion, e.failureOrPanic))
             )

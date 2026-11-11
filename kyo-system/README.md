@@ -541,8 +541,8 @@ Execution methods:
 | `waitForSuccess` | `Unit < (Async & Abort[CommandException \| ExitCode])` | fails on non-zero exit |
 | `textWithExitCode` | `(String, ExitCode) < (Async & Abort[CommandException])` | stdout and exit code together |
 | `stream` | `Stream[Byte, Async & Scope & Abort[CommandException]]` | stdout as a byte stream |
-| `spawn` | `Process < (Sync & Scope & Abort[CommandException])` | process handle, Scope-managed |
-| `spawnUnscoped` | `Process < (Sync & Abort[CommandException])` | process handle, caller owns lifetime |
+| `spawn` | `Process < (Async & Scope & Abort[CommandException])` | process handle, Scope-managed |
+| `spawnUnscoped` | `Process < (Async & Abort[CommandException])` | process handle, caller owns lifetime |
 
 When you need the full stdout as a string and the process exits before returning, use `text`. When you need only the exit code, use `waitFor` or `waitForSuccess`. When stdout is large or arrives incrementally, use `stream` or `spawn` with `collectOutput`. When the process outlives the current scope or you manage lifetime explicitly, use `spawnUnscoped`.
 
@@ -550,7 +550,9 @@ The built `Command` is readable without launching: `args` returns `Chunk[String]
 
 ### Process handles
 
-After `spawn`, the returned `Process` handle exposes stdout and stderr streams, lifecycle controls, and concurrent output draining. `Command.spawn` registers the process with the enclosing `Scope`. When the scope closes before the process exits, the process is forcibly killed. `Command.spawnUnscoped` omits scope registration and is appropriate for long-lived workers whose lifetime is managed explicitly:
+After `spawn`, the returned `Process` handle exposes stdout and stderr streams, lifecycle controls, and concurrent output draining. `Command.spawn` registers the process with the enclosing `Scope`. Closing the scope terminates the owned process, joins cleanup, and closes its streams. The same holds when a fiber waiting in `waitFor`, `waitForSuccess` or `textWithExitCode` is interrupted. `Command.spawnUnscoped` omits scope registration and is appropriate for workers whose lifetime is managed explicitly.
+
+Use `Command.processGroup` on Unix when cleanup must include processes left running after the command exits. An isolated supervisor retains the group leader until cleanup, preventing reuse of its process-group ID. `destroyTree` kills that original group and lets output readers finish at their buffered prefix. Processes that deliberately detach, and unrelated recipients of output descriptors, retain their own lifetimes. Without `processGroup`, cleanup covers the directly launched process and pipeline stages. Windows rejects `processGroup` with `ProcessGroupUnsupportedException`; ordinary commands remain supported.
 
 ```scala
 import kyo.*
@@ -562,10 +564,10 @@ val example: Unit < (Async & Sync & Scope & Abort[CommandException]) =
         alive <- proc.isAlive
         _     <- Sync.defer(println(s"alive: $alive"))
     yield ()
-    // proc is forcibly killed when the Scope closes
+    // proc is forcibly killed and its streams are released when the Scope closes
 ```
 
-`spawnUnscoped` omits scope registration. The caller is responsible for calling `destroy` or `destroyForcibly` at the appropriate moment: after a timed run, on application shutdown, or when the work unit completes:
+`spawnUnscoped` omits scope registration. The caller must call `close` when its work completes to join termination and release the streams:
 
 ```scala
 import kyo.*
@@ -575,11 +577,11 @@ val worker: Unit < (Async & Sync & Abort[CommandException]) =
     for
         proc <- Command("background-worker", "--queue", "jobs").spawnUnscoped
         _    <- Async.sleep(30.seconds)
-        _    <- proc.destroyForcibly
+        _    <- proc.close
     yield ()
 ```
 
-`proc.stdout` and `proc.stderr` return `Stream[Byte, Sync & Scope]`; the underlying `InputStream` is closed when the enclosing `Scope` closes.
+`proc.stdout` and `proc.stderr` return `Stream[Byte, Async & Scope]`. Node readers suspend until data is ready; the underlying stream is closed when its enclosing `Scope` closes.
 
 > **Caution:** Reading `stdout` then `stderr` sequentially deadlocks when the process writes more than the OS pipe buffer (~64 KB) to both channels. The unread producer blocks the OS, which in turn blocks `waitFor`. Use `collectOutput` to drain both concurrently.
 
@@ -603,7 +605,9 @@ Other lifecycle operations on a `Process`:
 | `isAlive` | `Boolean < Sync` | Non-blocking liveness check |
 | `pid` | `Long < Sync` | OS process identifier |
 | `destroy` | `Unit < Sync` | Requests termination (SIGTERM or equivalent) |
-| `destroyForcibly` | `Unit < Sync` | Forces termination (SIGKILL or equivalent) |
+| `destroyForcibly` | `Unit < Sync` | Forces termination (SIGKILL or equivalent); processes it started keep running |
+| `destroyTree` | `Unit < Async` | Terminates the owned process or original process group and joins cleanup, preserving buffered output |
+| `close` | `Unit < Async` | Joins termination and closes all standard streams |
 
 ### Exit codes
 

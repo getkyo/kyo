@@ -1,6 +1,7 @@
 import WasmCrossProject.*
 import WithKyoTest._
 import com.github.sbt.git.SbtGit.GitKeys.useConsoleForROGit
+import com.jsuereth.sbtpgp.PgpKeys.publishSigned
 import kyo.build.ScalacOption
 import kyo.build.ScalacOptions
 import kyo.build.ScalaVersion
@@ -324,6 +325,7 @@ Global / excludeLintKeys += coverageExcludedFiles
 Global / excludeLintKeys += ClassNameCheck.classNameGroup
 // Read only by the testKyo command's diff selection, which the lint cannot see.
 Global / excludeLintKeys += TestKyo.testInputs
+Global / excludeLintKeys += TestKyo.mainInputs
 
 Global / onLoad := {
 
@@ -1099,13 +1101,115 @@ lazy val `kyo-system` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-system"))
-        .dependsOn(`kyo-core`)
+        .enablePlugins(KyoFfiPlugin)
+        .dependsOn(`kyo-core`, `kyo-ffi`)
         .withKyoTest
-        .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
+        .settings(
+            `kyo-settings`,
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            TestKyo.mainInputs  := Seq(baseDirectory.value / ".." / "shared" / "src" / "main" / "c-process" / "kyo_process_supervisor.c"),
+            TestKyo.testInputs  := (baseDirectory.value / ".." / "shared" / "src" / "test" / "c" ** ("*.c" | "*.py" | "*.cjs")).get,
+            ffiLibraries        := {
+                val source = baseDirectory.value / ".." / "shared" / "src" / "main" / "c"
+                // Native's generated header is copied by the task below. The shared-library compiler also needs its hash as an input.
+                val image = if (ffiTargetPlatform.value == "Native") Nil
+                else Seq(target.value / "process" / "include" / "kyo_process_supervisor_image.h")
+                Seq(FfiLibrary(
+                    id = "kyo_process",
+                    cSources = (source ** "*.c").get,
+                    cHeaders = (source ** "*.h").get ++ image,
+                    includeDirs = Seq(target.value / "process" / "include"),
+                    cFlags = Seq("-pthread"),
+                    linkFlags = Seq("-pthread"),
+                    osTargets = Seq("darwin", "linux", "linux-musl")
+                ))
+            },
+            KyoProcessBuild.supervisorImage := {
+                val shared = baseDirectory.value / ".." / "shared" / "src" / "main"
+                KyoProcessBuild.generate(
+                    shared / "c-process" / "kyo_process_supervisor.c",
+                    shared / "c" / "kyo_process_protocol.h",
+                    target.value / "process",
+                    ffiCCompiler.value,
+                    ffiCFlags.value,
+                    ffiTargetOsArch.value.getOrElse(ffiHostOsArch),
+                    ffiTargetPlatform.value == "Native",
+                    ffiPrebuiltPool.value,
+                    streams.value.log
+                )
+            },
+            ffiCompile := ffiCompile.dependsOn(KyoProcessBuild.supervisorImage).value,
+            Compile / resourceGenerators += Def.task {
+                val image = KyoProcessBuild.supervisorImage.value
+                if (ffiTargetPlatform.value != "Native") Seq.empty[File]
+                else {
+                    val destination = (Compile / resourceManaged).value / "scala-native" / image.getName
+                    if (!destination.isFile || IO.read(destination) != IO.read(image)) IO.copyFile(image, destination)
+                    Seq(destination)
+                }
+            }.taskValue
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            Test / javaOptions += "--enable-native-access=ALL-UNNAMED",
+            KyoProcessBuild.nativeTests := {
+                val image = KyoProcessBuild.supervisorImage.value
+                KyoProcessBuild.test(
+                    baseDirectory.value / ".." / "shared" / "src",
+                    image,
+                    target.value / "process",
+                    ffiCCompiler.value,
+                    ffiCFlags.value,
+                    ffiHostOsArch,
+                    streams.value.log
+                )
+            },
+            Test / test     := (Test / test).dependsOn(KyoProcessBuild.nativeTests).value,
+            Test / testOnly := (Test / testOnly).dependsOn(KyoProcessBuild.nativeTests).evaluated
+        )
+        .nativeSettings(
+            `native-settings`,
+            KyoProcessBuild.supervisorPublicationCheck := {
+                KyoProcessBuild.requirePool(ffiPrebuiltPool.value)
+                ()
+            },
+            publish       := publish.dependsOn(KyoProcessBuild.supervisorPublicationCheck).value,
+            publishSigned := publishSigned.dependsOn(KyoProcessBuild.supervisorPublicationCheck).value
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)),
+            Test / jsEnv := new NodeJSEnv(NodeJSEnv.Config()
+                .withArgs(List("--max_old_space_size=5120"))
+                .withEnv(kyoSystemFfiEnv(target.value))),
+            KyoProcessBuild.nodeTests := {
+                val compiled    = (Test / compile).value
+                val natives     = ffiCompile.value
+                val environment = kyoSystemFfiEnv(target.value)
+                if (!ffiHostOsArch.startsWith("windows-")) {
+                    val script   = baseDirectory.value / ".." / "shared" / "src" / "test" / "c" / "kyo_process_node_test.cjs"
+                    val settings = environment ++ Map(
+                        "KYO_PROCESS_LIBRARY" -> environment("KYO_FFI_KYO_PROCESS_PATH"),
+                        "UV_THREADPOOL_SIZE"  -> "1"
+                    )
+                    val result = scala.sys.process.Process(Seq("node", script.getAbsolutePath), None, settings.toSeq: _*).!
+                    require(result == 0, "Node process ownership test failed")
+                }
+            },
+            Test / test     := (Test / test).dependsOn(KyoProcessBuild.nodeTests).value,
+            Test / testOnly := (Test / testOnly).dependsOn(KyoProcessBuild.nodeTests).evaluated
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            Test / jsEnv := new NodeJSEnv(NodeJSEnv.Config()
+                .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                .withEnv(kyoSystemFfiEnv(target.value)))
+        )
+
+def kyoSystemFfiEnv(target: File): Map[String, String] = Map(
+    "KYO_FFI_KYO_PROCESS_PATH" -> (target / "ffi" / ffiArtifactName("kyo_process", ffiHostOsArch)).getAbsolutePath,
+    "NODE_PATH"                -> (target / "node_modules").getAbsolutePath
+)
 
 // FileSystem's conformance suites, one class per tier (read, write, watch), published so a backend written outside kyo runs
 // the leaves the host passes. The host's runs live in this module's tests because kyo-system cannot depend on a module that
@@ -1823,7 +1927,6 @@ lazy val `kyo-ffi` =
         .crossType(CrossType.Full)
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(
@@ -4549,7 +4652,28 @@ lazy val `native-settings` = `native-settings-base` ++ Seq(
     }
 )
 
-lazy val `js-settings` = Seq(
+def kyoSystemNodeTestSettings(platform: String): Seq[Def.Setting[?]] = Seq(
+    Test / envVars ++= {
+        val processTarget = (LocalProject("kyo-system" + platform) / target).value
+        kyoSystemFfiEnv(processTarget) ++ Map(
+            "NODE_PATH" -> Seq(
+                target.value / "node_modules",
+                processTarget / "node_modules"
+            ).map(_.getAbsolutePath).mkString(java.io.File.pathSeparator)
+        )
+    }
+) ++ ffiKoffiJsBootstrap(
+    "kyo-process-consumer-test",
+    esModule = platform == "Wasm",
+    enabled = Def.task {
+        // Only modules whose test classpath actually contains the process native bridge need its Node dependency.
+        val filename = ffiArtifactName("kyo_process", ffiHostOsArch).replace("-" + ffiHostOsArch, "")
+        val resource = "kyo-ffi/native/" + ffiHostOsArch + "/" + filename
+        (Test / dependencyClasspath).value.exists(entry => (entry.data / resource).isFile)
+    }
+)
+
+lazy val `js-settings` = kyoSystemNodeTestSettings("JS") ++ Seq(
     Compile / doc / sources := Seq.empty,
     fork                    := false,
     // Node test process options are configured through jsEnv.
@@ -4580,7 +4704,7 @@ lazy val `js-settings` = Seq(
 // Turboshaft Wasm pipeline, under which the generated WasmGC code compiles correctly. The legacy
 // TurboFan pipeline on Node 22/23 miscompiled it; Node 23 is EOL, and Node 24 made Turboshaft the
 // default and removed the --turboshaft-wasm opt-in flag (passing it there is a startup error).
-lazy val `wasm-settings` = Seq(
+lazy val `wasm-settings` = kyoSystemNodeTestSettings("Wasm") ++ Seq(
     Compile / doc / sources := Seq.empty,
     fork                    := false,
     // Node test process options are configured through jsEnv.

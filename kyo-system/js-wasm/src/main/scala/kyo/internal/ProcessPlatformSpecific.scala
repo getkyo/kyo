@@ -31,7 +31,7 @@ private[kyo] object NodePathModule extends js.Object
 
 @js.native
 private[kyo] trait NodeChildProcessInstance extends js.Object:
-    def pid: Int                                                                          = js.native
+    def pid: js.UndefOr[Int]                                                              = js.native
     def exitCode: js.Dynamic                                                              = js.native
     def killed: Boolean                                                                   = js.native
     def stdin: NodeWritableStream                                                         = js.native
@@ -49,18 +49,26 @@ private[kyo] trait NodeChildProcessInstance extends js.Object:
 end NodeChildProcessInstance
 
 @js.native
-private[kyo] trait NodeReadableStream extends js.Object:
-    def on(event: String, listener: js.Function1[js.Any, Unit]): NodeReadableStream = js.native
-    def pipe(destination: NodeWritableStream): NodeWritableStream                   = js.native
+private[kyo] trait NodeRuntimeStream extends js.Object:
+    def on(event: String, listener: js.Function1[js.Any, Unit]): NodeRuntimeStream = js.native
+    def destroy(): NodeRuntimeStream                                               = js.native
+    def destroyed: Boolean                                                         = js.native
+    def closed: Boolean                                                            = js.native
+end NodeRuntimeStream
+
+@js.native
+private[kyo] trait NodeReadableStream extends NodeRuntimeStream:
+    def pause(): NodeReadableStream                               = js.native
+    def resume(): NodeReadableStream                              = js.native
+    def pipe(destination: NodeWritableStream): NodeWritableStream = js.native
 end NodeReadableStream
 
 @js.native
-private[kyo] trait NodeWritableStream extends js.Object:
-    def write(data: Uint8Array): Boolean                                            = js.native
-    def end(): Unit                                                                 = js.native
-    def on(event: String, listener: js.Function1[js.Any, Unit]): NodeWritableStream = js.native
+private[kyo] trait NodeWritableStream extends NodeRuntimeStream:
+    def write(data: Uint8Array): Boolean                                       = js.native
+    def write(data: Uint8Array, callback: js.Function1[js.Any, Unit]): Boolean = js.native
+    def end(): Unit                                                            = js.native
     // True once the stream has been torn down: after an error such as EPIPE, or when Node destroys a child's stdin as the child exits.
-    def destroyed: Boolean = js.native
     // True once end() has been called.
     def writableEnded: Boolean = js.native
 end NodeWritableStream
@@ -78,91 +86,134 @@ private[kyo] object NodeWritableStream:
             discard(stream.on("error", { (_: js.Any) => () }))
 end NodeWritableStream
 
-// --- NodeInputStream — InputStream backed by a Node.js Readable stream ---
-//
-// Node.js is fundamentally async so a truly blocking read() is not
-// possible.  Instead we buffer all data that arrives via the 'data'
-// event and serve it on demand.  When the event loop turns between
-// kyo-fiber steps the buffered bytes will be available.  This works
-// correctly for the streamFromJavaInputStream usage pattern which calls
-// read() in a Sync.Unsafe.defer loop — each iteration yields back to
-// the event loop, giving Node.js a chance to push more 'data' events
-// into the buffer.
+/** Bounded Node-readable buffering with readiness suspension. Each readable pauses after delivering one chunk, including merged stderr. */
+final private[kyo] class NodeInputStream private (
+    initialReadiness: Promise.Unsafe[Unit, Any],
+    completion: Promise.Unsafe[Unit, Any]
+) extends InputStream:
+    private val buffer           = scala.collection.mutable.ArrayBuffer.empty[Byte]
+    private var position         = 0
+    private var sources          = List.empty[NodeReadableStream]
+    private var remainingSources = 0
+    private var closed           = false
+    private var failure          = Maybe.empty[java.io.IOException]
+    private var readiness        = initialReadiness
+    private var remainingCloses  = 0
 
-final private[kyo] class NodeInputStream(readable: NodeReadableStream) extends InputStream:
-
-    // Simple growable byte queue.
-    // Accessed only from the JS single thread so no synchronisation needed.
-    private val buffer = scala.collection.mutable.ArrayBuffer.empty[Byte]
-    private var pos    = 0
-    private var ended  = false
-
-    discard(readable.on(
-        "data",
-        { (chunk: js.Any) =>
-            appendChunk(chunk)
-        }
-    ))
-    discard(readable.on("end", { (_: js.Any) => ended = true }))
-    discard(readable.on("error", { (_: js.Any) => ended = true }))
-
-    private def appendChunk(chunk: js.Any): Unit =
-        val arr = chunk.asInstanceOf[Uint8Array]
-        var i   = 0
-        while i < arr.length do
-            discard(buffer += arr(i).toByte)
-            i += 1
-    end appendChunk
-
-    /** Merge another readable stream's data into this stream (for redirectErrorStream). */
-    def mergeFrom(other: NodeReadableStream): Unit =
-        discard(other.on("data", { (chunk: js.Any) => appendChunk(chunk) }))
-        discard(other.on("end", { (_: js.Any) => () }))
-        discard(other.on("error", { (_: js.Any) => () }))
+    def mergeFrom(source: NodeReadableStream)(using AllowUnsafe): Unit =
+        sources = source :: sources
+        remainingSources += 1
+        remainingCloses += 1
+        var finished                          = false
+        def finish()(using AllowUnsafe): Unit =
+            if !finished then
+                finished = true
+                remainingSources -= 1
+                readiness.completeDiscard(Result.succeed(()))
+        discard(source.on(
+            "data",
+            { (chunk: js.Any) =>
+                discard(source.pause())
+                if !closed then
+                    val bytes = chunk.asInstanceOf[Uint8Array]
+                    var index = 0
+                    while index < bytes.length do
+                        discard(buffer += bytes(index).toByte)
+                        index += 1
+                    readiness.completeDiscard(Result.succeed(()))
+                end if
+            }
+        ))
+        discard(source.on("end", { (_: js.Any) => finish() }))
+        discard(source.on(
+            "error",
+            { (error: js.Any) =>
+                failure = Present(new java.io.IOException("Process output failed", js.JavaScriptException(error)))
+                finish()
+            }
+        ))
+        def onClose()(using AllowUnsafe): Unit =
+            finish()
+            remainingCloses -= 1
+            if remainingCloses == 0 then completion.completeDiscard(Result.succeed(()))
+        end onClose
+        if source.closed then onClose()
+        else discard(source.on("close", { (_: js.Any) => onClose() }))
     end mergeFrom
 
-    override def read(): Int =
-        if pos < buffer.length then
-            val b = buffer(pos) & 0xff
-            pos += 1
-            // Reclaim memory when we have consumed more than half and at least 4 KB
-            if pos > 4096 && pos > buffer.length / 2 then
-                buffer.remove(0, pos)
-                pos = 0
-            end if
-            b
-        else if ended then -1
-        else -2 // no data yet — see read(byte[],int,int) override
+    private def resume()(using AllowUnsafe): Unit =
+        if position == buffer.length && !closed && remainingSources > 0 then
+            buffer.clear()
+            position = 0
+            if readiness.poll().isDefined then readiness = Promise.Unsafe.initUninterruptible[Unit, Any]()
+            sources.foreach(source => discard(source.resume()))
 
-    override def read(b: Array[Byte], off: Int, len: Int): Int =
-        if len == 0 then 0
+    override def read(): Int =
+        val bytes = new Array[Byte](1)
+        val count = read(bytes, 0, 1)
+        if count < 0 then -1 else if count == 0 then -2 else bytes(0) & 0xff
+    end read
+
+    override def read(bytes: Array[Byte], offset: Int, length: Int): Int =
+        // Unsafe: java.io is the imperative host boundary for this event-loop-owned adapter.
+        import AllowUnsafe.embrace.danger
+        if offset < 0 || length < 0 || offset > bytes.length - length then throw new IndexOutOfBoundsException
+        if length == 0 then 0
         else
-            val avail = buffer.length - pos
-            if avail > 0 then
-                val n = math.min(avail, len)
-                var i = 0
-                while i < n do
-                    b(off + i) = buffer(pos + i)
-                    i += 1
-                pos += n
-                if pos > 4096 && pos > buffer.length / 2 then
-                    buffer.remove(0, pos)
-                    pos = 0
-                end if
-                n
-            else if ended then -1
-            else 0 // no data yet; caller should yield to event loop and retry
+            resume()
+            val count = math.min(length, buffer.length - position)
+            if count > 0 then
+                var index = 0
+                while index < count do
+                    bytes(offset + index) = buffer(position + index)
+                    index += 1
+                position += count
+                count
+            else
+                failure.foreach(error => throw error)
+                if closed || remainingSources == 0 then -1 else 0
             end if
         end if
     end read
 
-    override def available(): Int = buffer.length - pos
+    def readAsync(bytes: Array[Byte], offset: Int, length: Int)(using Frame): Int < Async =
+        Loop(()) { _ =>
+            Sync.defer {
+                val count = read(bytes, offset, length)
+                if count != 0 || length == 0 then Loop.done(count)
+                else readiness.safe.get.andThen(Loop.continue(()))
+            }
+        }
 
-    override def close(): Unit = ()
+    def stream(using Frame): Stream[Byte, Async & Scope] = ProcessStreams.fromReader(readAsync, () => closeAndWait())
 
+    override def available(): Int = buffer.length - position
+
+    override def close(): Unit =
+        // Unsafe: java.io close wakes effectful readers and releases the host streams.
+        import AllowUnsafe.embrace.danger
+        if !closed then
+            closed = true
+            buffer.clear()
+            position = 0
+            readiness.completeDiscard(Result.succeed(()))
+            sources.foreach(source => discard(source.destroy()))
+        end if
+    end close
+
+    def closeAndWait()(using Frame): Unit < Async = Sync.defer(close()).andThen(completion.safe.get)
 end NodeInputStream
 
 private[kyo] object NodeInputStream:
+    def init(readable: NodeReadableStream)(using AllowUnsafe): NodeInputStream =
+        val stream = new NodeInputStream(
+            Promise.Unsafe.initUninterruptible[Unit, Any](),
+            Promise.Unsafe.initUninterruptible[Unit, Any]()
+        )
+        stream.mergeFrom(readable)
+        stream
+    end init
+
     /** An InputStream that is already ended — read() always returns -1. */
     val empty: InputStream = new InputStream:
         override def read(): Int = -1
@@ -175,7 +226,7 @@ final private[kyo] class NodeOutputStream(writable: NodeWritableStream) extends 
     // A write to a torn-down stream is silently discarded by Node, so the closed state is checked here and reported the way
     // java.io.OutputStream reports it: the stream is destroyed after a pipe error or when its child exited, or ended by close().
     private def ensureOpen(): Unit =
-        if writable.destroyed || writable.writableEnded then
+        if writable == null || js.isUndefined(writable) || writable.destroyed || writable.writableEnded then
             throw new java.io.IOException("Stream closed")
 
     override def write(b: Int): Unit =
@@ -196,27 +247,75 @@ final private[kyo] class NodeOutputStream(writable: NodeWritableStream) extends 
     end write
 
     override def close(): Unit =
-        if !writable.destroyed && !writable.writableEnded then writable.end()
+        if writable != null && !js.isUndefined(writable) && !writable.destroyed && !writable.writableEnded then writable.end()
 
 end NodeOutputStream
 
 // --- NodeProcessUnsafe — Process.Unsafe backed by a NodeChildProcessInstance ---
 
-final private[kyo] class NodeProcessUnsafe(
+final private[kyo] class NodeProcessUnsafe private (
     val child: NodeChildProcessInstance,
-    val stderrEnded: Boolean = false
+    val stderrEnded: Boolean,
+    upstream: Seq[NodeChildProcessInstance],
+    startup: Promise.Unsafe[Unit, Abort[CommandException]],
+    _stdout: Maybe[NodeInputStream],
+    _stderr: Maybe[NodeInputStream]
 ) extends Process.Unsafe:
 
-    // Stores a spawn error (e.g. ENOENT) so it can be surfaced via waitFor().
-    private var spawnError: js.Any = null
+    // Node reports failed exec asynchronously. Acquisition observes that result before handing over the owned handle.
+    def markError(error: CommandException)(using AllowUnsafe): Unit = startup.completeDiscard(Result.fail(error))
 
-    def markError(err: js.Any): Unit = spawnError = err
+    def awaitStartup(using Frame): Unit < (Async & Abort[CommandException]) = startup.safe.get
 
-    def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[Process.ExitCode, Any] =
+    private var inputFeed                                            = Maybe.empty[() => Unit]
+    private var feedsClosed                                          = false
+    def registerInputFeed(stop: () => Unit)(using AllowUnsafe): Unit =
+        if feedsClosed then stop() else inputFeed = Present(stop)
+
+    override def stopInputFeeds()(using AllowUnsafe): Unit =
+        feedsClosed = true
+        val previous = inputFeed
+        inputFeed = Absent
+        previous.foreach(_())
+    end stopInputFeeds
+
+    private def input: NodeWritableStream = if upstream.isEmpty then child.stdin else upstream.head.stdin
+
+    def writeInput(bytes: Array[Byte], offset: Int, length: Int)(using Frame): Unit < Async = Sync.Unsafe.defer {
+        val completion = Promise.Unsafe.initUninterruptible[Unit, Any]()
+        val buffer     = new Uint8Array(length)
+        var index      = 0
+        while index < length do
+            buffer(index) = (bytes(offset + index) & 0xff).toShort
+            index += 1
+        discard(input.write(
+            buffer,
+            { (error: js.Any) =>
+                if error == null || js.isUndefined(error) then completion.completeDiscard(Result.succeed(()))
+                else
+                    completion.completeDiscard(Result.panic(new java.io.IOException(
+                        "Process input write failed",
+                        js.JavaScriptException(error)
+                    )))
+            }
+        ))
+        completion.safe.get
+    }
+
+    override def destroyTree()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] = Fiber.Unsafe.init {
+        val children = Chunk.from(upstream :+ child)
+        Sync.defer(children.foreach(process => if NodeProcessUnsafe.running(process) then discard(process.kill("SIGKILL"))))
+            .andThen(Kyo.foreachDiscard(children.filter(_.pid.isDefined))(process => waitForChild(process).uninterruptible().safe.get))
+    }
+
+    def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Any] = waitForChild(child)
+
+    private def waitForChild(target: NodeChildProcessInstance)(using AllowUnsafe, Frame): Fiber.Unsafe[Process.ExitCode, Any] =
         val p        = Promise.Unsafe.init[Process.ExitCode, Any]()
-        var resolved = false
-        val ec       = child.exitCode
-        val sc       = child.signalCode
+        var resolved = target.pid.isEmpty
+        if resolved then p.completeDiscard(Result.panic(new java.io.IOException("Process did not start")))
+        val ec = target.exitCode
+        val sc = target.signalCode
         // Both are consulted, because Node leaves exitCode null for a signalled death and records
         // the signal in signalCode instead. Checking exitCode alone missed a process that had
         // already been killed: the 'exit' event had fired before the listener below was attached,
@@ -226,7 +325,7 @@ final private[kyo] class NodeProcessUnsafe(
             p.completeDiscard(Result.succeed(exitCodeFrom(ec, sc)))
         end if
         if !resolved then
-            discard(child.on(
+            discard(target.on(
                 "exit",
                 { (codeOrNull: js.Any, signalOrNull: js.Any) =>
                     if !resolved then
@@ -237,7 +336,7 @@ final private[kyo] class NodeProcessUnsafe(
             ))
             // Handle spawn errors (e.g. ENOENT) which fire asynchronously on Node.js.
             // Treat them as a process exit with code 1 so callers don't wait forever.
-            discard(child.on(
+            discard(target.on(
                 "error",
                 { (_: js.Any) =>
                     if !resolved then
@@ -248,68 +347,18 @@ final private[kyo] class NodeProcessUnsafe(
             ))
         end if
         p
-    end waitFor
+    end waitForChild
 
-    def waitFor(timeout: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Process.ExitCode], Any] =
-        val p        = Promise.Unsafe.init[Maybe[Process.ExitCode], Any]()
-        var resolved = false
-        // A process that already died, from a signal as much as from an exit, has already fired its 'exit' event, so the listener below
-        // would never be called: answer from the recorded state, as the untimed overload does.
-        exitCode() match
-            case Present(code) =>
-                resolved = true
-                p.completeDiscard(Result.succeed(Present(code)))
-            case Absent => ()
-        end match
-        if !resolved then
-            // Held so every resolution path can clear it. An uncleared timer keeps the Node event
-            // loop alive for the whole timeout after the child has already exited.
-            var timer: js.Any      = null
-            def clearTimer(): Unit =
-                if timer != null then
-                    discard(js.Dynamic.global.clearTimeout(timer.asInstanceOf[js.Dynamic]))
-                    timer = null
-            discard(child.on(
-                "exit",
-                { (codeOrNull: js.Any, signalOrNull: js.Any) =>
-                    if !resolved then
-                        resolved = true
-                        clearTimer()
-                        p.completeDiscard(Result.succeed(Present(exitCodeFrom(codeOrNull, signalOrNull))))
-                    end if
-                }: js.Function2[js.Any, js.Any, Unit]
-            ))
-            discard(child.on(
-                "error",
-                { (_: js.Any) =>
-                    if !resolved then
-                        resolved = true
-                        clearTimer()
-                        // Present, matching the untimed overload. Absent is the timeout signal, and
-                        // reporting a spawn failure with it tells the caller the process is still
-                        // running when it never started.
-                        p.completeDiscard(Result.succeed(Present(Process.ExitCode(1))))
-                    end if
+    def waitFor(timeout: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[ExitCode], Any] =
+        Fiber.Unsafe.init {
+            Clock.let(Clock.live) {
+                Abort.run[Timeout](Async.timeout(timeout)(waitFor().safe.get)).map {
+                    case Result.Success(code) => Present(code)
+                    case Result.Failure(_)    => Absent
+                    case Result.Panic(error)  => Abort.panic(error)
                 }
-            ))
-            // An infinite timeout means "no timer". Node clamps any delay above the signed 32-bit
-            // range down to 1ms, so arming one would turn an unbounded wait into an immediate
-            // expiry, which is the exact inverse of what was asked for.
-            if timeout.isFinite then
-                val millis = math.min(timeout.toMillis, Int.MaxValue.toLong).toDouble
-                timer = js.Dynamic.global.setTimeout(
-                    { () =>
-                        if !resolved then
-                            resolved = true
-                            timer = null
-                            p.completeDiscard(Result.succeed(Absent))
-                        end if
-                    }: js.Function0[Unit],
-                    millis
-                )
-            end if
-        end if
-        p
+            }
+        }
     end waitFor
 
     // Node reports a signal death as code == null with signal set to its name, so a null code alone
@@ -345,29 +394,75 @@ final private[kyo] class NodeProcessUnsafe(
     def destroy()(using AllowUnsafe): Unit         = discard(child.kill("SIGTERM"))
     def destroyForcibly()(using AllowUnsafe): Unit = discard(child.kill("SIGKILL"))
 
-    // child.killed reports that a signal was *delivered*, not that the child died. Consulting it
-    // makes a process that has been sent SIGTERM but has not yet exited look dead, so Command's
-    // scope release skips the force-kill and leaves it running.
-    def isAlive()(using AllowUnsafe): Boolean = (child.exitCode == null || js.isUndefined(child.exitCode)) &&
-        (child.signalCode == null || js.isUndefined(child.signalCode))
+    def isAlive()(using AllowUnsafe): Boolean = NodeProcessUnsafe.running(child)
 
-    def pid()(using AllowUnsafe): Long = child.pid.toLong
+    def pid()(using AllowUnsafe): Long = child.pid.getOrElse(throw new java.io.IOException("Process did not start")).toLong
 
-    private val _stdout: InputStream =
-        if child.stdout == null || js.isUndefined(child.stdout) then NodeInputStream.empty
-        else
-            val nis = new NodeInputStream(child.stdout)
-            // When redirectError=true, merge stderr data into stdout (matching JVM behavior)
-            if stderrEnded && child.stderr != null && !js.isUndefined(child.stderr) then
-                nis.mergeFrom(child.stderr)
-            nis
-    private val _stderr: InputStream =
-        if stderrEnded || child.stderr == null || js.isUndefined(child.stderr) then NodeInputStream.empty
-        else new NodeInputStream(child.stderr)
+    def stdoutJava(using AllowUnsafe): InputStream = _stdout.fold(NodeInputStream.empty)(identity)
+    def stderrJava(using AllowUnsafe): InputStream = _stderr.fold(NodeInputStream.empty)(identity)
+    def stdinJava(using AllowUnsafe): OutputStream = new NodeOutputStream(input)
 
-    def stdoutJava(using AllowUnsafe): InputStream = _stdout
-    def stderrJava(using AllowUnsafe): InputStream = _stderr
-    def stdinJava(using AllowUnsafe): OutputStream = new NodeOutputStream(child.stdin)
+    override private[kyo] def stdoutStream(using Frame): Stream[Byte, Async & Scope] = _stdout.fold(Stream.empty[Byte])(_.stream)
+    override private[kyo] def stderrStream(using Frame): Stream[Byte, Async & Scope] = _stderr.fold(Stream.empty[Byte])(_.stream)
+
+    override private[kyo] def close()(using Frame): Unit < Async =
+        ProcessStreams.finish(Sync.Unsafe.defer(stopInputFeeds()).andThen(Sync.Unsafe.defer(destroyTree().safe.get))) {
+            ProcessStreams.finish(_stdout.fold(Kyo.unit)(_.closeAndWait())) {
+                ProcessStreams.finish(_stderr.fold(Kyo.unit)(_.closeAndWait())) {
+                    val streams = Chunk.from(upstream :+ child).flatMap(process =>
+                        Chunk[NodeRuntimeStream](process.stdin, process.stdout, process.stderr)
+                            .filter(stream => stream != null && !js.isUndefined(stream))
+                    )
+                    Kyo.foreachDiscard(streams) { stream =>
+                        Sync.Unsafe.defer {
+                            val completion = Promise.Unsafe.initUninterruptible[Unit, Any]()
+                            if stream.closed then completion.completeDiscard(Result.succeed(()))
+                            else discard(stream.on("close", { (_: js.Any) => completion.completeDiscard(Result.succeed(())) }))
+                            discard(stream.destroy())
+                            completion.safe.get
+                        }
+                    }
+                }
+            }
+        }
+
+end NodeProcessUnsafe
+
+private[kyo] object NodeProcessUnsafe:
+
+    def init(
+        child: NodeChildProcessInstance,
+        stderrEnded: Boolean = false,
+        upstream: Seq[NodeChildProcessInstance] = Seq.empty,
+        captureOutputs: Boolean = true
+    )(using AllowUnsafe): NodeProcessUnsafe =
+        val startup = Promise.Unsafe.initUninterruptible[Unit, Abort[CommandException]]()
+        if child.pid.isDefined then startup.completeDiscard(Result.succeed(()))
+        val stdout =
+            if !captureOutputs || child.stdout == null || js.isUndefined(child.stdout) then Absent
+            else
+                val stream = NodeInputStream.init(child.stdout)
+                if stderrEnded && child.stderr != null && !js.isUndefined(child.stderr) then stream.mergeFrom(child.stderr)
+                Present(stream)
+        val stderr =
+            if !captureOutputs then Absent
+            else
+                val sources = (upstream ++ (if stderrEnded then Seq.empty else Seq(child)))
+                    .map(_.stderr).filter(stream => stream != null && !js.isUndefined(stream))
+                if sources.isEmpty then Absent
+                else
+                    val stream = NodeInputStream.init(sources.head)
+                    sources.drop(1).foreach(stream.mergeFrom)
+                    Present(stream)
+                end if
+        new NodeProcessUnsafe(child, stderrEnded, upstream, startup, stdout, stderr)
+    end init
+
+    // `child.killed` reports that a signal was delivered, not that the child died: a child sent SIGTERM that has not exited yet is still
+    // running, and reading it as dead would skip the kill that release owes it.
+    def running(child: NodeChildProcessInstance)(using AllowUnsafe): Boolean =
+        child.pid.isDefined && (child.exitCode == null || js.isUndefined(child.exitCode)) &&
+            (child.signalCode == null || js.isUndefined(child.signalCode))
 
 end NodeProcessUnsafe
 
@@ -392,11 +487,13 @@ final private[kyo] class NodeCommandUnsafe(
     val stdoutSink: NodeStdioSink = NodeStdioSink.Pipe,
     val stderrSink: NodeStdioSink = NodeStdioSink.Pipe,
     val redirectError: Boolean = false,
-    val pipeTo: Maybe[Command.Unsafe] = Absent
+    val pipeTo: Maybe[Command.Unsafe] = Absent,
+    val processGroup: Boolean = false
 ) extends Command.Unsafe:
 
     // --- Builder methods — all return new instances ---
 
+    def withProcessGroup: NodeCommandUnsafe                         = copy(processGroup = true)
     def withCwd(path: kyo.Path): NodeCommandUnsafe                  = copy(workDir = Present(path))
     def withEnvAppend(vars: Map[String, String]): NodeCommandUnsafe =
         val newMode = envMode match
@@ -526,58 +623,6 @@ final private[kyo] class NodeCommandUnsafe(
         opts
     end buildOptions
 
-    /** Writes a Java InputStream into a child process's writable stream synchronously. */
-    private def feedInputStream(is: InputStream, childStdin: NodeWritableStream)(using AllowUnsafe): Unit =
-        val buf = new Array[Byte](8192)
-        var n   = is.read(buf)
-        while n >= 0 do
-            val arr = new Uint8Array(n)
-            var i   = 0
-            while i < n do
-                arr(i) = buf(i).toShort
-                i += 1
-            discard(childStdin.write(arr))
-            n = is.read(buf)
-        end while
-        childStdin.end()
-    end feedInputStream
-
-    /** Evaluates a Sync stream and writes the resulting bytes into a child process's writable stream. */
-    private def feedStream(stream: Stream[Byte, Sync], childStdin: NodeWritableStream)(using AllowUnsafe, Frame): Unit =
-        val chunk = Abort.run[Nothing](Sync.Unsafe.run(stream.run)).eval.getOrThrow
-        val arr   = new Uint8Array(chunk.length)
-        var i     = 0
-        chunk.foreach { b =>
-            arr(i) = (b & 0xff).toShort
-            i += 1
-        }
-        discard(childStdin.write(arr))
-        childStdin.end()
-    end feedStream
-
-    /** Pipes all data from a NodeReadableStream into a file path (append or overwrite). */
-    private def pipeToFile(readable: NodeReadableStream, path: kyo.Path, append: Boolean)(using AllowUnsafe, Frame): Unit =
-        var firstWrite = !append
-        discard(readable.on(
-            "data",
-            { (chunk: js.Any) =>
-                val arr   = chunk.asInstanceOf[Uint8Array]
-                val bytes = new Array[Byte](arr.length)
-                var i     = 0
-                while i < arr.length do
-                    bytes(i) = arr(i).toByte
-                    i += 1
-                val span = Span.from(bytes)
-                if firstWrite then
-                    firstWrite = false
-                    discard(path.unsafe.writeBytes(span))
-                else
-                    discard(path.unsafe.appendBytes(span))
-                end if
-            }
-        ))
-    end pipeToFile
-
     /** Checks whether the command exists and is executable without running it.
       *
       * For absolute paths: checks the file directly with fs.accessSync. For names without a separator: scans the PATH directories. Returns
@@ -646,276 +691,219 @@ final private[kyo] class NodeCommandUnsafe(
 
     // --- Effectful operations ---
 
-    def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
+    override private[kyo] def acquire()(using Frame): Process.Unsafe < (Async & Scope & Abort[CommandException]) =
+        if !processGroup then acquirePlain()
+        else if Platform.isWindows then Abort.fail(ProcessGroupUnsupportedException(args.headMaybe.getOrElse("")))
+        else
+            val chain = Chunk.from(pipelineChain)
+            if chain.size == 1 then
+                acquireGroupStage(Absent, Absent, Absent).map { process =>
+                    Sync.Unsafe.defer {
+                        feedOwned(process)
+                        process
+                    }
+                }
+            else
+                for
+                    links       <- Kyo.foreach(Chunk.from(0 until chain.size - 1))(_ => ProcessDescriptorPair.init(args.head))
+                    errors      <- ProcessDescriptorPair.init(args.head)
+                    errorReader <- Scope.acquireRelease(Sync.Unsafe.defer {
+                        val bindings = kyo.ffi.Ffi.load[ProcessPipeBindings]
+                        ProcessNodeInputStream.init(errors.takeRead(), bindings)
+                    })(_.closeAndWait())
+                    stages <- Kyo.foreach(Chunk.from(0 until chain.size)) { index =>
+                        // Unsafe: descriptor ownership is inspected only while acquiring this stage.
+                        Sync.Unsafe.defer {
+                            val input  = if index == 0 then Absent else Present(links(index - 1).readDescriptor)
+                            val output = if index == chain.size - 1 then Absent else Present(links(index).writeDescriptor)
+                            val error  = if chain(index).stderrSink == NodeStdioSink.Pipe then Present(errors.writeDescriptor) else Absent
+                            chain(index).acquireGroupStage(input, output, error)
+                        }
+                    }
+                    pipeline <- Scope.acquireRelease(Sync.Unsafe.defer {
+                        links.foreach(_.close())
+                        errors.closeWrite()
+                        chain.head.feedOwned(stages.head)
+                        new ProcessPipeline(stages, errorReader)
+                    })(_.close())
+                yield pipeline
+            end if
+        end if
+    end acquire
+
+    private def acquireGroupStage(input: Maybe[Int], output: Maybe[Int], errors: Maybe[Int])(using
+        Frame
+    ): ProcessSupervisor < (Async & Scope & Abort[CommandException]) =
+        Sync.Unsafe.defer {
+            if args.isEmpty then Abort.fail(ProgramNotFoundException(""))
+            else
+                workDir.map(path => Abort.when(!NodeFs.existsSync(path.unsafe.show))(WorkingDirectoryNotFoundException(path)))
+                    .getOrElse(Kyo.unit).andThen {
+                        val inputMask  = if input.isDefined || (stdinStream.isEmpty && stdinSource == Process.Input.Inherit) then 0 else 1
+                        val outputMask = if output.isEmpty && stdoutSink == NodeStdioSink.Pipe then 2 else 0
+                        val errorMask  = if redirectError then 8 else if errors.isEmpty && stderrSink == NodeStdioSink.Pipe then 4 else 0
+                        val mask       = inputMask | outputMask | errorMask
+                        ProcessSupervisor.init(args.head, mask) { (executable, endpoint) =>
+                            var files                                                          = List.empty[Int]
+                            def descriptor(sink: NodeStdioSink, inherited: Maybe[Int]): js.Any = inherited match
+                                case Present(fd) => fd
+                                case Absent      => sink match
+                                        case NodeStdioSink.ToFile(path, append) =>
+                                            val fd = NodeFs.openSync(path.unsafe.show, if append then "a" else "w")
+                                            files = fd :: files
+                                            fd
+                                        case _ => "inherit"
+                            try
+                                val options = buildOptions()
+                                options.detached = false
+                                val stdioInput: js.Any = input match
+                                    case Present(fd) => fd
+                                    case Absent      => "inherit"
+                                options.stdio = js.Array[js.Any](
+                                    stdioInput,
+                                    descriptor(stdoutSink, output),
+                                    if redirectError then "inherit" else descriptor(stderrSink, errors)
+                                )
+                                val arguments = Chunk(endpoint, "", mask.toString) ++ args
+                                val child     = NodeChildProcess.spawn(executable, js.Array(arguments.toSeq*), options)
+                                val helper    = NodeProcessUnsafe.init(child)
+                                discard(child.on(
+                                    "error",
+                                    { (error: js.Any) => helper.markError(translateError(js.JavaScriptException(error))) }
+                                ))
+                                Result.succeed(helper)
+                            catch case error: js.JavaScriptException => Result.fail(translateError(error))
+                            finally files.foreach(NodeFs.closeSync)
+                            end try
+                        }
+                    }
+            end if
+        }
+    end acquireGroupStage
+
+    private def feedOwned(process: ProcessSupervisor)(using Frame, AllowUnsafe): Unit =
+        feedInto(process.streams.write, () => process.streams.finishInput(), process.registerInputFeed)
+
+    private def feedInto(
+        write: (Array[Byte], Int, Int) => Unit < Async,
+        finish: () => Unit < Async,
+        register: (() => Unit) => Unit
+    )(using Frame, AllowUnsafe): Unit =
+        def start(body: => Unit < Async, source: Maybe[InputStream]): Unit =
+            val feed = Fiber.Unsafe.init {
+                Abort.run[Throwable](body).andThen(finish())
+                    .handle(Sync.ensure(source.foreach(_.close())))
+            }
+            register(() =>
+                discard(feed.interrupt())
+                source.foreach(_.close())
+            )
+        end start
+        stdinStream match
+            case Present(stream) =>
+                start(
+                    stream.foreachChunk { chunk =>
+                        val bytes = chunk.toArray
+                        write(bytes, 0, bytes.length)
+                    },
+                    Absent
+                )
+            case Absent => stdinSource match
+                    case Process.Input.FromStream(source) =>
+                        start(
+                            {
+                                val bytes = new Array[Byte](8192)
+                                Loop.foreach {
+                                    Sync.defer(source.read(bytes)).map { count =>
+                                        if count < 0 then Loop.done
+                                        else if count == 0 then Loop.continue
+                                        else write(bytes, 0, count).andThen(Loop.continue)
+                                    }
+                                }
+                            },
+                            Present(source)
+                        )
+                    case _ => ()
+        end match
+    end feedInto
+
+    private def acquirePlain()(using Frame): Process.Unsafe < (Async & Scope & Abort[CommandException]) =
+        val chain = Chunk.from(pipelineChain)
+        // The owner exists before spawning. All children and pipes are wired in one JS turn: Node may flush an unclaimed stdout on exit.
+        Scope.acquireRelease(Sync.defer(scala.collection.mutable.ArrayBuffer.empty[NodeProcessUnsafe])) { owners =>
+            val initial: Unit < Async = Kyo.unit
+            owners.reverseIterator.foldLeft(initial)((previous, process) => ProcessStreams.finish(previous)(process.close()))
+        }.map { owners =>
+            Sync.Unsafe.defer {
+                val started = chain.zipWithIndex.foldLeft(Result.succeed(()): Result[CommandException, Unit]) { (previous, entry) =>
+                    previous.flatMap { _ =>
+                        val (command, index) = entry
+                        command.copy(
+                            pipeTo = Absent,
+                            stdoutSink = if index + 1 == chain.size then command.stdoutSink else NodeStdioSink.Pipe,
+                            stdinSource = if index == 0 then command.stdinSource else Process.Input.Pipe,
+                            stdinStream = if index == 0 then command.stdinStream else Absent
+                        ).spawnRuntime(false).map(process => discard(owners += process))
+                    }
+                }
+                Abort.get(started.map { _ =>
+                    val children = Chunk.from(owners.map(_.child))
+                    children.sliding(2).foreach { pair =>
+                        if pair.size == 2 then discard(pair(0).stdout.pipe(pair(1).stdin))
+                    }
+                    val process = NodeProcessUnsafe.init(children.last, chain.last.redirectError, children.dropRight(1).toSeq)
+                    discard(owners += process)
+                    chain.head.feedInto(process.writeInput, () => Sync.defer(process.stdinJava.close()), process.registerInputFeed)
+                    process: Process.Unsafe
+                })
+            }.map { process =>
+                Kyo.foreachDiscard(Chunk.from(owners.dropRight(1)))(_.awaitStartup).andThen(process)
+            }
+        }
+    end acquirePlain
+
+    private[kyo] def spawnRaw()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
+        spawnRuntime(true)
+
+    /** The caller records this runtime-owned child before yielding. File sinks are inherited descriptors, not parent-side copies. */
+    private def spawnRuntime(captureOutputs: Boolean)(using AllowUnsafe, Frame): Result[CommandException, NodeProcessUnsafe] =
         if args.isEmpty then Result.fail(ProgramNotFoundException(""))
         else
-            // Validate program exists synchronously so spawn() can return Result.Failure without
-            // waiting for the async 'error' event (which would prevent synchronous error reporting).
             checkCommandExists() match
-                case Present(err) => Result.fail(err)
-                case Absent       =>
-                    // Validate cwd exists before spawning so we can report WorkingDirectoryNotFoundException
-                    // synchronously (Node.js would otherwise fire an asynchronous 'error' event).
-                    val wdError = workDir.flatMap { path =>
-                        val dirPath = path.unsafe.show
-                        val exists  = NodeFsModule.asInstanceOf[js.Dynamic].existsSync(dirPath).asInstanceOf[Boolean]
-                        if !exists then Present(WorkingDirectoryNotFoundException(path))
-                        else Absent
-                    }
-                    wdError match
-                        case Present(err) => Result.fail(err)
-                        case Absent       =>
+                case Present(error) => Result.fail(error)
+                case Absent         =>
+                    workDir match
+                        case Present(path) if !NodeFs.existsSync(path.unsafe.show) => Result.fail(WorkingDirectoryNotFoundException(path))
+                        case _                                                     =>
+                            var files                                                   = List.empty[Int]
+                            def descriptor(sink: NodeStdioSink, inherited: Int): js.Any = sink match
+                                case NodeStdioSink.Pipe                 => "pipe"
+                                case NodeStdioSink.Inherit              => inherited
+                                case NodeStdioSink.ToFile(path, append) =>
+                                    val fd = NodeFs.openSync(path.unsafe.show, if append then "a" else "w")
+                                    files = fd :: files
+                                    fd
                             try
-                                val chain = pipelineChain
-                                if chain.length == 1 then
-                                    // === Single-process spawn ===
-                                    val opts   = buildOptions()
-                                    val jsArgs = js.Array(args.drop(1).toSeq*)
-                                    val child  = NodeChildProcess.spawn(args.head, jsArgs, opts)
-                                    NodeWritableStream.guard(child.stdin)
-                                    val proc = new NodeProcessUnsafe(child, stderrEnded = redirectError)
-
-                                    // Register an error handler to prevent Node.js from crashing on unhandled
-                                    // 'error' events (e.g. ENOENT when the program is not found). The error is
-                                    // stored on the NodeProcessUnsafe and surfaced via waitFor().
-                                    discard(child.on(
-                                        "error",
-                                        { (err: js.Any) =>
-                                            proc.markError(err)
-                                        }
-                                    ))
-
-                                    stdinStream match
-                                        case Present(s) => feedStream(s, child.stdin)
-                                        case Absent     =>
-                                            stdinSource match
-                                                case Process.Input.FromStream(is) => feedInputStream(is, child.stdin)
-                                                case Process.Input.Inherit        => ()
-                                                case Process.Input.Pipe           => ()
-                                            end match
-                                    end match
-
-                                    stdoutSink match
-                                        case NodeStdioSink.ToFile(path, ap) => pipeToFile(child.stdout, path, ap)
-                                        case _                              => ()
-                                    end match
-
-                                    if !redirectError then
-                                        stderrSink match
-                                            case NodeStdioSink.ToFile(path, ap) => pipeToFile(child.stderr, path, ap)
-                                            case _                              => ()
-                                        end match
-                                    end if
-
-                                    Result.succeed(proc)
-                                else
-                                    // === Pipeline spawn ===
-                                    // Build options that force all stdio to pipe for pipeline stages
-                                    def pipeOpts(cmd: NodeCommandUnsafe): js.Dynamic =
-                                        val opts = js.Dynamic.literal()
-                                        cmd.workDir.foreach { path => opts.cwd = path.unsafe.show }
-                                        cmd.envMode match
-                                            case EnvMode.Inherit      => ()
-                                            case EnvMode.Append(vars) =>
-                                                val env = js.Dynamic.global.Object.assign(
-                                                    js.Dynamic.literal(),
-                                                    js.Dynamic.global.process.env
-                                                )
-                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                                                opts.env = env
-                                            case EnvMode.Remove(names) =>
-                                                val env = js.Dynamic.global.Object.assign(
-                                                    js.Dynamic.literal(),
-                                                    js.Dynamic.global.process.env
-                                                )
-                                                names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
-                                                opts.env = env
-                                            case EnvMode.AppendThenRemove(vars, names) =>
-                                                val env = js.Dynamic.global.Object.assign(
-                                                    js.Dynamic.literal(),
-                                                    js.Dynamic.global.process.env
-                                                )
-                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                                                names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
-                                                opts.env = env
-                                            case EnvMode.Replace(vars) =>
-                                                val env = js.Dynamic.literal()
-                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                                                opts.env = env
-                                            case EnvMode.Clear =>
-                                                opts.env = js.Dynamic.literal()
-                                            case EnvMode.ClearThenAppend(vars) =>
-                                                val env = js.Dynamic.literal()
-                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                                                opts.env = env
-                                        end match
-                                        opts.stdio = js.Array[js.Any]("pipe", "pipe", "pipe")
-                                        opts
-                                    end pipeOpts
-
-                                    // Spawn all stages
-                                    val children = chain.map { cmd =>
-                                        val opts   = pipeOpts(cmd)
-                                        val jsArgs = js.Array(cmd.args.drop(1).toSeq*)
-                                        val child  = NodeChildProcess.spawn(cmd.args.head, jsArgs, opts)
-                                        NodeWritableStream.guard(child.stdin)
-                                        child
-                                    }
-
-                                    // Wire pipes: stdout of N -> stdin of N+1
-                                    for i <- 0 until children.length - 1 do
-                                        children(i).stdout.pipe(children(i + 1).stdin)
-
-                                    // Feed stdin into the first process if configured
-                                    val firstCmd = chain.head
-                                    firstCmd.stdinStream match
-                                        case Present(s) => feedStream(s, children.head.stdin)
-                                        case Absent     =>
-                                            firstCmd.stdinSource match
-                                                case Process.Input.FromStream(is) => feedInputStream(is, children.head.stdin)
-                                                case Process.Input.Inherit        => ()
-                                                case Process.Input.Pipe           => ()
-                                            end match
-                                    end match
-
-                                    // Return the last process
-                                    val lastChild = children.last
-                                    val lastCmd   = chain.last
-                                    val proc      = new NodeProcessUnsafe(lastChild, stderrEnded = lastCmd.redirectError)
-                                    discard(lastChild.on("error", { (err: js.Any) => proc.markError(err) }))
-
-                                    // Handle stdout/stderr sinks on the last process
-                                    lastCmd.stdoutSink match
-                                        case NodeStdioSink.ToFile(path, ap) => pipeToFile(lastChild.stdout, path, ap)
-                                        case _                              => ()
-                                    end match
-                                    if !lastCmd.redirectError then
-                                        lastCmd.stderrSink match
-                                            case NodeStdioSink.ToFile(path, ap) => pipeToFile(lastChild.stderr, path, ap)
-                                            case _                              => ()
-                                        end match
-                                    end if
-
-                                    Result.succeed(proc)
-                                end if
+                                val options = buildOptions()
+                                val input   = options.stdio.asInstanceOf[js.Array[js.Any]](0)
+                                val output  = descriptor(stdoutSink, 1)
+                                val error   = if redirectError then output else descriptor(stderrSink, 2)
+                                options.stdio = js.Array[js.Any](input, output, error)
+                                val child = NodeChildProcess.spawn(args.head, js.Array(args.drop(1).toSeq*), options)
+                                NodeWritableStream.guard(child.stdin)
+                                val process = NodeProcessUnsafe.init(child, redirectError, captureOutputs = captureOutputs)
+                                discard(child.on(
+                                    "error",
+                                    { (error: js.Any) => process.markError(translateError(js.JavaScriptException(error))) }
+                                ))
+                                Result.succeed(process)
                             catch
-                                case e: js.JavaScriptException => Result.fail(translateError(e))
-                                case e: Throwable              => Result.panic(e)
+                                case error: js.JavaScriptException => Result.fail(translateError(error))
+                                case error: Throwable              => Result.panic(error)
+                            finally files.foreach(NodeFs.closeSync)
                             end try
-                    end match
-            end match
         end if
-    end spawn
-
-    def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]] =
-        val p = Promise.Unsafe.init[String, Abort[CommandException]]()
-        spawn() match
-            case Result.Failure(err)                     => p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex)                        => p.completeDiscard(Result.panic(ex))
-            case Result.Success(proc: NodeProcessUnsafe) =>
-                val outIs = proc.stdoutJava
-                // Register 'error' handler to propagate spawn failures (e.g. ENOENT) as CommandException.
-                discard(proc.child.on(
-                    "error",
-                    { (errAny: js.Any) =>
-                        p.completeDiscard(Result.fail(translateError(
-                            new js.JavaScriptException(errAny)
-                        )))
-                    }
-                ))
-                // Drain on 'close', not 'exit'. Node delivers a child's stdout (and stderr)
-                // 'data'/'end' events asynchronously, and they can arrive after the 'exit' event;
-                // 'close' fires only once the process has exited AND every stdio stream is fully
-                // drained. By then the NodeInputStream buffer holds all output and read() reaches a
-                // real EOF (-1) rather than the -2 "no data yet" sentinel, which the loop below
-                // would otherwise treat as end-of-output and truncate (returning empty for fast,
-                // small-output pipelines). The handlers are registered synchronously in the same
-                // tick as spawn(), so 'close' cannot have fired yet and is never missed.
-                discard(proc.child.on(
-                    "close",
-                    { (_: js.Any) =>
-                        val baos = new java.io.ByteArrayOutputStream()
-                        var b    = outIs.read()
-                        while b >= 0 do
-                            baos.write(b)
-                            b = outIs.read()
-                        p.completeDiscard(Result.succeed(baos.toString("UTF-8")))
-                    }
-                ))
-            case Result.Success(_) =>
-                p.completeDiscard(Result.panic(new IllegalStateException("Unexpected Process.Unsafe type")))
-        end match
-        p
-    end text
-
-    def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[Process.ExitCode, Abort[CommandException]] =
-        val p = Promise.Unsafe.init[Process.ExitCode, Abort[CommandException]]()
-        spawn() match
-            case Result.Failure(err)                     => p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex)                        => p.completeDiscard(Result.panic(ex))
-            case Result.Success(proc: NodeProcessUnsafe) =>
-                val ec = proc.child.exitCode
-                if ec != null && !js.isUndefined(ec) then
-                    p.completeDiscard(Result.succeed(Process.ExitCode(ec.asInstanceOf[Int])))
-                else
-                    // Register 'error' handler to propagate spawn failures (e.g. ENOENT) as CommandException.
-                    discard(proc.child.on(
-                        "error",
-                        { (errAny: js.Any) =>
-                            p.completeDiscard(Result.fail(translateError(
-                                new js.JavaScriptException(errAny)
-                            )))
-                        }
-                    ))
-                    discard(proc.child.on(
-                        "exit",
-                        { (codeOrNull: js.Any) =>
-                            val code = if codeOrNull == null then 1 else codeOrNull.asInstanceOf[Int]
-                            p.completeDiscard(Result.succeed(Process.ExitCode(code)))
-                        }
-                    ))
-                end if
-            case Result.Success(_) =>
-                p.completeDiscard(Result.panic(new IllegalStateException("Unexpected Process.Unsafe type")))
-        end match
-        p
-    end waitFor
-
-    def waitForSuccess()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[CommandException | Process.ExitCode]] =
-        val p = Promise.Unsafe.init[Unit, Abort[CommandException | Process.ExitCode]]()
-        spawn() match
-            case Result.Failure(err)                     => p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex)                        => p.completeDiscard(Result.panic(ex))
-            case Result.Success(proc: NodeProcessUnsafe) =>
-                val ec = proc.child.exitCode
-                if ec != null && !js.isUndefined(ec) then
-                    val code = Process.ExitCode(ec.asInstanceOf[Int])
-                    if code.isSuccess then p.completeDiscard(Result.succeed(()))
-                    else p.completeDiscard(Result.fail(code))
-                else
-                    discard(proc.child.on(
-                        "error",
-                        { (errAny: js.Any) =>
-                            p.completeDiscard(Result.fail(translateError(
-                                new js.JavaScriptException(errAny)
-                            )))
-                        }
-                    ))
-                    discard(proc.child.on(
-                        "exit",
-                        { (codeOrNull: js.Any) =>
-                            val rawCode = if codeOrNull == null then 1 else codeOrNull.asInstanceOf[Int]
-                            val code    = Process.ExitCode(rawCode)
-                            if code.isSuccess then p.completeDiscard(Result.succeed(()))
-                            else p.completeDiscard(Result.fail(code))
-                        }
-                    ))
-                end if
-            case Result.Success(_) =>
-                p.completeDiscard(Result.panic(new IllegalStateException("Unexpected Process.Unsafe type")))
-        end match
-        p
-    end waitForSuccess
+    end spawnRuntime
 
     private def copy(
         args: Chunk[String] = this.args,
@@ -926,7 +914,8 @@ final private[kyo] class NodeCommandUnsafe(
         stdoutSink: NodeStdioSink = this.stdoutSink,
         stderrSink: NodeStdioSink = this.stderrSink,
         redirectError: Boolean = this.redirectError,
-        pipeTo: Maybe[Command.Unsafe] = this.pipeTo
+        pipeTo: Maybe[Command.Unsafe] = this.pipeTo,
+        processGroup: Boolean = this.processGroup
     ): NodeCommandUnsafe =
         new NodeCommandUnsafe(
             args,
@@ -937,7 +926,8 @@ final private[kyo] class NodeCommandUnsafe(
             stdoutSink,
             stderrSink,
             redirectError,
-            pipeTo
+            pipeTo,
+            processGroup
         )
 
 end NodeCommandUnsafe

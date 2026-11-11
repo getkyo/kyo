@@ -4,7 +4,7 @@ import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
 import kyo.*
 import kyo.AllowUnsafe.embrace.danger
-import kyo.ffi.Test
+import kyo.ffi.it.Test
 
 /** Resource-extraction concurrency.
   *
@@ -17,6 +17,11 @@ import kyo.ffi.Test
   * spec is pure FS helper plumbing and runs in milliseconds.
   */
 class NativeLoaderConcurrencyTest extends Test:
+
+    // Preserve the FFI unit suite's timeout after moving its filesystem integration here.
+    override def timeout =
+        if kyo.internal.Platform.isDebugEnabled then Duration.Infinity
+        else Duration.fromJava(java.time.Duration.ofSeconds(120))
 
     // Mutates process-global state (System.setErr and/or a system property) and restores it, so the leaves must run
     // alone: under the default parallel leaf execution a sibling leaf observes the mutated global.

@@ -108,6 +108,7 @@ jobs:
           # Repo-wide: whatever any FFI module built for this os-arch. The publish host sorts out which
           # module gets which, by library id, through ffiPrebuiltPool.
           find . -path '*/target/ffi/lib*-darwin-*.dylib' -exec cp -n {} natives-out/ \;
+          find . -path '*/target/process/kyo-process-supervisor-darwin-*' -exec cp -n {} natives-out/ \;
           test -n "$(ls -A natives-out)" || { echo "producer natives-darwin built nothing" >&2; exit 1; }
           # Every collected file must actually be a Mach-O object. Per-module completeness is checked at
           # publish time by ffiPackagingCheck, which knows what each module requires; this step only
@@ -184,6 +185,7 @@ jobs:
             scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
+            find . -path '*/target/process/kyo-process-supervisor-linux-x86_64' -exec cp -n {} natives-out/ \;
       # The musl trees are staged inside the container below, so this restores only; the saves
       # follow the container step, keyed from these outputs. SQLite is one tree for both legs and the
       # glibc call above already staged it, so the container's script takes its stamp fast path.
@@ -231,6 +233,7 @@ jobs:
               bash scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
               mkdir -p natives-out
               find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
+              find . -path "*/target/process/kyo-process-supervisor-linux-musl-x86_64" -exec cp -n {} natives-out/ \;
             '
       # Push to main only, as every cache save: a tag or /release run would write a scope nothing reads.
       - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.boringssl-hit != 'true' }}
@@ -258,6 +261,7 @@ jobs:
             file "$f" | grep -qi 'ELF' || { echo "$f is not an ELF object" >&2; exit 1; }
           done
           ls -l natives-out
+          bash scripts/glibc-ceiling-check-test.sh
           bash scripts/glibc-ceiling-check.sh natives-out/*
       - uses: actions/upload-artifact@v7
         with:
@@ -325,6 +329,7 @@ jobs:
             scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
+            find . -path '*/target/process/kyo-process-supervisor-linux-aarch64' -exec cp -n {} natives-out/ \;
       # The musl trees are staged inside the container below, so this restores only; the saves
       # follow the container step, keyed from these outputs. SQLite is one tree for both legs and the
       # glibc call above already staged it, so the container's script takes its stamp fast path.
@@ -366,6 +371,7 @@ jobs:
               bash scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
               mkdir -p natives-out
               find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
+              find . -path "*/target/process/kyo-process-supervisor-linux-musl-aarch64" -exec cp -n {} natives-out/ \;
             '
       # Push to main only, as every cache save: a tag or /release run would write a scope nothing reads.
       - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.boringssl-hit != 'true' }}
@@ -393,6 +399,7 @@ jobs:
             file "$f" | grep -qi 'ELF' || { echo "$f is not an ELF object" >&2; exit 1; }
           done
           ls -l natives-out
+          bash scripts/glibc-ceiling-check-test.sh
           bash scripts/glibc-ceiling-check.sh natives-out/*
       - uses: actions/upload-artifact@v7
         with:
@@ -597,7 +604,8 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 120
-          command: scripts/sbt.sh publish -Dplatform=Native "ci-release"
+          # The portable Native jar embeds every supervisor executable and chooses at consumer C compile time.
+          command: scripts/sbt.sh publish -Dplatform=Native 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           CI_CLEAN: ""

@@ -34,7 +34,22 @@ for f in "$@"; do
     if ! head -c 4 "$f" 2>/dev/null | grep -q 'ELF'; then
         continue
     fi
-    needed="$(objdump -T "$f" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/^GLIBC_//' | sort -t. -k1,1n -k2,2n -k3,3n -u | tail -1)"
+    # The process supervisor is statically linked and has no dynamic symbol table. Its libc travels
+    # with it, so it imposes no symbol-version requirement on the consumer's installed libc.
+    needed=""
+    if ! headers="$(objdump -h "$f")"; then
+        echo "$f: could not inspect ELF sections" >&2
+        failed=1
+        continue
+    fi
+    if printf '%s\n' "$headers" | grep -E '[[:space:]]\.dynsym[[:space:]]' >/dev/null; then
+        if ! symbols="$(objdump -T "$f")"; then
+            echo "$f: could not inspect ELF dynamic symbols" >&2
+            failed=1
+            continue
+        fi
+        needed="$(printf '%s\n' "$symbols" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/^GLIBC_//' | sort -t. -k1,1n -k2,2n -k3,3n -u | tail -1)"
+    fi
     checked=$((checked + 1))
     if [ -z "$needed" ]; then
         echo "$f: needs no versioned glibc symbol"

@@ -4,6 +4,27 @@ package kyo
 // Needs cross-platform process helpers for Windows support.
 class ProcessTest extends kyo.test.Test[Any]:
 
+    "process control signals require unsafe permission" in {
+        typeCheckFailure("""
+            def signal(control: kyo.internal.ProcessControl) = control.terminate()
+        """)("AllowUnsafe")
+        typeCheckFailure("""
+            def signal(control: kyo.internal.ProcessControl) = control.kill()
+        """)("AllowUnsafe")
+        typeCheck("""
+            def signal(control: kyo.internal.ProcessControl)(using AllowUnsafe) = control.terminate()
+        """)
+    }
+
+    "registering a process input feed requires unsafe permission" in {
+        typeCheckFailure("""
+            def register(process: kyo.internal.ProcessSupervisor) = process.registerInputFeed(() => ())
+        """)("AllowUnsafe")
+        typeCheck("""
+            def register(process: kyo.internal.ProcessSupervisor)(using AllowUnsafe) = process.registerInputFeed(() => ())
+        """)
+    }
+
     // ProcessTest exercises Unix commands (sleep, sh -c, kill); each leaf cancels (not fails) on Windows.
     // Called as the first statement of every leaf body (the ScalaTest version skipped all via a `run` override).
     private def unixOnly(using Frame): Unit =
@@ -65,6 +86,50 @@ class ProcessTest extends kyo.test.Test[Any]:
                 result <- proc.waitFor(10.seconds)
                 code = result.getOrElse(Process.ExitCode.SIGKILL)
             yield assert(code != ExitCode.Success)
+        }
+    }
+
+    // The pids still running; a zombie awaiting its reaper counts as gone.
+    private def running(pids: Chunk[Long])(using Frame): Chunk[Long] < (Async & Abort[CommandException]) =
+        Kyo.filter(pids) { pid =>
+            Command("ps", "-o", "stat=", "-p", pid.toString).textWithExitCode.map { (out, code) =>
+                code.isSuccess && out.trim.nonEmpty && !out.trim.startsWith("Z")
+            }
+        }
+
+    "destroyTree kills the owned group across descendant generations" in {
+        unixOnly
+        Path.run(Path.tempDir("kyo-process-tree")).map { dir =>
+            // Two generations below the root, each holding the root's stdout, so a kill that stops at the first level leaves one behind.
+            val script =
+                s"sh -c 'sleep 100000 & echo $$! > $dir/grandchild; wait' & echo $$! > '$dir/child'; echo $$$$ > '$dir/root'; " +
+                    s"while [ ! -s '$dir/grandchild' ]; do :; done; echo ready > '$dir/ready'; wait"
+            Scope.run {
+                for
+                    _    <- Command("mkfifo", s"$dir/ready").waitFor
+                    proc <- Command("sh", "-c", script).processGroup.spawn
+                    _    <- Command("cat", s"$dir/ready").text
+                    pids <- Kyo.foreach(Chunk("root", "child", "grandchild"))(n => Command("cat", s"$dir/$n").text.map(_.trim.toLong))
+                    _    <- proc.destroyTree
+                    left <- running(pids)
+                    code <- proc.exitCode
+                yield
+                    assert(left.isEmpty, s"processes left running: $left of $pids")
+                    assert(code == Present(ExitCode.Signaled(9)), s"expected the root to die of SIGKILL, got $code")
+                end for
+            }
+        }
+    }
+
+    "destroyTree on a process that already exited returns without signalling anything" in {
+        unixOnly
+        Scope.run {
+            for
+                proc <- Command("true").spawn
+                code <- proc.waitFor
+                _    <- proc.destroyTree
+                same <- proc.exitCode
+            yield assert(code == ExitCode.Success && same == Present(ExitCode.Success))
         }
     }
 
@@ -336,17 +401,13 @@ class ProcessTest extends kyo.test.Test[Any]:
     "Unsafe process.waitFor(timeout)" in {
         unixOnly
         import AllowUnsafe.embrace.danger
-        val spawnResult = Command("true").unsafe.spawn()
-        spawnResult match
-            case Result.Success(proc) =>
-                val fiber  = proc.waitFor(5.seconds)
-                val result = fiber.safe.get
-                result.map { maybeCode =>
+        Scope.run {
+            Scope.acquireRelease(Command("true").unsafe.spawn().safe.get)(_.close()).map { proc =>
+                proc.waitFor(5.seconds).safe.get.map { maybeCode =>
                     assert(maybeCode == Present(ExitCode.Success))
                 }
-            case other =>
-                fail(s"Expected spawn to succeed, got: $other")
-        end match
+            }
+        }
     }
 
     "Unsafe waitFor(timeout) returns the exit code of a process a signal already killed" in {
@@ -367,17 +428,13 @@ class ProcessTest extends kyo.test.Test[Any]:
     "Process.Unsafe.waitFor returns Fiber.Unsafe resolving with ExitCode.Success" in {
         unixOnly
         import AllowUnsafe.embrace.danger
-        val spawnResult = Command("true").unsafe.spawn()
-        spawnResult match
-            case Result.Success(proc) =>
-                val fiber    = proc.waitFor()
-                val exitCode = fiber.safe.get
-                exitCode.map { code =>
+        Scope.run {
+            Scope.acquireRelease(Command("true").unsafe.spawn().safe.get)(_.close()).map { proc =>
+                proc.waitFor().safe.get.map { code =>
                     assert(code == ExitCode.Success)
                 }
-            case other =>
-                fail(s"Expected spawn to succeed, got: $other")
-        end match
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -393,6 +450,20 @@ class ProcessTest extends kyo.test.Test[Any]:
                 _     <- proc.destroy
                 alive <- proc.isAlive
             yield assert(!alive) // process is no longer alive after exit and destroy
+        }
+    }
+
+    "destroyTree preserves buffered output after the direct child exits" in {
+        unixOnly
+        Scope.run {
+            for
+                process <- Command("sh", "-c", "printf buffered").spawn
+                code    <- process.waitFor
+                _       <- process.destroyTree
+                output  <- process.stdout.run
+            yield
+                assert(code == ExitCode.Success)
+                assert(new String(output.toArray, java.nio.charset.StandardCharsets.UTF_8) == "buffered")
         }
     }
 

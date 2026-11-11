@@ -62,83 +62,77 @@ object Command:
 
         /** Spawns the process and registers it with the enclosing `Scope` for automatic cleanup.
           *
-          * If the scope closes before `waitFor` completes, the process is forcibly killed.
+          * Closing the scope terminates the owned process, waits for cleanup, and releases its streams. With [[processGroup]], cleanup
+          * includes the original group even after its leader exits; otherwise it covers the directly launched process and pipeline stages.
           */
-        def spawn(using Frame): Process < (Sync & Scope & Abort[CommandException]) =
-            // `.safe` is a pure `Result.map` inside the unsafe block, not a kernel
-            // `.map` a stop could park on between the fork and `acquireRelease`'s `ensureMap`.
-            Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
-                Sync.Unsafe.defer {
-                    // Feeds are stopped unconditionally: the process may have exited
-                    // while a feed is still parked reading its own source.
-                    p.unsafe.stopInputFeeds()
-                    if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
-                }
-            }
+        def spawn(using Frame): Process < (Async & Scope & Abort[CommandException]) =
+            self.unsafe.acquire().map(_.safe)
 
         /** Spawns the process WITHOUT registering it with any `Scope`: the caller owns the process
           * lifetime and must close it. The unscoped analog of [[spawn]] (mirrors `Fiber.initUnscoped`),
           * for a process that outlives the spawning computation's scope, such as a long-lived worker a
           * backend owns and closes explicitly.
           */
-        def spawnUnscoped(using Frame): Process < (Sync & Abort[CommandException]) =
-            // `.safe` is a pure `Result.map` inside the unsafe block, so the process arrives from `Abort.get` with no
-            // trailing kernel `.map` a stop could park on before a bracketing caller registers its release.
-            Sync.Unsafe.defer {
-                Abort.get(self.unsafe.spawn().map(_.safe))
-            }
+        def spawnUnscoped(using Frame): Process < (Async & Abort[CommandException]) =
+            Scope.runUnowned(self.unsafe.acquire().map(_.safe))
 
         /** Spawns the process, waits for it to complete, and returns its combined stdout as a UTF-8 string. */
         def text(using Frame): String < (Async & Abort[CommandException]) =
-            Sync.Unsafe.defer(self.unsafe.text().safe.get)
+            Command.textWithExitCode(self).map(_._1)
 
-        /** Spawns the process and returns its stdout as a byte stream (scope-managed). */
+        /** Spawns the process and returns its stdout as a byte stream, draining stderr concurrently without retaining it. */
         def stream(using Frame): Stream[Byte, Async & Scope & Abort[CommandException]] =
             Stream {
-                Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
-                    Sync.Unsafe.defer {
-                        p.unsafe.stopInputFeeds()
-                        if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
-                    }
-                }.map { p =>
-                    p.stdout.emit
-                }
+                for
+                    process <- Command.spawn(self)
+                    _       <- Fiber.init(Scope.run(process.stderr.discard))
+                    _       <- Scope.ensure(process.destroyTree)
+                    _       <- process.stdout.emit
+                yield ()
             }
 
-        /** Spawns the process and waits for it to exit, returning the `ExitCode`. */
+        /** Spawns the process, drains its output without retaining it, and returns the `ExitCode`. Interrupting the wait releases the
+          * process as [[spawn]] does.
+          */
         def waitFor(using Frame): ExitCode < (Async & Abort[CommandException]) =
-            Sync.Unsafe.defer(self.unsafe.waitFor().safe.get)
+            Scope.run {
+                for
+                    process <- Command.spawn(self)
+                    stdout  <- Fiber.init(Scope.run(process.stdout.discard))
+                    stderr  <- Fiber.init(Scope.run(process.stderr.discard))
+                    _       <- Scope.ensure(process.destroyTree)
+                    code    <- process.waitFor
+                    _       <- process.destroyTree
+                    _       <- stdout.get
+                    _       <- stderr.get
+                yield code
+            }
 
-        /** Spawns the process, waits for it to exit, and aborts with the `ExitCode` if the exit is non-successful.
+        /** Spawns the process, waits for it to exit, and aborts with the `ExitCode` if the exit is non-successful. Interrupting the wait
+          * releases the process as [[spawn]] does.
           *
           * Effect type includes `Abort[CommandException | ExitCode]` to signal either a launch failure or a non-zero exit.
           */
         def waitForSuccess(using Frame): Unit < (Async & Abort[CommandException | ExitCode]) =
-            Sync.Unsafe.defer(self.unsafe.waitForSuccess().safe.get)
+            Command.waitFor(self).map(code => if code.isSuccess then () else Abort.fail(code))
 
         /** Spawns the process, collects its stdout as a UTF-8 string, waits for exit, and returns both the text and the `ExitCode`.
           *
           * The `ExitCode` is returned as a value — the caller decides what to do with non-zero exits. stdout and stderr are drained
-          * concurrently so large outputs do not deadlock. `Abort[CommandException]` fires only if the process cannot be spawned.
+          * concurrently so large outputs do not deadlock. `Abort[CommandException]` fires only if the process cannot be spawned. Interrupting
+          * the wait releases the process as [[spawn]] does.
           */
         def textWithExitCode(using Frame): (String, ExitCode) < (Async & Abort[CommandException]) =
             Scope.run {
                 for
-                    proc <- Sync.Unsafe.defer {
-                        Abort.get(self.unsafe.spawn()).map { p =>
-                            Scope.acquireRelease(p.safe) { p =>
-                                Sync.Unsafe.defer {
-                                    // Feeds are stopped unconditionally: the process may have exited
-                                    // while a feed is still parked reading its own source.
-                                    p.unsafe.stopInputFeeds()
-                                    if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
-                                }
-                            }
-                        }
-                    }
-                    outFib   <- Fiber.init(Scope.run(proc.stdout.run))
-                    errFib   <- Fiber.init(Scope.run(proc.stderr.run))
-                    code     <- proc.waitFor
+                    proc   <- Command.spawn(self)
+                    outFib <- Fiber.init(Scope.run(proc.stdout.run))
+                    errFib <- Fiber.init(Scope.run(proc.stderr.discard))
+                    // Release the owned group and cancel its output to the buffered prefix before joining readers.
+                    _    <- Scope.ensure(proc.destroyTree)
+                    code <- proc.waitFor
+                    // A group can retain descendants after its leader exits; pipeline stages can also outlive the last stage.
+                    _        <- proc.destroyTree
                     outBytes <- outFib.get
                     _        <- errFib.get
                 yield (new String(outBytes.toArray, StandardCharsets.UTF_8), code)
@@ -223,6 +217,29 @@ object Command:
         /** Pipes this command's stdout into `that` command's stdin (UNIX-style `|`). */
         def andThen(that: Command): Command = self.unsafe.withAndThen(that.unsafe).safe
 
+        /** Starts the program as the leader of a new process group, which [[Process.destroyTree]], and so the release of [[spawn]]'s
+          * scope, kills whole, after the program has exited as well. [[text]], [[waitFor]], [[waitForSuccess]] and [[textWithExitCode]]
+          * kill it at the program's exit.
+          *
+          * Without it, a child that the program leaves running when it exits is reparented to init, where no walk from the program finds
+          * it: the child outlives the scope, and when it holds the program's stdout, a read of that output waits for the child. Every
+          * process the program starts joins the group unless it moves itself out (`setsid`, `setpgid`), as a daemon does.
+          *
+          * [[Process.destroyTree]] ends output reads at their buffered prefix. A process that deliberately leaves the group, or receives a
+          * transferred descriptor, has an independent lifetime and is never killed merely because it holds the command's output pipe.
+          *
+          * A process in a group of its own is not in the terminal's foreground group: Ctrl-C at the terminal does not reach it, and on the
+          * supported Unix runtimes a read of an inherited terminal stops it, so a command that reads the terminal should not use this.
+          *
+          * The program, once exited, stays unreaped until `destroyTree` kills its group, so its pid, which is the group's id, cannot be
+          * reused before that kill. An isolated native supervisor retains this ownership independently of the host runtime's reaper.
+          * With [[spawnUnscoped]], the caller must run [[Process.close]] to release both the group and its descriptors. On the JVM the
+          * spawn calls the C library through `java.lang.foreign`, so without
+          * `--enable-native-access=ALL-UNNAMED` the JDK prints a restricted-method warning. Windows has no process groups: there the spawn
+          * fails with [[ProcessGroupUnsupportedException]].
+          */
+        def processGroup: Command = self.unsafe.withProcessGroup.safe
+
         /** Returns the underlying `Unsafe` implementation. */
         def unsafe: Command.Unsafe = self
 
@@ -242,19 +259,29 @@ object Command:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe extends Serializable:
 
+        private[kyo] def acquire()(using Frame): Process.Unsafe < (Async & Scope & Abort[CommandException]) =
+            Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(spawnRaw())))(_.close())
+
         // --- Effectful operations ---
 
-        /** Attempts to start the process; returns a typed `CommandException` on pre-launch failure. */
-        def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe]
+        /** Runtime-only spawn used to launch an ordinary child, including the isolated supervisor itself. */
+        private[kyo] def spawnRaw()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe]
+
+        /** Acquires the process asynchronously, reporting launch failures through the returned fiber. The caller owns its lifetime. */
+        final def spawn()(using AllowUnsafe, Frame): Fiber.Unsafe[Process.Unsafe, Abort[CommandException]] =
+            Fiber.Unsafe.init(Scope.runUnowned(acquire()))
 
         /** Spawns the process, waits for exit, collects stdout as a UTF-8 string. */
-        def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]]
+        final def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]] =
+            Fiber.Unsafe.init(Command.text(safe))
 
         /** Spawns the process and waits for exit, returning the `ExitCode`. */
-        def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Abort[CommandException]]
+        final def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Abort[CommandException]] =
+            Fiber.Unsafe.init(Command.waitFor(safe))
 
         /** Spawns the process, waits for exit, and fails with the `ExitCode` if non-zero. */
-        def waitForSuccess()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[CommandException | ExitCode]]
+        final def waitForSuccess()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[CommandException | ExitCode]] =
+            Fiber.Unsafe.init(Command.waitForSuccess(safe))
 
         // --- Accessors ---
 
@@ -292,6 +319,7 @@ object Command:
         def withStderrFile(path: kyo.Path, append: Boolean): Unsafe
         def withRedirectErrorStream(value: Boolean): Unsafe
         def withAndThen(that: Unsafe): Unsafe
+        def withProcessGroup: Unsafe
 
         /** Lifts this `Unsafe` value back into the safe `Command` opaque type. */
         def safe: Command = this

@@ -49,6 +49,18 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    "waitFor drains output larger than the pipe capacity" in {
+        assumeUnix()
+        val command = Command("perl", "-e", "print STDOUT 'o' x 1048576; print STDERR 'e' x 1048576; exit 7")
+        for
+            plain   <- command.waitFor
+            grouped <- command.processGroup.waitFor
+        yield
+            assert(plain == ExitCode.Failure(7))
+            assert(grouped == ExitCode.Failure(7))
+        end for
+    }
+
     "waitForSuccess completes without error for zero-exit" in {
         trueCmd.waitForSuccess.map(_ => succeed("no exception means zero-exit succeeded"))
     }
@@ -69,6 +81,18 @@ class CommandTest extends kyo.test.Test[Any]:
             echo("streamdata").stream.run.map { bytes =>
                 val result = new String(bytes.toArray)
                 assert(result.trim == "streamdata")
+            }
+        }
+    }
+
+    "stream drains stderr larger than the pipe capacity" in {
+        assumeUnix()
+        Kyo.foreachDiscard(Chunk(false, true)) { grouped =>
+            Scope.run {
+                val command = Command("perl", "-e", "print STDERR 'e' x 1048576; print STDOUT 'complete'")
+                (if grouped then command.processGroup else command).stream.run.map { bytes =>
+                    assert(utf8(bytes) == "complete")
+                }
             }
         }
     }
@@ -114,6 +138,21 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    "spawn reports a missing script interpreter before handing over the process" in {
+        assumeUnix()
+        Scope.run {
+            for
+                dir <- Scope.acquireRelease(Path.run(Path.tempDir("kyo-missing-interpreter")))(path => Path.run(path.removeAll))
+                script = dir / "command"
+                _      <- Path.run(script.write("#!/__kyo_missing_interpreter_7319__\n"))
+                _      <- Command("chmod", "+x", script.toString).waitForSuccess
+                result <- Abort.run[CommandException](Command(script.toString).spawn)
+            yield result match
+                case Result.Failure(ProgramNotFoundException(program)) => assert(program == script.toString)
+                case other => fail(s"Expected ProgramNotFoundException at acquisition, got $other")
+        }
+    }
+
     "missing cwd raises WorkingDirectoryNotFoundException" in {
         val missingDir = Path / "kyo-nonexistent-cwd-xyzzy-99" / "sub"
         Abort.run[CommandException] {
@@ -133,9 +172,11 @@ class CommandTest extends kyo.test.Test[Any]:
             result match
                 case Result.Failure(err) =>
                     val msg = err match
-                        case ProgramNotFoundException(cmd)        => s"not found: $cmd"
-                        case PermissionDeniedException(cmd)       => s"denied: $cmd"
-                        case WorkingDirectoryNotFoundException(p) => s"missing cwd: $p"
+                        case ProgramNotFoundException(cmd)         => s"not found: $cmd"
+                        case PermissionDeniedException(cmd)        => s"denied: $cmd"
+                        case WorkingDirectoryNotFoundException(p)  => s"missing cwd: $p"
+                        case ProcessGroupUnsupportedException(cmd) => s"no process groups: $cmd"
+                        case ProcessLaunchException(cmd, errno)    => s"launch failed: $cmd ($errno)"
                     assert(msg.startsWith("not found:"))
                 case Result.Success(_) =>
                     fail("Expected failure, got success")
@@ -306,6 +347,66 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    // A command that forks a child holding its stdout, records both pids, and then signals `ready` over a named pipe.
+    private def forking(dir: Path): Command =
+        Command("sh", "-c", s"sleep 100000 & echo $$! > '$dir/child'; echo $$$$ > '$dir/root'; echo ready > '$dir/ready'; wait")
+
+    private def withForking[A](test: (
+        Command,
+        Unit < (Async & Abort[CommandException]),
+        Chunk[Long] < (Async & Abort[CommandException])
+    ) => A < (Async & Abort[CommandException] & Scope))(
+        using Frame
+    ): A < (Async & Abort[CommandException | FileSystemException] & Scope) =
+        Path.run(Path.tempDir("kyo-cmd-tree")).map { dir =>
+            val ready = Command("cat", s"$dir/ready").text.unit
+            val pids  = Kyo.foreach(Chunk("root", "child"))(name => Command("cat", s"$dir/$name").text.map(_.trim.toLong))
+            Scope.ensure(Path.run(dir.removeAll)).andThen {
+                Command("mkfifo", s"$dir/ready").waitFor.andThen(test(forking(dir).processGroup, ready, pids))
+            }
+        }
+
+    // The pids still running; a zombie awaiting its reaper counts as gone.
+    private def running(pids: Chunk[Long])(using Frame): Chunk[Long] < (Async & Abort[CommandException]) =
+        Kyo.filter(pids)(pid => stateOf(pid).map(state => state.nonEmpty && !state.startsWith("Z")))
+
+    // The state `ps` reports for a process, Z for a zombie, empty once no process has the pid. Read from /proc where the host has it:
+    // BusyBox's ps (Alpine) takes no -p and prints nothing, which would read as every process gone.
+    private def stateOf(pid: Long)(using Frame): String < (Async & Abort[CommandException]) =
+        Command("sh", "-c", s"if [ -e /proc/self/stat ]; then sed 's/.*) //' /proc/$pid/stat 2>/dev/null; else ps -o stat= -p $pid; fi")
+            .text.map(_.trim)
+
+    "closing the scope of a spawned group kills its remaining members" in {
+        assumeUnix()
+        withForking { (command, ready, pids) =>
+            for
+                started <- Scope.run(command.spawn.andThen(ready).andThen(pids))
+                left    <- running(started)
+            yield assert(left.isEmpty, s"processes left running: $left of $started")
+        }
+    }
+
+    "interrupting a wait on a process group kills its remaining members" in {
+        assumeUnix()
+        withForking { (command, ready, pids) =>
+            for
+                started <- Scope.run(Fiber.init(command.waitFor).andThen(ready).andThen(pids))
+                left    <- running(started)
+            yield assert(left.isEmpty, s"processes left running: $left of $started")
+        }
+    }
+
+    // The forked child holds the stdout the wait's readers block on, so the readers can only finish once the tree is gone.
+    "interrupting textWithExitCode on a process group kills its remaining members" in {
+        assumeUnix()
+        withForking { (command, ready, pids) =>
+            for
+                started <- Scope.run(Fiber.init(command.textWithExitCode).andThen(ready).andThen(pids))
+                left    <- running(started)
+            yield assert(left.isEmpty, s"processes left running: $left of $started")
+        }
+    }
+
     // A spawn must not hand its pipes to a child another spawn forks at the same time: a long-lived child holding a short command's
     // stdout keeps that command's read from ever reaching EOF. Each round forks a long-lived child while a short command's output is
     // read; every read must complete, and one that does not is counted within its bound rather than left to hang the leaf.
@@ -351,25 +452,21 @@ class CommandTest extends kyo.test.Test[Any]:
 
     "Command.unsafe.spawn returns Success for valid command" in {
         import AllowUnsafe.embrace.danger
-        val result = trueCmd.unsafe.spawn()
-        result match
-            case Result.Success(proc) =>
-                discard(proc.waitFor().safe.get)
-                succeed("spawn returned Success and waitFor completed")
-            case other =>
-                fail(s"Expected Success(Process.Unsafe), got: $other")
-        end match
+        Scope.run {
+            Scope.acquireRelease(trueCmd.unsafe.spawn().safe.get)(_.close()).map { proc =>
+                proc.waitFor().safe.get.map(code => assert(code == ExitCode.Success))
+            }
+        }
     }
 
     "Command.unsafe.spawn returns Failure(ProgramNotFoundException) for unknown program" in {
         import AllowUnsafe.embrace.danger
-        val result = Command("__kyo_test_nonexistent_8f3a3__").unsafe.spawn()
-        result match
+        Command("__kyo_test_nonexistent_8f3a3__").unsafe.spawn().safe.getResult.map {
             case Result.Failure(ProgramNotFoundException(cmd)) =>
                 assert(cmd == "__kyo_test_nonexistent_8f3a3__")
             case other =>
                 fail(s"Expected Failure(ProgramNotFoundException), got: $other")
-        end match
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -387,13 +484,19 @@ class CommandTest extends kyo.test.Test[Any]:
         val errors: List[CommandException] = List(
             ProgramNotFoundException("test"),
             PermissionDeniedException("test"),
-            WorkingDirectoryNotFoundException(Path / "nonexistent")
+            WorkingDirectoryNotFoundException(Path / "nonexistent"),
+            ProcessGroupUnsupportedException("test"),
+            ProcessLaunchException("test", 24)
         )
         errors.foreach { err =>
             err match
                 case ProgramNotFoundException(cmd)           => assert(cmd == "test")
                 case PermissionDeniedException(cmd)          => assert(cmd == "test")
                 case WorkingDirectoryNotFoundException(path) => ()
+                case ProcessGroupUnsupportedException(cmd)   => assert(cmd == "test")
+                case ProcessLaunchException(cmd, errno)      =>
+                    assert(cmd == "test")
+                    assert(errno == 24)
         }
         ()
     }
@@ -636,6 +739,549 @@ class CommandTest extends kyo.test.Test[Any]:
                 assert(text.trim == "out")
                 assert(code == ExitCode.Success)
             }
+        }
+    }
+
+    // A writer to a pipe whose reader is gone dies of SIGPIPE, status 141 in the shell, only while the signal is at its default; an
+    // ignored disposition survives exec, so a child of a process that ignores it gets EPIPE instead.
+    "a spawned program sees SIGPIPE at its default, with and without processGroup" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-sigpipe")).map { dir =>
+            val writer                   = Command("sh", "-c", s"(yes; echo $$? > '$dir/status') | head -1 > /dev/null")
+            def status(command: Command) = command.waitFor.andThen(Command("cat", s"$dir/status").text.map(_.trim))
+            for
+                plain   <- status(writer)
+                grouped <- status(writer.processGroup)
+            yield assert(plain == "141" && grouped == "141", s"yes exited $plain without processGroup and $grouped with it")
+            end for
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // processGroup
+    // ---------------------------------------------------------------------------
+
+    // A program that starts a child holding none of its output and exits at once; the child's pid is in `dir/child` once it has exited.
+    private def leaving(dir: Path): Command =
+        Command("sh", "-c", s"sleep 100000 > /dev/null 2>&1 & echo $$! > '$dir/child'")
+
+    private def pidIn(file: String)(using Frame): Long < (Async & Abort[CommandException]) =
+        Command("cat", file).text.map(_.trim.toLong)
+
+    private def utf8(bytes: Chunk[Byte]): String = new String(bytes.toArray, StandardCharsets.UTF_8)
+
+    // The detached child retains stdout until its input closes. Its parent's readiness pipe establishes that setsid has completed.
+    private val detached: String =
+        """pipe(my $r, my $w); my $p = fork(); if ($p == 0) { close $r; POSIX::setsid(); close $w; <STDIN>; exit 0 }
+          |close $w; <$r>; print "$p\n";""".stripMargin
+
+    "processGroup: the program leads a group of its own, and without it runs in its caller's group" in {
+        assumeUnix()
+        // The fifth field of /proc/<pid>/stat, the third after the command's closing parenthesis, is the group.
+        val group =
+            Command("sh", "-c", "if [ -e /proc/self/stat ]; then sed 's/.*) //' /proc/$$/stat | cut -d' ' -f3; else ps -o pgid= -p $$; fi")
+        Scope.run {
+            for
+                grouped    <- group.processGroup.spawn
+                groupedPid <- grouped.pid
+                groupedOut <- grouped.stdout.run
+                plain      <- group.spawn
+                plainPid   <- plain.pid
+                plainOut   <- plain.stdout.run
+            yield
+                assert(utf8(groupedOut).trim.toLong == groupedPid)
+                assert(utf8(plainOut).trim.toLong != plainPid)
+        }
+    }
+
+    "processGroup: destroyTree kills a child the program left running when it exited" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-group")).map { dir =>
+            Scope.run {
+                for
+                    proc  <- leaving(dir).processGroup.spawn
+                    code  <- proc.waitFor
+                    child <- pidIn(s"$dir/child")
+                    alive <- running(Chunk(child))
+                    _     <- proc.destroyTree
+                    left  <- running(Chunk(child))
+                yield
+                    assert(code == ExitCode.Success)
+                    assert(alive == Chunk(child), "the child should outlive the program until destroyTree")
+                    assert(left.isEmpty, s"the child $child is still running")
+            }
+        }
+    }
+
+    "processGroup: closing the spawn's scope kills a child the program left running when it exited" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-group")).map { dir =>
+            for
+                child <- Scope.run(leaving(dir).processGroup.spawn.map(_.waitFor).andThen(pidIn(s"$dir/child")))
+                left  <- running(Chunk(child))
+            yield assert(left.isEmpty, s"the child $child is still running")
+        }
+    }
+
+    // Without the group, the read waits for the child, which holds the program's stdout.
+    "processGroup: a read of stdout ends once destroyTree kills the child that holds it" in {
+        assumeUnix()
+        Scope.run {
+            for
+                proc   <- Command("sh", "-c", "echo hi; sleep 100000 &").processGroup.spawn
+                reader <- Fiber.init(Scope.run(proc.stdout.run))
+                _      <- proc.waitFor
+                _      <- proc.destroyTree
+                out    <- reader.get
+            yield assert(utf8(out) == "hi\n")
+        }
+    }
+
+    "processGroup: output finishes without killing a detached descriptor holder" in {
+        assumeUnix()
+        Scope.run {
+            for
+                proc   <- Command("perl", "-MPOSIX", "-e", detached).pipeStdin.processGroup.spawn
+                reader <- Fiber.init(Scope.run(proc.stdout.run))
+                _      <- proc.waitFor
+                _      <- proc.destroyTree
+                out    <- reader.get
+                pid = utf8(out).trim.toLongOption
+                left <- running(Chunk.from(pid))
+            yield assert(pid.nonEmpty && left == Chunk.from(pid), s"output: ${utf8(out)}, left running: $left")
+        }
+    }
+
+    "processGroup: releasing drained output leaves other owned groups runnable" in {
+        assumeUnix()
+        Scope.run {
+            for
+                first  <- Command("sh", "-c", "echo out; echo err 1>&2").processGroup.spawn
+                output <- first.collectOutput
+                code   <- first.waitFor
+                second <- Command("cat").pipeStdin.processGroup.spawn
+                third  <- Command("cat").pipeStdin.processGroup.spawn
+                _      <- first.destroyTree
+                _      <- Sync.Unsafe.defer {
+                    second.unsafe.stdinJava.write("second\n".getBytes(StandardCharsets.UTF_8))
+                    second.unsafe.stdinJava.close()
+                    third.unsafe.stdinJava.write("third\n".getBytes(StandardCharsets.UTF_8))
+                    third.unsafe.stdinJava.close()
+                }
+                secondOutput <- second.collectOutput
+                thirdOutput  <- third.collectOutput
+                secondCode   <- second.waitFor
+                thirdCode    <- third.waitFor
+            yield
+                assert(output ==
+                    (Chunk.from("out\n".getBytes(StandardCharsets.UTF_8)), Chunk.from("err\n".getBytes(StandardCharsets.UTF_8))))
+                assert(code == ExitCode.Success)
+                assert(utf8(secondOutput._1) == "second\n" && secondOutput._2.isEmpty)
+                assert(utf8(thirdOutput._1) == "third\n" && thirdOutput._2.isEmpty)
+                assert(secondCode == ExitCode.Success && thirdCode == ExitCode.Success)
+        }
+    }
+
+    "processGroup: cleanup does not kill an unrelated process receiving an output descriptor" in {
+        assumeUnix()
+        val receiver =
+            """import os, socket, sys
+              |server = socket.socket(socket.AF_UNIX)
+              |server.bind('socket')
+              |server.listen(1)
+              |with open('ready', 'w') as ready:
+              |    ready.write('ready')
+              |connection, _ = server.accept()
+              |_, descriptors, _, _ = socket.recv_fds(connection, 1, 1)
+              |assert len(descriptors) == 1
+              |connection.sendall(b'received')
+              |sys.stdin.buffer.read(1)
+              |os.close(descriptors[0])
+              |""".stripMargin
+        val sender =
+            """import socket
+              |connection = socket.socket(socket.AF_UNIX)
+              |connection.connect('socket')
+              |socket.send_fds(connection, [b'x'], [1])
+              |assert connection.recv(8) == b'received'
+              |""".stripMargin
+        Path.run(Path.tempDir("kyo-fd-owner")).map { dir =>
+            Scope.ensure(Path.run(dir.removeAll)).andThen {
+                Scope.run {
+                    for
+                        _         <- Command("mkfifo", s"$dir/ready").waitForSuccess
+                        unrelated <- Command("python3", "-c", receiver).cwd(dir).pipeStdin.spawn
+                        ready     <- Command("cat", s"$dir/ready").text
+                        proc      <- Command("python3", "-c", sender).cwd(dir).processGroup.spawn
+                        code      <- proc.waitFor
+                        before    <- unrelated.isAlive
+                        _         <- proc.destroyTree
+                        alive     <- unrelated.isAlive
+                        exit      <- unrelated.exitCode
+                    yield
+                        assert(ready == "ready")
+                        assert(code == ExitCode.Success)
+                        assert(before)
+                        assert(alive, s"holding a transferred descriptor does not make a process part of this command: $exit")
+                    end for
+                }
+            }
+        }
+    }
+
+    "processGroup: an exited program keeps its exit code through destroyTree" in {
+        assumeUnix()
+        Scope.run {
+            for
+                proc   <- Command("sh", "-c", "exit 3").processGroup.spawn
+                code   <- proc.waitFor
+                alive  <- proc.isAlive
+                polled <- proc.exitCode
+                _      <- proc.destroyTree
+                same   <- proc.exitCode
+            yield
+                assert(code == ExitCode.Failure(3))
+                assert(!alive)
+                assert(polled == Present(ExitCode.Failure(3)) && same == Present(ExitCode.Failure(3)))
+        }
+    }
+
+    "processGroup: closing the scope releases unread output pipes" in {
+        assumeUnix()
+        assume(!kyo.internal.Platform.isJS, "Checks the raw file streams owned by the JVM and Native group spawn")
+        for
+            process <- Scope.run {
+                Command("sh", "-c", "echo out; echo err >&2").processGroup.spawn.map { process =>
+                    process.waitFor.andThen(process)
+                }
+            }
+            _ <- Scope.ensure(Sync.Unsafe.defer {
+                process.unsafe.stdoutJava.close()
+                process.unsafe.stderrJava.close()
+            })
+            results <- Sync.Unsafe.defer {
+                // Unsafe: retain the raw streams to check that scope release closed both descriptors.
+                Chunk(process.unsafe.stdoutJava, process.unsafe.stderrJava).map(stream =>
+                    Result(stream.read()).fold(
+                        value => s"read $value",
+                        _ => "unexpected failure",
+                        error => error.getMessage.toLowerCase(java.util.Locale.ROOT)
+                    )
+                )
+            }
+        yield assert(results == Chunk("stream closed", "stream closed"), s"reads after scope close: $results")
+        end for
+    }
+
+    // Node reaps every child before its 'exit' event, so on JS no exited leader is held.
+    "processGroup: an exited program stays unreaped until destroyTree, holding its group's id" in {
+        assumeUnix()
+        Scope.run {
+            for
+                proc  <- Command("sh", "-c", "exit 3").processGroup.spawn
+                _     <- proc.waitFor
+                pid   <- proc.pid
+                held  <- stateOf(pid)
+                _     <- proc.destroyTree
+                after <- stateOf(pid)
+            yield
+                assert(held.startsWith("Z"), s"expected the exited program held unreaped, ps says '$held'")
+                assert(after.isEmpty, s"expected the program reaped after destroyTree, ps says '$after'")
+        }
+    }
+
+    // destroyTree stops the tree before it kills it; macOS's waitid reports the stop as an exit, which must not be taken for one.
+    "processGroup: destroyTree on a running program reports the kill, not the stop before it, and reaps the program" in {
+        assumeUnix()
+        Scope.run {
+            for
+                proc  <- Command("sleep", "100000").processGroup.spawn
+                pid   <- proc.pid
+                _     <- proc.destroyTree
+                code  <- proc.exitCode
+                after <- stateOf(pid)
+            yield
+                assert(code == Present(ExitCode.SIGKILL))
+                assert(after.isEmpty, s"expected the program reaped after destroyTree, ps says '$after'")
+        }
+    }
+
+    "processGroup: a program killed by a signal reports the signal" in {
+        assumeUnix()
+        Command("sh", "-c", "kill -9 $$").processGroup.waitFor.map(code => assert(code == ExitCode.Signaled(9)))
+    }
+
+    "processGroup: destroy stops a running program with SIGTERM" in {
+        assumeUnix()
+        Scope.run {
+            for
+                proc <- Command("sleep", "100000").processGroup.spawn
+                _    <- proc.destroy
+                code <- proc.waitFor
+            yield assert(code == ExitCode.SIGTERM)
+        }
+    }
+
+    "processGroup: the working folder, the environment, stdin and redirectErrorStream reach the program" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-group")).map { dir =>
+            Path.run((dir / "marker").write("x")).andThen {
+                Command("sh", "-c", "ls; echo $KYO_GROUP; cat; echo err >&2")
+                    .cwd(dir)
+                    .envAppend(Map("KYO_GROUP" -> "value"))
+                    .stdin("in\n")
+                    .redirectErrorStream(true)
+                    .processGroup
+                    .text
+                    .map(out => assert(out == "marker\nvalue\nin\nerr\n"))
+            }
+        }
+    }
+
+    "processGroup: envRemove and envClear shape the program's environment" in {
+        assumeUnix()
+        for
+            removed <- Command("sh", "-c", "echo ${HOME:-none}").envRemove(Set("HOME")).processGroup.text
+            cleared <- Command("env").envClear.processGroup.text
+            only    <- Command("env").envClear.envAppend(Map("KYO_ONLY" -> "1")).processGroup.text
+        yield
+            assert(removed == "none\n")
+            assert(cleared == "")
+            assert(only == "KYO_ONLY=1\n")
+        end for
+    }
+
+    "processGroup: stdin from a stream and from a pipe" in {
+        assumeUnix()
+        for
+            streamed <- Command("cat").stdin(Stream.init(Chunk.from("streamed".getBytes(StandardCharsets.UTF_8)))).processGroup.text
+            piped    <- Scope.run {
+                for
+                    proc <- Command("cat").pipeStdin.processGroup.spawn
+                    // Unsafe: a piped stdin is reachable only as the child's java.io.OutputStream.
+                    _ <- Sync.Unsafe.defer {
+                        val stdin = proc.unsafe.stdinJava
+                        stdin.write("piped".getBytes(StandardCharsets.UTF_8))
+                        stdin.close()
+                    }
+                    out <- proc.stdout.run
+                yield utf8(out)
+            }
+        yield
+            assert(streamed == "streamed")
+            assert(piped == "piped")
+        end for
+    }
+
+    "processGroup: stdoutToFile and stderrToFile, truncating and appending" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-group")).map { dir =>
+            val both = Command("sh", "-c", "echo out; echo err >&2")
+            for
+                _   <- both.stdoutToFile(dir / "out").stderrToFile(dir / "err").processGroup.waitFor
+                _   <- both.stdoutToFile(dir / "out").stderrToFile(dir / "err", append = true).processGroup.waitFor
+                out <- Path.run((dir / "out").read)
+                err <- Path.run((dir / "err").read)
+            yield
+                assert(out == "out\n")
+                assert(err == "err\nerr\n")
+            end for
+        }
+    }
+
+    "processGroup: closing the scope kills every stage of a pipeline and what each left running" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-group")).map { dir =>
+            val first = Command("sh", "-c", s"sleep 100000 > /dev/null 2>&1 & echo $$! > '$dir/child'; echo x")
+            for
+                out <- Scope.run(first.andThen(cat).processGroup.spawn.map(proc =>
+                    proc.stdout.run.map(bytes => proc.waitFor.andThen(utf8(bytes)))
+                ))
+                child <- pidIn(s"$dir/child")
+                left  <- running(Chunk(child))
+            yield
+                assert(out == "x\n")
+                assert(left.isEmpty, s"the child $child is still running")
+            end for
+        }
+    }
+
+    "processGroup: a missing program, a program the host will not run and a missing folder raise their exceptions" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-group")).map { dir =>
+            val script = dir / "script.sh"
+            for
+                _        <- Path.run(script.write("#!/bin/sh\necho no\n"))
+                missing  <- Abort.run[CommandException](Command("kyo-no-such-program").processGroup.waitFor)
+                denied   <- Abort.run[CommandException](Command(script.toString).processGroup.waitFor)
+                noFolder <- Abort.run[CommandException](Command("true").cwd(dir / "gone").processGroup.waitFor)
+            yield
+                missing match
+                    case Result.Failure(ProgramNotFoundException(cmd)) => assert(cmd == "kyo-no-such-program")
+                    case other                                         => fail(s"Expected ProgramNotFoundException, got: $other")
+                denied match
+                    case Result.Failure(PermissionDeniedException(cmd)) => assert(cmd == script.toString)
+                    case other                                          => fail(s"Expected PermissionDeniedException, got: $other")
+                noFolder match
+                    case Result.Failure(WorkingDirectoryNotFoundException(path)) => assert(path == dir / "gone")
+                    case other => fail(s"Expected WorkingDirectoryNotFoundException, got: $other")
+            end for
+        }
+    }
+
+    "processGroup: on Windows the spawn fails with ProcessGroupUnsupportedException" in {
+        assume(isWindows, "Every other host has process groups")
+        Abort.run[CommandException](Command("cmd", "/c", "echo", "x").processGroup.waitFor).map {
+            case Result.Failure(ProcessGroupUnsupportedException(cmd)) => assert(cmd == "cmd")
+            case other                                                 => fail(s"Expected ProcessGroupUnsupportedException, got: $other")
+        }
+    }
+
+    // On macOS the spawn closes every descriptor no file action names, so an inherited one must be named to stay open.
+    "processGroup: inherited stdin, stdout and stderr are open in the program" in {
+        assumeUnix()
+        Command("sh", "-c", "exec 3<&0 && exec 4>&1 && exec 5>&2").inheritIO.processGroup.waitFor.map(code =>
+            assert(code == ExitCode.Success)
+        )
+    }
+
+    "processGroup: destroyTree run again, or beside another, releases the group once" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-group")).map { dir =>
+            for
+                child <- Scope.run {
+                    for
+                        proc   <- leaving(dir).processGroup.spawn
+                        _      <- proc.waitFor
+                        first  <- Fiber.init(proc.destroyTree)
+                        second <- Fiber.init(proc.destroyTree)
+                        _      <- first.get
+                        _      <- second.get
+                        _      <- proc.destroyTree
+                        child  <- pidIn(s"$dir/child")
+                    yield child
+                }
+                left <- running(Chunk(child))
+            yield assert(left.isEmpty, s"the child $child is still running")
+        }
+    }
+
+    "processGroup: text answers at the program's exit, killing what it left holding stdout and reaping it" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-group")).map { dir =>
+            for
+                out   <- Command("sh", "-c", s"echo $$$$; sleep 100000 & echo $$! > '$dir/child'").processGroup.text
+                child <- pidIn(s"$dir/child")
+                left  <- running(Chunk(child))
+                pid = out.trim.toLong
+                // text answers at the end of the output, which the kill brings; the reap that follows it is awaited.
+                _ <- assertEventually(stateOf(pid).map(_.isEmpty))
+            yield assert(left.isEmpty, s"the child $child is still running")
+        }
+    }
+
+    "processGroup: textWithExitCode answers at the program's exit though a process it left holds stdout" in {
+        assumeUnix()
+        Command("sh", "-c", "echo hi; sleep 100000 &").processGroup.textWithExitCode.map { (out, code) =>
+            assert(out == "hi\n" && code == ExitCode.Success)
+        }
+    }
+
+    "processGroup: the unsafe waitFor answers once the group is killed" in {
+        assumeUnix()
+        Path.run(Path.tempDir("kyo-cmd-group")).map { dir =>
+            for
+                // Unsafe: the unscoped wait is what is under test.
+                code  <- Sync.Unsafe.defer(leaving(dir).processGroup.unsafe.waitFor().safe.get)
+                child <- pidIn(s"$dir/child")
+                left  <- running(Chunk(child))
+            yield
+                assert(code == ExitCode.Success)
+                assert(left.isEmpty, s"the child $child is still running")
+        }
+    }
+
+    "processGroup: a program from spawnUnscoped is held until destroyTree reaps it" in {
+        assumeUnix()
+        for
+            proc  <- Command("sh", "-c", "exit 0").processGroup.spawnUnscoped
+            _     <- proc.waitFor
+            pid   <- proc.pid
+            held  <- stateOf(pid)
+            _     <- proc.destroyTree
+            after <- stateOf(pid)
+            _     <- proc.close
+        yield
+            assert(held.startsWith("Z"), s"expected the exited program held unreaped, ps says '$held'")
+            assert(after.isEmpty, s"expected the program reaped after destroyTree, ps says '$after'")
+        end for
+    }
+
+    "processGroup: the unsafe timed wait answers Absent while the program runs and its code once it exited" in {
+        assumeUnix()
+        Scope.run {
+            for
+                running <- Command("sleep", "100000").processGroup.spawn
+                early   <- Sync.Unsafe.defer(running.unsafe.waitFor(1.millis).safe.get)
+                exited  <- Command("sh", "-c", "exit 4").processGroup.spawn
+                _       <- exited.waitFor
+                late    <- Sync.Unsafe.defer(exited.unsafe.waitFor(1.hour).safe.get)
+            yield
+                assert(early == Absent)
+                assert(late == Present(ExitCode.Failure(4)))
+        }
+    }
+
+    // On macOS kqueue reports a leader's exit before waitid can read it, a window that programs exiting at once reach.
+    "processGroup: concurrent groups retain distinct exit codes while ordinary children exit" in {
+        assumeUnix()
+        Scope.run {
+            for
+                processes <- Kyo.foreach(Chunk(7, 200))(code =>
+                    Command("sh", "-c", s"read release; exit $code").pipeStdin.processGroup.spawn
+                )
+                // Both leaders stay live behind stdin while the host runtime reaps ordinary children.
+                ordinary <- Async.foreach(Chunk(0, 0), 2)(_ => Command("true").waitFor)
+                _        <- Kyo.foreachDiscard(processes)(process =>
+                    Sync.Unsafe.defer {
+                        process.unsafe.stdinJava.write("release\n".getBytes(StandardCharsets.UTF_8))
+                        process.unsafe.stdinJava.flush()
+                    }
+                )
+                codes <- Async.foreach(processes, 2)(_.waitFor)
+            yield
+                assert(ordinary == Chunk(ExitCode.Success, ExitCode.Success))
+                assert(codes == Chunk(ExitCode.Failure(7), ExitCode.Failure(200)))
+        }
+    }
+
+    // A pipe end the parent holds that leaked into another child would keep this program's `read` from ever seeing end of input.
+    "processGroup: a program spawned later does not hold an earlier one's pipes" in {
+        assumeUnix()
+        Scope.run {
+            for
+                reader <- Command("sh", "-c", "read x; echo done").pipeStdin.processGroup.spawn
+                _      <- Command("sleep", "100000").processGroup.spawn
+                _      <- Command("sleep", "100000").spawn
+                // Unsafe: a piped stdin is reachable only as the child's java.io.OutputStream.
+                _    <- Sync.Unsafe.defer(reader.unsafe.stdinJava.close())
+                code <- reader.waitFor
+                out  <- reader.stdout.run
+            yield assert(code == ExitCode.Success && utf8(out) == "done\n")
+        }
+    }
+
+    "processGroup: a program does not hold the pipes of one spawned before it without a group" in {
+        assumeUnix()
+        Scope.run {
+            for
+                reader <- Command("sh", "-c", "read x; echo done").pipeStdin.spawn
+                _      <- Command("sleep", "100000").processGroup.spawn
+                // Unsafe: a piped stdin is reachable only as the child's java.io.OutputStream.
+                _    <- Sync.Unsafe.defer(reader.unsafe.stdinJava.close())
+                code <- reader.waitFor
+                out  <- reader.stdout.run
+            yield assert(code == ExitCode.Success && utf8(out) == "done\n")
         }
     }
 

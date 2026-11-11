@@ -646,63 +646,49 @@ final private[kyo] class ShellBackend(
             Chunk(id.value) ++
             Chunk.from(command.args)
 
-        // Spawn process
-        val execCmd = Command((cmd +: baseArgs.toSeq)*)
-        Scope.run {
-            Abort.runWith[CommandException](execCmd.spawn) {
-                case Result.Success(proc) =>
-                    // Collect output
-                    for
-                        outFib   <- Fiber.init(Scope.run(proc.stdout.run))
-                        errFib   <- Fiber.init(Scope.run(proc.stderr.run))
-                        rawExit  <- proc.waitFor
-                        outBytes <- outFib.get
-                        errBytes <- errFib.get
-                    yield
-                        val stdoutStr = new String(outBytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                        val stderrStr = new String(errBytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                        // Parse exit code and classify result
-                        if rawExit == ExitCode.Failure(125) then
-                            val msg = if stderrStr.nonEmpty then stderrStr.trim else "podman exec failed with exit code 125"
-                            Abort.fail[ContainerException](mapError(msg, ResourceContext.Container(id), Seq("exec", id.value)))
-                        else if isDockerDaemonError(stderrStr) && stderrStr.nonEmpty then
-                            Abort.fail[ContainerException](mapError(stderrStr.trim, ResourceContext.Container(id), Seq("exec", id.value)))
-                        // Exit code 126: command exists but cannot be invoked (permissions, not executable)
-                        else if rawExit == ExitCode.Failure(126) then
-                            Abort.fail[ContainerException](
-                                ContainerExecFailedException(
-                                    id,
-                                    Chunk.from(command.args),
-                                    ExitCode.Failure(126),
-                                    "Command cannot be invoked (permission denied or not executable)"
-                                )
-                            )
-                        // Exit code 127: command not found in the container's PATH
-                        else if rawExit == ExitCode.Failure(127) then
-                            Abort.fail[ContainerException](
-                                ContainerExecFailedException(
-                                    id,
-                                    Chunk.from(command.args),
-                                    ExitCode.Failure(127),
-                                    "Command not found"
-                                )
-                            )
-                        else
-                            val exitCode = rawExit match
-                                // Signal-terminated: map to 128+signal convention
-                                case ExitCode.Signaled(sig) => ExitCode.Failure(128 + sig)
-                                case other                  => other
-                            ExecResult(exitCode, stdoutStr, stderrStr)
-                        end if
-                case Result.Failure(cmdEx) =>
+        Abort.runWith[CommandException](runWithStreams(baseArgs.toSeq*)) {
+            case Result.Success((stdoutStr, stderrStr, rawExit)) =>
+                // Parse exit code and classify result
+                if rawExit == ExitCode.Failure(125) then
+                    val msg = if stderrStr.nonEmpty then stderrStr.trim else "podman exec failed with exit code 125"
+                    Abort.fail[ContainerException](mapError(msg, ResourceContext.Container(id), Seq("exec", id.value)))
+                else if isDockerDaemonError(stderrStr) && stderrStr.nonEmpty then
+                    Abort.fail[ContainerException](mapError(stderrStr.trim, ResourceContext.Container(id), Seq("exec", id.value)))
+                // Exit code 126: command exists but cannot be invoked (permissions, not executable)
+                else if rawExit == ExitCode.Failure(126) then
                     Abort.fail[ContainerException](
-                        ContainerOperationException(s"exec failed in ${id.value}", cmdEx)
+                        ContainerExecFailedException(
+                            id,
+                            Chunk.from(command.args),
+                            ExitCode.Failure(126),
+                            "Command cannot be invoked (permission denied or not executable)"
+                        )
                     )
-                case Result.Panic(ex) =>
+                // Exit code 127: command not found in the container's PATH
+                else if rawExit == ExitCode.Failure(127) then
                     Abort.fail[ContainerException](
-                        ContainerBackendException(s"exec panicked in ${id.value}", ex)
+                        ContainerExecFailedException(
+                            id,
+                            Chunk.from(command.args),
+                            ExitCode.Failure(127),
+                            "Command not found"
+                        )
                     )
-            }
+                else
+                    val exitCode = rawExit match
+                        // Signal-terminated: map to 128+signal convention
+                        case ExitCode.Signaled(sig) => ExitCode.Failure(128 + sig)
+                        case other                  => other
+                    ExecResult(exitCode, stdoutStr, stderrStr)
+                end if
+            case Result.Failure(cmdEx) =>
+                Abort.fail[ContainerException](
+                    ContainerOperationException(s"exec failed in ${id.value}", cmdEx)
+                )
+            case Result.Panic(ex) =>
+                Abort.fail[ContainerException](
+                    ContainerBackendException(s"exec panicked in ${id.value}", ex)
+                )
         }
     end execOnce
 
@@ -726,7 +712,7 @@ final private[kyo] class ShellBackend(
                     case Result.Success(proc) =>
                         Channel.initUnscoped[LogEntry](streamBufferSize).map { channel =>
                             def drain(
-                                byteStream: Stream[Byte, Sync & Scope],
+                                byteStream: Stream[Byte, Async & Scope],
                                 source: LogEntry.Source
                             ): Unit < (Async & Abort[Closed]) =
                                 Scope.run(
@@ -852,44 +838,32 @@ final private[kyo] class ShellBackend(
 
         // Container's stdout goes to command's stdout, container's stderr goes to command's stderr
         // We need to collect them separately based on the stdout/stderr flags
-        val logsCmd = Command((cmd +: args.toSeq)*)
-        Scope.run {
-            Abort.runWith[CommandException](logsCmd.spawn) {
-                case Result.Success(proc) =>
-                    for
-                        outFib   <- Fiber.init(Scope.run(proc.stdout.run))
-                        errFib   <- Fiber.init(Scope.run(proc.stderr.run))
-                        exitCode <- proc.waitFor
-                        outBytes <- outFib.get
-                        errBytes <- errFib.get
-                    yield
-                        val outStr = new String(outBytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                        val errStr = new String(errBytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                        if !exitCode.isSuccess then
-                            Abort.fail[ContainerException](mapError((outStr + errStr).trim, ResourceContext.Container(id), args.toSeq))
-                        else
-                            val outEntries =
-                                if stdout then parseLogLines(outStr, LogEntry.Source.Stdout, effectiveTimestamps)
-                                else Chunk.empty[LogEntry]
-                            val errEntries =
-                                if stderr then parseLogLines(errStr, LogEntry.Source.Stderr, effectiveTimestamps)
-                                else Chunk.empty[LogEntry]
-                            val merged: Chunk[LogEntry] =
-                                if needMerge then Chunk.from(mergeByTimestamp(outEntries.toSeq, errEntries.toSeq))
-                                else outEntries.concat(errEntries)
-                            if !timestamps && effectiveTimestamps then
-                                merged.map(_.copy(timestamp = Absent))
-                            else merged
-                        end if
-                case Result.Failure(cmdEx) =>
-                    Abort.fail[ContainerException](
-                        ContainerOperationException(s"logs failed for ${id.value}", cmdEx)
-                    )
-                case Result.Panic(ex) =>
-                    Abort.fail[ContainerException](
-                        ContainerBackendException(s"logs panicked for ${id.value}", ex)
-                    )
-            }
+        Abort.runWith[CommandException](runWithStreams(args.toSeq*)) {
+            case Result.Success((outStr, errStr, exitCode)) =>
+                if !exitCode.isSuccess then
+                    Abort.fail[ContainerException](mapError((outStr + errStr).trim, ResourceContext.Container(id), args.toSeq))
+                else
+                    val outEntries =
+                        if stdout then parseLogLines(outStr, LogEntry.Source.Stdout, effectiveTimestamps)
+                        else Chunk.empty[LogEntry]
+                    val errEntries =
+                        if stderr then parseLogLines(errStr, LogEntry.Source.Stderr, effectiveTimestamps)
+                        else Chunk.empty[LogEntry]
+                    val merged: Chunk[LogEntry] =
+                        if needMerge then Chunk.from(mergeByTimestamp(outEntries.toSeq, errEntries.toSeq))
+                        else outEntries.concat(errEntries)
+                    if !timestamps && effectiveTimestamps then
+                        merged.map(_.copy(timestamp = Absent))
+                    else merged
+                end if
+            case Result.Failure(cmdEx) =>
+                Abort.fail[ContainerException](
+                    ContainerOperationException(s"logs failed for ${id.value}", cmdEx)
+                )
+            case Result.Panic(ex) =>
+                Abort.fail[ContainerException](
+                    ContainerBackendException(s"logs panicked for ${id.value}", ex)
+                )
         }
     end logs
 
@@ -2192,10 +2166,16 @@ final private[kyo] class ShellBackend(
     private def runWithStreams(args: String*)(using Frame): (String, String, ExitCode) < (Async & Abort[CommandException]) =
         Scope.run {
             for
-                proc     <- Command((cmd +: args)*).spawn
-                outFib   <- Fiber.init(Scope.run(proc.stdout.run))
-                errFib   <- Fiber.init(Scope.run(proc.stderr.run))
+                proc <-
+                    val command = Command((cmd +: args)*)
+                    if kyo.internal.Platform.isWindows then command.spawn else command.processGroup.spawn
+                outFib <- Fiber.init(Scope.run(proc.stdout.run))
+                errFib <- Fiber.init(Scope.run(proc.stderr.run))
+                // Releases run last-registered first, and closing the scope waits for the readers. A process the CLI forked (a conmon, a
+                // credential helper) can hold its pipes after an interrupt, so the tree is killed before the readers are awaited.
+                _        <- Scope.ensure(proc.destroyTree)
                 code     <- proc.waitFor
+                _        <- proc.destroyTree
                 outBytes <- outFib.get
                 errBytes <- errFib.get
             yield (

@@ -3,6 +3,7 @@
 > Test/compile
 $ exists target/package.json
 $ exec grep -- '"name":"probe-bootstrap"' target/package.json
+$ exec grep -- '"type":"commonjs"' target/package.json
 $ exec grep -- '"koffi":"\^2.7"' target/package.json
 $ exists target/node_modules/koffi/package.json
 # Idempotent: a second Test/compile keeps the installed marker and does not reinstall.

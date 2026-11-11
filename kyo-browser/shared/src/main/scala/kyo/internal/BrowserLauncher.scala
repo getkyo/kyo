@@ -85,7 +85,7 @@ private[kyo] object BrowserLauncher:
     private def spawnChrome(config: Browser.LaunchConfig, tmpDir: Path)(using
         Frame
     )
-        : Process < (Sync & Scope & Abort[BrowserSetupException]) =
+        : Process < (Async & Scope & Abort[BrowserSetupException]) =
         val args = (config.executable +: chromiumFlags(tmpDir, config.headless)) ++ config.extraArgs
         Abort.recover[CommandException] { (ex: CommandException) =>
             Abort.fail[BrowserSetupException](

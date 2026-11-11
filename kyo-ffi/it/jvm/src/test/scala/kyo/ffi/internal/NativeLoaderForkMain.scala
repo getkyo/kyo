@@ -1,6 +1,6 @@
 package kyo.ffi.internal
 
-/** Child-JVM main used by [[NativeLoaderForkStressTest]] to stress `extractBytesToTemp` under concurrent peer processes.
+/** Child-JVM main used by [[NativeLoaderForkStressTest]] to exercise `extractBytesToTemp` under concurrent peer processes.
   *
   * Args: `<extractDir> <libId> <hex-payload>`
   *
@@ -15,6 +15,8 @@ object NativeLoaderForkMain:
             val libId   = args(1)
             val payload = hexDecode(args(2))
             val out     = NativeLoader.extractBytesToTemp(payload, "lib", libId, "so")
+            // Keep the parent's path protocol independent of child/JVM diagnostics.
+            java.lang.System.err.println("native extraction fixture: diagnostic on stderr")
             java.lang.System.out.println(out.toAbsolutePath.nn.toString)
             java.lang.System.exit(0)
         catch

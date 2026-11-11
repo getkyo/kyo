@@ -5,7 +5,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kyo.*
 import kyo.AllowUnsafe.embrace.danger
-import kyo.ffi.Test
+import kyo.ffi.it.Test
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -22,6 +22,11 @@ import scala.concurrent.duration.*
   * exercises the real multi-process path. Fork count is 4 by default; drops to 2 on slow hosts via `-Dkyo.ffi.testForkN=`.
   */
 class NativeLoaderForkStressTest extends Test:
+
+    // Preserve the FFI unit suite's timeout after moving its filesystem integration here.
+    override def timeout =
+        if kyo.internal.Platform.isDebugEnabled then kyo.Duration.Infinity
+        else kyo.Duration.fromJava(java.time.Duration.ofSeconds(120))
 
     // Resolve the JVM test classpath and a java binary so we can ProcessBuilder a child JVM that loads NativeLoaderForkMain.
     private val javaHome: Path =
@@ -68,7 +73,8 @@ class NativeLoaderForkStressTest extends Test:
                                 libId,
                                 hex
                             )
-                            pb.redirectErrorStream(true)
+                            // Stdout carries one path. JVM diagnostics (including JAVA_TOOL_OPTIONS) belong on stderr.
+                            pb.redirectError(ProcessBuilder.Redirect.INHERIT)
                             val proc       = pb.start().nn
                             val finishedOk = proc.waitFor(60L, TimeUnit.SECONDS)
                             val out        = new String(proc.getInputStream.nn.readAllBytes().nn).nn
