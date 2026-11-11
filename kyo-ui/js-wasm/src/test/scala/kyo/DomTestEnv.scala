@@ -53,6 +53,7 @@ private[kyo] object DomTestEnv:
             js.Dynamic.global.globalThis.Element = window.Element
             js.Dynamic.global.globalThis.HTMLElement = window.HTMLElement
             js.Dynamic.global.globalThis.Node = window.Node
+            js.Dynamic.global.globalThis.Event = window.Event
         end if
     end install
 

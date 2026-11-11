@@ -80,13 +80,13 @@ private[kyo] object DomBackend:
             _       <- DomStyleSheet.injectBase()
             root    <- ReactiveUI.normalize(ui, Seq.empty)
             html    <- HtmlRenderer.render(ui, Seq.empty)
-            _       <- Sync.defer(container.innerHTML = html)
+            mount   <- DomMount.init(container, html)
             regions <- DomReactiveRegions.init(container)
             _       <- applyJsProps(container)
             _       <- Sync.defer(seedEnter(container, Set.empty))
             _       <- Sync.defer(seedFocusAuto(container, Set.empty))
             _       <- Sync.defer(beginAnimationsSync(container))
-            exchange = LocalExchange(regions, diagnostics)
+            exchange = LocalExchange(regions, diagnostics, mount)
             dispatch <- ReactiveUI.subscribe(root, exchange)
             // A subscription interrupt is asynchronous. Stop accepting publications before the Scope begins
             // interrupting region fibers, so an already-woken observer cannot publish into the registry after its
@@ -118,8 +118,8 @@ private[kyo] object DomBackend:
             // Finalizers are LIFO. Register the drain first, then the channel, then listeners, so teardown
             // removes callbacks before closing their queue and finally interrupts and joins the drain.
             _           <- Scope.ensure(events.close.andThen(Sync.defer(diagnostics.channelClosed())).unit)
-            _           <- setupEventDelegation(dispatch.handle, events)
-            _           <- setupInputMasking()
+            _           <- setupEventDelegation(mount, dispatch.handle, events)
+            _           <- setupInputMasking(mount)
             dragRuntime <- DomDragRuntime.install(
                 container,
                 event =>
@@ -131,6 +131,8 @@ private[kyo] object DomBackend:
                             result
                         }.unit
                     )
+                ,
+                mount = Present(mount)
             )
             _ <- Sync.defer(diagnostics.dragRuntimeInstalled(dragRuntime))
             _ <- Async.never
@@ -175,7 +177,7 @@ private[kyo] object DomBackend:
     final private case class RangeFocus(path: Maybe[String], rootIndex: Int, childIndexes: Seq[Int])
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
-    private class LocalExchange(regions: DomReactiveRegions, diagnostics: MountDiagnostics) extends UIExchange:
+    private class LocalExchange(regions: DomReactiveRegions, diagnostics: MountDiagnostics, mount: DomMount) extends UIExchange:
 
         private var open = true
 
@@ -193,14 +195,15 @@ private[kyo] object DomBackend:
             previous: Maybe[UI],
             ui: UI
         )(using Frame): Unit < Async =
-            Sync.defer(open).flatMap { isOpen =>
+            // Unsafe: a publication reads mount ownership before it renders and again before it writes.
+            Sync.Unsafe.defer(open && mount.isCurrent).flatMap { isOpen =>
                 if !isOpen then Kyo.unit
                 else
                     val boundaryMode =
                         if ReactiveRegion.owns(region, contentContext) then ReactiveRegion.BoundaryMode.Suppress
                         else ReactiveRegion.BoundaryMode.Emit
                     HtmlRenderer.renderRegion(ui, path, contentContext, region, parentContext, boundaryMode).flatMap { html =>
-                        Sync.defer(open).flatMap { stillOpen =>
+                        Sync.Unsafe.defer(open && mount.isCurrent).flatMap { stillOpen =>
                             if !stillOpen then Kyo.unit
                             else
                                 val applied = region match
@@ -543,16 +546,16 @@ private[kyo] object DomBackend:
         end if
     end beginAnimationsSync
 
-    /** True when `start` or any of its ancestors below `document.body` declares event type `t` in `data-kyo-ev`.
+    /** True when `start` or any of its ancestors below `container` declares event type `t` in `data-kyo-ev`.
       *
       * ReactiveUI.dispatchToElement bubbles an event to every ancestor that declared a handler for its type, so the
       * SPA forwarding gate must forward when ANY ancestor declared it, not just the target (checking only the
       * target's own data-kyo-ev would drop e.g. a keydown meant for an ancestor panel before bubble dispatch runs).
       */
-    private[kyo] def declaredInChain(start: dom.Element, t: String): Boolean =
+    private[kyo] def declaredInChain(start: dom.Element, t: String, container: dom.Element = document.body): Boolean =
         var n: dom.Element = start
         var found          = false
-        while !found && n != null && (n ne document.body) do
+        while !found && n != null && (n ne container) do
             val ev = n.getAttribute("data-kyo-ev")
             if ev != null && ev.split(",").contains(t) then found = true
             else
@@ -565,6 +568,7 @@ private[kyo] object DomBackend:
     end declaredInChain
 
     private def addScopedListener(
+        mount: DomMount,
         eventType: String,
         listener: scalajs.js.Function1[dom.Event, Unit],
         capture: Boolean
@@ -577,9 +581,10 @@ private[kyo] object DomBackend:
         )
         Scope.acquireRelease {
             Sync.defer {
-                val target = document.body
-                target.addEventListener(eventType, listener, capture)
-                Installed(target, eventType, listener, capture)
+                val target = mount.container
+                val owned  = ownedListener(mount, listener)
+                target.addEventListener(eventType, owned, capture)
+                Installed(target, eventType, owned, capture)
             }
         }(installed =>
             Sync.defer(installed.target.removeEventListener(installed.eventType, installed.listener, installed.capture))
@@ -587,6 +592,7 @@ private[kyo] object DomBackend:
     end addScopedListener
 
     private def addScopedListener(
+        mount: DomMount,
         eventType: String,
         listener: scalajs.js.Function1[dom.Event, Unit],
         options: dom.EventListenerOptions
@@ -599,21 +605,33 @@ private[kyo] object DomBackend:
         )
         Scope.acquireRelease {
             Sync.defer {
-                val target = document.body
-                target.addEventListener(eventType, listener, options)
-                Installed(target, eventType, listener, options)
+                val target = mount.container
+                val owned  = ownedListener(mount, listener)
+                target.addEventListener(eventType, owned, options)
+                Installed(target, eventType, owned, options)
             }
         }(installed =>
             Sync.defer(installed.target.removeEventListener(installed.eventType, installed.listener, installed.options))
         ).unit
     end addScopedListener
 
-    /** Set up capture-phase event delegation on document.body. */
-    private def setupEventDelegation(dispatch: (Seq[String], UIEvent) => Boolean < Async, events: Channel[Unit < Async])(using
+    private def ownedListener(mount: DomMount, listener: js.Function1[dom.Event, Unit]): js.Function1[dom.Event, Unit] =
+        event =>
+            // Unsafe: browser callbacks inspect the live mount boundary before performing DOM effects.
+            import AllowUnsafe.embrace.danger
+            if mount.owns(event.target) then listener(event)
+
+    /** Set up capture-phase event delegation within the mounted tree. */
+    private def setupEventDelegation(
+        mount: DomMount,
+        dispatch: (Seq[String], UIEvent) => Boolean < Async,
+        events: Channel[Unit < Async]
+    )(using
         Frame
     ): Unit < (Scope & Sync) =
+        val container = mount.container
         final class ChainTypes(target: dom.Element):
-            def contains(t: String): Boolean = declaredInChain(target, t)
+            def contains(t: String): Boolean = declaredInChain(target, t, container)
 
         // A submit button's click makes the browser fire a native `submit` right after, but the Click dispatch
         // already emulates onSubmit; this flag (set on Click, cleared on a 0-timeout) suppresses that one
@@ -626,10 +644,11 @@ private[kyo] object DomBackend:
             if e.`type` == "keydown" then
                 val ke  = e.asInstanceOf[dom.KeyboardEvent]
                 val tgt = e.target.asInstanceOf[dom.Element]
-                if tgt != null && scrollKeyPrevented(ke.key, tgt) && tgt.closest("[data-kyo-scroll-keys]") != null then
-                    e.preventDefault()
+                if tgt != null && scrollKeyPrevented(ke.key, tgt) then
+                    val region = tgt.closest("[data-kyo-scroll-keys]")
+                    if region != null && (region ne container) && container.contains(region) then e.preventDefault()
             end if
-            findPathElement(e.target.asInstanceOf[dom.Element]).foreach { target =>
+            findPathElement(e.target.asInstanceOf[dom.Element], container).foreach { target =>
                 val path    = parsePath(target.getAttribute("data-kyo-path"))
                 val evTypes = ChainTypes(target)
                 val t       = e.`type`
@@ -765,27 +784,27 @@ private[kyo] object DomBackend:
 
         val wheelOptions = js.Dynamic.literal(capture = true, passive = false).asInstanceOf[dom.EventListenerOptions]
         for
-            _ <- addScopedListener("click", handler, true)
-            _ <- addScopedListener("input", handler, true)
-            _ <- addScopedListener("change", handler, true)
-            _ <- addScopedListener("submit", handler, true)
-            _ <- addScopedListener("keydown", handler, true)
-            _ <- addScopedListener("keyup", handler, true)
-            _ <- addScopedListener("focus", handler, true)
-            _ <- addScopedListener("blur", handler, true)
-            _ <- addScopedListener("mouseover", handler, true)
-            _ <- addScopedListener("mouseout", handler, true)
-            _ <- addScopedListener("wheel", handler, wheelOptions)
+            _ <- addScopedListener(mount, "click", handler, true)
+            _ <- addScopedListener(mount, "input", handler, true)
+            _ <- addScopedListener(mount, "change", handler, true)
+            _ <- addScopedListener(mount, "submit", handler, true)
+            _ <- addScopedListener(mount, "keydown", handler, true)
+            _ <- addScopedListener(mount, "keyup", handler, true)
+            _ <- addScopedListener(mount, "focus", handler, true)
+            _ <- addScopedListener(mount, "blur", handler, true)
+            _ <- addScopedListener(mount, "mouseover", handler, true)
+            _ <- addScopedListener(mount, "mouseout", handler, true)
+            _ <- addScopedListener(mount, "wheel", handler, wheelOptions)
         yield ()
         end for
     end setupEventDelegation
 
-    private def findPathElement(el: dom.Element): Maybe[dom.Element] =
-        if el == null || (el eq document.body) then Absent
+    private def findPathElement(el: dom.Element, container: dom.Element): Maybe[dom.Element] =
+        if el == null || (el eq container) then Absent
         else if el.hasAttribute("data-kyo-path") then Present(el)
         else
             el.parentNode match
-                case p: dom.Element => findPathElement(p)
+                case p: dom.Element => findPathElement(p, container)
                 case _              => Absent
 
     private def parsePath(p: String): Seq[String] =
@@ -947,7 +966,7 @@ private[kyo] object DomBackend:
         dispatchInput(t)
     end setFilteredAt
 
-    private def setupInputMasking()(using Frame): Unit < (Scope & Sync) =
+    private def setupInputMasking(mount: DomMount)(using Frame): Unit < (Scope & Sync) =
         val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
             val tRaw = e.target
             if tRaw != null then
@@ -1022,8 +1041,8 @@ private[kyo] object DomBackend:
                     end if
                 end if
             end if
-        addScopedListener("beforeinput", handler, true).andThen {
-            addScopedListener("compositionend", compositionEndHandler, true)
+        addScopedListener(mount, "beforeinput", handler, true).andThen {
+            addScopedListener(mount, "compositionend", compositionEndHandler, true)
         }
     end setupInputMasking
 

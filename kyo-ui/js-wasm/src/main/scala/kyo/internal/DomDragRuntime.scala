@@ -170,10 +170,11 @@ private[kyo] object DomDragRuntime:
         enqueue: UIEvent => Unit,
         timing: Timing = BrowserTiming,
         hit: Hit = BrowserHit,
-        frames: Frames = BrowserFrames
+        frames: Frames = BrowserFrames,
+        mount: Maybe[DomMount] = Absent
     )(using Frame): Handle < (Sync & Scope) =
         Sync.defer {
-            val runtime = new Runtime(container, enqueue, timing, hit, frames)
+            val runtime = new Runtime(container, enqueue, timing, hit, frames, mount)
             Scope.ensure(Sync.defer(runtime.close())).andThen(runtime.install.map(_ => runtime))
         }
     end install
@@ -183,7 +184,8 @@ private[kyo] object DomDragRuntime:
         enqueue: UIEvent => Unit,
         timing: Timing,
         hit: Hit,
-        frames: Frames
+        frames: Frames,
+        mount: Maybe[DomMount]
     )(using Frame) extends Handle:
         private var state: State                                                        = State.Idle
         private var closed                                                              = false
@@ -194,9 +196,15 @@ private[kyo] object DomDragRuntime:
         private var sourceCache: Maybe[ConfigCache[DragProtocol.ValidatedSourceConfig]] = Absent
         private var targetCache: Maybe[ConfigCache[DragProtocol.ValidatedTargetConfig]] = Absent
 
-        private val dragListener: js.Function1[dom.Event, Unit] = (event: dom.Event) => handle(event)
+        private val dragListener: js.Function1[dom.Event, Unit] = (event: dom.Event) =>
+            // Unsafe: the browser invokes native drag callbacks outside an effect.
+            import AllowUnsafe.embrace.danger
+            if ownsTarget(event.target) then handle(event)
 
-        private val sensorListener: js.Function1[dom.Event, Unit] = (event: dom.Event) => handleSensor(event)
+        private val sensorListener: js.Function1[dom.Event, Unit] = (event: dom.Event) =>
+            // Unsafe: the browser invokes sensor callbacks outside an effect.
+            import AllowUnsafe.embrace.danger
+            if ownsTarget(event.target) then handleSensor(event)
 
         private val resolveListener: js.Function1[dom.Event, Unit] = (event: dom.Event) => resolveEvent(event)
 
@@ -282,7 +290,7 @@ private[kyo] object DomDragRuntime:
             end if
         end close
 
-        private def handle(event: dom.Event): Unit =
+        private def handle(event: dom.Event)(using AllowUnsafe): Unit =
             if !closed then
                 event.`type` match
                     case "dragstart" => transition(NativeEvent.Start, event)
@@ -294,7 +302,7 @@ private[kyo] object DomDragRuntime:
                     case _           => ()
         end handle
 
-        private def transition(native: NativeEvent, event: dom.Event): Unit =
+        private def transition(native: NativeEvent, event: dom.Event)(using AllowUnsafe): Unit =
             (state, native) match
                 case (State.Idle, NativeEvent.Start)                            => start(event)
                 case (State.Idle, NativeEvent.Enter)                            => probeTarget(event, UIEvent.DragEnter.apply)
@@ -320,7 +328,7 @@ private[kyo] object DomDragRuntime:
 
         // --- Sensor sessions (pointer, touch, keyboard) ---
 
-        private def handleSensor(event: dom.Event): Unit =
+        private def handleSensor(event: dom.Event)(using AllowUnsafe): Unit =
             if !closed then
                 (state, event.`type`) match
                     case (State.Idle, "pointerdown") =>
@@ -380,7 +388,7 @@ private[kyo] object DomDragRuntime:
                     case _ => ()
         end handleSensor
 
-        private def sensorSource(event: dom.Event): Maybe[Located[DragProtocol.ValidatedSourceConfig]] =
+        private def sensorSource(event: dom.Event)(using AllowUnsafe): Maybe[Located[DragProtocol.ValidatedSourceConfig]] =
             asElement(event.target).flatMap(closestSource).filter { source =>
                 val activation = source.config.wire.activation
                 activation == Drag.Activation.Sensors || activation == Drag.Activation.Both
@@ -391,7 +399,7 @@ private[kyo] object DomDragRuntime:
             at: Drag.Point,
             keyboard: Boolean,
             pointer: Maybe[Double]
-        ): Unit =
+        )(using AllowUnsafe): Unit =
             val config  = source.config.wire
             val context = SessionContext(
                 token("drag"),
@@ -478,7 +486,7 @@ private[kyo] object DomDragRuntime:
                 case Drag.Rejection.Application(reason) => s"Move rejected: $reason"
                 case other                              => s"Move rejected: ${other.productPrefix}"
 
-        private def processSensorFrame(context: SessionContext): Unit =
+        private def processSensorFrame(context: SessionContext)(using AllowUnsafe): Unit =
             val at    = context.lastPoint
             val stack = hit.elementsAt(at.x, at.y)
             context.preview.foreach { preview =>
@@ -488,7 +496,9 @@ private[kyo] object DomDragRuntime:
             }
             autoScroll(at)
             val matched = stack.iterator
-                .filter(element => (container.contains(element)) || (element eq container))
+                .filter { element =>
+                    ownsTarget(element)
+                }
                 .map(element => acceptedTarget(element, context, Absent, UI.Modifiers.none))
                 .collectFirst { case Present(value) => value }
             matched match
@@ -523,7 +533,7 @@ private[kyo] object DomDragRuntime:
             target: Located[DragProtocol.ValidatedTargetConfig],
             stack: Seq[dom.Element],
             at: Drag.Point
-        ): Unit =
+        )(using AllowUnsafe): Unit =
             val excluded = context.selectionKeys.toSet
             val anchor   = stack.iterator
                 .filter(element => target.element.contains(element) && !(element eq target.element))
@@ -557,7 +567,7 @@ private[kyo] object DomDragRuntime:
         private def keyboardItems(
             context: SessionContext,
             target: Located[DragProtocol.ValidatedTargetConfig]
-        ): Chunk[Located[DragProtocol.ValidatedSourceConfig]] =
+        )(using AllowUnsafe): Chunk[Located[DragProtocol.ValidatedSourceConfig]] =
             val excluded = context.selectionKeys.toSet
             val nodes    = target.element.querySelectorAll(s"[$sourceKeyAttribute]")
             val builder  = ChunkBuilder.init[Located[DragProtocol.ValidatedSourceConfig]]
@@ -574,7 +584,7 @@ private[kyo] object DomDragRuntime:
             builder.result()
         end keyboardItems
 
-        private def containerTargets(): Chunk[Located[DragProtocol.ValidatedTargetConfig]] =
+        private def containerTargets()(using AllowUnsafe): Chunk[Located[DragProtocol.ValidatedTargetConfig]] =
             val nodes   = container.querySelectorAll(s"[$targetKeyAttribute]")
             val builder = ChunkBuilder.init[Located[DragProtocol.ValidatedTargetConfig]]
             var index   = 0
@@ -586,7 +596,7 @@ private[kyo] object DomDragRuntime:
             builder.result()
         end containerTargets
 
-        private def keyboardKey(context: SessionContext, event: dom.Event): Unit =
+        private def keyboardKey(context: SessionContext, event: dom.Event)(using AllowUnsafe): Unit =
             val orientation              = context.target.fold(Drag.Orientation.Vertical)(_.config.wire.orientation)
             val forwardKeys: Set[String] = orientation match
                 case Drag.Orientation.Horizontal => Set("ArrowRight")
@@ -624,7 +634,7 @@ private[kyo] object DomDragRuntime:
             end match
         end keyboardKey
 
-        private def moveKeyboardSlot(context: SessionContext, update: Int => Int): Unit =
+        private def moveKeyboardSlot(context: SessionContext, update: Int => Int)(using AllowUnsafe): Unit =
             context.target.foreach { target =>
                 val items   = keyboardItems(context, target)
                 val maximum = items.size
@@ -654,7 +664,7 @@ private[kyo] object DomDragRuntime:
             end if
         end applyKeyboardSlot
 
-        private def keyboardTab(context: SessionContext, backward: Boolean): Unit =
+        private def keyboardTab(context: SessionContext, backward: Boolean)(using AllowUnsafe): Unit =
             val targets = containerTargets()
             if targets.nonEmpty then
                 val currentIndex = context.target.fold(-1)(current => targets.indexWhere(_.element eq current.element))
@@ -673,7 +683,7 @@ private[kyo] object DomDragRuntime:
             end if
         end keyboardTab
 
-        private def selectionSnapshot(source: Located[DragProtocol.ValidatedSourceConfig]): Chunk[String] =
+        private def selectionSnapshot(source: Located[DragProtocol.ValidatedSourceConfig])(using AllowUnsafe): Chunk[String] =
             val scope = enclosingTarget(source.element).map(_.element).getOrElse(container)
             val nodes = scope.querySelectorAll(s"[$sourceKeyAttribute][$selectedAttribute='true']")
             val keys  = ChunkBuilder.init[String]
@@ -693,7 +703,7 @@ private[kyo] object DomDragRuntime:
             if found && selected.nonEmpty then selected else Chunk(source.config.wire.key)
         end selectionSnapshot
 
-        private def enclosingTarget(from: dom.Element): Maybe[Located[DragProtocol.ValidatedTargetConfig]] =
+        private def enclosingTarget(from: dom.Element)(using AllowUnsafe): Maybe[Located[DragProtocol.ValidatedTargetConfig]] =
             var current = parent(from)
             while current != null && (container.contains(current) || (current eq container)) do
                 decodeTarget(current) match
@@ -749,7 +759,7 @@ private[kyo] object DomDragRuntime:
 
         // --- Native HTML5 sessions ---
 
-        private def start(event: dom.Event): Unit =
+        private def start(event: dom.Event)(using AllowUnsafe): Unit =
             asElement(event.target).flatMap(closestSource).foreach { source =>
                 val config           = source.config.wire
                 val nativeActivation =
@@ -787,7 +797,7 @@ private[kyo] object DomDragRuntime:
             }
         end start
 
-        private def probeTarget(event: dom.Event, make: (Seq[String], DragProtocol.TargetData) => UIEvent): Unit =
+        private def probeTarget(event: dom.Event, make: (Seq[String], DragProtocol.TargetData) => UIEvent)(using AllowUnsafe): Unit =
             newProbe(event).foreach { case State.ExternalProbing(context, probe) =>
                 move(State.ExternalProbing(context, probe))
                 targetEvent(event, context, Present(probe), make)
@@ -799,7 +809,7 @@ private[kyo] object DomDragRuntime:
             context: SessionContext,
             probe: Maybe[Probe],
             make: (Seq[String], DragProtocol.TargetData) => UIEvent
-        ): Unit =
+        )(using AllowUnsafe): Unit =
             asElement(event.target).flatMap(acceptedTarget(_, context, probe, modifiers(event))).foreach { matched =>
                 event.preventDefault()
                 setDropEffect(event, matched.operation)
@@ -820,13 +830,13 @@ private[kyo] object DomDragRuntime:
             }
         end leave
 
-        private def probeDrop(event: dom.Event): Unit =
+        private def probeDrop(event: dom.Event)(using AllowUnsafe): Unit =
             newProbe(event).foreach { case (external @ State.ExternalProbing(context, _)) =>
                 move(external)
                 externalDrop(event, context)
             }
 
-        private def externalDrop(event: dom.Event, context: SessionContext): Unit =
+        private def externalDrop(event: dom.Event, context: SessionContext)(using AllowUnsafe): Unit =
             dataTransfer(event).flatMap(snapshot).fold(discardContext(context)) { snapshot =>
                 context.wireItems = Present(snapshot.wireItems)
                 context.domainItems = Present(snapshot.domainItems)
@@ -846,7 +856,7 @@ private[kyo] object DomDragRuntime:
             }
         end externalDrop
 
-        private def internalDrop(event: dom.Event, context: SessionContext): Unit =
+        private def internalDrop(event: dom.Event, context: SessionContext)(using AllowUnsafe): Unit =
             asElement(event.target).flatMap(acceptedTarget(_, context, Absent, modifiers(event))).foreach { matched =>
                 event.preventDefault()
                 setDropEffect(event, matched.operation)
@@ -980,7 +990,7 @@ private[kyo] object DomDragRuntime:
             context: SessionContext,
             probe: Maybe[Probe],
             mods: UI.Modifiers
-        ): Maybe[TargetMatch] =
+        )(using AllowUnsafe): Maybe[TargetMatch] =
             var current = from
             while current != null && container.contains(current) do
                 decodeTarget(current).foreach { target =>
@@ -1035,7 +1045,7 @@ private[kyo] object DomDragRuntime:
                 Present(Drag.Position.Inside)
             )
 
-        private def closestSource(from: dom.Element): Maybe[Located[DragProtocol.ValidatedSourceConfig]] =
+        private def closestSource(from: dom.Element)(using AllowUnsafe): Maybe[Located[DragProtocol.ValidatedSourceConfig]] =
             var current = from
             while current != null && container.contains(current) do
                 decodeSource(current) match
@@ -1045,13 +1055,17 @@ private[kyo] object DomDragRuntime:
             Absent
         end closestSource
 
-        private def decodeSource(element: dom.Element): Maybe[Located[DragProtocol.ValidatedSourceConfig]] =
-            validPath(element.getAttribute("data-kyo-path")).flatMap { path =>
-                cachedSource(element).flatMap { config =>
-                    val dedicated = element.getAttribute(sourceKeyAttribute)
-                    if dedicated != null && dedicated == config.wire.key then Present(Located(element, path, config)) else Absent
+        private def decodeSource(element: dom.Element)(using AllowUnsafe): Maybe[Located[DragProtocol.ValidatedSourceConfig]] =
+            if !ownsTarget(element) then Absent
+            else
+                validPath(element.getAttribute("data-kyo-path")).flatMap { path =>
+                    cachedSource(element).flatMap { config =>
+                        val dedicated = element.getAttribute(sourceKeyAttribute)
+                        if dedicated != null && dedicated == config.wire.key then Present(Located(element, path, config)) else Absent
+                    }
                 }
-            }
+            end if
+        end decodeSource
 
         private def cachedSource(element: dom.Element): Maybe[DragProtocol.ValidatedSourceConfig] =
             val raw = element.getAttribute(sourceAttribute)
@@ -1072,13 +1086,17 @@ private[kyo] object DomDragRuntime:
             end if
         end cachedSource
 
-        private def decodeTarget(element: dom.Element): Maybe[Located[DragProtocol.ValidatedTargetConfig]] =
-            validPath(element.getAttribute("data-kyo-path")).flatMap { path =>
-                cachedTarget(element).flatMap { config =>
-                    val dedicated = element.getAttribute(targetKeyAttribute)
-                    if dedicated != null && dedicated == config.wire.key then Present(Located(element, path, config)) else Absent
+        private def decodeTarget(element: dom.Element)(using AllowUnsafe): Maybe[Located[DragProtocol.ValidatedTargetConfig]] =
+            if !ownsTarget(element) then Absent
+            else
+                validPath(element.getAttribute("data-kyo-path")).flatMap { path =>
+                    cachedTarget(element).flatMap { config =>
+                        val dedicated = element.getAttribute(targetKeyAttribute)
+                        if dedicated != null && dedicated == config.wire.key then Present(Located(element, path, config)) else Absent
+                    }
                 }
-            }
+            end if
+        end decodeTarget
 
         private def cachedTarget(element: dom.Element): Maybe[DragProtocol.ValidatedTargetConfig] =
             val raw = element.getAttribute(targetAttribute)
@@ -1422,6 +1440,9 @@ private[kyo] object DomDragRuntime:
 
         private def number(value: js.Dynamic): Double =
             if js.typeOf(value) == "number" && value.asInstanceOf[Double].isFinite then value.asInstanceOf[Double] else 0d
+
+        private def ownsTarget(target: dom.EventTarget)(using AllowUnsafe): Boolean =
+            mount.fold(DomMount.owns(container, target))(_.owns(target))
 
         private def asElement(value: Any): Maybe[dom.Element] = value match
             case element: dom.Element => Present(element)

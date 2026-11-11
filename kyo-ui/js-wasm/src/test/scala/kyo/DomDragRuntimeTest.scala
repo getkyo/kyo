@@ -136,6 +136,40 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
         override def drainStarted(): Unit                                     = started = true
     end MountedDiagnostics
 
+    "nested selector mounts own their native drag sessions" in {
+        Scope.run {
+            for
+                outerDiagnostics <- Sync.defer(new MountedDiagnostics)
+                innerDiagnostics <- Sync.defer(new MountedDiagnostics)
+                _                <- Sync.defer {
+                    dom.document.body.innerHTML = "<div id='drag-outer'></div>"
+                }
+                outer <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.div(UI.div("placeholder").id("drag-inner")),
+                    "#drag-outer",
+                    outerDiagnostics
+                )))
+                _     <- Scope.ensure(outer.interrupt.andThen(outer.getResult).unit)
+                _     <- assertEventually(Sync.defer(outerDiagnostics.runtime != null))
+                inner <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.div(UI.button("source").id("nested-drag-source").dragSource(
+                        Drag.Source("nested-source", Chunk(dragText("text/plain" -> "nested")))
+                    )),
+                    "#drag-inner",
+                    innerDiagnostics
+                )))
+                _        <- Scope.ensure(inner.interrupt.andThen(inner.getResult).unit)
+                _        <- assertEventually(Sync.defer(innerDiagnostics.runtime != null))
+                sessions <- Sync.defer {
+                    val source   = dom.document.getElementById("nested-drag-source")
+                    val transfer = new FakeTransfer
+                    discard(source.dispatchEvent(dragEvent("dragstart", source, transfer, 0, 0)))
+                    (outerDiagnostics.runtime.activeSessions, innerDiagnostics.runtime.activeSessions)
+                }
+            yield assert(sessions == (0, 1), s"Observed sessions: $sessions")
+        }
+    }
+
     "runs a native internal drag through scoped capture listeners" in {
         val source = Drag.Source(
             "source-key",

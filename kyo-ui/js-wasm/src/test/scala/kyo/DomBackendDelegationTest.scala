@@ -446,4 +446,274 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "selector mounts dispatch clicks only to their own tree" in {
+        Scope.run {
+            for
+                leftCount    <- AtomicInt.init(0)
+                rightCount   <- AtomicInt.init(0)
+                leftBarrier  <- Latch.init(1)
+                rightBarrier <- Latch.init(1)
+                leftReady    <- Sync.defer(new DomTestEnv.MountReady)
+                rightReady   <- Sync.defer(new DomTestEnv.MountReady)
+                _            <- Sync.defer {
+                    dom.document.body.innerHTML = "<div id='left-mount'></div><div id='right-mount'></div>"
+                }
+                left <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.div(UI.button("left").id("left-click").onClick(leftCount.incrementAndGet.unit))
+                        .onKeyUp(_ => leftBarrier.release),
+                    "#left-mount",
+                    leftReady
+                )))
+                _     <- Scope.ensure(left.interrupt.andThen(left.getResult).unit)
+                right <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.div(UI.button("right").id("right-click").onClick(rightCount.incrementAndGet.unit))
+                        .onKeyUp(_ => rightBarrier.release),
+                    "#right-mount",
+                    rightReady
+                )))
+                _ <- Scope.ensure(right.interrupt.andThen(right.getResult).unit)
+                _ <- assertEventually(Sync.defer(leftReady.installed && rightReady.installed))
+                _ <- Sync.defer {
+                    dom.document.getElementById("left-click").asInstanceOf[dom.html.Button].click()
+                    Seq("left-click", "right-click").foreach { id =>
+                        val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                            "keyup",
+                            scalajs.Dynamic.literal(key = "x", bubbles = true)
+                        )
+                        discard(dom.document.getElementById(id).asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
+                    }
+                }
+                _          <- leftBarrier.await
+                _          <- rightBarrier.await
+                leftValue  <- leftCount.get
+                rightValue <- rightCount.get
+            yield assert((leftValue, rightValue) == (1, 0), s"Observed counts: $leftValue, $rightValue")
+        }
+    }
+
+    "nested selector mounts do not dispatch into the enclosing tree" in {
+        Scope.run {
+            for
+                outerCount   <- AtomicInt.init(0)
+                innerCount   <- AtomicInt.init(0)
+                outerBarrier <- Latch.init(1)
+                innerBarrier <- Latch.init(1)
+                outerReady   <- Sync.defer(new DomTestEnv.MountReady)
+                innerReady   <- Sync.defer(new DomTestEnv.MountReady)
+                _            <- Sync.defer {
+                    dom.document.body.innerHTML = "<div id='outer-mount'></div>"
+                }
+                outer <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.div(UI.div("placeholder").id("inner-mount"), UI.button("marker").id("outer-marker"))
+                        .onClick(outerCount.incrementAndGet.unit).onKeyUp(_ => outerBarrier.release),
+                    "#outer-mount",
+                    outerReady
+                )))
+                _     <- Scope.ensure(outer.interrupt.andThen(outer.getResult).unit)
+                _     <- assertEventually(Sync.defer(outerReady.installed))
+                inner <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.div(UI.button("inner").id("inner-click").onClick(innerCount.incrementAndGet.unit))
+                        .onKeyUp(_ => innerBarrier.release),
+                    "#inner-mount",
+                    innerReady
+                )))
+                _ <- Scope.ensure(inner.interrupt.andThen(inner.getResult).unit)
+                _ <- assertEventually(Sync.defer(innerReady.installed))
+                _ <- Sync.defer {
+                    dom.document.getElementById("inner-click").asInstanceOf[dom.html.Button].click()
+                    Seq("outer-marker", "inner-click").foreach { id =>
+                        val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                            "keyup",
+                            scalajs.Dynamic.literal(key = "x", bubbles = true)
+                        )
+                        discard(dom.document.getElementById(id).asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
+                    }
+                }
+                _          <- outerBarrier.await
+                _          <- innerBarrier.await
+                outerValue <- outerCount.get
+                innerValue <- innerCount.get
+            yield assert((outerValue, innerValue) == (0, 1), s"Observed counts: $outerValue, $innerValue")
+        }
+    }
+
+    "selector mounts leave outside input masking and scroll keys alone" in {
+        Scope.run {
+            for
+                ready <- Sync.defer(new DomTestEnv.MountReady)
+                _     <- Sync.defer {
+                    dom.document.body.innerHTML =
+                        "<div id='owned-mount'></div><div data-kyo-scroll-keys><input id='outside-input' data-kyo-mask='999'></div>"
+                }
+                fiber  <- Fiber.initUnscoped(Scope.run(DomBackend.mount(UI.div("owned"), "#owned-mount", ready)))
+                _      <- Scope.ensure(fiber.interrupt.andThen(fiber.getResult).unit)
+                _      <- assertEventually(Sync.defer(ready.installed))
+                result <- Sync.defer {
+                    val target = dom.document.getElementById("outside-input").asInstanceOf[scalajs.Dynamic]
+                    val input  = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].InputEvent)(
+                        "beforeinput",
+                        scalajs.Dynamic.literal(inputType = "insertText", data = "1", bubbles = true, cancelable = true)
+                    )
+                    val key = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                        "keydown",
+                        scalajs.Dynamic.literal(key = "ArrowDown", bubbles = true, cancelable = true)
+                    )
+                    discard(target.dispatchEvent(input))
+                    discard(target.dispatchEvent(key))
+                    (
+                        input.defaultPrevented.asInstanceOf[Boolean],
+                        key.defaultPrevented.asInstanceOf[Boolean],
+                        target.value.asInstanceOf[String]
+                    )
+                }
+            yield assert(result == (false, false, ""), s"Observed input: $result")
+        }
+    }
+
+    "selector mounts do not inherit event declarations from outside ancestors" in {
+        Scope.run {
+            for
+                ready <- Sync.defer(new DomTestEnv.MountReady)
+                _     <- Sync.defer {
+                    dom.document.body.innerHTML =
+                        "<div data-kyo-ev='click' data-kyo-scroll-keys><div id='bounded-mount'></div></div>"
+                }
+                fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.div(UI.a("link").href(UI.Href.Path("#destination")).id("owned-link"), UI.button("key").id("owned-key")),
+                    "#bounded-mount",
+                    ready
+                )))
+                _         <- Scope.ensure(fiber.interrupt.andThen(fiber.getResult).unit)
+                _         <- assertEventually(Sync.defer(ready.installed))
+                prevented <- Sync.defer {
+                    val click = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].MouseEvent)(
+                        "click",
+                        scalajs.Dynamic.literal(bubbles = true, cancelable = true)
+                    )
+                    val key = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                        "keydown",
+                        scalajs.Dynamic.literal(key = "ArrowDown", bubbles = true, cancelable = true)
+                    )
+                    discard(dom.document.getElementById("owned-link").asInstanceOf[scalajs.Dynamic].dispatchEvent(click))
+                    discard(dom.document.getElementById("owned-key").asInstanceOf[scalajs.Dynamic].dispatchEvent(key))
+                    (click.defaultPrevented.asInstanceOf[Boolean], key.defaultPrevented.asInstanceOf[Boolean])
+                }
+            yield assert(prevented == (false, false), s"Observed prevention: $prevented")
+        }
+    }
+
+    "closing a replaced mount preserves the replacement's events" in {
+        Scope.run {
+            for
+                count       <- AtomicInt.init(0)
+                barrier     <- Latch.init(1)
+                oldReady    <- Sync.defer(new DomTestEnv.MountReady)
+                newReady    <- Sync.defer(new DomTestEnv.MountReady)
+                _           <- Sync.defer { dom.document.body.innerHTML = "<div id='replacement-mount'></div>" }
+                old         <- Fiber.initUnscoped(Scope.run(DomBackend.mount(UI.div("old"), "#replacement-mount", oldReady)))
+                _           <- Scope.ensure(old.interrupt.andThen(old.getResult).unit)
+                _           <- assertEventually(Sync.defer(oldReady.installed))
+                replacement <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.div(UI.button("new").id("replacement-click").onClick(count.incrementAndGet.unit))
+                        .onKeyUp(_ => barrier.release),
+                    "#replacement-mount",
+                    newReady
+                )))
+                _ <- Scope.ensure(replacement.interrupt.andThen(replacement.getResult).unit)
+                _ <- assertEventually(Sync.defer(newReady.installed))
+                _ <- old.interrupt
+                _ <- old.getResult
+                _ <- Sync.defer {
+                    val target = dom.document.getElementById("replacement-click").asInstanceOf[dom.html.Button]
+                    target.click()
+                    val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                        "keyup",
+                        scalajs.Dynamic.literal(key = "x", bubbles = true)
+                    )
+                    discard(target.asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
+                }
+                _     <- barrier.await
+                value <- count.get
+            yield assert(value == 1)
+        }
+    }
+
+    "closed nested mounts keep leftover DOM outside the parent's event tree" in {
+        Scope.run {
+            for
+                count      <- AtomicInt.init(0)
+                barrier    <- Latch.init(1)
+                outerReady <- Sync.defer(new DomTestEnv.MountReady)
+                innerReady <- Sync.defer(new DomTestEnv.MountReady)
+                _          <- Sync.defer { dom.document.body.innerHTML = "<div id='closed-outer'></div>" }
+                outer      <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.div(UI.div("placeholder").id("closed-inner"), UI.button("marker").id("closed-marker"))
+                        .onClick(count.incrementAndGet.unit).onKeyUp(_ => barrier.release),
+                    "#closed-outer",
+                    outerReady
+                )))
+                _     <- Scope.ensure(outer.interrupt.andThen(outer.getResult).unit)
+                _     <- assertEventually(Sync.defer(outerReady.installed))
+                inner <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.button("leftover").id("closed-click"),
+                    "#closed-inner",
+                    innerReady
+                )))
+                _ <- Scope.ensure(inner.interrupt.andThen(inner.getResult).unit)
+                _ <- assertEventually(Sync.defer(innerReady.installed))
+                _ <- inner.interrupt
+                _ <- inner.getResult
+                _ <- Sync.defer {
+                    dom.document.getElementById("closed-click").asInstanceOf[dom.html.Button].click()
+                    val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                        "keyup",
+                        scalajs.Dynamic.literal(key = "x", bubbles = true)
+                    )
+                    discard(dom.document.getElementById("closed-marker").asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
+                }
+                _     <- barrier.await
+                value <- count.get
+            yield assert(value == 0)
+        }
+    }
+
+    "raw HTML in a nested mount cannot borrow the container's outer event path" in {
+        Scope.run {
+            for
+                count      <- AtomicInt.init(0)
+                barrier    <- Latch.init(1)
+                outerReady <- Sync.defer(new DomTestEnv.MountReady)
+                innerReady <- Sync.defer(new DomTestEnv.MountReady)
+                _          <- Sync.defer { dom.document.body.innerHTML = "<div id='raw-outer'></div>" }
+                outer      <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.div(UI.div("spacer"), UI.div("placeholder").id("raw-inner")),
+                    "#raw-outer",
+                    outerReady
+                )))
+                _     <- Scope.ensure(outer.interrupt.andThen(outer.getResult).unit)
+                _     <- assertEventually(Sync.defer(outerReady.installed))
+                inner <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.Ast.Reactive(Signal.initConst(UI.fragment(
+                        UI.rawHtml("<button id='raw-click'>raw</button>"),
+                        UI.button("marker").id("raw-marker").onClick(count.incrementAndGet.unit).onKeyUp(_ => barrier.release)
+                    ))),
+                    "#raw-inner",
+                    innerReady
+                )))
+                _ <- Scope.ensure(inner.interrupt.andThen(inner.getResult).unit)
+                _ <- assertEventually(Sync.defer(innerReady.installed))
+                _ <- Sync.defer {
+                    dom.document.getElementById("raw-click").asInstanceOf[dom.html.Button].click()
+                    val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
+                        "keyup",
+                        scalajs.Dynamic.literal(key = "x", bubbles = true)
+                    )
+                    discard(dom.document.getElementById("raw-marker").asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
+                }
+                _     <- barrier.await
+                value <- count.get
+            yield assert(value == 0, s"Observed clicks: $value")
+        }
+    }
+
 end DomBackendDelegationTest
