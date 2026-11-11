@@ -4,7 +4,7 @@ kyo-ui describes web UIs as pure values that run unchanged in three places: a Sc
 
 **A `UI` is a pure value, runnable on any of three targets.** `UI.runMount(ui)` mounts to the DOM on Scala.js. `UI.runHandlers(basePath)(ui)` exposes the same value as two HTTP handlers (a GET that serves the SSR page plus a WebSocket route that carries diffs out and events in) for server-driven deployments. `UI.runRender(ui)` returns a `Stream[String, Async]` of full-page HTML for SSR, tests, or custom transports. The same source becomes a Scala.js single-page app or a server-push HTML-over-WebSocket app; only the runner changes. The same value tree includes a typed SVG layer (the `Svg.*` factories) rendered by the same engine across all three runners.
 
-**A `Signal[A]` is a value of type `A` everywhere kyo-ui takes one.** Setters and child slots that accept `A` equally accept `Signal[A]` (read-only, re-renders on change) or `SignalRef[A]` (read-write, two-way binding). Conditional rendering is `when(cond: Signal[Boolean])(ui)`. There is no wrapper type, no binder operator, no hooks; reactivity is the API, not a layer on top of it.
+**Signals express reactive values.** Child slots and reactive setter overloads accept `Signal[A]` and re-render on change; bound input setters accept `SignalRef[A]` for two-way binding. For a setter that takes a constant, such as `.title`, map a signal to the element instead. Conditional rendering is `when(cond: Signal[Boolean])(ui)`. There is no wrapper type, no binder operator, no hooks; reactivity is the API, not a layer on top of it.
 
 **Invalid states do not compile.** Container factories restrict their children at the type level (`ul(div(...))` is a compile error). The same content-model typing rejects a bare SVG primitive as an HTML child (`div(Svg.circle(...))` does not compile; only the `<svg>` root, `Svg.svg(...)`, is HTML-embeddable). `Length` variants are method-typed (`.padding` rejects `Auto`, `.gap` rejects `Pct`). Domain enums (`Target`, `Href`, `Keyboard`, `FileAccept`, `Color`) replace stringly-typed attributes. Capability traits gate setters (`.disabled` only on `HasDisabled` elements, `.checked` only on `BooleanInput`). Wrong HTML stops compiling.
 
@@ -58,6 +58,7 @@ val greeting: UI = p("Hello, ", span("world").id("name"), "!")
 Every `Element` carries an `Attrs` record. The chainable setters are:
 
 - `.id(v: String)`: DOM id (also used by `Browser`-style test helpers).
+- `.title(v: String)`: advisory text on any element, including the name of an embedded frame. For SVG descriptive text, use an `Svg.title` child.
 - `.hidden(v: Boolean)`: hide the element. The `Signal[Boolean]` overload exists but lives under "Reactivity" below because it changes the return type.
 - `.style(v: Style)` / `.style(f: Style.type => Style)`: attach styling, see [Styles](#styles).
 - `.tabIndex(v)`, `.focusTrap(v)`, `.focusGroup(id)`: focus order and grouping for keyboard navigation.
@@ -102,7 +103,7 @@ div.onClickSelf(Console.printLine("background"))(
 )
 ```
 
-By default an event bubbles through the tree: every ancestor that declared a handler for the event's type fires, innermost first. `.stopPropagation(true)` makes an element *consume* the events it handles — when the dispatch walk reaches an element that both carries the flag and declared a handler for the arriving type, handlers on elements above it do not fire. It only consumes the types that element actually handles; other types pass through. Typical use is nested overlays, where an Escape should close just the innermost layer. Focus and blur never bubble, so the flag does not apply to them.
+By default an event bubbles through the tree: every ancestor that declared a handler for the event's type fires, innermost first. `.stopPropagation(true)` makes an element *consume* the events it handles: when the dispatch walk reaches an element that both carries the flag and declared a handler for the arriving type, handlers on elements above it do not fire. It only consumes the types that element actually handles; other types pass through. Typical use is nested overlays, where an Escape should close just the innermost layer. Focus and blur never bubble, so the flag does not apply to them.
 
 > **Note:** `onClick`, `onClickSelf`, `onFocus`, `onBlur`, and `Form.onSubmit` each available as a by-name `=> Any < Async` action or as a typed handler receiving `MouseEvent` or `KeyboardEvent`. `onKeyDown` and `onKeyUp` take a `KeyboardEvent => Any < Async`; the function shape is required because the handler receives the key. Per-input change handlers take `String => Any < Async`, `Boolean => Any < Async`, or `Double => Any < Async`.
 
@@ -357,6 +358,16 @@ Input elements share three capability traits.
 `BooleanInput`: boolean-shaped fields with `.checked`, disabled, and a `Boolean => Unit < Async` Change handler. Implementations: `UI.checkbox`, `UI.radio`.
 
 `ConstrainedInput`: the `TextInput` variants that accept typing constraints, adding `.inputFilter(v: InputFilter)` and `.inputMask(v: String)`. Implementations: every `TextInput` except `UI.numberInput`, which constrains its content through `type="number"` plus `.min` / `.max` / `.step` instead. See [Typing constraints](#typing-constraints).
+
+`UI.textarea.rows(n)` sets its visible line count, clamped to at least 1. `Style.fieldSizing(_.content)` sizes a field from its content instead; on a textarea this overrides the `rows` sizing hint. CSS width, height and min/max constraints still apply. Browsers without `field-sizing` support retain normal sizing from `rows` and CSS.
+
+```scala
+import kyo.*
+import kyo.Style.*
+
+val message: UI = UI.textarea.rows(1).title("Message")
+    .style(Style.width(320.px).minHeight(24.px).maxHeight(160.px).fieldSizing(_.content))
+```
 
 ### Two-way binding via `SignalRef`
 
@@ -802,6 +813,7 @@ val fullWidth: Style = Style.width(100.pct).maxWidth(960.px)
 - `.textAlign(v)`, `.textDecoration(v)` with shorthands `.underline` and `.strikethrough`.
 - `.lineHeight(v: Double)`: clamped to `>= 0.1`.
 - `.letterSpacing(v: Px | Em)`, `.textTransform(v)`, `.textOverflow(v)`, `.textWrap(v)`.
+- `.fieldSizing(v)`: `fixed` for the browser's default field sizing, or `content` to size from the field's contents within CSS size constraints.
 
 ### Borders, corners, shadows
 

@@ -298,6 +298,10 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def whiteSpace(v: WhiteSpace): Style                    = appendProp(Prop.WhiteSpaceProp(v))
     def whiteSpace(f: WhiteSpace.type => WhiteSpace): Style = whiteSpace(f(WhiteSpace))
 
+    /** Sets CSS `field-sizing`: fixed sizing or sizing from the field's content, subject to its CSS size constraints. */
+    def fieldSizing(v: FieldSizing): Style                     = appendProp(Prop.FieldSizingProp(v))
+    def fieldSizing(f: FieldSizing.type => FieldSizing): Style = fieldSizing(f(FieldSizing))
+
     // Borders: width is px only
 
     def border(width: Length.Px, style: BorderStyle, c: Color): Style =
@@ -711,6 +715,8 @@ object Style:
     def textWrap(f: TextWrap.type => TextWrap): Style                               = empty.textWrap(f)
     def whiteSpace(v: WhiteSpace): Style                                            = empty.whiteSpace(v)
     def whiteSpace(f: WhiteSpace.type => WhiteSpace): Style                         = empty.whiteSpace(f)
+    def fieldSizing(v: FieldSizing): Style                                          = empty.fieldSizing(v)
+    def fieldSizing(f: FieldSizing.type => FieldSizing): Style                      = empty.fieldSizing(f)
     def border(width: Length.Px, style: BorderStyle, c: Color): Style               = empty.border(width, style, c)
     def border(width: Length.Px, style: BorderStyle, f: Color.type => Color): Style = empty.border(width, style, f)
     def border(width: Length.Px, c: Color): Style                                   = empty.border(width, c)
@@ -997,6 +1003,10 @@ object Style:
     enum WhiteSpace derives CanEqual:
         case normal, noWrap, pre, preWrap, preLine
 
+    /** CSS `field-sizing`: `fixed` uses the field's default sizing; `content` sizes from its contents within CSS size constraints. */
+    enum FieldSizing derives CanEqual:
+        case fixed, content
+
     /** Maps to the CSS `font-family` property; `Custom` carries an arbitrary family name. */
     enum FontFamily derives CanEqual:
         case SansSerif, Serif, Monospace, Cursive, Fantasy, SystemUi
@@ -1163,6 +1173,7 @@ object Style:
         case TextOverflowProp(value: TextOverflow)
         case TextWrapProp(value: TextWrap)
         case WhiteSpaceProp(value: WhiteSpace)
+        case FieldSizingProp(value: FieldSizing)
         // Borders
         case BorderColorProp(top: Color, right: Color, bottom: Color, left: Color)
         case BorderWidthProp(top: Length, right: Length, bottom: Length, left: Length)

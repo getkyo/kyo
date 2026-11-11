@@ -655,6 +655,11 @@ object UI:
             def id(v: String): Self      = withAttrs(attrs.copy(identifier = Present(v)))
             def hidden(v: Boolean): Self = withAttrs(attrs.copy(hidden = Present(v)))
 
+            /** Sets the element's advisory `title` attribute. On a frame it names the embedded content. Use an `Svg.title` child for SVG
+              * descriptive text.
+              */
+            def title(v: String): Self = withAttrs(attrs.copy(title = Present(v)))
+
             /** Reactive `hidden`: re-renders when the signal emits. */
             def hidden(v: Signal[Boolean]): Reactive[Self] =
                 given Frame = frame
@@ -1140,6 +1145,7 @@ object UI:
 
         final private[kyo] case class Attrs(
             identifier: Maybe[String] = Absent,
+            title: Maybe[String] = Absent,
             hidden: Maybe[Boolean] = Absent,
             tabIndex: Maybe[Int] = Absent,
             focusTrap: Maybe[Boolean] = Absent,
@@ -1493,10 +1499,14 @@ object UI:
 
         final case class Textarea(
             attrs: Attrs = Attrs(),
-            textInputAttrs: TextInputAttrs = TextInputAttrs()
+            textInputAttrs: TextInputAttrs = TextInputAttrs(),
+            rows: Maybe[Int] = Absent
         )(using val frame: Frame) extends Block with Interactive with ConstrainedInput with Void:
             type Self = Textarea
             def withAttrs(a: Attrs): Textarea = copy(attrs = a)
+
+            /** Sets the number of visible lines, clamped to at least 1. Content-based field sizing overrides this sizing hint. */
+            def rows(v: Int): Textarea = copy(rows = Present(math.max(1, v)))
 
             def value: Maybe[Bound[String]]            = textInputAttrs.value
             def placeholder: Maybe[String]             = textInputAttrs.placeholder
@@ -1994,8 +2004,7 @@ object UI:
         /** An inline frame embedding another document at `src`. `title` names the frame for assistive technology. Size it with `.style`. */
         final case class Iframe(
             attrs: Attrs = Attrs(),
-            src: Maybe[String] = Absent,
-            frameTitle: Maybe[String] = Absent
+            src: Maybe[String] = Absent
         )(using val frame: Frame) extends Block with Void:
             type Self = Iframe
             def withAttrs(a: Attrs): Iframe            = copy(attrs = a)
@@ -2003,7 +2012,6 @@ object UI:
             def src(v: Signal[String]): Reactive[Self] =
                 given Frame = frame
                 Reactive[Self](v.map(s => this.src(s): UI))
-            def title(v: String): Iframe = copy(frameTitle = Present(v))
         end Iframe
 
         // ---- Custom dropdown (div-based overlay, NOT native <select>) ----

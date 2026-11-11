@@ -7,6 +7,78 @@ import kyo.UI.foreach
 
 class HtmlRendererTest extends UITest:
 
+    "control attributes: title is escaped once on ordinary elements and frames" in {
+        kyo.internal.HtmlRenderer.render(
+            UI.div(
+                UI.span.title("before").title("Tom & \"Jerry\" <tag>")("label"),
+                UI.button.title("")("go"),
+                UI.iframe("about:blank").title("Revenue"),
+                UI.span("untitled")
+            ),
+            Seq.empty
+        ).map { html =>
+            assert(html.contains("""<span data-kyo-path="0" title="Tom &amp; &quot;Jerry&quot; &lt;tag&gt;">label</span>"""), html)
+            assert(html.contains("""<button data-kyo-path="1" title="" type="submit">go</button>"""), html)
+            assert(html.contains("""<iframe data-kyo-path="2" title="Revenue" src="about:blank"></iframe>"""), html)
+            assert(html.contains("""<span data-kyo-path="3">untitled</span>"""), html)
+            assert(html.split(" title=").length == 4, html)
+        }
+    }
+
+    "control attributes: textarea rows preserve positive values and clamp nonpositive values" in {
+        kyo.internal.HtmlRenderer.render(
+            UI.div(UI.textarea.rows(3), UI.textarea.rows(0), UI.textarea.rows(Int.MinValue), UI.textarea),
+            Seq.empty
+        ).map { html =>
+            assert(html.contains("""<textarea data-kyo-path="0" rows="3"></textarea>"""), html)
+            assert(html.contains("""<textarea data-kyo-path="1" rows="1"></textarea>"""), html)
+            assert(html.contains("""<textarea data-kyo-path="2" rows="1"></textarea>"""), html)
+            assert(html.contains("""<textarea data-kyo-path="3"></textarea>"""), html)
+            assert(UI.textarea.rows(Int.MaxValue).rows == Present(Int.MaxValue))
+        }
+    }
+
+    "control attributes: title and rows update through a reactive render" in {
+        val app = Signal.initRef(false).map { updated =>
+            UI.div(
+                UI.button("update").id("update").onClick(updated.set(true)),
+                updated.map { next =>
+                    UI.textarea.id("field").title(if next then "Tom & Jerry" else "before").rows(if next then 3 else 1)
+                }
+            )
+        }
+        withUI(app) {
+            for
+                _ <- Browser.assertAttribute(Selector.id("field"), "title", "before")
+                _ <- Browser.assertAttribute(Selector.id("field"), "rows", "1")
+                _ <- Browser.click(Selector.id("update"))
+                _ <- Browser.assertAttribute(Selector.id("field"), "title", "Tom & Jerry")
+                _ <- Browser.assertAttribute(Selector.id("field"), "rows", "3")
+            yield ()
+        }
+    }
+
+    "control attributes: content sizing overrides rows while fixed sizing preserves them" in {
+        import kyo.Style.*
+        val content = Style.width(200.px).fieldSizing(_.content)
+        withUI(UI.div(
+            UI.textarea.id("short").rows(1).value("one").style(content),
+            UI.textarea.id("tall").rows(20).value("one").style(content),
+            UI.textarea.id("fixed").rows(20).value("one").style(Style.width(200.px).fieldSizing(_.fixed))
+        )) {
+            for
+                sizing <- Browser.eval("getComputedStyle(document.getElementById('tall')).getPropertyValue('field-sizing')")
+                equal  <-
+                    Browser.evalBoolean("document.getElementById('short').offsetHeight === document.getElementById('tall').offsetHeight")
+                taller <-
+                    Browser.evalBoolean("document.getElementById('fixed').offsetHeight > document.getElementById('tall').offsetHeight")
+            yield
+                assert(sizing == "content")
+                assert(equal)
+                assert(taller)
+        }
+    }
+
     "div with text" in {
         withUI(UI.div("Hello")) {
             Browser.assertText(Selector.css("body"), "Hello").unit

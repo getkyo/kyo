@@ -586,6 +586,7 @@ private[kyo] object HtmlRenderer:
     private def renderCommonAttrs(sb: StringBuilder, elem: Element, cssRules: Maybe[CssCollector] = Absent)(using Frame): Unit =
         val attrs = elem.attrs
         attrs.identifier.foreach(id => w(sb, s""" id="${esc(id)}""""))
+        attrs.title.foreach(t => w(sb, s""" title="${esc(t)}""""))
         val pseudoClass = registerPseudoClass(cssRules, attrs.uiStyle)
         val classes     = pseudoClass match
             case Present(cls) => attrs.cssClasses :+ cls
@@ -771,6 +772,7 @@ private[kyo] object HtmlRenderer:
                 boolAttr(sb, "disabled", ta.disabled)
                 boolAttr(sb, "readonly", ta.readOnly)
                 ta.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
+                ta.rows.foreach(n => w(sb, s""" rows="$n""""))
             case sel: Select =>
                 boolAttr(sb, "disabled", sel.disabled)
                 val selValue: Unit < Sync = sel.value match
@@ -820,7 +822,6 @@ private[kyo] object HtmlRenderer:
                 img.alt.foreach(a => w(sb, s""" alt="${esc(a)}""""))
             case f: Iframe =>
                 f.src.foreach(s => w(sb, s""" src="${esc(s)}""""))
-                f.frameTitle.foreach(t => w(sb, s""" title="${esc(t)}""""))
             case td: Td =>
                 td.colspan.foreach(n => w(sb, s""" colspan="$n""""))
                 td.rowspan.foreach(n => w(sb, s""" rowspan="$n""""))

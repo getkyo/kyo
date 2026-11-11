@@ -458,6 +458,14 @@ class StyleTest extends kyo.test.Test[Any]:
         }
     }
 
+    "fieldSizing renders both values and the last declaration wins" in {
+        assert(Style.fieldSizing(_.content).toCss == "field-sizing: content;")
+        assert(Style.fieldSizing(Style.FieldSizing.fixed).toCss == "field-sizing: fixed;")
+        assert(Style.empty.fieldSizing(_.content) == Style.fieldSizing(Style.FieldSizing.content))
+        assert(Style.fieldSizing(_.content).fieldSizing(_.fixed).toCss == "field-sizing: fixed;")
+        assert(Style.fieldSizing(_.fixed).fieldSizing(_.content).toCss == "field-sizing: content;")
+    }
+
     "borders" - {
         "border shorthand" in {
             val s = Style.border(1.px, Style.BorderStyle.solid, Color.hex("#000").get)

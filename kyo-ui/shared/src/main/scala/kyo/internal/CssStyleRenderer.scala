@@ -271,7 +271,10 @@ private[kyo] object CssStyleRenderer:
                 case TextWrap.ellipsis => "overflow-wrap: normal; text-overflow: ellipsis;"
                 case TextWrap.balance  => "text-wrap: balance;"
                 case TextWrap.pretty   => "text-wrap: pretty;"
-        case WhiteSpaceProp(v)                 => s"white-space: ${whiteSpaceCss(v)};"
+        case WhiteSpaceProp(v)  => s"white-space: ${whiteSpaceCss(v)};"
+        case FieldSizingProp(v) => v match
+                case FieldSizing.fixed   => "field-sizing: fixed;"
+                case FieldSizing.content => "field-sizing: content;"
         case BorderColorProp(t, r, b, l)       => s"border-color: ${color(t)} ${color(r)} ${color(b)} ${color(l)};"
         case BorderWidthProp(t, r, b, l)       => s"border-width: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
         case BorderStyleProp(v)                => s"border-style: ${borderStyle(v)};"
