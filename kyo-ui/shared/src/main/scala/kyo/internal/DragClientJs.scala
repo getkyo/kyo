@@ -40,6 +40,11 @@ private[kyo] object DragClientJs:
            |function sortable(t){var a=t.cfg.accepts;if(!a.mediaTypes)return false;for(var i=0;i<a.mediaTypes.length;i++){if(a.mediaTypes[i]==="application/x-kyo-sortable")return true;}return false;}
            |function orient(t){var o=t.cfg.orientation||{};return o.Horizontal?"h":(o.Both?"b":"v");}
            |function label(c){return (c.cfg.label!==undefined&&c.cfg.label!==null)?c.cfg.label:c.key;}
+           |function previewNode(src){var p=src.cfg.preview||{},node;
+           |  if(p.Hidden){node=document.createElement("div");node.style.opacity="0";node.style.width="1px";node.style.height="1px";}
+           |  else if(p.Label){node=document.createElement("div");node.textContent=p.Label.value;}
+           |  else node=src.el.cloneNode(true);
+           |  node.setAttribute("data-kyo-drag-preview","true");node.setAttribute("aria-hidden","true");node.style.position="fixed";return node;}
            |function live(){var r=document.createElement("div");r.setAttribute("data-kyo-drag-live","true");r.setAttribute("aria-live","assertive");r.setAttribute("role","status");
            |  var s=r.style;s.position="fixed";s.left="-10000px";s.top="-10000px";s.width="1px";s.height="1px";s.overflow="hidden";document.body.appendChild(r);return r;}
            |function say(m){if(ctx&&ctx.region)ctx.region.textContent=m;}
@@ -63,8 +68,8 @@ private[kyo] object DragClientJs:
            |  ctx={id:sid("drag"),src:src,op:{Move:{}},keyboard:keyboard,pointerId:pointerId,last:at,target:null,anchor:null,after:false,slot:0,
            |       collection:scope?scope.key:null,keys:selection(src),region:live(),preview:null};
            |  src.el.setAttribute("data-kyo-dragging","true");
-           |  if(!keyboard){var cl=src.el.cloneNode(true);cl.setAttribute("data-kyo-drag-preview","true");cl.setAttribute("aria-hidden","true");
-           |    var st=cl.style;st.position="fixed";st.pointerEvents="none";st.opacity="0.8";document.body.appendChild(cl);ctx.preview=cl;}
+           |  if(!keyboard&&!(src.cfg.preview&&src.cfg.preview.Hidden)){var cl=previewNode(src);
+           |    var st=cl.style;st.pointerEvents="none";st.opacity="0.8";document.body.appendChild(cl);ctx.preview=cl;}
            |  if(keyboard&&scope){ctx.target=scope;scope.el.setAttribute("data-kyo-drop-valid","true");
            |    var its=items(scope);var before=0;for(var i=0;i<its.length;i++){var pos=src.el.compareDocumentPosition(its[i].el);if(pos&Node.DOCUMENT_POSITION_PRECEDING)before++;}ctx.slot=before;}
            |  phase="Dragging";say(label(src)+" picked up.");emitStart(src,at,{ctrl:false,alt:false,shift:false,meta:false});}
@@ -152,8 +157,13 @@ private[kyo] object DragClientJs:
            |  if(e.dataTransfer){var its=s.cfg.items||[];for(var i=0;i<its.length;i++){var it=its[i];
            |    if(it.Text){for(var m in it.Text.representations)e.dataTransfer.setData(m,it.Text.representations[m]);}
            |    else if(it.Uri)e.dataTransfer.setData("text/uri-list",it.Uri.value);}}
+           |  var preview=null;
+           |  if(e.dataTransfer&&!(s.cfg.preview&&s.cfg.preview.Native)){var image=previewNode(s);
+           |    try{image.style.left="-10000px";image.style.top="-10000px";document.body.appendChild(image);
+           |      if(typeof e.dataTransfer.setDragImage==="function")e.dataTransfer.setDragImage(image,0,0);preview=image;}
+           |    finally{if(preview!==image){image.remove();e.preventDefault();}}}
            |  ctx={id:sid("drag"),src:s,op:{Move:{}},keyboard:false,pointerId:null,last:pt(e),target:null,anchor:null,after:false,slot:0,
-           |       collection:null,keys:[s.key],region:null,preview:null};
+           |       collection:null,keys:[s.key],region:null,preview:preview};
            |  var scope=tgtAt(s.el.parentElement);ctx.collection=scope?scope.key:null;
            |  phase="Dragging";emitStart(s,pt(e),mods(e));}
            |function onDragOverNative(e){if(phase!=="Dragging"||!ctx)return;var t=tgtAt(e.target);

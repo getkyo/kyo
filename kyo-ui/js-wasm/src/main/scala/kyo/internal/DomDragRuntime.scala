@@ -194,9 +194,15 @@ private[kyo] object DomDragRuntime:
         private var sourceCache: Maybe[ConfigCache[DragProtocol.ValidatedSourceConfig]] = Absent
         private var targetCache: Maybe[ConfigCache[DragProtocol.ValidatedTargetConfig]] = Absent
 
-        private val dragListener: js.Function1[dom.Event, Unit] = (event: dom.Event) => handle(event)
+        private val dragListener: js.Function1[dom.Event, Unit] = (event: dom.Event) =>
+            // Unsafe: the browser invokes this native listener at the boundary for drag DOM mutations.
+            import AllowUnsafe.embrace.danger
+            handle(event)
 
-        private val sensorListener: js.Function1[dom.Event, Unit] = (event: dom.Event) => handleSensor(event)
+        private val sensorListener: js.Function1[dom.Event, Unit] = (event: dom.Event) =>
+            // Unsafe: the browser invokes this native listener at the boundary for sensor DOM mutations.
+            import AllowUnsafe.embrace.danger
+            handleSensor(event)
 
         private val resolveListener: js.Function1[dom.Event, Unit] = (event: dom.Event) => resolveEvent(event)
 
@@ -282,7 +288,7 @@ private[kyo] object DomDragRuntime:
             end if
         end close
 
-        private def handle(event: dom.Event): Unit =
+        private def handle(event: dom.Event)(using AllowUnsafe): Unit =
             if !closed then
                 event.`type` match
                     case "dragstart" => transition(NativeEvent.Start, event)
@@ -294,7 +300,7 @@ private[kyo] object DomDragRuntime:
                     case _           => ()
         end handle
 
-        private def transition(native: NativeEvent, event: dom.Event): Unit =
+        private def transition(native: NativeEvent, event: dom.Event)(using AllowUnsafe): Unit =
             (state, native) match
                 case (State.Idle, NativeEvent.Start)                            => start(event)
                 case (State.Idle, NativeEvent.Enter)                            => probeTarget(event, UIEvent.DragEnter.apply)
@@ -320,7 +326,7 @@ private[kyo] object DomDragRuntime:
 
         // --- Sensor sessions (pointer, touch, keyboard) ---
 
-        private def handleSensor(event: dom.Event): Unit =
+        private def handleSensor(event: dom.Event)(using AllowUnsafe): Unit =
             if !closed then
                 (state, event.`type`) match
                     case (State.Idle, "pointerdown") =>
@@ -391,7 +397,7 @@ private[kyo] object DomDragRuntime:
             at: Drag.Point,
             keyboard: Boolean,
             pointer: Maybe[Double]
-        ): Unit =
+        )(using AllowUnsafe): Unit =
             val config  = source.config.wire
             val context = SessionContext(
                 token("drag"),
@@ -418,7 +424,7 @@ private[kyo] object DomDragRuntime:
                     try discard(dyn.setPointerCapture(id))
                     catch case _: Throwable => ()
             }
-            if !keyboard then context.preview = sensorPreview(source.element)
+            if !keyboard then context.preview = sensorPreview(source.element, config.preview)
             context.liveRegion = Present(createLiveRegion())
             if keyboard then
                 enclosingTarget(source.element).foreach { target =>
@@ -436,16 +442,27 @@ private[kyo] object DomDragRuntime:
             emitStart(context, source.path, at, UI.Modifiers.none)
         end sensorLift
 
-        private def sensorPreview(element: dom.Element): Maybe[dom.Element] =
-            val clone = element.cloneNode(deep = true).asInstanceOf[dom.Element]
-            clone.setAttribute("data-kyo-drag-preview", "true")
-            clone.setAttribute("aria-hidden", "true")
-            val style = clone.asInstanceOf[dom.html.Element].style
-            style.position = "fixed"
-            style.pointerEvents = "none"
-            style.opacity = "0.8"
-            discard(document.body.appendChild(clone))
-            Present(clone)
+        private def sensorPreview(element: dom.Element, preview: Drag.Preview)(using AllowUnsafe): Maybe[dom.Element] =
+            val node = preview match
+                case Drag.Preview.Hidden       => Absent
+                case Drag.Preview.Label(value) =>
+                    val label = document.createElement("div")
+                    label.textContent = value
+                    Present(label)
+                // Sensors have no browser-provided drag image, so Native uses the source clone.
+                case Drag.Preview.Native | Drag.Preview.Clone =>
+                    Present(element.cloneNode(deep = true).asInstanceOf[dom.Element])
+            node.map { node =>
+                node.setAttribute("data-kyo-drag-preview", "true")
+                node.setAttribute("aria-hidden", "true")
+                // Both HTML and SVG clones expose the same CSS style property at this native facade boundary.
+                val style = node.asInstanceOf[dom.html.Element].style
+                style.position = "fixed"
+                style.pointerEvents = "none"
+                style.opacity = "0.8"
+                discard(document.body.appendChild(node))
+                node
+            }
         end sensorPreview
 
         private def createLiveRegion(): dom.Element =
@@ -749,7 +766,7 @@ private[kyo] object DomDragRuntime:
 
         // --- Native HTML5 sessions ---
 
-        private def start(event: dom.Event): Unit =
+        private def start(event: dom.Event)(using AllowUnsafe): Unit =
             asElement(event.target).flatMap(closestSource).foreach { source =>
                 val config           = source.config.wire
                 val nativeActivation =
@@ -766,7 +783,7 @@ private[kyo] object DomDragRuntime:
                         preferred(config.operations, Absent, modifiers(event)).foreach { operation =>
                             val id = token("drag")
                             setInternalData(transfer, config)
-                            val preview = createPreview(source.element, config.preview, transfer)
+                            val preview = createPreview(source.element, config.preview, transfer, event)
                             val context = SessionContext(
                                 id,
                                 Present(source),
@@ -1368,34 +1385,48 @@ private[kyo] object DomDragRuntime:
             case "linkMove" => Drag.AllowedOperations(Set(Drag.Operation.Link, Drag.Operation.Move))
             case _          => Drag.AllowedOperations.all
 
-        private def createPreview(element: dom.Element, preview: Drag.Preview, transfer: js.Dynamic): Maybe[dom.Element] =
+        private def createPreview(
+            element: dom.Element,
+            preview: Drag.Preview,
+            transfer: js.Dynamic,
+            event: dom.Event
+        )(using AllowUnsafe): Maybe[dom.Element] =
             preview match
                 case Drag.Preview.Native => Absent
                 case Drag.Preview.Clone  =>
                     val clone = element.cloneNode(deep = true).asInstanceOf[dom.Element]
-                    previewNode(clone, transfer, hidden = false)
+                    previewNode(clone, transfer, event)
                 case Drag.Preview.Hidden =>
                     val hidden = document.createElement("div")
                     hidden.setAttribute("aria-hidden", "true")
                     hidden.asInstanceOf[dom.html.Element].style.opacity = "0"
                     hidden.asInstanceOf[dom.html.Element].style.width = "1px"
                     hidden.asInstanceOf[dom.html.Element].style.height = "1px"
-                    previewNode(hidden, transfer, hidden = true)
+                    previewNode(hidden, transfer, event)
                 case Drag.Preview.Label(value) =>
                     val label = document.createElement("div")
                     label.textContent = value
-                    previewNode(label, transfer, hidden = false)
+                    previewNode(label, transfer, event)
 
-        private def previewNode(node: dom.Element, transfer: js.Dynamic, hidden: Boolean): Maybe[dom.Element] =
-            node.setAttribute("data-kyo-drag-preview", "true")
-            node.setAttribute("aria-hidden", "true")
-            val style = node.asInstanceOf[dom.html.Element].style
-            style.position = "fixed"
-            style.left = "-10000px"
-            style.top = "-10000px"
-            discard(document.body.appendChild(node))
-            if js.typeOf(transfer.setDragImage) == "function" then discard(transfer.setDragImage(node, 0, 0))
-            Present(node)
+        private def previewNode(node: dom.Element, transfer: js.Dynamic, event: dom.Event)(using AllowUnsafe): Maybe[dom.Element] =
+            var installed = false
+            try
+                node.setAttribute("data-kyo-drag-preview", "true")
+                node.setAttribute("aria-hidden", "true")
+                // HTML and SVG elements expose CSS style at this native facade boundary.
+                val style = node.asInstanceOf[dom.html.Element].style
+                style.position = "fixed"
+                style.left = "-10000px"
+                style.top = "-10000px"
+                discard(document.body.appendChild(node))
+                if js.typeOf(transfer.setDragImage) == "function" then discard(transfer.setDragImage(node, 0, 0))
+                installed = true
+                Present(node)
+            finally
+                if !installed then
+                    node.remove()
+                    event.preventDefault()
+            end try
         end previewNode
 
         private def setDropEffect(event: dom.Event, operation: Drag.Operation): Unit =

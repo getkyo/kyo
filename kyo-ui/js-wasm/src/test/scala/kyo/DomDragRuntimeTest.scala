@@ -1056,6 +1056,110 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
             yield result
         }
 
+    "a failing native preview installation releases its node and cancels the drag" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val source = root.querySelector("#item-a")
+                val config = Drag.Source("a", Chunk.empty, preview = Drag.Preview.Clone, activation = Drag.Activation.Native)
+                source.setAttribute("data-kyo-drag-source", success(DragProtocol.encodedSourceConfig(config, DragProtocol.Limits.default)))
+                val errors = ArrayBuffer.empty[String]
+                // Native listener failures are reported as ErrorEvent, not thrown by dispatchEvent. Capture that boundary explicitly.
+                val record: scalajs.Function1[dom.Event, Unit] = event =>
+                    // The native ErrorEvent carries an Error even though this DOM facade omits its error field.
+                    errors += event.asInstanceOf[scalajs.Dynamic].error.name.asInstanceOf[String]
+                    event.preventDefault()
+                dom.window.addEventListener("error", record)
+                try
+                    val transfer = new FakeTransfer
+                    transfer.raw.setDragImage = (
+                        (_: dom.Element, _: Double, _: Double) =>
+                            transfer.dragImageCalls += 1
+                            // Deliberately fail the native downcall without introducing a Scala throw into the fixture.
+                            discard(scalajs.Dynamic.global.JSON.parse(""))
+                    ): scalajs.Function3[dom.Element, Double, Double, Unit]
+                    val start = dragEvent("dragstart", source, transfer, 0, 0)
+                    discard(source.dispatchEvent(start))
+                    assert(Chunk.from(errors) == Chunk("SyntaxError"))
+                    assert(transfer.dragImageCalls == 1)
+                    assert(runtime.stateName == "Idle")
+                    assert(events.size == 0)
+                    assert(dom.document.querySelectorAll("[data-kyo-drag-preview]").length == 0)
+                    assert(start.defaultPrevented)
+                    val retry = new FakeTransfer
+                    discard(source.dispatchEvent(dragEvent("dragstart", source, retry, 0, 0)))
+                    assert(runtime.stateName == "Dragging")
+                    assert(retry.dragImageCalls == 1)
+                    discard(source.dispatchEvent(dragEvent("dragend", source, retry, 0, 0)))
+                    assert(runtime.stateName == "Idle")
+                    assert(dom.document.querySelectorAll("[data-kyo-drag-preview]").length == 0)
+                finally
+                    dom.window.removeEventListener("error", record)
+                    // Isolate a failed acquisition even on the red implementation; assertions above read before this cleanup.
+                    val nodes = dom.document.querySelectorAll("[data-kyo-drag-preview]")
+                    var index = 0
+                    while index < nodes.length do
+                        nodes(index).remove()
+                        index += 1
+                end try
+            }
+        }
+    }
+
+    "sensor previews honor declarations for pointer touch and keyboard and clean up on cancellation" in {
+        val previews = Chunk(Drag.Preview.Native, Drag.Preview.Clone, Drag.Preview.Hidden, Drag.Preview.Label("Badge"))
+        Kyo.foreach(Chunk("pointer", "touch", "keyboard")) { mode =>
+            Kyo.foreach(previews) { preview =>
+                sensorFixture { (root, runtime, events, hit, frames, timing) =>
+                    Sync.defer {
+                        val source = root.querySelector("#item-a")
+                        val config = Drag.Source("a", Chunk.empty, preview = preview, activation = Drag.Activation.Sensors)
+                        source.setAttribute(
+                            "data-kyo-drag-source",
+                            success(DragProtocol.encodedSourceConfig(config, DragProtocol.Limits.default))
+                        )
+                        mode match
+                            case "pointer" =>
+                                discard(source.dispatchEvent(sensorEvent("pointerdown", source, 10, 10)))
+                                discard(source.dispatchEvent(sensorEvent("pointermove", source, 10, 30)))
+                                frames.flush()
+                            case "touch" =>
+                                discard(source.dispatchEvent(sensorEvent("touchstart", source, 10, 10)))
+                                timing.checkAt(DomDragRuntime.touchHoldDelayMs.toDouble + 1)
+                            case _ => discard(source.dispatchEvent(sensorEvent("keydown", source, key = "Enter")))
+                        end match
+                        val nodes    = dom.document.querySelectorAll("[data-kyo-drag-preview]")
+                        val count    = nodes.length
+                        val text     = if count == 0 then "" else nodes(0).textContent
+                        val dragging = runtime.stateName
+                        mode match
+                            case "pointer" => discard(source.dispatchEvent(sensorEvent("pointercancel", source, 10, 30)))
+                            case "touch"   => discard(source.dispatchEvent(sensorEvent("touchcancel", source, 10, 10)))
+                            case _         => discard(source.dispatchEvent(sensorEvent("keydown", source, key = "Escape")))
+                        end match
+                        (
+                            mode,
+                            preview,
+                            dragging,
+                            count,
+                            text,
+                            runtime.stateName,
+                            dom.document.querySelectorAll("[data-kyo-drag-preview]").length
+                        )
+                    }
+                }
+            }
+        }.map { states =>
+            val expected = Chunk("pointer", "touch", "keyboard").map { mode =>
+                previews.map { preview =>
+                    val count = if mode == "keyboard" || preview == Drag.Preview.Hidden then 0 else 1
+                    val text  = if count == 0 then "" else if preview == Drag.Preview.Label("Badge") then "Badge" else "A"
+                    (mode, preview, "Dragging", count, text, "Idle", 0)
+                }
+            }
+            assert(states == expected, s"$states")
+        }
+    }
+
     "sensor pointer lift requires the activation distance" in {
         sensorFixture { (root, runtime, events, hit, frames, timing) =>
             Sync.defer {
