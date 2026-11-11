@@ -25,6 +25,13 @@ class LspResultShapesTest extends Test:
         targetRange = range0,
         targetSelectionRange = range0
     )
+    val loc1  = LspHandler.Location(LspHandler.LspDocument.Uri.fromWire("file:///other.scala"), LspHandler.Range.of(2, 4, 2, 8))
+    val link1 = LspHandler.LocationLink(
+        originSelectionRange = Present(LspHandler.Range.of(0, 0, 0, 3)),
+        targetUri = LspHandler.LspDocument.Uri.fromWire("file:///other.scala"),
+        targetRange = LspHandler.Range.of(2, 0, 3, 1),
+        targetSelectionRange = LspHandler.Range.of(2, 4, 2, 8)
+    )
 
     // ---- TextDocumentContentChangeEvent ----
 
@@ -359,6 +366,52 @@ class LspResultShapesTest extends Test:
     "DefinitionResult.Links round-trips" in {
         val v: LspHandler.DefinitionResult = LspHandler.DefinitionResult.Links(Chunk(link0))
         assert(roundtrip(v) == v)
+    }
+
+    "DefinitionResult.Many round-trips through a structure inside another value, as a client reads a result" in {
+        val v: LspHandler.DefinitionResult = LspHandler.DefinitionResult.Many(Chunk(loc0, loc1))
+        assert(Structure.decode[Maybe[LspHandler.DefinitionResult]](Structure.encode[Maybe[LspHandler.DefinitionResult]](Present(v))) ==
+            Result.succeed(Present(v)))
+    }
+
+    "DefinitionResult.Links round-trips through a structure inside another value, as a client reads a result" in {
+        val v: LspHandler.DefinitionResult = LspHandler.DefinitionResult.Links(Chunk(link0, link1))
+        assert(Structure.decode[Maybe[LspHandler.DefinitionResult]](Structure.encode[Maybe[LspHandler.DefinitionResult]](Present(v))) ==
+            Result.succeed(Present(v)))
+    }
+
+    "DefinitionResult refuses an array of both locations and links" in {
+        val both = s"[${encode(loc0)},${encode(link0)}]"
+        Json.decode[LspHandler.DefinitionResult](both) match
+            case Result.Failure(failure: TypeMismatchException) => assert(failure.actual == "an array of both")
+            case other                                          => fail(s"decoded $other")
+    }
+
+    "DefinitionResult.One round-trips through a reader that consumes a mismatched header" in {
+        val value: LspHandler.DefinitionResult = LspHandler.DefinitionResult.One(loc0)
+        assert(MsgPack.decode[LspHandler.DefinitionResult](MsgPack.encode(value)) == Result.succeed(value))
+    }
+
+    "DefinitionResult arrays round-trip through MessagePack inside another value" in {
+        val locations: Maybe[LspHandler.DefinitionResult] = Present(LspHandler.DefinitionResult.Many(Chunk(loc0, loc1)))
+        val links: Maybe[LspHandler.DefinitionResult]     = Present(LspHandler.DefinitionResult.Links(Chunk(link0, link1)))
+        assert(MsgPack.decode[Maybe[LspHandler.DefinitionResult]](MsgPack.encode(locations)) == Result.succeed(locations))
+        assert(MsgPack.decode[Maybe[LspHandler.DefinitionResult]](MsgPack.encode(links)) == Result.succeed(links))
+    }
+
+    "DefinitionResult requires every location-link range" in {
+        Json.decode[LspHandler.DefinitionResult]("""[{"targetUri":"file:///test.scala"}]""") match
+            case Result.Failure(failure: MissingFieldException) => assert(failure.fieldName == "targetRange")
+            case other                                          => fail(s"decoded $other")
+        Json.decode[LspHandler.DefinitionResult](s"""[{"targetUri":"file:///test.scala","targetRange":${encode(range0)}}]""") match
+            case Result.Failure(failure: MissingFieldException) => assert(failure.fieldName == "targetSelectionRange")
+            case other                                          => fail(s"decoded $other")
+    }
+
+    "DefinitionResult refuses a location in an array without its range" in {
+        Json.decode[LspHandler.DefinitionResult]("""[{"uri":"file:///test.scala"}]""") match
+            case Result.Failure(failure: MissingFieldException) => assert(failure.fieldName == "range")
+            case other                                          => fail(s"decoded $other")
     }
 
     // ---- DeclarationResult ----
