@@ -2106,22 +2106,20 @@ class ContainerItTest extends BasePodTest:
             }
         }
 
-        "fails for nonexistent image with typed ImageNotFound" - runBackends {
+        "a nonexistent image reports typed absence or a registry refusal" - runBackends {
             val img = ContainerImage("nonexistent-image-xyzzy-99999", "notatag")
             Abort.run[ContainerException](ContainerImage.pull(img)).map {
                 case Result.Failure(e: ContainerImageMissingException) =>
+                    assert(e.image == img)
                     assert(e.getMessage.contains("Image not found"))
-                case Result.Failure(other) =>
-                    // Registry unreachable in CI environments also produces a failure — accept it if its
-                    // message mentions a network/TLS issue rather than asserting a wrong type.
-                    val msg = Option(other.getMessage).getOrElse("")
+                case Result.Failure(e: ContainerRegistryUnavailableException) =>
+                    // A refusal to serve the manifest establishes no absence. The deterministic daemon-response test asserts
+                    // ImageNotFound for a 404; this live request must preserve a registry fault as its own retryable type.
                     assert(
-                        msg.toLowerCase.contains("ssl") ||
-                            msg.toLowerCase.contains("tls") ||
-                            msg.toLowerCase.contains("network") ||
-                            msg.toLowerCase.contains("timeout"),
-                        s"expected ImageNotFound or a network-unreachable message, got: $other"
+                        e.target == img.reference || e.target == s"image ${img.reference}",
+                        s"registry refusal names the wrong image: ${e.target}"
                     )
+                    assert(e.detail.nonEmpty)
                 case r => fail(s"expected failure, got $r")
             }
         }

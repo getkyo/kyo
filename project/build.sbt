@@ -9,12 +9,15 @@
 // (so that `compatLibrary(...)` parses), the plugin's source directory
 // is added to the meta-build's own compile sources.
 //
-// Plugin compile-time deps (sbt-scalajs-crossproject,
+// Plugin compile-time deps (sbt-projectmatrix, sbt-scalajs-crossproject,
 // sbt-scala-native-crossproject) come from `project/plugins.sbt` —
 // they're already there because the outer build itself uses
 // crossProject in build.sbt.
-Compile / unmanagedSourceDirectories +=
-    baseDirectory.value.getParentFile / "kyo-compat" / "plugin" / "src" / "main" / "scala"
+Compile / unmanagedSourceDirectories ++= {
+    val src = baseDirectory.value.getParentFile / "kyo-compat" / "plugin" / "src" / "main"
+    // scala-2: the plugin's sbt 1 code, as the meta-build runs on sbt 1.
+    Seq(src / "scala", src / "scala-2")
+}
 
 // Same pattern for the in-tree `sbt-kyo-test` plugin so that build.sbt
 // can call `.enablePlugins(kyo.test.sbt.KyoTestPlugin)` directly. The

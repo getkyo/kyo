@@ -19,8 +19,8 @@
 // Why fake-stub kyo-compat-X jars: the plugin auto-injects
 // `libraryDependencies += "io.getkyo" %%% "kyo-compat-<backend>" % compatKyoVersion.value`
 // on every generated row. The check tasks themselves don't compile cells,
-// but checkForkTest invokes Test/test, which forces update on the JVM
-// cells. We publishLocal empty stubs so resolution succeeds without hitting
+// but the test script runs Test/test on the JVM cells, which forces update
+// there. We publishLocal empty stubs so resolution succeeds without hitting
 // any real backend artifacts. Same pattern as publish/.
 
 ThisBuild / scalaVersion     := "3.3.4"
@@ -47,7 +47,11 @@ lazy val forkSettingMarker   = settingKey[String]("sanity marker for fork settin
 // setting must be applied on every project.
 val rootBase: File = file(".").getCanonicalFile
 val pinnedIvyPaths: Setting[IvyPaths] =
-    ivyPaths := IvyPaths(rootBase, Some(rootBase / "ivy-cache"))
+    ivyPaths := {
+        // IvyPaths takes Files on sbt 1, Strings on sbt 2.
+        implicit def pathOf(f: File): String = f.getPath
+        IvyPaths(rootBase, rootBase / "ivy-cache")
+    }
 
 // --------------------------------------------------------------------
 // fake kyo-compat-{future,kyo} stubs (JVM + JS + Native).
@@ -100,18 +104,16 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         commonSettingMarker := "common-value",
         // Test/fork + Test/javaOptions on the receiver.
         // ForkTest asserts System.getProperty("foo") == "bar" inside a
-        // forked test JVM. checkForkTest below invokes Test/test on the
-        // JVM cells; if fork or javaOptions did not flow, the assertion
-        // and the task fail.
+        // forked test JVM. The test script runs Test/test on the JVM
+        // cells; if fork or javaOptions did not flow, the assertion and
+        // the task fail.
         Test / fork           := true,
         Test / javaOptions    += "-Dfoo=bar",
         forkSettingMarker     := "fork-on",
-        // scalatest is the test runtime for ForkTest. %%% picks up the
-        // per-platform crossVersion automatically. The shared/src/test
-        // sources are compiled across every cell, so the dep must be
-        // available on JVM/JS/Native; checkForkTest only RUNS Test/test
-        // on the JVM cells.
-        libraryDependencies   += "org.scalatest" %%% "scalatest" % "3.2.19" % Test
+        // scalatest is the test runtime for ForkTest, crossed for the row's
+        // platform. The shared/src/test sources are compiled across every
+        // cell, so the dep must be available on JVM/JS/Native.
+        libraryDependencies   += ("org.scalatest" % "scalatest" % "3.2.19" % Test).cross(crossVersion.value)
     )
     // Scenarios 5/6/7: per-platform settings via the kyo-compat plugin's
     // `.jvmSettings` / `.jsSettings` / `.nativeSettings` extension methods on
@@ -152,7 +154,6 @@ val checkCommonSettings = taskKey[Unit](".settings(commonSettingMarker) on every
 val checkJvmSettings    = taskKey[Unit](".jvmSettings on JVM cells only")
 val checkJsSettings     = taskKey[Unit](".jsSettings on JS cells only")
 val checkNativeSettings = taskKey[Unit](".nativeSettings on Native cells only")
-val checkForkTest       = taskKey[Unit]("Test/fork + Test/javaOptions flow to JVM cells")
 
 checkCommonSettings := {
     val s   = Keys.state.value
@@ -261,17 +262,3 @@ checkNativeSettings := {
             "non-Native cells [" + nonNativeIds + "] carry the empty default."
     )
 }
-
-// Fan out Test/test to every JVM cell. ForkTest's
-// `assert(System.getProperty("foo") == "bar")` only passes if both
-// `Test/fork := true` and `Test/javaOptions += "-Dfoo=bar"` propagated to
-// the cell's task scope. A failed assertion fails the test runner, which
-// fails this task.
-checkForkTest := Def.sequential(
-    myLib.future.jvm / Test / test,
-    myLib.kyo.jvm    / Test / test,
-    Def.task(println(
-        s"checkForkTest OK; ${jvmCells.size} JVM cells (myLibFuture, myLibKyo) ran " +
-            "ForkTest under fork with -Dfoo=bar."
-    ))
-).value

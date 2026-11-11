@@ -30,16 +30,17 @@ private[sbt] object CiWorkflow {
                |        include:
                |          - { os: ubuntu-latest,    target: linux-x86_64,   cc: gcc,   cflags: 'Nil' }
                |          - { os: ubuntu-24.04-arm, target: linux-aarch64,  cc: gcc,   cflags: 'Nil' }
-               |          - { os: macos-14,         target: darwin-aarch64, cc: clang, cflags: 'Nil' }
+               |          - { os: macos-15,         target: darwin-aarch64, cc: clang, cflags: 'Nil' }
                |          # darwin-x86_64 is cross-built on the arm64 runner: the target names the
                |          # artifact and its resource directory, -arch x86_64 makes clang emit x86_64 code.
-               |          - { os: macos-14,         target: darwin-x86_64,  cc: clang, cflags: 'Seq("-arch", "x86_64")' }
+               |          - { os: macos-15,         target: darwin-x86_64,  cc: clang, cflags: 'Seq("-arch", "x86_64")' }
                |    runs-on: $${{ matrix.os }}
                |    steps:
                |      - uses: actions/checkout@v4
                |      - name: "ffiCompile ($${{ matrix.target }})"
                |        env:
                |          CC: $${{ matrix.cc }}
+               |          MACOSX_DEPLOYMENT_TARGET: '14.0'
                |        run: |
                |          sbt 'set ThisBuild / ffiTargetOsArch := Some("$${{ matrix.target }}")' 'set ThisBuild / ffiCFlags ++= $${{ matrix.cflags }}' ffiCompile
                |      - uses: actions/upload-artifact@v4

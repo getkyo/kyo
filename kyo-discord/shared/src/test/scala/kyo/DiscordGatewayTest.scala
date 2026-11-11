@@ -88,25 +88,33 @@ class DiscordGatewayTest extends kyo.test.Test[Any]:
 
     "a first heartbeat due at once goes out before any time passes, and an acknowledged one keeps the connection" in {
         withGateway { gw =>
-            Clock.withTimeControl { control =>
-                Random.let(fixedJitter(0.0))(connected(gw) { (conn, discord) =>
-                    for
-                        // Due at once, the beat goes out before Ready, so it carries no sequence yet.
-                        first <- conn.next
-                        _     <- conn.send(ack)
-                        // The answer to op 1 is read after the ack, so the ack has landed before the interval elapses.
-                        _         <- conn.send("""{"op":1,"d":null}""")
-                        requested <- conn.next
-                        _         <- control.advance(1000.millis)
-                        second    <- conn.next
-                        _         <- Discord.close(discord)
-                    yield
-                        val noSequence = Json.decode[Structure.Value]("""{"op":1,"d":null}""").getOrThrow
-                        assert(
-                            (first, requested, second) == (noSequence, heartbeat(1), heartbeat(1)),
-                            s"got: ${Json.encode(first)}, ${Json.encode(requested)}, ${Json.encode(second)}"
-                        )
-                })
+            Kyo.foreach(Chunk.range(0, 200)) { _ =>
+                Clock.withTimeControl { control =>
+                    Random.let(fixedJitter(0.0))(Fiber.initUnscoped(Discord.initUnscoped(gw.config)).map { initFiber =>
+                        gw.nextConnection.map { conn =>
+                            for
+                                _ <- conn.send(hello(1000))
+                                _ <- conn.next // Identify
+                                // Observe the first beat before sending Ready. A completed connection has already read Ready's
+                                // sequence, so it cannot establish that a heartbeat racing with Ready must still carry null.
+                                first   <- conn.next
+                                _       <- conn.send(ready(1, "S1", gw.resumeUrl))
+                                discord <- initFiber.get
+                                _       <- conn.send(ack)
+                                // The answer to op 1 follows the ack, so the ack has landed before the interval elapses.
+                                _         <- conn.send("""{"op":1,"d":null}""")
+                                requested <- conn.next
+                                _         <- control.advance(1000.millis)
+                                second    <- conn.next
+                                _         <- Discord.close(discord)
+                            yield (first, requested, second)
+                        }
+                    })
+                }
+            }.map { beats =>
+                val noSequence = Json.decode[Structure.Value]("""{"op":1,"d":null}""").getOrThrow
+                val expected   = (noSequence, heartbeat(1), heartbeat(1))
+                assert(beats == Chunk.fill(200)(expected), s"unexpected heartbeats: ${beats.filterNot(_ == expected).take(3)}")
             }
         }
     }

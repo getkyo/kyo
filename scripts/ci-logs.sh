@@ -147,9 +147,18 @@ show_log() {
     esac
 }
 
+# A job log carries the runner's ANSI colors, and gh 2.103 refuses to print a response holding
+# terminal escape sequences unless told to: without the flag every job read as "log unavailable".
+# The escapes are stripped by clean() anyway. Older gh has no such flag and prints them as is.
+# The help text is captured first: under pipefail, grep -q closing the pipe early fails the gh side.
+GH_LOG_FLAGS=()
+case "$(gh api --help 2>/dev/null)" in
+    *--allow-escape-sequences*) GH_LOG_FLAGS=(--allow-escape-sequences) ;;
+esac
+
 inspect_job() {
     local jobid="$1" raw
-    raw="$(gh api "repos/$REPO/actions/jobs/$jobid/logs" 2>/dev/null)"; local rc=$?
+    raw="$(gh api ${GH_LOG_FLAGS[@]+"${GH_LOG_FLAGS[@]}"} "repos/$REPO/actions/jobs/$jobid/logs" 2>/dev/null)"; local rc=$?
     # A cancelled/killed step or an expired run leaves no log blob (HTTP 404 with
     # an <Error> XML body). Report it instead of silently showing nothing.
     if [ $rc -ne 0 ] || [ -z "$raw" ] || printf '%s' "$raw" | head -c 200 | grep -q '<Error>'; then
