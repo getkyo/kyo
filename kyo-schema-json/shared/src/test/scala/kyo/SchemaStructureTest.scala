@@ -1223,6 +1223,29 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
             assert(Json.encode(value) == "\"550e8400-e29b-41d4-a716-446655440000\"")
         }
 
+        "encodes an inferred generated version 7 UUID as canonical JSON text" in {
+            val generator = UUIDGenerator.test(Chunk(1000L), Chunk.fill(16)(0.toByte))
+            UUID.let(generator) {
+                UUID.v7.map(id => assert(Json.encode(id) == "\"00000000-03e8-7000-8000-000000000000\""))
+            }
+        }
+
+        "round-trips version 7 UUIDs without losing their timestamp type" in {
+            val value        = UUID.V7.init(1000L, 7, 9L)
+            val decoded      = Json.decode[UUID.V7](Json.encode(value)).getOrThrow
+            val millis: Long = decoded.unixTimestampMillis
+            assert(decoded == value)
+            assert(millis == 1000L)
+        }
+
+        "refuses another UUID version when decoding a version 7 UUID" in {
+            Json.decode[UUID.V7]("\"550e8400-e29b-41d4-a716-446655440000\"") match
+                case Result.Failure(error: ConstructorRejectedException) =>
+                    assert(error.path == Seq.empty)
+                    assert(error.typeName == "kyo.UUID.V7")
+                case other => fail(s"Expected constructor rejection, got: $other")
+        }
+
         "decodes lowercase canonical JSON text to the exact kyo UUID" in {
             val expected = parseUuid("550e8400-e29b-41d4-a716-446655440000")
             assert(Json.decode[UUID]("\"550e8400-e29b-41d4-a716-446655440000\"") == Result.succeed(expected))

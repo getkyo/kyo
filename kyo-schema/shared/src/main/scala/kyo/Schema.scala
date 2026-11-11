@@ -2990,6 +2990,10 @@ object Schema:
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[kyo.UUID].asInstanceOf[Tag[Any]])
         )
 
+    /** Schema for version 7 UUIDs. Uses canonical UUID text and rejects UUIDs of another version on decode. */
+    given uuidV7Schema: Schema[kyo.UUID.V7] =
+        transformViaWith(uuidSchema, kyo.UUID.V7.from, identity, Constructed.fromMaybe, "kyo.UUID.V7")
+
     /** Schema for Unit values.
       *
       * Unit serializes as an empty JSON object `{}`, not as `null`. The reasoning: Scala's `Unit` carries no

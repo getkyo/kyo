@@ -15,7 +15,7 @@ import kyo.net.Test
   *   - the CODEGEN structs (`KEvent`/`Timespec`/`IoUringCqe`, flat) have the exact total byte size the C ABI uses; the derived `StructLayout`
   *     mirrors the codegen's size model, and a `Buffer` of each allocates to the right size.
   *   - the MANUAL byte layouts ([[EpollEvent$]] and the sockaddr encoders) produce the C `sizeof`. `EpollEvent` is arch-aware (12 bytes
-  *     packed on x86_64, 16 bytes naturally aligned on aarch64); the sockaddr encoders are 16 / 28 / 110 and the opaque SQE region is 64.
+  *     packed on x86_64, 16 bytes naturally aligned on aarch64); the sockaddr encoders use the host's header and path capacity.
   *
   * The `StructAbiCheck` fail-fast contract is exercised directly with a synthetic mismatch, proving the check is not a no-op. The codegen
   * impls run the real check at class init when their binding loads (exercised by the binding tests).
@@ -92,26 +92,32 @@ class PosixStructsAbiTest extends Test:
     }
 
     "manual sockaddr sizes match C sizeof" - {
-        "inet4 == 16, inet6 == 28, unix == 110" in {
+        "inet4, inet6 and unix use the host's structure sizes" in {
             val v4 = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 8080).getOrElse(fail("inet4 encode failed"))
             val v6 = SockAddr.encodeInet6(PosixConstants.AF_INET6, "::1", 8080).getOrElse(fail("inet6 encode failed"))
             val un = SockAddr.encodeUnix(PosixConstants.AF_UNIX, "/tmp/kyo.sock").getOrElse(fail("unix encode failed"))
             try
                 assert(v4._2 == 16 && v4._1.size == 16)
                 assert(v6._2 == 28 && v6._1.size == 28)
-                assert(un._2 == 110 && un._1.size == 110)
+                val unixSize = if PosixConstants.isMacOrBsd then 106 else 110
+                assert(un._2 == unixSize && un._1.size == unixSize)
             finally
                 v4._1.close()
                 v6._1.close()
                 un._1.close()
             end try
         }
-        "inet4 encodes family host-order and port network-order" in {
+        "inet4 encodes the host's family header and the port in network order" in {
             val (buf, _) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0x0102).getOrElse(fail("encode failed"))
             try
-                // sin_family (host order, AF_INET == 2) in the first 2 bytes.
-                assert((buf.get(0) & 0xff) == (PosixConstants.AF_INET & 0xff))
-                assert((buf.get(1) & 0xff) == ((PosixConstants.AF_INET >> 8) & 0xff))
+                // macOS and the BSDs: sin_len then sin_family, one byte each; Linux: sin_family in 2 bytes, host order.
+                if PosixConstants.isMacOrBsd then
+                    assert((buf.get(0) & 0xff) == 16)
+                    assert((buf.get(1) & 0xff) == PosixConstants.AF_INET)
+                else
+                    assert((buf.get(0) & 0xff) == (PosixConstants.AF_INET & 0xff))
+                    assert((buf.get(1) & 0xff) == ((PosixConstants.AF_INET >> 8) & 0xff))
+                end if
                 // sin_port (network order, big-endian): 0x0102 => byte[2]=0x01, byte[3]=0x02.
                 assert((buf.get(2) & 0xff) == 0x01)
                 assert((buf.get(3) & 0xff) == 0x02)
@@ -123,14 +129,42 @@ class PosixStructsAbiTest extends Test:
             finally buf.close()
             end try
         }
+        "inet6 and unix encode the host's family header" in {
+            val (v6, _) = SockAddr.encodeInet6(PosixConstants.AF_INET6, "::1", 0).getOrElse(fail("inet6 encode failed"))
+            val (un, _) = SockAddr.encodeUnix(PosixConstants.AF_UNIX, "/tmp/kyo.sock").getOrElse(fail("unix encode failed"))
+            try
+                if PosixConstants.isMacOrBsd then
+                    assert((v6.get(0) & 0xff) == 28 && (v6.get(1) & 0xff) == PosixConstants.AF_INET6)
+                    assert((un.get(0) & 0xff) == 106 && (un.get(1) & 0xff) == PosixConstants.AF_UNIX)
+                else
+                    assert((v6.get(0) & 0xff) == PosixConstants.AF_INET6 && (v6.get(1) & 0xff) == 0)
+                    assert((un.get(0) & 0xff) == PosixConstants.AF_UNIX && (un.get(1) & 0xff) == 0)
+                end if
+            finally
+                v6.close()
+                un.close()
+            end try
+        }
         "unix rejects an over-long path" in {
             val tooLong = "/" + ("a" * SockAddr.sunPathMax)
             assert(SockAddr.encodeUnix(PosixConstants.AF_UNIX, tooLong).isEmpty)
         }
+        "unix leaves room for the terminator at the host's path byte limit" in {
+            val capacity = if PosixConstants.isMacOrBsd then 104 else 108
+            val path     = "/" + ("a" * (capacity - 2))
+            val (buf, _) = SockAddr.encodeUnix(PosixConstants.AF_UNIX, path).getOrElse(fail("maximum path rejected"))
+            try
+                assert((buf.get(capacity) & 0xff) == 'a'.toInt)
+                assert(buf.get(capacity + 1) == 0.toByte)
+                assert(SockAddr.encodeUnix(PosixConstants.AF_UNIX, path + "a").isEmpty)
+                assert(SockAddr.encodeUnix(PosixConstants.AF_UNIX, "/" + ("é" * (capacity / 2))).isEmpty)
+            finally buf.close()
+            end try
+        }
         "inet6 parses ::1 to the loopback address in network order" in {
             val (buf, _) = SockAddr.encodeInet6(PosixConstants.AF_INET6, "::1", 0x0102).getOrElse(fail("encode failed"))
             try
-                // sin6_family at 0..1 (host order), sin6_port net-order at 2..3.
+                // The family header at 0..1, sin6_port net-order at 2..3.
                 assert((buf.get(2) & 0xff) == 0x01)
                 assert((buf.get(3) & 0xff) == 0x02)
                 // sin6_addr (16 bytes) at offset 8: ::1 is 15 zero bytes then 0x01.
