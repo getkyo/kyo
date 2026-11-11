@@ -1552,6 +1552,52 @@ class HttpServerTest extends BaseHttpTest:
         }
     }
 
+    "cancelling an await does not complete the server's lifetime" in {
+        Scope.run {
+            for
+                server <- HttpServer.init(loopback)(HttpRoute.getRaw("alive").response(_.bodyText).handler(_ => HttpResponse.ok("ok")))
+                waiter <- Fiber.init(server.await)
+                _      <- assertEventually(Sync.Unsafe.defer(server.unsafe.awaitFiber.waiters() > 0))
+                _      <- waiter.interruptAwait
+                completedBeforeClose <- Sync.Unsafe.defer(server.unsafe.awaitFiber.done())
+                _                    <- Abort.run[Any](server.closeNow)
+            yield assert(!completedBeforeClose, "cancelling a waiter completed the server's shared lifetime promise")
+        }
+    }
+
+    "closeNow waits for handler finalizers" - {
+        for webSocket <- Seq(false, true) do
+            val kind = if webSocket then "WebSocket" else "HTTP"
+            s"$kind handler parked on an application await" in {
+                Scope.run {
+                    for
+                        entered   <- Latch.init(1)
+                        release   <- Fiber.Promise.init[Unit, Any]
+                        finalized <- Fiber.Promise.init[Unit, Any]
+                        _         <- Scope.ensure(release.completeUnitDiscard)
+                        work    = Sync.ensure(finalized.completeUnitDiscard)(entered.release.andThen(release.get))
+                        handler =
+                            if webSocket then HttpHandler.webSocket("park")((_, _) => work)
+                            else HttpRoute.getRaw("park").response(_.bodyText).handler(_ => work.andThen(HttpResponse.ok("done")))
+                        server <- HttpServer.init(loopback)(handler)
+                        client <- Fiber.init {
+                            Abort.run[Any] {
+                                if webSocket then HttpClient.webSocket(s"ws://127.0.0.1:${server.port}/park")(_ => Async.never)
+                                else HttpClient.getText(s"http://127.0.0.1:${server.port}/park").unit
+                            }
+                        }
+                        _                    <- entered.await
+                        _                    <- server.closeNow
+                        completedBeforeClose <- finalized.done
+                        // Also release a handler the broken implementation did not interrupt, before asserting the failure.
+                        _ <- release.completeUnitDiscard
+                        _ <- finalized.get
+                        _ <- client.interrupt
+                    yield assert(completedBeforeClose, "server close returned before its handler's finalizer completed")
+                }
+            }
+    }
+
     "edge cases" - {
 
         "large request body" - {
