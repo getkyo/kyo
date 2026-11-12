@@ -278,13 +278,13 @@ class TagTest extends kyo.test.Test[Any]:
             def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]] = Tag.dynamic[Map[A, List[B]]]
             val tag                                          = nested[String, Int]
             val _: Tag[Map[String, List[Int]]]               = tag
-            val tpe                                          = tag.tpe
-            val encoded                                      = Tag.internal.encode[Map[String, List[Int]]](tpe.staticDB)
-            assert(tpe.dynamicDB.nonEmpty)
-            val original = Tag.internal.Dynamic(encoded, tpe.dynamicDB)
+            // the tag as the compiler built it: its text with a slot for each part, and the parts
+            val built    = tag.asInstanceOf[Tag.internal.Dynamic]
+            val original = Tag.internal.Dynamic(built.tag, built.map)
+            assert(built.map.nonEmpty)
             assert(original.hashCode == tag.hash)
             assert(original.tpe.toString == tag.show)
-            assert(Tag.internal.Dynamic(encoded, tpe.dynamicDB.toSeq.reverse.toMap).hashCode == tag.hash)
+            assert(Tag.internal.Dynamic(built.tag, built.map.toSeq.reverse.toMap).hashCode == tag.hash)
             assert(nested[String, Int].hash == tag.hash)
             assert(nested[Int, String].hash != tag.hash)
         }
@@ -305,7 +305,157 @@ class TagTest extends kyo.test.Test[Any]:
         }
     }
 
+    "an encoding read back" - {
+        trait Higher[F[_]]
+        def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]]      = Tag.dynamic[Map[A, List[B]]]
+        def lambda[A: Tag]: Tag[Higher[[X] =>> Either[A, X]]] = Tag.dynamic[Higher[[X] =>> Either[A, X]]]
+        def deep[A: Tag]: Tag[Option[List[A]]]                =
+            given Tag[List[A]] = Tag.dynamic[List[A]]
+            Tag.dynamic[Option[List[A]]]
+
+        "parse reads back every encoding the compiler writes, as the same type" in {
+            val tags = Chunk(
+                Tag[Any].erased,
+                Tag[Nothing].erased,
+                Tag[Null].erased,
+                Tag[Int].erased,
+                Tag["text"].erased,
+                Tag["a:b"].erased,
+                Tag["a\nb"].erased,
+                Tag["a\rb"].erased,
+                Tag["λ:\u0000\ud800"].erased,
+                Tag[List[Int]].erased,
+                Tag[Map[String, List[Int]]].erased,
+                Tag[Int | String].erased,
+                Tag[Serializable & Product].erased,
+                Tag[List[? <: Number]].erased,
+                Tag[Higher[[X] =>> Either[Int, X]]].erased
+            )
+            assert(tags.map(tag => Tag.internal.parse[Any](Tag.internal.encode(tag)).map(_ =:= tag)) == tags.map(_ => Present(true)))
+        }
+
+        "a dynamic tag is encoded whole, its parts at every depth, and reads back as its type" in {
+            val tags = Chunk(nested[String, Int].erased, lambda[Int].erased, deep[Map[String, Int]].erased)
+            assert(tags.map(tag => Tag.internal.parse[Any](Tag.internal.encode(tag)).map(_ =:= tag)) == tags.map(_ => Present(true)))
+            assert(Tag.internal.parse[Any](Tag.internal.encode(nested[String, Int].erased)).map(_ <:< Tag[Map[String, Seq[Int]]]) ==
+                Present(true))
+        }
+
+        "parse refuses a text that is not a whole encoding" in {
+            // nothing, a flag alone, a class name, an unknown kind, a parameter and a parent naming no entry, a count that is not a
+            // number, no root, a variance past the three, an id given twice, a flag the root is not written with
+            val texts = Chunk(
+                "",
+                "*",
+                "example.Message",
+                "*0:Q",
+                ".0:E:1:006\n1:A",
+                ".0:E:1:000g\n1:A",
+                ".0:C:scala.Some:1:1:5:",
+                "*0:C:x:z:::",
+                "*1:A",
+                ".0:C:scala.List:1:7:1\n1:A",
+                ".0:A\n0:N",
+                "*0:A"
+            )
+            assert(texts.map(Tag.internal.parse[Any]) == texts.map(_ => Absent))
+        }
+    }
+
+    "a union or an intersection built at run time" - {
+        abstract class Event
+        abstract class Message extends Event
+        abstract class Note    extends Event
+        abstract class Other
+        final case class Fact[+V](value: V)    extends Event
+        final case class Relation[+K](kind: K) extends Event
+        def union[A: Tag, B: Tag]: Tag[A | B]                             = Tag.dynamic[A | B]
+        def intersection[A: Tag, B: Tag]: Tag[A & B]                      = Tag.dynamic[A & B]
+        def layer[E: Tag, V: Tag, K: Tag]: Tag[E | Fact[V] | Relation[K]] = Tag.dynamic[E | Fact[V] | Relation[K]]
+        def withEvent[A: Tag]: Tag[A | Event]                             = Tag.dynamic[A | Event]
+        def andString[A: Tag]: Tag[A & String]                            = Tag.dynamic[A & String]
+        def facts[V: Tag]: Tag[Fact[V]]                                   = Tag.dynamic[Fact[V]]
+        def nested[A: Tag, B: Tag, C: Tag]: Tag[(A | B) | C]              =
+            given Tag[A | B] = union[A, B]
+            Tag.dynamic[(A | B) | C]
+
+        "is the type the compiler derives, whatever order its members are written in" in {
+            assert(union[Note, Message] =:= Tag[Message | Note])
+            assert(Tag[Message | Note] =:= union[Note, Message])
+            assert(layer[Message, Nothing, Nothing] =:= Tag[Message | Fact[Nothing] | Relation[Nothing]])
+            assert(layer[Message, String, String] =:= Tag[Message | Fact[String] | Relation[String]])
+            assert(intersection[Serializable, Product] =:= Tag[Product & Serializable])
+        }
+        "splices a union filling one of its members into its own" in {
+            assert(nested[Message, Note, Other] =:= Tag[Message | Note | Other])
+            assert(nested[Message, Note, Other] =:= union[Message, Note | Other])
+        }
+        "drops a member another one covers, as the compiler does" in {
+            assert(union[Message, Event] =:= Tag[Event])
+            assert(union[Nothing, Message] =:= Tag[Message])
+            assert(union[List[Int], Seq[Int]] =:= Tag[Seq[Int]])
+            assert(union[Fact[Message], Fact[Event]] =:= Tag[Fact[Event]])
+            assert(layer[Event, Int, Int] =:= Tag[Event])
+            assert(intersection[Message, Event] =:= Tag[Message])
+            assert(intersection[Any, Message] =:= Tag[Message])
+        }
+        "left with a class without parameters, is the text the compiler writes for it" in {
+            val collapsed = Chunk(
+                (union[Message, Event].erased, Tag[Event].erased),
+                (withEvent[Message].erased, Tag[Event].erased),
+                (intersection[String, CharSequence].erased, Tag[String].erased),
+                (andString[CharSequence].erased, Tag[String].erased)
+            )
+            assert(collapsed.map((built, compiled) => (built.equals(compiled), built.hash == compiled.hash)) ==
+                collapsed.map(_ => (true, true)))
+        }
+        "an intersection is a subtype of a union holding it, and of the same type built at another site" in {
+            assert(Tag[Message & Fact[String]] <:< Tag[(Message & Fact[String]) | Note])
+            val built    = intersection[Message | Fact[Nothing] | Relation[Nothing], Fact[String]]
+            val compiled = Tag[(Message | Fact[Nothing] | Relation[Nothing]) & Fact[String]]
+            assert(built <:< compiled)
+            assert(compiled <:< built)
+            assert(built =:= compiled)
+        }
+        "stays apart from a different type" in {
+            assert(!(union[Note, Message] =:= Tag[Message | Other]))
+            assert(!(layer[Message, String, Int] =:= Tag[Message | Fact[Int] | Relation[Int]]))
+            assert(!(union[Message, Event] =:= Tag[Message]))
+            assert(union[Note, Message] <:< Tag[Event])
+            assert(!(union[Note, Other] <:< Tag[Event]))
+        }
+        "shows each part as the type it is" in {
+            assert(facts[Map[String, Int]].show == Tag[Fact[Map[String, Int]]].show)
+            assert(union[Message, Fact[Int]].show == Tag[Message | Fact[Int]].show)
+            assert(layer[Message, Nothing, Nothing].show == Tag[Message | Fact[Nothing] | Relation[Nothing]].show)
+            assert(facts[Fact[Int]].show == Tag[Fact[Fact[Int]]].show)
+        }
+        "is written as the compiler's type is, and reads back as it" in {
+            val pairs = Chunk(
+                (union[Note, Message].erased, Tag[Message | Note].erased),
+                (layer[Message, String, String].erased, Tag[Message | Fact[String] | Relation[String]].erased),
+                (nested[Message, Note, Other].erased, Tag[Message | Note | Other].erased),
+                (union[List[Int], Seq[Int]].erased, Tag[Seq[Int]].erased)
+            )
+            def written(tag: Tag[Any]) = Tag.internal.encode(tag)
+            assert(pairs.map((built, compiled) => written(built) == written(compiled)) == pairs.map(_ => true))
+            assert(pairs.map((built, _) => Tag.internal.parse[Any](written(built)).map(_ =:= built)) == pairs.map(_ => Present(true)))
+            assert(pairs.map((built, _) => Tag.internal.parse[Any](written(built)).map(written)) == pairs.map((built, _) =>
+                Present(written(built))
+            ))
+            assert(written(layer[Message, String, Int].erased) != written(Tag[Message | Fact[Int] | Relation[Int]].erased))
+        }
+    }
+
     "without variance" - {
+
+        "literal text preserves encoding delimiters" in {
+            assert(Tag["a:b"].show == "a:b")
+            assert(Tag["a\nb"].show == "a\nb")
+            assert(Tag["a\rb"].show == "a\rb")
+            assert(Tag["λ:\u0000\ud800"].show == "λ:\u0000\ud800")
+        }
+
         "equal tags" - {
             class Test[A]
             test[Test[Int], Test[Int]]
@@ -1721,6 +1871,99 @@ class TagTest extends kyo.test.Test[Any]:
         "EmptyTuple keeps its own tag" in {
             assert(Tag[EmptyTuple] =:= Tag[EmptyTuple])
             assert(!(Tag[EmptyTuple] =:= Tag[Tuple1[String]]))
+        }
+
+        "a tuple is not a subtype of a type it does not extend" in {
+            assert(!(Tag[(Int, Double)] <:< Tag[String]))
+            assert(!(Tag[Tuple1[String]] <:< Tag[Int]))
+            assert(!(Tag[Chunk[(Int, Double)]] <:< Tag[Chunk[String]]))
+        }
+
+        "a tuple is a subtype of its cons chain and of the chain's parents" in {
+            assert(Tag[(Int, Double)] <:< Tag[Int *: Double *: EmptyTuple])
+            assert(Tag[(Int, Double)] <:< Tag[NonEmptyTuple])
+            assert(Tag[(Int, Double)] <:< Tag[Tuple])
+            assert(Tag[(Int, Double)] <:< Tag[Product2[Int, Double]])
+            assert(Tag[Int *: Double *: EmptyTuple] <:< Tag[Tuple])
+        }
+    }
+
+    "wildcard arguments" - {
+        class Box[A]
+        class Out[+A]
+        class In[-A]
+
+        "an invariant parameter admits every argument within the wildcard's bounds" in {
+            assert(Tag[Box[String]] <:< Tag[Box[?]])
+            assert(Tag[Box[Int]] <:< Tag[Box[?]])
+            assert(Tag[Box[String]] <:< Tag[Box[? <: AnyRef]])
+            assert(!(Tag[Box[Int]] <:< Tag[Box[? <: AnyRef]]))
+            assert(Tag[Box[Any]] <:< Tag[Box[? >: String]])
+            assert(Tag[Box[String]] <:< Tag[Box[? >: String]])
+            assert(!(Tag[Box[Int]] <:< Tag[Box[? >: String]]))
+            assert(Tag[Box[CharSequence]] <:< Tag[Box[? >: String <: AnyRef]])
+            assert(!(Tag[Box[Any]] <:< Tag[Box[? >: String <: AnyRef]]))
+        }
+        "a wildcard argument is not a specific one" in {
+            assert(!(Tag[Box[?]] <:< Tag[Box[String]]))
+            assert(!(Tag[Box[? <: AnyRef]] <:< Tag[Box[AnyRef]]))
+            assert(!(Tag[Box[?]] <:< Tag[Box[Any]]))
+            assert(!(Tag[Box[Any]] <:< Tag[Box[? <: AnyRef]]))
+        }
+        "a wildcard within another's bounds conforms to it" in {
+            assert(Tag[Box[? <: String]] <:< Tag[Box[? <: AnyRef]])
+            assert(!(Tag[Box[? <: AnyRef]] <:< Tag[Box[? <: String]]))
+            assert(Tag[Box[? >: AnyRef]] <:< Tag[Box[? >: String]])
+            assert(!(Tag[Box[? >: String]] <:< Tag[Box[? >: AnyRef]]))
+            assert(Tag[Box[?]] <:< Tag[Box[?]])
+        }
+        "a covariant parameter reads the upper bound" in {
+            assert(Tag[Out[String]] <:< Tag[Out[? <: AnyRef]])
+            assert(!(Tag[Out[Int]] <:< Tag[Out[? <: AnyRef]]))
+            assert(Tag[Out[String]] <:< Tag[Out[? >: Int]])
+            assert(Tag[Out[? <: String]] <:< Tag[Out[AnyRef]])
+            assert(!(Tag[Out[? <: AnyRef]] <:< Tag[Out[String]]))
+            assert(Tag[Out[? <: String]] <:< Tag[Out[? <: AnyRef]])
+        }
+        "a contravariant parameter reads the lower bound" in {
+            assert(Tag[In[Any]] <:< Tag[In[? >: String]])
+            assert(Tag[In[AnyRef]] <:< Tag[In[? >: String]])
+            assert(!(Tag[In[Int]] <:< Tag[In[? >: String]]))
+            assert(Tag[In[AnyRef]] <:< Tag[In[? <: String]])
+            assert(Tag[In[? >: AnyRef]] <:< Tag[In[String]])
+            assert(!(Tag[In[? >: String]] <:< Tag[In[AnyRef]]))
+            assert(Tag[In[? >: AnyRef]] <:< Tag[In[? >: String]])
+        }
+        "nested" in {
+            assert(Tag[List[Box[String]]] <:< Tag[List[Box[?]]])
+            assert(!(Tag[List[Box[?]]] <:< Tag[List[Box[String]]]))
+            assert(Tag[Box[Box[String]]] <:< Tag[Box[? <: Box[?]]])
+        }
+        "equality is by bounds" in {
+            assert(Tag[Box[?]] =:= Tag[Box[?]])
+            assert(Tag[Box[? <: AnyRef]] =:= Tag[Box[? <: AnyRef]])
+            assert(Tag[Box[?]] =!= Tag[Box[Any]])
+            assert(Tag[Box[?]] =!= Tag[Box[? <: AnyRef]])
+            assert(Tag[Box[? <: AnyRef]] =!= Tag[Box[AnyRef]])
+        }
+        "show" in {
+            val anyRef = Tag[AnyRef].show
+            val string = Tag[String].show
+            assert(Tag[Box[?]].show.endsWith("Box[?]"))
+            assert(Tag[Box[? <: AnyRef]].show.endsWith(s"Box[? <: $anyRef]"))
+            assert(Tag[Box[? >: String]].show.endsWith(s"Box[? >: $string]"))
+            assert(Tag[Box[? >: String <: AnyRef]].show.endsWith(s"Box[? >: $string <: $anyRef]"))
+        }
+        "an invariant argument holding a wildcard is not the same as one holding a type, as in Scala" in {
+            assert(!(Tag[Box[Box[String]]] <:< Tag[Box[Box[?]]]))
+            assert(Tag[Box[Box[String]]] <:< Tag[Box[? <: Box[?]]])
+        }
+        "a dynamic argument beside a wildcard" in {
+            def boxed[A: Tag]: Tag[Box[Box[A]]] = Tag[Box[Box[A]]]
+            assert(boxed[String] <:< Tag[Box[? <: Box[?]]])
+            assert(boxed[String] <:< Tag[Box[? <: Box[? <: AnyRef]]])
+            assert(!(boxed[Int] <:< Tag[Box[? <: Box[? <: AnyRef]]]))
+            assert(!(boxed[String] <:< Tag[Box[Box[?]]]))
         }
     }
 

@@ -753,6 +753,19 @@ val show: String      = a.show
 
 > **Note:** Inside the `kyo` package, `Tag.derive` fails rather than falling back to dynamic-tag construction. This is a performance constraint on internal Kyo code; user code outside the package falls back to dynamic derivation when needed.
 
+Wildcard arguments retain both bounds, including for invariant parameters. A lookup by `Tag[Box[? <: AnyRef]]` can match `Box[String]` without treating the wildcard as the concrete type `AnyRef`.
+
+```scala
+import kyo.*
+
+class Box[A]
+
+val matches = Tag[Box[String]] <:< Tag[Box[? <: AnyRef]] // true
+val differs = Tag[Box[?]] =!= Tag[Box[Any]]              // true
+```
+
+Tags assembled from runtime type arguments compare unions and intersections by their types, independent of member order. Nested unions and intersections are flattened, redundant members are removed, and intersections distribute over unions. Tuple tags retain their ancestors without making the tuple its own parent.
+
 ### Union- and intersection-aware tags
 
 When the type to identify involves a union or intersection (and is not generic), `ConcreteTag[A]` captures it precisely. `ClassTag` collapses unions and intersections; `ConcreteTag` does not. It is what `Result.flatMapError` uses to recover from specific subtypes of a union error.
