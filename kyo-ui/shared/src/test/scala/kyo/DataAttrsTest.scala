@@ -28,6 +28,21 @@ class DataAttrsTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a key with a quote stays inside data-kyo-path" in {
+        val key  = "x\" onmouseover=\"alert(1)"
+        val keys = Signal.initConst(Chunk(key))
+        renderHtml(
+            UI.div(
+                UI.ul(keys.foreachKeyed(identity)(k => UI.li(k))),
+                Svg.svg(keys.foreachKeyed(identity)(_ => Svg.g))
+            )
+        ).map { s =>
+            assert(!s.contains(""" onmouseover="alert(1)"""), s)
+            assert(s.contains("""data-kyo-path="0.0.x&quot; onmouseover=&quot;alert(1)""""), s)
+            assert(s.contains("""data-kyo-path="1.0.x&quot; onmouseover=&quot;alert(1)""""), s)
+        }
+    }
+
     "data with kyo- prefix throws IllegalArgumentException with message containing kyo-" in {
         val ex = intercept[IllegalArgumentException] {
             UI.div.data("kyo-internal", "x")
