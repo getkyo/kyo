@@ -62,7 +62,28 @@ assert(a eq b)
 
 > **Caution:** the registry holds instruments in a `WeakReference`. If every caller drops its handle the entry is evicted on next lookup and the next caller gets a fresh instrument with the count reset to zero. The user is responsible for holding a strong reference somewhere (typically a `val` in the module that owns the metric).
 
-> **Note:** the description argument is stored only on first registration. Re-declaring the same counter under the same path with a different description silently keeps the original description; the second description is discarded.
+> **Note:** the description and the unit are stored only on first registration. Re-declaring the same counter under the same key with a different description or unit silently keeps the original; the second is discarded.
+
+### Series: one instrument, one series per attribute set
+
+An instrument is the metric at its path, and a measurement carries the attributes of the series it belongs to. Counter and histogram series are created on first observation and live as long as the instrument; their methods without attributes use a direct, separate series. Attribute order does not affect identity, and a repeated name uses its last value. Use bounded dimensions such as routes or operation names: every distinct attribute set retains a series.
+
+```scala
+import kyo.AllowUnsafe.embrace.danger
+
+val scope    = StatsRegistry.scope("app", "request")
+val requests = scope.counter("requests", "requests per model", unit = "{request}")
+requests.inc(Attributes.add("model", "a"))
+requests.add(2, Attributes.add("model", "b"))
+requests.inc()
+
+assert(requests.get(Attributes.add("model", "b")) == 2)
+assert(requests.series().map(_.attributes.get.map(_.name)) == Seq(Nil, List("model"), List("model")))
+```
+
+`series()` is what an exporter reads: every series of the instrument, with a counter's delta since its last read or a histogram's summary. The series without attributes comes first, when present. Gauges contain only explicitly registered series: `scope.gauge("depth", attributes = Attributes.add("queue", "orders"))(depth)` registers the thunk for that attribute set, first-writer-wins per set. Registering an attributed gauge does not reserve or fabricate a series without attributes.
+
+`unit` is the OpenTelemetry unit string the exporter sends with the metric: `"1"` for a dimensionless count, `"ms"`, `"By"`, `"{request}"`. The name carries no unit of its own.
 
 ### Reading, without registering
 
@@ -89,7 +110,7 @@ A gauge makes this a correctness question rather than a hygiene one. A gauge's v
 
 ### Enumerating what a process produces
 
-`snapshot` returns every live instrument with its key, kind, description and handle, sorted by key:
+`snapshot` returns every live instrument with its path, kind, description, unit and handle, sorted by path:
 
 ```scala
 val all: Seq[StatsRegistry.Registration] = StatsRegistry.snapshot()
@@ -97,10 +118,10 @@ val all: Seq[StatsRegistry.Registration] = StatsRegistry.snapshot()
 val hostMetrics: Seq[StatsRegistry.Registration] = StatsRegistry.snapshot("machine")
 
 val kinds: Seq[String] = hostMetrics.map {
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Counter(_, _))      => path.mkString(".") + " counter"
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Histogram(_, _))    => path.mkString(".") + " histogram"
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Gauge(_, _))        => path.mkString(".") + " gauge"
-    case StatsRegistry.Registration(path, StatsRegistry.Instrument.CounterGauge(_, _)) => path.mkString(".") + " counter-gauge"
+    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Counter(_, _, _))      => path.mkString(".") + " counter"
+    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Histogram(_, _, _))    => path.mkString(".") + " histogram"
+    case StatsRegistry.Registration(path, StatsRegistry.Instrument.Gauge(_, _, _))        => path.mkString(".") + " gauge"
+    case StatsRegistry.Registration(path, StatsRegistry.Instrument.CounterGauge(_, _, _)) => path.mkString(".") + " counter-gauge"
 }
 ```
 

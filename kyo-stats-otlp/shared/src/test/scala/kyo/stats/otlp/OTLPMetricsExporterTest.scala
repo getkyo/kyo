@@ -81,6 +81,74 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
 
     "periodic export" - {
 
+        "exports only registered gauge series with their attributes and unit" in {
+            withCollector { (config, metricCh) =>
+                val name  = "attributed.gauge." + java.util.UUID.randomUUID().toString
+                val gauge = Stat.initScope("test").initGauge(
+                    name,
+                    unit = "By",
+                    attributes = Attributes.add("mount", "/data").add("labels", List("a,b", "c"))
+                )(42.0)
+                for
+                    _     <- OTLPMetricsExporter.run(config)
+                    found <- awaitMetric(metricCh, s"test.$name", gauge)
+                yield
+                    assert(found.unit == "By")
+                    val points = found.gauge.get.dataPoints
+                    assert(points.size == 1)
+                    assert(points.head.asDouble == Present(42.0))
+                    val attributes = points.head.attributes.map(kv => kv.key -> Json.encode(kv.value)).toMap
+                    assert(attributes("mount") == """{"stringValue":"/data"}""")
+                    assert(attributes("labels") == """{"arrayValue":{"values":[{"stringValue":"a,b"},{"stringValue":"c"}]}}""")
+                end for
+            }
+        }
+
+        "exports attributed counter gauges as independent deltas" in {
+            withCollector { (config, metricCh) =>
+                val name  = "attributed.counterGauge." + java.util.UUID.randomUUID().toString
+                val gauge = Stat.initScope("test").initCounterGauge(
+                    name,
+                    unit = "By",
+                    attributes = Attributes.add("disk", "a")
+                )(17L)
+                for
+                    _     <- OTLPMetricsExporter.run(config)
+                    found <- awaitMetric(metricCh, s"test.$name", gauge)
+                yield
+                    assert(found.unit == "By")
+                    assert(found.sum.get.aggregationTemporality == OTLPModel.DeltaTemporality)
+                    val points = found.sum.get.dataPoints
+                    assert(points.size == 1)
+                    assert(points.head.asInt == Present("17"))
+                    assert(points.head.attributes.map(_.key) == Seq("disk"))
+                    assert(points.head.attributes.head.value.stringValue == Present("a"))
+                end for
+            }
+        }
+
+        "exports attributed histograms with shared boundaries and separate totals" in {
+            withCollector { (config, metricCh) =>
+                val name      = "attributed.histogram." + java.util.UUID.randomUUID().toString
+                val histogram = Stat.initScope("test").initHistogram(name, unit = "ms", boundaries = Array(1.0, 10.0))
+                for
+                    _     <- histogram.observe(3.0, Attributes.add("route", "/a"))
+                    _     <- histogram.observe(20.0, Attributes.add("route", "/b"))
+                    _     <- OTLPMetricsExporter.run(config)
+                    found <- awaitMetric(metricCh, s"test.$name", histogram)
+                yield
+                    assert(found.unit == "ms")
+                    assert(found.histogram.get.aggregationTemporality == OTLPModel.CumulativeTemporality)
+                    val points = found.histogram.get.dataPoints
+                    assert(points.size == 2)
+                    assert(points.forall(_.explicitBounds == Seq(1.0, 10.0)))
+                    assert(points.forall(_.count == "1"))
+                    val totals = points.map(p => p.attributes.head.value.stringValue.get -> (p.bucketCounts, p.sum)).toMap
+                    assert(totals == Map("/a" -> (Seq("0", "1", "0"), 3.0), "/b" -> (Seq("0", "0", "1"), 20.0)))
+                end for
+            }
+        }
+
         "exports registered counter at interval".onlyJvm in {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.counter." + java.util.UUID.randomUUID().toString.take(8)
@@ -176,6 +244,29 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
                 yield
                     assert(found.gauge.isDefined)
                     assert(found.gauge.get.dataPoints.head.asDouble == Present(99.5))
+                end for
+            }
+        }
+
+        "the series of one name export as one metric with a data point per attribute set, carrying the unit".onlyJvm in {
+            withCollector { (config, metricCh) =>
+                val uniqueName = "test.export.attributed." + java.util.UUID.randomUUID().toString.take(8)
+                val scope      = Stat.initScope("test", "export")
+                val requests   = scope.initCounter(uniqueName, "requests per model", unit = "{request}")
+                for
+                    _     <- requests.add(1L, Attributes.add("model", "a"))
+                    _     <- requests.add(2L, Attributes.add("model", "b"))
+                    _     <- OTLPMetricsExporter.run(config)
+                    found <- awaitMetric(metricCh, s"test.export.$uniqueName", requests)
+                yield
+                    assert(found.unit == "{request}")
+                    assert(found.description == "requests per model")
+                    val points = found.sum.get.dataPoints
+                    assert(points.size == 2)
+                    val byModel = points.map(p =>
+                        p.attributes.collectFirst { case KeyValue("model", v) => v.stringValue.get }.get -> p.asInt.get
+                    ).toMap
+                    assert(byModel == Map("a" -> "1", "b" -> "2"))
                 end for
             }
         }

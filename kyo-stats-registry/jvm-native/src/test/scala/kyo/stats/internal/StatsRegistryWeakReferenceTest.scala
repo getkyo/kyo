@@ -23,10 +23,10 @@ class StatsRegistryWeakReferenceTest extends AnyFreeSpec {
         val first  = new Object
         val second = new Object
         assert(store.get(path, "first", first) eq first)
-        val reference = store.map.get(path)._1.asInstanceOf[Reference[Object]]
+        val reference = store.map.get(path).reference.asInstanceOf[Reference[Object]]
         reference.clear()
         assert(store.get(path, "second", second) eq second)
-        assert(store.map.get(path)._1.get() eq second)
+        assert(store.map.get(path).reference.get() eq second)
         assert(store.map.size() == 1)
     }
 
