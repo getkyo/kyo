@@ -1,8 +1,176 @@
 package kyo
 
+import kyo.internal.DiscoverJs
+
 class BrowserDiscoverTest extends BrowserTest:
 
     override def timeout = 90.seconds
+
+    private val splitTextPage = s"""<body style="margin:0">
+        <span id="sample" style="position:absolute;left:10px;top:10px;width:100px;height:30px">${"a" * 199}😀</span>
+    </body>"""
+
+    "discovery text keeps a complete character at the truncation boundary" in {
+        withBrowser {
+            onPage(s"<span id='sample'>${"a" * 198}😀tail</span>") {
+                Browser.element(Browser.Selector.id("sample")).map { info =>
+                    assert(info.map(_.text) == Present(Present("a" * 198 + "😀")))
+                }
+            }
+        }
+    }
+
+    "discovery text omits a character split by elements truncation" in {
+        withBrowser {
+            onPage(splitTextPage) {
+                Browser.elements().map { infos =>
+                    assert(infos.filter(_.id == Present("sample")).map(_.text) == Chunk(Present("a" * 199)))
+                }
+            }
+        }
+    }
+
+    "discovery text omits a character split by element truncation" in {
+        withBrowser {
+            onPage(splitTextPage) {
+                Browser.element(Browser.Selector.id("sample")).map { info =>
+                    assert(info.map(_.text) == Present(Present("a" * 199)))
+                }
+            }
+        }
+    }
+
+    "discovery text omits a character split by elementAt truncation" in {
+        withBrowser {
+            onPage(splitTextPage) {
+                Browser.elementAt(15, 15).map { info =>
+                    assert(info.map(i => (i.id, i.text)) == Present((Present("sample"), Present("a" * 199))))
+                }
+            }
+        }
+    }
+
+    "discovery text replaces lone DOM surrogates while preserving valid pairs" in {
+        withBrowser {
+            onPage("""<body><span id="high"></span><span id="low"></span><span id="pair"></span>
+                <script>
+                    document.getElementById('high').textContent = 'x' + String.fromCharCode(0xD83D);
+                    document.getElementById('low').textContent = String.fromCharCode(0xDE00) + 'y';
+                    document.getElementById('pair').textContent = String.fromCharCode(0xD83D, 0xDE00);
+                </script></body>""") {
+                Browser.elements(Browser.Selector.css("span")).map { infos =>
+                    assert(infos.map(i => (i.id, i.text)) == Chunk(
+                        (Present("high"), Present("x�")),
+                        (Present("low"), Present("�y")),
+                        (Present("pair"), Present("😀"))
+                    ))
+                }
+            }
+        }
+    }
+
+    private def malformedDiscovery(callee: String)(read: => Unit < (Browser & Abort[BrowserReadException]))(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < (Browser & Abort[BrowserReadException]) =
+        onPage("""<body style="margin:0"><div id="sample" style="position:absolute;left:10px;top:10px;width:100px;height:30px">Sample</div>
+            <script>
+                window.__kyoDiscoverInstalled = true;
+                window.__kyoDiscoverProbe = () => ({text: 'z'.repeat(100000), x: 'left'});
+            </script></body>""") {
+            val value =
+                if callee == "elements" then "JSON.stringify([window.__kyoDiscoverProbe()])"
+                else "JSON.stringify({present:true,info:window.__kyoDiscoverProbe()})"
+            Browser.eval(value).map { raw =>
+                val decoded =
+                    if callee == "elements" then Json.decode[Seq[DiscoverJs.ElementInfoWire]](raw).unit
+                    else Json.decode[ElementInfoEnvelope](raw).unit
+                decoded match
+                    case Result.Failure(problem) =>
+                        tight(Abort.run[BrowserReadException](read)).map {
+                            case Result.Failure(error: BrowserProtocolErrorException) =>
+                                val matches = error.error == s"decode failed: ${problem.problem}"
+                                assert(error.method == callee)
+                                assert(matches, s"expected the decoder diagnostic; received ${error.error.length} characters")
+                            case other => fail(s"expected a protocol error, got $other")
+                        }
+                    case other => fail(s"expected an invalid fixture, got $other")
+                end match
+            }
+        }
+
+    "discovery text elements errors report the decoder diagnostic" in {
+        withBrowser(malformedDiscovery("elements")(Browser.elements(Browser.Selector.id("sample")).unit))
+    }
+
+    "discovery text element errors report the decoder diagnostic" in {
+        withBrowser(malformedDiscovery("element")(Browser.element(Browser.Selector.id("sample")).unit))
+    }
+
+    "discovery text elementAt errors report the decoder diagnostic" in {
+        withBrowser(malformedDiscovery("elementAt")(Browser.elementAt(15, 15).unit))
+    }
+
+    private def discoveryTextBoundaries(withoutWellFormed: Boolean)(using Frame, kyo.test.AssertScope) =
+        onPage("<body></body>") {
+            val prepare =
+                if withoutWellFormed then
+                    Browser.eval("delete String.prototype.toWellFormed; typeof ''.toWellFormed").map(v => assert(v == "undefined"))
+                else Kyo.unit
+            prepare.andThen(Browser.eval("""(() => {
+                const high = String.fromCharCode(0xD83D), low = String.fromCharCode(0xDE00);
+                const values = ['  \n ', 'a'.repeat(200), 'b'.repeat(201), 'c'.repeat(199) + high + low,
+                    'd'.repeat(198) + high + low, 'e'.repeat(199) + high, low + 'z', high + high + low + low, ' \t kept \n '];
+                values.forEach(value => { const el = document.createElement('span'); el.textContent = value; document.body.appendChild(el); });
+                return 'ready';
+            })()""")).andThen {
+                tight(Browser.elements(Browser.Selector.css("span"))).map { infos =>
+                    assert(infos.map(_.text) == Chunk(
+                        Absent,
+                        Present("a" * 200),
+                        Present("b" * 200),
+                        Present("c" * 199),
+                        Present("d" * 198 + "😀"),
+                        Present("e" * 199 + "�"),
+                        Present("�z"),
+                        Present("�😀�"),
+                        Present("kept")
+                    ))
+                }
+            }
+        }
+
+    "discovery text boundary matrix preserves the text limit and whitespace contract" in {
+        withBrowser(discoveryTextBoundaries(false))
+    }
+
+    "discovery text boundary matrix works without native well-formed conversion" in {
+        withBrowser(discoveryTextBoundaries(true))
+    }
+
+    private def missingDiscovery(callee: String)(read: => Unit < (Browser & Abort[BrowserReadException]))(using
+        Frame,
+        kyo.test.AssertScope
+    ) =
+        onPage(
+            """<body style="margin:0"><span id="sample" style="position:absolute;left:10px;top:10px;width:100px;height:30px">Sample</span>
+            <script>window.__kyoDiscoverInstalled = true; window.__kyoDiscoverProbe = () => undefined;</script></body>"""
+        ) {
+            tight(Abort.run[BrowserReadException](read)).map {
+                case Result.Failure(error: BrowserProtocolErrorException) =>
+                    assert(error.method == callee)
+                    assert(error.error == "decode failed: missing element info")
+                case other => fail(s"expected a protocol error, got $other")
+            }
+        }
+
+    "discovery text element errors identify a missing snapshot" in {
+        withBrowser(missingDiscovery("element")(Browser.element(Browser.Selector.id("sample")).unit))
+    }
+
+    "discovery text elementAt errors identify a missing snapshot" in {
+        withBrowser(missingDiscovery("elementAt")(Browser.elementAt(15, 15).unit))
+    }
 
     // element returns full ElementInfo for a present match.
     // A #submit button with known geometry and classes.

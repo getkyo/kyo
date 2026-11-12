@@ -287,6 +287,14 @@ yield (title, heading, items)
 end for
 ```
 
+Discovery reads return `ElementInfo` snapshots with geometry, flags and a text preview. `element` and `elementAt` return `Absent` when no element matches; `elements` returns snapshots in document order. Preview text is trimmed and limited to 200 UTF-16 units without splitting a surrogate pair. Lone DOM surrogates become U+FFFD, and empty text is `Absent`. A malformed snapshot reports the schema decoder's problem and location instead of the full reply.
+
+```scala
+Browser.elements(Browser.Selector.css("button, a")).map { infos =>
+    infos.map(info => (info.selector, info.text))
+}
+```
+
 The read surface:
 
 | Method | Returns | Notes |
@@ -301,6 +309,8 @@ The read surface:
 | `countNow(selector)` | `Int` | Point-in-time matched-element count (no retry, returns `0` when nothing matches) |
 | `selectionStart(selector)` | `Int` | Cursor position inside an `<input>` / `<textarea>` |
 | `boundingBox(selector)` | `Maybe[BoundingBox]` | Page-relative geometry |
+| `element(selector)` / `elementAt(x, y)` | `Maybe[Browser.ElementInfo]` | Settled discovery snapshot, or `Absent` |
+| `elements(selector)` | `Chunk[Browser.ElementInfo]` | Settled discovery snapshots in document order |
 | `role(selector)` / `accessibleName(selector)` | `Maybe[String]` | ARIA role / accessible name from the AX tree |
 | `url` / `title` | `String` | Page-level location and `<title>` |
 | `readableContent` | `String` | Text of the page's main content, one line per block element, after a Readability-style strip of navigation, ads and other chrome |
