@@ -382,8 +382,15 @@ final private[kyo] class JvmCommandUnsafe(
         else
             val cmd = args.head
             if cmd.startsWith("/") || cmd.contains("/") then
-                if java.nio.file.Files.isExecutable(java.nio.file.Paths.get(cmd)) then Absent
-                else Present(ProgramNotFoundException(cmd))
+                // The spawn resolves a relative executable after changing directory, so the preflight must use the same directory.
+                val path = workDir.fold(java.nio.file.Paths.get(cmd))(dir => java.nio.file.Paths.get(dir.toString).resolve(cmd))
+                if !java.nio.file.Files.exists(path) then Present(ProgramNotFoundException(cmd))
+                // A directory's execute bit permits searching it, not executing it as a program. Native reports a failed exec as an
+                // exit code, so reject directories before spawning on both runtimes.
+                else if java.nio.file.Files.isDirectory(path) || !java.nio.file.Files.isExecutable(path) then
+                    Present(PermissionDeniedException(cmd))
+                else Absent
+                end if
             else
                 val pathEnv = java.lang.System.getenv("PATH")
                 val pathStr = if pathEnv != null then pathEnv else ""
@@ -397,10 +404,9 @@ final private[kyo] class JvmCommandUnsafe(
 
     /** Translates a java.io.IOException from ProcessBuilder.start() into a CommandException. */
     private def translateIOException(e: IOException, cmd: String)(using Frame): CommandException =
+        // "Cannot run program" also prefixes permission errors.
         val msg = e.getMessage
-        if msg != null && (msg.contains("No such file") || msg.contains("Cannot run program") || msg.contains("error=2")) then
-            ProgramNotFoundException(cmd)
-        else if msg != null && (msg.contains("Permission denied") || msg.contains("error=13")) then
+        if msg != null && (msg.contains("Permission denied") || msg.contains("error=13")) then
             PermissionDeniedException(cmd)
         else
             ProgramNotFoundException(cmd)

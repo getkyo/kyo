@@ -604,8 +604,14 @@ final private[kyo] class NodeCommandUnsafe(
                         "\\"
                     ) || (cmd.length > 1 && cmd(1) == ':')
                 then
-                    if isExec(cmd) then Absent
-                    else Present(ProgramNotFoundException(cmd))
+                    // Resolve the executable against the same working directory the spawn uses.
+                    val path = workDir.fold(cmd)(dir => nodePath.resolve(dir.unsafe.show, cmd).asInstanceOf[String])
+                    if !fs.existsSync(path).asInstanceOf[Boolean] then Present(ProgramNotFoundException(cmd))
+                    // A directory can have search permission without being an executable program.
+                    else if fs.statSync(path).isDirectory().asInstanceOf[Boolean] || !isExec(path) then
+                        Present(PermissionDeniedException(cmd))
+                    else Absent
+                    end if
                 else
                     // Bare command name: scan PATH
                     val pathEnv = js.Dynamic.global.process.env.PATH
