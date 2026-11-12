@@ -1134,6 +1134,30 @@ private[kyo] object HtmlRenderer:
           |  var value=active.tagName==="TEXTAREA"?fresh.textContent:(fresh.getAttribute("value")||"");if(value!==active.value)active.value=value;
           |  applyJsProps(active);return true;
           |}
+          |// Markup equality alone misses dirty form properties. An unapplied property carrier still needs the insertion hooks.
+          |function kyoRangeSameElementState(a,b){
+          |  for(var i=0;i<a.attributes.length;i++)if(a.attributes[i].name.indexOf("data-kyo-prop-")===0)return false;
+          |  if(a.namespaceURI!=="http://www.w3.org/1999/xhtml")return true;
+          |  switch(a.tagName){
+          |    case "INPUT":return a.value===b.value&&a.checked===b.checked&&a.indeterminate===b.indeterminate;
+          |    case "TEXTAREA":return a.value===b.value;
+          |    case "SELECT":return a.selectedIndex===b.selectedIndex;
+          |    case "OPTION":return a.selected===b.selected;
+          |    default:return true;
+          |  }
+          |}
+          |function kyoRangeSameNode(a,b){
+          |  if(!a.isEqualNode(b))return false;if(a.nodeType!==1)return true;
+          |  if(!kyoRangeSameElementState(a,b))return false;
+          |  var left=a.querySelectorAll("*"),right=b.querySelectorAll("*");
+          |  for(var i=0;i<left.length;i++)if(!kyoRangeSameElementState(left[i],right[i]))return false;
+          |  return true;
+          |}
+          |function kyoRangeSameContent(start,end,fragment){
+          |  var a=start.nextSibling,b=fragment.firstChild;
+          |  while(a!==end&&b){if(!kyoRangeSameNode(a,b))return false;a=a.nextSibling;b=b.nextSibling;}
+          |  return a===end&&b===null;
+          |}
           |function kyoRangeReplace(id,html){
           |  if(!kyoRangeId(id))kyoRangeFail("malformed replacement id: "+id);
           |  if(!__kyoRanges)kyoRangeFail("registry is closed");var endpoints=__kyoRanges.get(id);
@@ -1149,6 +1173,11 @@ private[kyo] object HtmlRenderer:
           |  __kyoRanges.forEach(function(pair,key){if(key!==id&&range.intersectsNode(pair.start))removed.push(key);});
           |  incoming.forEach(function(pair,key){if(__kyoRanges.has(key)&&removed.indexOf(key)<0)kyoRangeFail("duplicate id: "+key);});
           |  var oldRoots=kyoRangeRoots(endpoints.start,endpoints.end),newRoots=kyoRangeFragmentRoots(fragment),newSemanticRoots=kyoRangeSemanticRoots(newRoots,id),active=document.activeElement;
+          |  var newHost=newRoots.length===1&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id;
+          |  // Compare synthetic table hosts separately from their semantic children. Keeping equivalent live nodes preserves a pressed click.
+          |  if(synthetic&&newHost&&parent.cloneNode(false).isEqualNode(newRoots[0].cloneNode(false))&&
+          |      kyoRangeSameElementState(parent,newRoots[0])&&kyoRangeSameContent(endpoints.start,endpoints.end,newRoots[0]))return;
+          |  if(!synthetic&&!newHost&&kyoRangeSameContent(endpoints.start,endpoints.end,fragment))return;
           |  if(kyoRangeMorph(active,oldRoots,newSemanticRoots,incoming))return;
           |  var inside=active&&active!==document.body&&kyoRangeContains(oldRoots,active);
           |  var activeLocator=inside?kyoRangeFocusLocator(oldRoots,active):null;

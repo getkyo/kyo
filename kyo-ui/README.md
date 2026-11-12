@@ -218,8 +218,11 @@ In kyo-ui:
 - The function that constructs the `UI` value runs once. There is no component function that re-runs on every state change.
 - A `signal.render(f)` boundary is a subscription to the signal at the granularity of `f`. Only `f` re-runs when the signal emits, and the framework patches only that logical region.
 - There is no virtual DOM. The boundary generates a fresh subtree. HTML emits `ReplaceRange`, which preserves the comment anchors and parses the replacement in their actual parent context with a DOM `Range`. SVG retains its `<g>` boundary and emits path-addressed `Replace`: the boundary holds the previous rendered AST, the server-push transport compares it against the fresh one, and sends a `Replace` only for the nodes that actually differ, addressed by their own paths, so a chart whose data moved but whose axes, gridlines and legend did not sends its marks and nothing else. An unchanged re-render sends nothing. The comparison walks a node as exactly its attributes and its children, and replaces the enclosing node whole anywhere it cannot decompose. The browser-side runtime applies each diff via `outerHTML`; in-process it replaces the boundary whole, since there the update is a DOM write rather than bytes on a wire.
+
 - Subscription granularity is determined at the call site. `div(name: Signal[String])` is a fine-grained subscription on one text node. `when(loggedIn)(bigSubtree)` is a coarse subscription that swaps a whole subtree. Both are explicit choices in the code, not framework defaults to argue with.
 - There is no `useMemo`, `useCallback`, or `React.memo` equivalent because nothing gets re-executed that you did not opt into. The cost of "rendering" a subtree is the cost of the closure inside its boundary, and you wrote that closure.
+
+Both HTML clients retain existing nodes when the incoming range matches their markup and live input, checkbox and selection state. This preserves a native click between mouse press and release. Edited form properties still get repaired when their state differs from the incoming content.
 
 ### Scalar reactive boundary
 

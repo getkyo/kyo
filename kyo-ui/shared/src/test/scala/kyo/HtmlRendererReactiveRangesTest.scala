@@ -7,6 +7,75 @@ import kyo.UI.foreachKeyed
 
 class HtmlRendererReactiveRangesTest extends UITest:
 
+    "an unchanged reactive button keeps the click pressed before its update" in {
+        Kyo.foreachDiscard(Chunk(false, true)) { inTable =>
+            for
+                version <- Signal.initRef(0)
+                clicks  <- Signal.initRef(0)
+                button = (v: Int) =>
+                    UI.button(if v == 0 then "Before" else "Submit").id("pressed-submit")
+                        .onClick(clicks.getAndUpdate(_ + 1).unit)
+                ui = UI.div(
+                    if inTable then UI.table(version.map(v => UI.tr(UI.td(button(v)))))
+                    else UI.div(version.map(v => button(v))),
+                    clicks.map(n => UI.span(n.toString).id("pressed-count"))
+                )
+                _ <- withUI(ui) {
+                    for
+                        // The changed label fences the region's initial subscription replay before the controlled update.
+                        _ <- version.set(1)
+                        _ <- Browser.assertText(Selector.id("pressed-submit"), "Submit")
+                        _ <- Browser.eval("""(() => {
+                        window.__pressedButton = document.getElementById('pressed-submit');
+                        window.__pressedUpdate = new Promise(resolve => {
+                            const socket = window.__kyoWs;
+                            function receive(event) {
+                                const op = JSON.parse(event.data);
+                                if (op.ReplaceRange && op.ReplaceRange.html.includes('id="pressed-submit"')) {
+                                    socket.removeEventListener('message', receive);
+                                    resolve('updated');
+                                }
+                            }
+                            socket.addEventListener('message', receive);
+                        });
+                        return 'armed';
+                    })()""")
+                        _ <- kyo.internal.Actionability.withActionable(
+                            Selector.id("pressed-submit"),
+                            requireFillable = false,
+                            requireEnabled = true
+                        ) { ref =>
+                            kyo.internal.BrowserEval.armClickProbe.andThen {
+                                Browser.use { tab =>
+                                    import kyo.internal.BrowserEval.dispatchMouse
+                                    import kyo.internal.CdpTypes.MouseEventType.*
+                                    dispatchMouse(tab, Moved, ref.x, ref.y, 0)
+                                        .andThen {
+                                            // Deliver the real region frame between native press and release, without a delay race.
+                                            Scope.run {
+                                                Scope.ensure(dispatchMouse(tab, Released, ref.x, ref.y, 1))
+                                                    .andThen(dispatchMouse(tab, Pressed, ref.x, ref.y, 1))
+                                                    .andThen(version.set(2))
+                                                    .andThen(kyo.internal.BrowserEval.evalJsAwaiting("window.__pressedUpdate")).unit
+                                            }
+                                        }
+                                }
+                            }
+                        }
+                        delivery <- kyo.internal.BrowserEval.clickDelivery
+                        sameNode <- Browser.eval("String(window.__pressedButton === document.getElementById('pressed-submit'))")
+                        _ = assert(
+                            delivery == kyo.internal.BrowserEval.ClickDelivery.Received,
+                            s"table=$inTable, delivery=$delivery, sameNode=$sameNode"
+                        )
+                        _ = assert(sameNode == "true")
+                        _ <- Browser.assertText(Selector.id("pressed-count"), "1")
+                    yield ()
+                }
+            yield ()
+        }
+    }
+
     "HTML reactive regions render as safe logical comment ranges" in {
         for
             ref  <- Signal.initRef("value")
