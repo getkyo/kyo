@@ -651,22 +651,26 @@ final class DoltFileSystem private (
 
     // --- Locks ---
 
-    /** Attempts an advisory lock, held in memory rather than in the tree. `sentinelSuffix` is accepted and ignored: it
-      * names the sidecar file a host backend creates, and there is no sidecar here.
+    /** Attempts an advisory lock, held in memory rather than in the tree. No sidecar file is created, but the claim is
+      * keyed by the name a host backend's sidecar would have, `path` followed by `sentinelSuffix`, since the suffix is part
+      * of a lock's identity: claims under different suffixes are independent, and claims naming the same sidecar contend.
       */
     def tryLock(path: Path, mode: Path.LockMode, sentinelSuffix: String = Path.defaultLockSuffix)(using
         Frame
     ): Maybe[Path.Lock] < (Async & Sync & Scope & Abort[FileReadException | FileLockException]) =
+        val slot = DoltVfsStore.key(path) + sentinelSuffix
         Sync.Unsafe.defer {
             val owner = Path.LockOwnership.fresh()
             // Ascribed so the branches unify as one Maybe, which is what makes the match below exhaustive.
-            val claimed: Maybe[DoltLock] = if claim(path, mode, owner) then Present(new DoltLock(path, mode, owner, this)) else Absent
+            val claimed: Maybe[DoltLock] =
+                if claim(slot, mode, owner) then Present(new DoltLock(path, slot, mode, owner, this)) else Absent
             claimed
         }.map {
             case Present(lock) =>
-                Scope.ensure(Sync.Unsafe.defer(discard(surrender(path, lock.ownership)))).andThen(Present(lock: Path.Lock))
+                Scope.ensure(Sync.Unsafe.defer(discard(surrender(slot, lock.ownership)))).andThen(Present(lock: Path.Lock))
             case Absent => Absent
         }
+    end tryLock
 
     def lock(
         path: Path,
@@ -676,8 +680,7 @@ final class DoltFileSystem private (
     )(using Frame): Path.Lock < (Async & Scope & Abort[FileReadException | FileLockException]) =
         FileSystem.awaitLock[Async](path, wait)(tryLock(path, mode, sentinelSuffix))
 
-    private[kyo] def claim(path: Path, mode: Path.LockMode, owner: Path.LockOwnership)(using AllowUnsafe): Boolean =
-        val slot                     = DoltVfsStore.key(path)
+    private[kyo] def claim(slot: String, mode: Path.LockMode, owner: Path.LockOwnership)(using AllowUnsafe): Boolean =
         @tailrec def loop(): Boolean =
             val current = locks.get()
             current.get(slot) match
@@ -693,8 +696,7 @@ final class DoltFileSystem private (
     end claim
 
     /** Drops one owner's claim, answering whether the owner still held it. */
-    private[kyo] def surrender(path: Path, owner: Path.LockOwnership)(using AllowUnsafe): Boolean =
-        val slot                     = DoltVfsStore.key(path)
+    private[kyo] def surrender(slot: String, owner: Path.LockOwnership)(using AllowUnsafe): Boolean =
         @tailrec def loop(): Boolean =
             val current = locks.get()
             current.get(slot) match
@@ -708,8 +710,8 @@ final class DoltFileSystem private (
         loop()
     end surrender
 
-    private[kyo] def holds(path: Path, owner: Path.LockOwnership)(using AllowUnsafe): Boolean =
-        locks.get().get(DoltVfsStore.key(path)).exists(_.owners.contains(owner))
+    private[kyo] def holds(slot: String, owner: Path.LockOwnership)(using AllowUnsafe): Boolean =
+        locks.get().get(slot).exists(_.owners.contains(owner))
 
 end DoltFileSystem
 
@@ -729,7 +731,7 @@ object DoltFileSystem:
         AtomicLong.Unsafe.init(0L)
     end tempCounter
 
-    /** Who holds a path's advisory lock, and in which mode. Shared claims accumulate owners; an exclusive one has one. */
+    /** Who holds a lock slot, and in which mode. Shared claims accumulate owners; an exclusive one has one. */
     final private[kyo] case class Claim(mode: Path.LockMode, owners: Set[Path.LockOwnership])
 
     final private[kyo] case class TooManyLinks(path: Path)

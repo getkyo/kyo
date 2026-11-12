@@ -166,18 +166,20 @@ final private[kyo] class DoltChannel(
 
 end DoltChannel
 
-/** One holder's claim on a path's advisory lock. The claim itself lives in the filesystem's map rather than in this
-  * object, so releasing through a stale handle and releasing through a live one are the same operation.
+/** One holder's claim on a path's advisory lock, kept under `slot`, the path and suffix that identify the lock. The claim
+  * itself lives in the filesystem's map rather than in this object, so releasing through a stale handle and releasing
+  * through a live one are the same operation.
   */
 final private[kyo] class DoltLock(
     path: Path,
+    slot: String,
     val mode: Path.LockMode,
     private[kyo] val ownership: Path.LockOwnership,
     owner: DoltFileSystem
 ) extends Path.Lock:
 
     def check(using Frame): Unit < (Sync & Abort[FileLockException]) =
-        Sync.Unsafe.defer(owner.holds(path, ownership)).map { held =>
+        Sync.Unsafe.defer(owner.holds(slot, ownership)).map { held =>
             if held then () else Abort.fail(FileLockOwnershipLostException(path))
         }
 
@@ -187,6 +189,6 @@ final private[kyo] class DoltLock(
       */
     private[kyo] def release(ownership: Path.LockOwnership)(using Frame): Unit < (Sync & Abort[FileLockException]) =
         if ownership != this.ownership then Abort.fail(FileLockOwnershipLostException(path))
-        else Sync.Unsafe.defer(discard(owner.surrender(path, ownership)))
+        else Sync.Unsafe.defer(discard(owner.surrender(slot, ownership)))
 
 end DoltLock
