@@ -1251,7 +1251,9 @@ object Path extends PathPlatformSpecific:
         inline def removeExisting(using inline frame: Frame): Unit < PathWrite =
             ArrowEffect.suspend(Tag[PathWrite], Path.Op.RemoveExisting(self))
 
-        /** Recursively deletes this path and all of its contents. */
+        /** Recursively deletes this path and all of its contents. Already missing entries are ignored.
+          * Symbolic links are deleted without traversing their targets.
+          */
         inline def removeAll(using inline frame: Frame): Unit < PathWrite =
             ArrowEffect.suspend(Tag[PathWrite], Path.Op.RemoveAll(self))
 

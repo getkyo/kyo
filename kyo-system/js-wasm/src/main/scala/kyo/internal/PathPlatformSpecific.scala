@@ -838,13 +838,7 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     def removeAll()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
         catchFs(FileSystemOperation.Remove) {
-            if NodeFs.existsSync(pathStr) then
-                val stat = NodeFs.lstatSync(pathStr)
-                if stat.isDirectory() then
-                    NodeFs.rmSync(pathStr, js.Dynamic.literal(recursive = true, force = true))
-                else
-                    NodeFs.unlinkSync(pathStr)
-                end if
+            NodeFs.rmSync(pathStr, js.Dynamic.literal(recursive = true, force = true))
         }
 
     // --- Walk handle ---

@@ -286,14 +286,23 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     def removeAll()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
         catchFs(FileSystemOperation.Remove) {
-            if Files.exists(jpath) then
-                val visitor = new SimpleFileVisitor[java.nio.file.Path]:
-                    override def visitFile(p: java.nio.file.Path, a: BasicFileAttributes): FileVisitResult =
-                        Files.delete(p); FileVisitResult.CONTINUE
-                    override def postVisitDirectory(p: java.nio.file.Path, e: IOException): FileVisitResult =
-                        if e != null then throw e // Re-throw to propagate through Java's FileVisitor API
-                        Files.delete(p); FileVisitResult.CONTINUE
-                discard(Files.walkFileTree(jpath, visitor))
+            // Unsafe: walkFileTree invokes these Java callbacks synchronously inside this unsafe operation.
+            val visitor = new SimpleFileVisitor[java.nio.file.Path]:
+                override def visitFile(p: java.nio.file.Path, a: BasicFileAttributes): FileVisitResult =
+                    discard(Files.deleteIfExists(p))
+                    FileVisitResult.CONTINUE
+                override def visitFileFailed(p: java.nio.file.Path, e: IOException): FileVisitResult =
+                    if !NioExceptionBoundary.isFileNotFound(e) then
+                        throw e // Propagate non-missing failures through Java's FileVisitor API.
+                    FileVisitResult.CONTINUE
+                end visitFileFailed
+                override def postVisitDirectory(p: java.nio.file.Path, e: IOException): FileVisitResult =
+                    if e != null && !NioExceptionBoundary.isFileNotFound(e) then
+                        throw e // Propagate non-missing failures through Java's FileVisitor API.
+                    discard(Files.deleteIfExists(p))
+                    FileVisitResult.CONTINUE
+                end postVisitDirectory
+            discard(Files.walkFileTree(jpath, visitor))
         }
 
     // --- Walk handle ---
