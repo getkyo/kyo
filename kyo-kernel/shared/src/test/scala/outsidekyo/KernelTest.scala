@@ -217,6 +217,17 @@ class KernelTest extends AnyFreeSpec:
             assert(answer(v).eval == 6)
         }
 
+        "handleFirst returns a remainder that an external caller can resume" in {
+            def peel(v: Int < Ask): (Int < Ask) < Any =
+                ArrowEffect.handleFirst(Tag[Ask], v)(
+                    [C] => (_, cont) => kyo.Kyo.lift(cont(10)),
+                    value => kyo.Kyo.lift(value: Int < Ask)
+                )
+            val remainder = peel(ask.map(a => ask.map(b => a + b))).eval
+            assert(answer(remainder).eval == 11)
+            assert(answer(peel(42).eval).eval == 42)
+        }
+
         "handleCont" in {
             val v = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))([C] => (_, cont) => cont(2), a => a * 10)
             assert(v.eval == 30)
@@ -514,6 +525,12 @@ class KernelTest extends AnyFreeSpec:
             val v       = level.map(a => ContextEffect.suspend(Tag[Level2]).map(_ + a))
             val r       = ContextEffect.handleInheritable(Tag[Level], 1)(ContextEffect.handleInheritable(Tag[Level2], 10)(isolate.run(v)))
             assert(r.eval == 11)
+        }
+
+        "a crossing carries a region's state to a run outside it" in {
+            val isolate  = Isolate.derive[Level, Any, Any].crossing
+            val captured = ContextEffect.handleInheritable(Tag[Level], 6)(isolate.capture(state => state)).eval
+            assert(isolate.run(captured, level).eval == 6)
         }
     }
 

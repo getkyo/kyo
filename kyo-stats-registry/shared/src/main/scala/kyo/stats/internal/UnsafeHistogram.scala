@@ -2,13 +2,19 @@ package kyo.stats.internal
 
 import java.lang.Float.floatToIntBits
 import java.lang.Float.intBitsToFloat
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.LongAdder
 import kyo.AllowUnsafe
+import kyo.stats.Attributes
 import scala.annotation.tailrec
 
-/** A fixed-bucket histogram for recording value distributions, inspired by the OTel SDK's ExplicitBucketHistogramAggregation and
+/** A fixed-bucket histogram, one series per attribute set, inspired by the OTel SDK's ExplicitBucketHistogramAggregation and
   * Prometheus's fixed-bucket histogram.
+  *
+  * The series with no attributes is the histogram's own and sits on the hot path with no lookup; a series for an attribute set is made the
+  * first time that set is observed, with the same boundaries, and lives as long as the histogram does, the way an OpenTelemetry SDK
+  * instrument owns its data points. Attribute order is not identity: a set is normalized to name order before it keys a series.
   *
   * Optimized for high-throughput observation: the hot path is a binary search followed by a single LongAdder.increment() plus two atomic
   * CAS updates, one for the packed min/max and one for the running sum. Count is derived at read time from a single-pass bucket snapshot.
@@ -52,91 +58,128 @@ class UnsafeHistogram(boundaries: Array[Double]) extends Serializable {
             boundaries.toSeq.mkString("[", ", ", "]")
     )
 
-    private val buckets = Array.fill(boundaries.length + 1)(new LongAdder)
+    private val base  = new UnsafeHistogram.Cell(boundaries)
+    private val cells = new ConcurrentHashMap[Attributes, UnsafeHistogram.Cell]
 
-    // Min (upper 32 bits) and max (lower 32 bits) packed as floats in a single AtomicLong
-    private val minMaxBits = new AtomicLong(pack(Float.MaxValue, Float.MinValue))
+    private def cell(attributes: Attributes): UnsafeHistogram.Cell =
+        if (attributes.get.isEmpty) base
+        else cells.computeIfAbsent(attributes.normalized, _ => new UnsafeHistogram.Cell(boundaries))
 
-    // Running total of every observed value, never reset, held as the raw Double bits in one AtomicLong
-    // and advanced with a single CAS per observation: the same cross-platform accumulator shape as
-    // minMaxBits above. A java.util.concurrent.atomic.DoubleAdder would carry the same value but is absent
-    // from the Scala.js javalib, so a shared histogram using it fails to link on the JS lane; a LongAdder
-    // would truncate every fractional observation. This bit-packed AtomicLong links on every platform and
-    // keeps full Double precision. The buckets are never drained either, so this total and the buckets
-    // describe the same lifetime window.
-    private val sumBits = new AtomicLong(java.lang.Double.doubleToRawLongBits(0.0))
+    def observe(v: Long)(implicit _au: AllowUnsafe): Unit   = base.observe(v.toDouble)
+    def observe(v: Double)(implicit _au: AllowUnsafe): Unit = base.observe(v)
 
-    @tailrec private def addToSum(v: Double): Unit = {
-        val cur  = sumBits.get()
-        val next = java.lang.Double.doubleToRawLongBits(java.lang.Double.longBitsToDouble(cur) + v)
-        if (!sumBits.compareAndSet(cur, next))
-            addToSum(v)
+    def observe(v: Long, attributes: Attributes)(implicit _au: AllowUnsafe): Unit   = cell(attributes).observe(v.toDouble)
+    def observe(v: Double, attributes: Attributes)(implicit _au: AllowUnsafe): Unit = cell(attributes).observe(v)
+
+    /** The distribution of the series with no attributes. */
+    def summary()(implicit _au: AllowUnsafe): Summary = base.summary()
+
+    /** The distribution of the series `attributes`, empty when nothing was observed with them. Never makes a series. */
+    def summary(attributes: Attributes)(implicit _au: AllowUnsafe): Summary = {
+        val found = if (attributes.get.isEmpty) base else cells.get(attributes.normalized)
+        if (found == null) new UnsafeHistogram.Cell(boundaries).summary() else found.summary()
     }
 
-    private def pack(min: Float, max: Float): Long = (floatToIntBits(min).toLong << 32) | (floatToIntBits(max).toLong & 0xffffffffL)
-
-    def observe(v: Long)(implicit _au: AllowUnsafe): Unit = observe(v.toDouble)
-
-    def observe(v: Double)(implicit _au: AllowUnsafe): Unit = {
-        @tailrec def findBucket(lo: Int, hi: Int): Unit =
-            if (lo >= hi)
-                buckets(lo).increment()
-            else {
-                val mid = (lo + hi) / 2
-                if (boundaries(mid) < v)
-                    findBucket(mid + 1, hi)
-                else
-                    findBucket(lo, mid)
-            }
-        findBucket(0, boundaries.length)
-        updateMinMax(v.toFloat)
-        addToSum(v)
-    }
-
-    private def updateMinMax(v: Float): Unit = {
-        @tailrec def loop(): Unit = {
-            val cur    = minMaxBits.get()
-            val curMin = intBitsToFloat((cur >>> 32).toInt)
-            val curMax = intBitsToFloat(cur.toInt)
-            val newMin = if (v < curMin) v else curMin
-            val newMax = if (v > curMax) v else curMax
-            if (newMin != curMin || newMax != curMax) {
-                if (!minMaxBits.compareAndSet(cur, pack(newMin, newMax)))
-                    loop()
-            }
+    /** Every series' distribution, the attribute-free one first: what an exporter emits as data points. Non-destructive. */
+    def series()(implicit _au: AllowUnsafe): Seq[UnsafeHistogram.Series] = {
+        val out = List.newBuilder[UnsafeHistogram.Series]
+        out += UnsafeHistogram.Series(Attributes.empty, base.summary())
+        val it = cells.entrySet().iterator()
+        while (it.hasNext) {
+            val entry = it.next()
+            out += UnsafeHistogram.Series(entry.getKey, entry.getValue.summary())
         }
-        loop()
+        out.result()
     }
-
-    def summary()(implicit _au: AllowUnsafe): Summary = {
-        val counts                                   = new Array[Long](buckets.length)
-        @tailrec def loop(i: Int, total: Long): Long =
-            if (i >= counts.length)
-                total
-            else {
-                counts(i) = buckets(i).sum()
-                loop(i + 1, total + counts(i))
-            }
-        val total = loop(0, 0L)
-
-        val cur = minMaxBits.get()
-        val min = if (total == 0) 0.0 else intBitsToFloat((cur >>> 32).toInt).toDouble
-        val max = if (total == 0) 0.0 else intBitsToFloat(cur.toInt).toDouble
-
-        Summary(
-            boundaries = boundaries,
-            bucketCounts = counts,
-            count = total,
-            min = min,
-            max = max,
-            sum = java.lang.Double.longBitsToDouble(sumBits.get())
-        )
-    }
-
 }
 
 object UnsafeHistogram {
     // OTel SDK defaults (milliseconds)
     private[kyo] val defaultBoundaries: Array[Double] =
         Array(0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000)
+
+    /** One series' distribution. */
+    final case class Series(attributes: Attributes, summary: Summary)
+
+    final private[kyo] class Cell(boundaries: Array[Double]) extends Serializable {
+
+        private val buckets = Array.fill(boundaries.length + 1)(new LongAdder)
+
+        // Min (upper 32 bits) and max (lower 32 bits) packed as floats in a single AtomicLong
+        private val minMaxBits = new AtomicLong(pack(Float.MaxValue, Float.MinValue))
+
+        // Running total of every observed value, never reset, held as the raw Double bits in one AtomicLong
+        // and advanced with a single CAS per observation: the same cross-platform accumulator shape as
+        // minMaxBits above. A java.util.concurrent.atomic.DoubleAdder would carry the same value but is absent
+        // from the Scala.js javalib, so a shared histogram using it fails to link on the JS lane; a LongAdder
+        // would truncate every fractional observation. This bit-packed AtomicLong links on every platform and
+        // keeps full Double precision. The buckets are never drained either, so this total and the buckets
+        // describe the same lifetime window.
+        private val sumBits = new AtomicLong(java.lang.Double.doubleToRawLongBits(0.0))
+
+        @tailrec private def addToSum(v: Double): Unit = {
+            val cur  = sumBits.get()
+            val next = java.lang.Double.doubleToRawLongBits(java.lang.Double.longBitsToDouble(cur) + v)
+            if (!sumBits.compareAndSet(cur, next))
+                addToSum(v)
+        }
+
+        private def pack(min: Float, max: Float): Long = (floatToIntBits(min).toLong << 32) | (floatToIntBits(max).toLong & 0xffffffffL)
+
+        def observe(v: Double): Unit = {
+            @tailrec def findBucket(lo: Int, hi: Int): Unit =
+                if (lo >= hi)
+                    buckets(lo).increment()
+                else {
+                    val mid = (lo + hi) / 2
+                    if (boundaries(mid) < v)
+                        findBucket(mid + 1, hi)
+                    else
+                        findBucket(lo, mid)
+                }
+            findBucket(0, boundaries.length)
+            updateMinMax(v.toFloat)
+            addToSum(v)
+        }
+
+        private def updateMinMax(v: Float): Unit = {
+            @tailrec def loop(): Unit = {
+                val cur    = minMaxBits.get()
+                val curMin = intBitsToFloat((cur >>> 32).toInt)
+                val curMax = intBitsToFloat(cur.toInt)
+                val newMin = if (v < curMin) v else curMin
+                val newMax = if (v > curMax) v else curMax
+                if (newMin != curMin || newMax != curMax) {
+                    if (!minMaxBits.compareAndSet(cur, pack(newMin, newMax)))
+                        loop()
+                }
+            }
+            loop()
+        }
+
+        def summary(): Summary = {
+            val counts                                   = new Array[Long](buckets.length)
+            @tailrec def loop(i: Int, total: Long): Long =
+                if (i >= counts.length)
+                    total
+                else {
+                    counts(i) = buckets(i).sum()
+                    loop(i + 1, total + counts(i))
+                }
+            val total = loop(0, 0L)
+
+            val cur = minMaxBits.get()
+            val min = if (total == 0) 0.0 else intBitsToFloat((cur >>> 32).toInt).toDouble
+            val max = if (total == 0) 0.0 else intBitsToFloat(cur.toInt).toDouble
+
+            Summary(
+                boundaries = boundaries,
+                bucketCounts = counts,
+                count = total,
+                min = min,
+                max = max,
+                sum = java.lang.Double.longBitsToDouble(sumBits.get())
+            )
+        }
+    }
 }

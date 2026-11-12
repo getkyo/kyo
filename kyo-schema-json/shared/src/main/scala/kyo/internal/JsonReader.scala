@@ -740,23 +740,26 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         malformed(msg)
     end error
 
+    // The snippet starts and ends on a character's first byte, so a cut never splits a character into replacement characters, and its
+    // column counts the chars decoded before the break, which a caret reads as characters where `pos` counts bytes.
     private def malformed(msg: String): Nothing =
-        given Frame                          = _frame
-        val contextRadius                    = 30
-        val start                            = math.max(0, pos - contextRadius)
-        val end                              = math.min(input.size, pos + contextRadius)
-        val len                              = end - start
-        val arr                              = new Array[Byte](len)
-        @tailrec def copyBytes(i: Int): Unit =
+        given Frame                            = _frame
+        val contextRadius                      = 30
+        def continuation(i: Int)               = (input(i) & 0xc0) == 0x80
+        @tailrec def firstByte(i: Int): Int    = if i < pos && continuation(i) then firstByte(i + 1) else i
+        @tailrec def lastBoundary(i: Int): Int = if i > pos && i < input.size && continuation(i) then lastBoundary(i - 1) else i
+        val start                              = firstByte(math.max(0, pos - contextRadius))
+        val end                                = lastBoundary(math.min(input.size, pos + contextRadius))
+        val len                                = end - start
+        val arr                                = new Array[Byte](len)
+        @tailrec def copyBytes(i: Int): Unit   =
             if i < len then
                 arr(i) = input(start + i)
                 copyBytes(i + 1)
         copyBytes(0)
-        val snippet        = new String(arr, StandardCharsets.UTF_8)
-        val caretPos       = pos - start
-        val caret          = " " * caretPos + "^"
-        val contextSnippet = s"$snippet\n  $caret"
-        throw ParseException(Json(), contextSnippet, msg, Nil, pos)
+        val snippet = new String(arr, StandardCharsets.UTF_8)
+        val column  = new String(arr, 0, pos - start, StandardCharsets.UTF_8).length
+        throw ParseException(Json(), snippet, msg, Nil, pos, column)
     end malformed
 
     // Reset state for reuse from pool

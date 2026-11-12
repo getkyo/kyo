@@ -1223,6 +1223,29 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
             assert(Json.encode(value) == "\"550e8400-e29b-41d4-a716-446655440000\"")
         }
 
+        "encodes an inferred generated version 7 UUID as canonical JSON text" in {
+            val generator = UUIDGenerator.test(Chunk(1000L), Chunk.fill(16)(0.toByte))
+            UUID.let(generator) {
+                UUID.v7.map(id => assert(Json.encode(id) == "\"00000000-03e8-7000-8000-000000000000\""))
+            }
+        }
+
+        "round-trips version 7 UUIDs without losing their timestamp type" in {
+            val value        = UUID.V7.init(1000L, 7, 9L)
+            val decoded      = Json.decode[UUID.V7](Json.encode(value)).getOrThrow
+            val millis: Long = decoded.unixTimestampMillis
+            assert(decoded == value)
+            assert(millis == 1000L)
+        }
+
+        "refuses another UUID version when decoding a version 7 UUID" in {
+            Json.decode[UUID.V7]("\"550e8400-e29b-41d4-a716-446655440000\"") match
+                case Result.Failure(error: ConstructorRejectedException) =>
+                    assert(error.path == Seq.empty)
+                    assert(error.typeName == "kyo.UUID.V7")
+                case other => fail(s"Expected constructor rejection, got: $other")
+        }
+
         "decodes lowercase canonical JSON text to the exact kyo UUID" in {
             val expected = parseUuid("550e8400-e29b-41d4-a716-446655440000")
             assert(Json.decode[UUID]("\"550e8400-e29b-41d4-a716-446655440000\"") == Result.succeed(expected))
@@ -1262,6 +1285,40 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
             val encoded = Json.encode(value)
             assert(encoded == s""""$highBitsUuidText"""")
             assert(Json.decode[java.util.UUID](encoded) == Result.succeed(value))
+        }
+    }
+
+    "Tag schema and JSON codec" - {
+        "a tag reads back as the type it was written for" in {
+            val tags =
+                Chunk(
+                    Tag[Int].erased,
+                    Tag[String].erased,
+                    Tag["a:b\nc"].erased,
+                    Tag[List[Int]].erased,
+                    Tag[Int | String].erased,
+                    Tag[Map[String, List[Int]]].erased
+                )
+            assert(tags.map(tag => Json.decode[Tag[Any]](Json.encode(tag)).map(_ =:= tag)) == tags.map(_ => Result.succeed(true)))
+        }
+
+        "a dynamic tag is written as one encoding and reads back as its type" in {
+            def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]] = Tag.dynamic[Map[A, List[B]]]
+            val tag                                          = nested[String, Int].erased
+            val back                                         = Json.decode[Tag[Any]](Json.encode(tag))
+            assert(back.map(_ =:= tag) == Result.succeed(true))
+            assert(back.map(_ =:= Tag[Map[String, List[Int]]].erased) == Result.succeed(true))
+            assert(back.map(_.show) == Result.succeed(tag.show))
+        }
+
+        "a text that is not a tag's encoding is a typed decoding failure" in {
+            // a class name, nothing, an unknown kind, a parameter and a parent that name no entry, a count that is not a number
+            val texts = Chunk("example.Message", "", "*0:Q", ".0:C:scala.Some:1:1:5:", "*0:C:x:z:::")
+            assert(texts.map(text =>
+                Json.decode[Tag[Any]](Json.encode(text)) match
+                    case Result.Failure(_: TypeMismatchException) => true
+                    case _                                        => false
+            ) == texts.map(_ => true))
         }
     }
 

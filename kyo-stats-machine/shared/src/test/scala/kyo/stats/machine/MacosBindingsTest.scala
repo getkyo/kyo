@@ -46,7 +46,7 @@ class MacosBindingsTest extends kyo.test.Test[Any]:
         StatsRegistry.internal.gauges.get(path.toList.reverse, "", new UnsafeGauge(() => -1d)).collect()
 
     private def gaugeRegistered(path: String*): Boolean =
-        StatsRegistry.internal.gauges.map.containsKey(path.toList)
+        StatsRegistry.internal.gauges.contains(path.toList)
 
     "real host load" - {
 

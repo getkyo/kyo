@@ -142,7 +142,7 @@ import scala.util.control.NonFatal
     end generateProductFocus
 
     private def generateDirectFocus[A: Type, F: Type, Nominal: Type, V: Type](using
-        Quotes
+        quotes: Quotes
     )(
         focus: Expr[Focus.Select[A, F]],
         fieldName: String,
@@ -179,7 +179,7 @@ import scala.util.control.NonFatal
                             case AppliedType(_, targs) => targs
                             case _                     => List.empty
                         val constructorCall = Select.overloaded(companion, "apply", typeArgs, args)
-                        val setExpr         = constructorCall.asExprOf[Any]
+                        val setExpr         = MacroUtils.applyContextualArgs(using quotes)(constructorCall).asExprOf[Any]
                         '{ $focus.setter.asInstanceOf[(A, Any) => A](root, $setExpr) }
                     }
                 case _ => root
@@ -189,7 +189,7 @@ import scala.util.control.NonFatal
     end generateDirectFocus
 
     private def generateRenamedFocus[A: Type, F: Type, Nominal: Type, V: Type](using
-        Quotes
+        quotes: Quotes
     )(
         focus: Expr[Focus.Select[A, F]],
         fieldName: String,
@@ -227,7 +227,7 @@ import scala.util.control.NonFatal
                             case AppliedType(_, targs) => targs
                             case _                     => List.empty
                         val constructorCall = Select.overloaded(companion, "apply", typeArgs, args)
-                        val setExpr         = constructorCall.asExprOf[Any]
+                        val setExpr         = MacroUtils.applyContextualArgs(using quotes)(constructorCall).asExprOf[Any]
                         '{ $focus.setter.asInstanceOf[(A, Any) => A](root, $setExpr) }
                     }
                 case _ => root
@@ -1235,7 +1235,11 @@ import scala.util.control.NonFatal
             val applied = childType match
                 case AppliedType(_, targs) => TypeApply(ctor, targs.map(Inferred(_))).appliedToArgs(args)
                 case _                     => Apply(ctor, args)
-            applied.asExpr
+            val value = MacroUtils.applyContextualArgs(applied).asExpr
+            '{
+                given Frame = $frame
+                $value
+            }
         end build
         // Built with reflection rather than a nested splice: `build` holds this macro's Quotes, which a splice's own scope rejects.
         val construct = Lambda(
@@ -2371,11 +2375,17 @@ import scala.util.control.NonFatal
                             val typeArgsList = tpe match
                                 case AppliedType(_, targs) => targs
                                 case _                     => List.empty
-                            if typeArgsList.isEmpty then Apply(ctor, ctorArgs)
-                            else TypeApply(ctor, typeArgsList.map(t => Inferred(t))).appliedToArgs(ctorArgs)
+                            val applied =
+                                if typeArgsList.isEmpty then Apply(ctor, ctorArgs)
+                                else TypeApply(ctor, typeArgsList.map(t => Inferred(t))).appliedToArgs(ctorArgs)
+                            val value = MacroUtils.applyContextualArgs(applied).asExprOf[a]
+                            '{
+                                given Frame = $r.frame
+                                $value
+                            }.asTerm
 
                     val resultSym = Symbol.newVal(owner, "_result", tpe, Flags.EmptyFlags, Symbol.noSymbol)
-                    val resultDef = ValDef(resultSym, Some(construct))
+                    val resultDef = ValDef(resultSym, Some(construct.changeOwner(resultSym)))
 
                     val nExpr                     = Expr(n)
                     val allStmts: List[Statement] =

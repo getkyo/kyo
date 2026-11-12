@@ -213,7 +213,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *
       * Capture and isolate must come from the same instance, so a spawn holds the result of one call rather than calling this twice.
       */
-    final private[kyo] def crossing: Isolate[Remove, Keep, Restore] =
+    final def crossing: Isolate[Remove, Keep, Restore] =
         Contextual.andThen(this)
 
 end Isolate
@@ -383,9 +383,11 @@ object Isolate:
                 )
             }
 
+            // An effect is kept when a kept effect is a subtype of it, as the rows already allow: a computation pending Sync runs
+            // where Async is kept, and one pending Abort[Sub] where Abort[Super] is.
             val isolates =
                 remove
-                    .filterNot(t => keep.exists(t =:= _))
+                    .filterNot(t => keep.exists(_ <:< t))
                     .filterNot(_ <:< TypeRepr.of[ContextEffect[Any]])
                     .map { t =>
                         t.asType match

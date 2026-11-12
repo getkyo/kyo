@@ -109,6 +109,7 @@ import scala.quoted.*
         meta: Expr[Schema[A]]
     )(using Quotes): Expr[Convert[A, B]] =
         import quotes.reflect.*
+        val outer: quotes.type = quotes
 
         val tpeF = TypeRepr.of[F]
         val tpeB = TypeRepr.of[B].dealias
@@ -160,9 +161,7 @@ import scala.quoted.*
             new Convert[A, B]((a: A) =>
                 val rec = m.resultOf(a).asInstanceOf[Record[Any]]
                 ${
-                    // Cannot use MacroUtils.constructCaseClass or MacroUtils.getDefault here:
-                    // symB/tpeB/fieldsB are bound to the outer Quotes instance, but this splice
-                    // introduces a new Quotes context, causing path-dependent type mismatch.
+                    // Use the outer Quotes for the target's symbols when completing its contextual clauses.
                     val companion        = Ref(symB.companionModule)
                     val args: List[Term] = fieldsB.zipWithIndex.map: (field, idx) =>
                         val fieldName  = field.name
@@ -184,7 +183,8 @@ import scala.quoted.*
                     val typeArgs = tpeB match
                         case AppliedType(_, args) => args
                         case _                    => List.empty
-                    Select.overloaded(companion, "apply", typeArgs, args).asExprOf[B]
+                    val call = Select.overloaded(companion, "apply", typeArgs, args)
+                    MacroUtils.applyContextualArgs(using outer)(call).asExprOf[B]
                 }
             )
         }

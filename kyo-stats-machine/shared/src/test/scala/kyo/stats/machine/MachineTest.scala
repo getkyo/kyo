@@ -42,7 +42,7 @@ class MachineTest extends kyo.test.Test[Any]:
         StatsRegistry.internal.histograms.get(path.toList.reverse, "", new UnsafeHistogram(Array(0d))).summary()
 
     private def histogramRegistered(path: String*): Boolean =
-        StatsRegistry.internal.histograms.map.containsKey(path.toList)
+        StatsRegistry.internal.histograms.contains(path.toList)
 
     "degradable" - {
 

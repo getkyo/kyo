@@ -1013,6 +1013,25 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
     }
 
     "stream resource cleanup (#1398)" - {
+        for (name, pure) <- Seq("takeWhile" -> false, "takeWhilePure" -> true) do
+            s"$name releases after delivering its prefix without running the upstream tail" in {
+                AtomicRef.init(Chunk.empty[String]).map { log =>
+                    val stream = Stream:
+                        Sync.ensure(log.updateAndGet(_ :+ "release").unit):
+                            Emit.value(Chunk(1, 2, 3)).andThen(Abort.fail("upstream tail"))
+                    val selected =
+                        if pure then stream.takeWhilePure(_ < 3)
+                        else stream.takeWhile(v => Kyo.lift(v < 3))
+                    Abort.run[String](selected.tap(v => log.updateAndGet(_ :+ v.toString).unit).run).map { result =>
+                        log.get.map { entries =>
+                            assert(result == Result.succeed(Chunk(1, 2)))
+                            assert(entries == Chunk("1", "2", "release"))
+                        }
+                    }
+                }
+            }
+        end for
+
         "Scope.ensure runs after full stream consumption" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
@@ -1568,40 +1587,32 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
         // A scope cannot tell a remainder nobody will resume from one someone
         // still intends to resume, so it releases at its own exit: one release, and the late consumer refused.
-        "a rest from splitAt carried to another fiber is released at the peeling scope's exit, and consuming it there is refused" in {
+        "a rest from splitAt first consumed on another fiber after the peeling scope exits is refused" in {
             AtomicInt.init(0).map { released =>
-                Latch.init(1).map { entered =>
-                    Latch.init(1).map { gate =>
-                        Promise.init[Stream[Int, Async], Any].map { handoff =>
-                            val stream: Stream[Int, Async] = Stream:
-                                Sync.ensure(released.incrementAndGet.unit):
-                                    Emit.valueWith(Chunk(1))(entered.release.andThen(gate.await).andThen(Emit.value(Chunk(2))))
-                            for
-                                peeler <- Fiber.initUnscoped {
-                                    Env.run(0) {
-                                        stream.splitAt(1).map { (head, rest) =>
-                                            handoff.complete(Result.succeed(rest)).andThen(entered.await).andThen(head)
-                                        }
-                                    }
-                                }
-                                consumer <- Fiber.initUnscoped(handoff.get.map(_.run))
-                                _        <- entered.await
-                                head     <- peeler.get
-                                atExit   <- released.get
-                                _        <- gate.release
-                                res      <- consumer.getResult
-                                total    <- released.get
-                            yield
-                                val rendered = res.toString
-                                assert(head == Chunk(1))
-                                assert(atExit == 1, s"the peeling scope released $atExit on its way out")
-                                assert(total == 1, s"released $total times in all")
-                                assert(res.isPanic, rendered)
-                                assert(rendered.contains("released when the scope that owned it ended"), rendered)
-                                assert(rendered.contains("Stream.splitAtWith"), rendered)
-                            end for
-                        }
-                    }
+                AtomicBoolean.init(false).map { used =>
+                    val stream: Stream[Int, Async] = Stream:
+                        Sync.ensure(released.incrementAndGet.unit):
+                            Emit.valueWith(Chunk(1))(used.set(true).andThen(Emit.value(Chunk(2))))
+                    for
+                        peeler   <- Fiber.initUnscoped(Env.run(0)(stream.splitAt(1)))
+                        split    <- peeler.get
+                        atExit   <- released.get
+                        consumer <- Fiber.initUnscoped(split._2.run)
+                        res      <- consumer.getResult
+                        total    <- released.get
+                        useRan   <- used.get
+                    yield
+                        val rendered = res.toString
+                        assert(split._1 == Chunk(1))
+                        assert(atExit == 1, s"the peeling scope released $atExit on its way out")
+                        assert(total == 1, s"released $total times in all")
+                        assert(!useRan)
+                        res match
+                            case Result.Panic(_: Closed) => succeed
+                            case other                   => fail(s"expected a closed bracket, got $other")
+                        assert(rendered.contains("released when the scope that owned it ended"), rendered)
+                        assert(rendered.contains("Stream.splitAtWith"), rendered)
+                    end for
                 }
             }
         }

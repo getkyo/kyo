@@ -54,9 +54,9 @@ object HttpServer:
         def host: String = self.host
 
         /** Closes the server gracefully: it stops accepting, ends each connection between requests at once and each other one after it
-          * answers the requests it has already received, and completes when every connection has begun closing and the port is released,
-          * so a connect right after it is refused and a rebind of the port succeeds. A connection still open when `gracePeriod` ends is
-          * closed then, interrupting its handler.
+          * answers the requests it has already received. Completion waits for handler cleanup and release of the listening port, so a
+          * connect right after it is refused and a rebind succeeds. A connection still open when `gracePeriod` ends is closed then,
+          * interrupting its handler. The grace period bounds request processing, not resource finalization.
           */
         def close(gracePeriod: Duration)(using Frame): Unit < Async =
             Sync.Unsafe.defer(self.closeFiber(gracePeriod).safe.get)
@@ -64,7 +64,7 @@ object HttpServer:
         /** Closes the server with a default grace period (30 seconds). */
         def close(using Frame): Unit < Async = close(30.seconds)
 
-        /** Closes the server immediately without waiting for in-flight requests. */
+        /** Interrupts in-flight handlers immediately, then waits for their cleanup and release of the listening port. */
         def closeNow(using Frame): Unit < Async = close(Duration.Zero)
 
         /** Awaits until the server closes. */
@@ -227,7 +227,7 @@ object HttpServer:
         /** Returns the address the server is bound to. */
         def address: HttpAddress
 
-        /** Closes the server as the safe `close` describes. Returns a fiber that completes when every connection has begun closing. */
+        /** Closes the server as the safe `close` describes, including handler cleanup and release of the listening port. */
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
 
         /** Returns a fiber that completes when the server closes. */
@@ -274,6 +274,7 @@ object HttpServer:
             // the same mechanism HttpClientBackend uses for the connections it creates.
             val registry                                = new kyo.internal.ConnectionRegistry[Served]
             val draining                                = AtomicBoolean.Unsafe.init(false)
+            val inflight                                = kyo.internal.server.InflightHandlers.init()
             def tracked(conn: kyo.net.Connection): Unit =
                 // Prune closed entries on accept (no per-connection close hook), then register this one. register closes
                 // the connection itself and returns false when a shutdown races this accept, so the connection is
@@ -294,7 +295,8 @@ object HttpServer:
                         Present(conn.onClosing),
                         Present(() => conn.close()),
                         clock,
-                        Present(served.drain)
+                        Present(served.drain),
+                        Present(inflight)
                     )
                 else
                     (
@@ -316,7 +318,7 @@ object HttpServer:
                     )(tracked)
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog, netConfig)(tracked)
-            listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry, draining, clock))
+            listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry, draining, inflight, clock))
         end listen
     end Unsafe
 
@@ -325,7 +327,8 @@ object HttpServer:
     /** An accepted connection and its part in a graceful close. Compared by identity, as the registry's set requires. */
     final private class Served(val connection: kyo.net.Connection, val drain: UnsafeServerDispatch.Drain)
 
-    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns.
+    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns and the count of
+      * handler fibers its close waits on.
       *
       * The server does NOT own its transport: one transport is shared by every client and server in the process, so closing the server closes
       * its listener, which releases the bound port, and its accepted connections, and leaves the transport alone. Closing it would take every
@@ -336,9 +339,11 @@ object HttpServer:
         transport: kyo.net.Transport,
         registry: kyo.internal.ConnectionRegistry[Served],
         draining: AtomicBoolean.Unsafe,
+        inflight: kyo.internal.server.InflightHandlers,
         clock: Clock
     )(using allow: AllowUnsafe) extends Unsafe:
-        private val closedPromise            = Promise.Unsafe.init[Unit, Any]()
+        // A caller can abandon its await without completing the server's lifetime for every other caller.
+        private val closedPromise            = Promise.Unsafe.initUninterruptible[Unit, Any]()
         private val httpAddress: HttpAddress = NetConfigTranslation.toHttpAddress(listener.address)
 
         def port: Int = httpAddress match
@@ -355,12 +360,17 @@ object HttpServer:
             listener.close()       // stop accepting new connections first
             registry.markClosing() // any accept racing the close now closes itself in `tracked` instead of being orphaned
 
-            // The close completes once the connections are settled AND the listen descriptor is released: the listener's close returns
-            // while the port may still accept, and a caller that rebinds the port or expects a refusal right after close must not see it.
-            // `released` is awaited after the connections, since on Node it completes only once every accepted connection has ended.
+            // The close completes once the connections are settled, their handler fibers have completed AND the listen descriptor is
+            // released: the listener's close returns while the port may still accept, and a caller that rebinds the port or expects a
+            // refusal right after close must not see it. Closing a connection only starts the interrupt of its handler and its scope
+            // cleanup, so the handlers are awaited after the connections; counting stops only then, since a
+            // draining connection still dispatches the requests it has received. `released` is awaited last, since on Node it completes
+            // only once every accepted connection has ended.
             val connectionsSettled = Promise.Unsafe.init[Unit, Any]()
             connectionsSettled.onComplete(_ =>
-                listener.released.onComplete(_ => discard(closedPromise.completeDiscard(Result.succeed(()))))
+                inflight.close().onComplete(_ =>
+                    listener.released.onComplete(_ => discard(closedPromise.completeDiscard(Result.succeed(()))))
+                )
             )
 
             def forceCloseAndComplete(): Unit =

@@ -23,8 +23,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 value
             }
 
-        def v7(using Frame): UUID < Sync =
-            Sync.defer(value)
+        def v7(using Frame): UUID.V7 < Sync =
+            Sync.defer(UUID.V7.init(0L, 0, 0L))
     end FixedUUIDGenerator
 
     // ==================== Route inspection ====================

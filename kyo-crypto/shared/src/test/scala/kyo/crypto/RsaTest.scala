@@ -129,6 +129,13 @@ class RsaTest extends kyo.test.Test[Any]:
             assert(Rsa.VerificationKey(oddOfBits(2048), BigInt(65537)).map(_.exponent) == Result.succeed(BigInt(65537)))
         }
 
+        "checked applies the constructor's checks and fails with the bounds failure itself" in {
+            assert(Rsa.VerificationKey.checked(oddOfBits(2047), BigInt(65537)) == Result.fail(BoundsFailure.ModulusTooSmall(2047, 2048)))
+            assert(Rsa.VerificationKey.checked(oddOfBits(2048) + 1, BigInt(65537)) == Result.fail(BoundsFailure.ModulusEven))
+            assert(Rsa.VerificationKey.checked(oddOfBits(2048), BigInt(65536)) == Result.fail(BoundsFailure.ExponentEven(BigInt(65536))))
+            assert(Rsa.VerificationKey.checked(oddOfBits(2048), BigInt(65537)) == Rsa.VerificationKey(oddOfBits(2048), BigInt(65537)))
+        }
+
         "two keys are equal exactly when their modulus and exponent are" in {
             val a = keyOf(Rsa.VerificationKey(oddOfBits(2048), BigInt(65537)))
             val b = keyOf(Rsa.VerificationKey(oddOfBits(2048), BigInt(65537)))
