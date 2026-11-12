@@ -203,4 +203,54 @@ class KeyTest extends BaseBrowserTest:
         assert(info.keyCode == 190)
     }
 
+    "fromString resolves every supported named key" in {
+        val named = Chunk(
+            "Enter"      -> Browser.Key.Enter,
+            "Tab"        -> Browser.Key.Tab,
+            "Backspace"  -> Browser.Key.Backspace,
+            "Escape"     -> Browser.Key.Escape,
+            "ArrowUp"    -> Browser.Key.ArrowUp,
+            "ArrowDown"  -> Browser.Key.ArrowDown,
+            "ArrowLeft"  -> Browser.Key.ArrowLeft,
+            "ArrowRight" -> Browser.Key.ArrowRight,
+            "Home"       -> Browser.Key.Home,
+            "End"        -> Browser.Key.End,
+            "PageUp"     -> Browser.Key.PageUp,
+            "PageDown"   -> Browser.Key.PageDown,
+            "Delete"     -> Browser.Key.Delete,
+            "Space"      -> Browser.Key.Space,
+            "Shift"      -> Browser.Key.Shift,
+            "Control"    -> Browser.Key.Control,
+            "Alt"        -> Browser.Key.Alt,
+            "Meta"       -> Browser.Key.Meta
+        )
+        named.foreach { (name, key) =>
+            assert(Browser.Key.fromString(name).map(_.value) == Present(key.value), name)
+        }
+    }
+
+    "fromString preserves literal characters through the existing character constructor" in {
+        Chunk('a', 'A', '1', '!', ' ', 'é', '\t').foreach { char =>
+            assert(Browser.Key.fromString(char.toString).map(_.value) == Present(Browser.Key(char).value))
+        }
+    }
+
+    "fromString rejects unknown names and strings that are not one Char" in {
+        Chunk("", "Return", "Esc", "enter", "control", "Enter ", "ab", "🧠", "a\u0301").foreach { name =>
+            assert(Browser.Key.fromString(name) == Absent, name)
+        }
+    }
+
+    "fromString feeds named keys into the existing physical dispatch mapping" in {
+        // The expected type prevents inference from widening the opaque key to String inside this package.
+        val parsedArrow: Maybe[Browser.Key] = Browser.Key.fromString("ArrowDown")
+        val arrow                           = parsedArrow.map((key: Browser.Key) => KeyInfo.mapKey(key))
+        assert(arrow.map(info => (info.keyName, info.domCode, info.keyCode, info.text, info.modifierBit)) ==
+            Present(("ArrowDown", "ArrowDown", 40, Absent, 0)))
+        val parsedModifier: Maybe[Browser.Key] = Browser.Key.fromString("Control")
+        val modifier                           = parsedModifier.map((key: Browser.Key) => KeyInfo.mapKey(key))
+        assert(modifier.map(info => (info.keyName, info.domCode, info.keyCode, info.text, info.modifierBit)) ==
+            Present(("Control", "ControlLeft", 17, Absent, 2)))
+    }
+
 end KeyTest

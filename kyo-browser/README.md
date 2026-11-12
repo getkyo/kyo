@@ -252,6 +252,17 @@ Browser.press(Browser.Key('a'))      // printable character
 
 The full set of named constants: `Enter`, `Tab`, `Backspace`, `Escape`, `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`, `Home`, `End`, `PageUp`, `PageDown`, `Delete`, `Space`, `Shift`, `Control`, `Alt`, `Meta`.
 
+`Key.fromString` parses those case-sensitive names or a single Scala `Char`, returning `Maybe[Key]`. Unknown names and strings longer than one UTF-16 code unit return `Absent`; use `typeText` for arbitrary text.
+
+```scala
+import kyo.*
+
+Browser.Key.fromString("ArrowDown") // Present(Key.ArrowDown)
+Browser.Key.fromString("x")         // Present(Key('x'))
+Browser.Key.fromString("Return")    // Absent
+Browser.Key.fromString("ArrowDown").map(key => Browser.press(key))
+```
+
 The assertion family. Each entry is auto-retried against the active retry schedule and raises a typed `BrowserAssertion*` exception when the schedule exhausts.
 
 | Method | Description |

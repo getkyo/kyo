@@ -26,11 +26,38 @@ import kyo.*
   */
 opaque type Key = String
 
-/** Companion containing the [[Key.apply]] constructor and the named WebDriver keys. */
+/** Companion containing the character constructor, name parser and named WebDriver keys. */
 object Key:
     /** Wraps a single printable character as a [[Key]]. */
     def apply(char: Char): Key                        = char.toString
     extension (k: Key) private[kyo] def value: String = k
+
+    /** Parses a supported key constant's case-sensitive name, such as `Enter`, `ArrowDown` or `Space`, or a single [[Char]] as
+      * [[apply]] does. Returns `Absent` for unknown names and strings containing more than one UTF-16 code unit. For arbitrary text,
+      * use [[kyo.Browser.typeText]].
+      */
+    def fromString(name: String): Maybe[Key] =
+        name match
+            case "Enter"                => Present(Enter)
+            case "Tab"                  => Present(Tab)
+            case "Backspace"            => Present(Backspace)
+            case "Escape"               => Present(Escape)
+            case "ArrowUp"              => Present(ArrowUp)
+            case "ArrowDown"            => Present(ArrowDown)
+            case "ArrowLeft"            => Present(ArrowLeft)
+            case "ArrowRight"           => Present(ArrowRight)
+            case "Home"                 => Present(Home)
+            case "End"                  => Present(End)
+            case "PageUp"               => Present(PageUp)
+            case "PageDown"             => Present(PageDown)
+            case "Delete"               => Present(Delete)
+            case "Space"                => Present(Space)
+            case "Shift"                => Present(Shift)
+            case "Control"              => Present(Control)
+            case "Alt"                  => Present(Alt)
+            case "Meta"                 => Present(Meta)
+            case one if one.length == 1 => Present(apply(one.charAt(0)))
+            case _                      => Absent
 
     /** The Enter / Return key. */
     val Enter: Key = ""
