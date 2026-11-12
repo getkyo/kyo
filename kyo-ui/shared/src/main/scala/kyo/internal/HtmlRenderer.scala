@@ -373,6 +373,24 @@ private[kyo] object HtmlRenderer:
                             }.andThen(closeInitialHost(sb, host))
                         end for
                 }
+
+            case m: Mounted =>
+                // A mount's live content belongs to the instance the renderer runs, so a static render shows its placeholder,
+                // inside a range of its own that the instance's updates then replace.
+                val region      = ReactiveRegion.from(context, namespace)
+                val placeholder = m.placeholderUI.getOrElse(UI.empty(using m.frame))
+                val host        = ReactiveRegion.renderHost(region, parentContext, ReactiveRegion.tableContent(placeholder))
+                openInitialHost(sb, host)
+                renderTo(
+                    sb,
+                    placeholder,
+                    path,
+                    context.transparent,
+                    ReactiveRegion.namespace(host),
+                    cssRules,
+                    ReactiveRegion.contentParent(host),
+                    ReactiveRegion.BoundaryMode.Emit
+                ).andThen(closeInitialHost(sb, host))
     end renderTo
 
     private def renderBoundElementBoundary(
