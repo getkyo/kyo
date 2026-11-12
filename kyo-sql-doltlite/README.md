@@ -84,9 +84,16 @@ carries no user, password, host or port. There are no advisory locks and no conf
 of which are refused by name rather than silently downgraded, exactly as
 [kyo-sql-sqlite](../kyo-sql-sqlite/README.md) describes for the engine this one forks.
 
-A conflict is the one merge outcome whose aftermath differs. The engine never keeps a conflict past a
-transaction, so a conflicting `merge`, `stageMerge` or `pull` answers the same `Dolt.Merge.Conflicted` a server
-does and leaves the branch as it was before the merge, with no conflicts in the working set to resolve.
+A conflict survives only inside the transaction that produced it. Outside a transaction, `merge`, `stageMerge`
+and `pull` read the conflicts into `Dolt.Merge.Conflicted` and abort the merge, leaving the branch unchanged.
+Inside an outer `transaction`, they leave the conflicts there to resolve and commit in that body. Inside a
+nested transaction, the engine discards the conflicts at its savepoint, so the operation fails with
+`DoltLiteNestedMergeConflictException`; rolling back that nested scope leaves the outer transaction usable.
+
+The embedded engine's version-control `commit`, and a successful merge that commits, also end the SQL
+transaction. Writes committed by that call cannot be rolled back by a later failure in the body. Keep the
+version-control commit at the end of the transaction body. An unresolved conflict still fails SQL commit;
+it is never accepted as a successful transaction.
 
 ## In a browser
 
