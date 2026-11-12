@@ -188,4 +188,39 @@ class JsonReaderTest extends kyo.test.Test[Any]:
             case other                                     => fail(s"expected a LimitExceededException, got $other")
     }
 
+    private def assertMessage(input: String, message: String)(using kyo.test.AssertScope) =
+        Json.decode[Structure.Value](input) match
+            case Result.Failure(e: ParseException) => assert(e.problem == message, s"$input: ${e.problem}")
+            case other                             => fail(s"$input: expected a ParseException, got $other")
+
+    "a malformed document's message prints the bytes around the break whole, with a caret beneath the character it broke at" in {
+        assertMessage(
+            s"""{"questions":[{"Open":{"text":"${"x" * 300}"}}}}""",
+            s"""Cannot parse '${"x" * 27}"}}}}' as Expected ',' or ']' at position 334""" + "\n" + " " * 44 + "^"
+        )
+        assertMessage("""{"a":1,}""", """Cannot parse '{"a":1,}' as Expected a field name at position 7""" + "\n" + " " * 21 + "^")
+    }
+
+    "a malformed number ending at the input boundary keeps its caret" in {
+        assertMessage("1.", "Cannot parse '1.' as Expected digit after '.' at position 2\n" + " " * 16 + "^")
+    }
+
+    "a malformed document's caret counts the characters before the break, where its position counts bytes" in {
+        assertMessage(
+            "{\"a\":\"😀😀\"}}",
+            "Cannot parse '{\"a\":\"😀😀\"}}' as Unexpected trailing content at position 16\n" + " " * 24 + "^"
+        )
+    }
+
+    "a malformed document's snippet starts and ends on a character, never in the middle of one" in {
+        assertMessage(
+            "[\"" + "é" * 20 + "\"  1]",
+            "Cannot parse '" + "é" * 13 + "\"  1]' as Expected ',' or ']' at position 45\n" + " " * 30 + "^"
+        )
+        assertMessage(
+            "[1 2 \"" + "é" * 20 + "\"]",
+            "Cannot parse '[1 2 \"" + "é" * 13 + "' as Expected ',' or ']' at position 3\n" + " " * 17 + "^"
+        )
+    }
+
 end JsonReaderTest
