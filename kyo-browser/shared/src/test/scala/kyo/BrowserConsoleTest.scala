@@ -2,6 +2,68 @@ package kyo
 
 class BrowserConsoleTest extends BrowserTest:
 
+    "onConsole receives primitive console values and thrown numbers before a string notification barrier" in {
+        withBrowser {
+            onPage("<html><body>console values</body></html>") {
+                for
+                    received <- AtomicRef.init(Chunk.empty[(Browser.ConsoleLevel, String)])
+                    barrier  <- Latch.init(1)
+                    _        <- Browser.onConsole(message =>
+                        if message.text == "kyo-console-barrier" then barrier.release
+                        else received.updateAndGet(_.append((message.level, message.text))).unit
+                    ) {
+                        Browser.eval("""
+                            console.log('count', 3, true, null, undefined, NaN, -0, Infinity, -Infinity, 9007199254740993n);
+                            for (const literal of ['42', 'null', 'undefined', 'true', 'NaN', '-0', 'Infinity', '-Infinity', '9007199254740993n']) {
+                                const script = document.createElement('script');
+                                script.textContent = 'throw ' + literal; document.body.appendChild(script);
+                            }
+                            console.log('kyo-console-barrier'); 'ok'
+                        """).andThen(barrier.await)
+                    }
+                    messages <- received.get
+                yield assert(
+                    messages == Chunk(
+                        (Browser.ConsoleLevel.Log, "count 3 true null undefined NaN -0 Infinity -Infinity 9007199254740993n"),
+                        (Browser.ConsoleLevel.Error, "Uncaught 42"),
+                        (Browser.ConsoleLevel.Error, "Uncaught null"),
+                        (Browser.ConsoleLevel.Error, "Uncaught undefined"),
+                        (Browser.ConsoleLevel.Error, "Uncaught true"),
+                        (Browser.ConsoleLevel.Error, "Uncaught NaN"),
+                        (Browser.ConsoleLevel.Error, "Uncaught -0"),
+                        (Browser.ConsoleLevel.Error, "Uncaught Infinity"),
+                        (Browser.ConsoleLevel.Error, "Uncaught -Infinity"),
+                        (Browser.ConsoleLevel.Error, "Uncaught 9007199254740993n")
+                    ),
+                    s"messages=$messages"
+                )
+            }
+        }
+    }
+
+    "eval retains native special primitives and its undefined compatibility" in {
+        withBrowser {
+            onPage("<html><body>eval values</body></html>") {
+                Kyo.foreachDiscard(Chunk(
+                    "NaN"               -> "NaN",
+                    "-0"                -> "-0",
+                    "Infinity"          -> "Infinity",
+                    "-Infinity"         -> "-Infinity",
+                    "9007199254740993n" -> "9007199254740993n",
+                    "undefined"         -> "",
+                    "null"              -> "null"
+                )) { (expression, expected) =>
+                    Browser.eval(expression).map(value => assert(value == expected, s"$expression: $value"))
+                }.andThen {
+                    Browser.eval("2 ** 63").map { value =>
+                        assert(BigDecimal(value).toDouble == 9223372036854775808.0)
+                        assert(BigDecimal(value) > BigDecimal(Long.MaxValue))
+                    }
+                }
+            }
+        }
+    }
+
     override def timeout = 90.seconds
 
     // ---- consoleLogs ----

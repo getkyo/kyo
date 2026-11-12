@@ -148,7 +148,8 @@ final private[kyo] case class GetFrameTreeResult(frameTree: FrameTreeNode) deriv
 
 /** CDP `RemoteObject` modelled as a discriminated sum type on the `type` field.
   *
-  * CDP wire shape: `{"type": "string", "value": "hello"}` (`number` / `boolean` carry their typed `value` likewise),
+  * CDP wire shape: `{"type": "string", "value": "hello"}` (finite `number` / `boolean` carry their typed `value` likewise),
+  * while special numbers and bigints use `unserializableValue` instead of `value`,
   * `{"type": "object", "description": "Promise"}` (non-serialisable references carry only the description),
   * `{"type": "undefined"}` (no fields). The flat-discriminator schema (kyo-schema's `.discriminator("type")`) encodes
   * and decodes this exact shape, mapping each variant case class to its CDP type string by name.
@@ -167,25 +168,59 @@ sealed private[kyo] trait RemoteObject derives CanEqual
 
 private[kyo] object RemoteObject:
 
-    /** CDP's optional human-readable description for non-serialisable references (e.g. `"Promise"` for `Promise` objects). Returns
-      * `Absent` for variants that don't carry a description (`undefined`).
-      */
     extension (ro: RemoteObject)
-        def descriptionOpt: Maybe[String] = ro match
-            case s: RemoteObject.`string`    => s.description
-            case n: RemoteObject.`number`    => n.description
-            case b: RemoteObject.`boolean`   => b.description
-            case o: RemoteObject.`object`    => o.description
-            case f: RemoteObject.`function`  => f.description
-            case s: RemoteObject.`symbol`    => s.description
-            case b: RemoteObject.`bigint`    => b.description
-            case _: RemoteObject.`undefined` => Absent
+        /** The primitive's text, or the description of a referenced object. */
+        def text: String = ro match
+            case s: RemoteObject.`string` => s.value
+            case n: RemoteObject.`number` =>
+                val value   = n.value
+                val integer = value.toLong
+                if value == 0.0 && 1.0 / value == Double.NegativeInfinity then "-0"
+                else if value >= Long.MinValue.toDouble && value < Long.MaxValue.toDouble && value == integer.toDouble then
+                    integer.toString
+                else value.toString
+                end if
+            case b: RemoteObject.`boolean`   => b.value.toString
+            case o: RemoteObject.`object`    => if o.subtype.contains("null") then "null" else o.description.getOrElse("")
+            case f: RemoteObject.`function`  => f.description.getOrElse("")
+            case s: RemoteObject.`symbol`    => s.description.getOrElse("")
+            case b: RemoteObject.`bigint`    => b.value
+            case _: RemoteObject.`undefined` => "undefined"
     end extension
 
     final case class `string`(value: String, description: Maybe[String] = Absent) extends RemoteObject
         derives Schema, CanEqual
     final case class `number`(value: Double, description: Maybe[String] = Absent) extends RemoteObject
-        derives Schema, CanEqual
+        derives CanEqual
+
+    object `number`:
+        // The wire carries exactly one of these fields. Decode joins them into the one Double a number holds.
+        @kyo.schema.tagOnly
+        private enum Literal derives Schema, CanEqual:
+            case NaN, `-0`, Infinity, `-Infinity`
+        private case class Wire(value: Maybe[Double], unserializableValue: Maybe[Literal], description: Maybe[String]) derives Schema
+
+        given Schema[`number`] = Schema.derived[Wire].transformVia(wire =>
+            (wire.value, wire.unserializableValue) match
+                case (Present(value), Absent) if value.isFinite => Present(`number`(value, wire.description))
+                case (Absent, Present(literal))                 =>
+                    val value = literal match
+                        case Literal.NaN         => Double.NaN
+                        case Literal.`-0`        => -0.0
+                        case Literal.Infinity    => Double.PositiveInfinity
+                        case Literal.`-Infinity` => Double.NegativeInfinity
+                    Present(`number`(value, wire.description))
+                case _ => Maybe.empty[`number`]
+        )(number =>
+            val value = number.value
+            if value.isNaN then Wire(Absent, Present(Literal.NaN), number.description)
+            else if value == Double.PositiveInfinity then Wire(Absent, Present(Literal.Infinity), number.description)
+            else if value == Double.NegativeInfinity then Wire(Absent, Present(Literal.`-Infinity`), number.description)
+            else if value == 0.0 && 1.0 / value == Double.NegativeInfinity then Wire(Absent, Present(Literal.`-0`), number.description)
+            else Wire(Present(value), Absent, number.description)
+            end if
+        )
+    end `number`
     final case class `boolean`(value: Boolean, description: Maybe[String] = Absent) extends RemoteObject
         derives Schema, CanEqual
     final case class `object`(subtype: Maybe[String] = Absent, description: Maybe[String] = Absent) extends RemoteObject
@@ -196,7 +231,8 @@ private[kyo] object RemoteObject:
         derives Schema, CanEqual
     final case class `symbol`(description: Maybe[String] = Absent) extends RemoteObject
         derives Schema, CanEqual
-    final case class `bigint`(value: String, description: Maybe[String] = Absent) extends RemoteObject
+    final case class `bigint`(@kyo.schema.rename("unserializableValue") value: String, description: Maybe[String] = Absent)
+        extends RemoteObject
         derives Schema, CanEqual
 
     given Schema[RemoteObject] = Schema.derived[RemoteObject].discriminator("type")
@@ -297,14 +333,12 @@ final private[kyo] case class ScreencastFrameMetadata(
 final private[kyo] case class ScreencastFrameWire(data: String, metadata: ScreencastFrameMetadata, sessionId: Int) derives Schema
 
 // Runtime console events
-final private[kyo] case class RemoteObjectValue(`type`: String, value: Maybe[String] = Absent, description: Maybe[String] = Absent)
-    derives Schema
 final private[kyo] case class CallFrameWire(url: Maybe[String] = Absent, lineNumber: Maybe[Int] = Absent, columnNumber: Maybe[Int] = Absent)
     derives Schema
 final private[kyo] case class StackTraceWire(callFrames: Seq[CallFrameWire] = Nil) derives Schema
 final private[kyo] case class ConsoleApiCalledWire(
     `type`: String,
-    args: Seq[RemoteObjectValue] = Nil,
+    args: Seq[RemoteObject] = Nil,
     timestamp: Maybe[Double] = Absent,
     stackTrace: Maybe[StackTraceWire] = Absent
 ) derives Schema
@@ -313,7 +347,7 @@ final private[kyo] case class ExceptionDetailsWire(
     url: Maybe[String] = Absent,
     lineNumber: Maybe[Int] = Absent,
     stackTrace: Maybe[StackTraceWire] = Absent,
-    exception: Maybe[RemoteObjectValue] = Absent
+    exception: Maybe[RemoteObject] = Absent
 ) derives Schema
 final private[kyo] case class ExceptionThrownWire(timestamp: Maybe[Double] = Absent, exceptionDetails: ExceptionDetailsWire) derives Schema
 
