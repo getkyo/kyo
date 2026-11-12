@@ -759,6 +759,94 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
+    for operation <- Chunk("reload", "fragment", "query") do
+        s"goto compatibility for $operation preserves its navigation behavior" in {
+            val bytes = Span.fromUnsafe(
+                "<html><body><input id='state' value='original'><h1 id='section'>Section</h1></body></html>".getBytes("UTF-8")
+            )
+            val handler = HttpRoute.getRaw("/").response(_.bodyBinary).handler(_ =>
+                HttpResponse.ok(bytes).addHeader("Content-Type", "text/html; charset=utf-8")
+            )
+            withLocalhostServer(handler) { (host, port) =>
+                withBrowser {
+                    val canonical = s"http://$host:$port/"
+                    val target    = operation match
+                        case "fragment" => canonical + "#section"
+                        case "query"    => canonical + "?step=2"
+                        case _          => canonical
+                    for
+                        _ <- Browser.goto(canonical, Browser.Settle.Load)
+                        _ <- Browser.eval("window.marker = 'preserved'; document.getElementById('state').value = 'typed'; 'set'")
+                        _ <- if operation == "reload" then Browser.reload(Browser.Settle.Load)
+                        else Browser.goto(target, Browser.Settle.Load)
+                        marker <- Browser.eval("window.marker || 'missing'")
+                        value  <- Browser.value(Browser.Selector.id("state"))
+                        url    <- Browser.url
+                    yield
+                        assert(marker == (if operation == "fragment" then "preserved" else "missing"), marker)
+                        assert(value == (if operation == "fragment" then "typed" else "original"), value)
+                        assert(url == target, url)
+                    end for
+                }
+            }
+        }
+    end for
+
+    "goto compatibility for a different destination with a quoted query" in {
+        val firstBytes = Span.fromUnsafe("<p>first</p>".getBytes("UTF-8"))
+        val nextBytes  = Span.fromUnsafe("<p>next</p>".getBytes("UTF-8"))
+        val first      = HttpRoute.getRaw("/").response(_.bodyBinary).handler(_ =>
+            HttpResponse.ok(firstBytes).addHeader("Content-Type", "text/html; charset=utf-8")
+        )
+        val next = HttpRoute.getRaw("/next").response(_.bodyBinary).handler(_ =>
+            HttpResponse.ok(nextBytes).addHeader("Content-Type", "text/html; charset=utf-8")
+        )
+        withLocalhostServer(first, next) { (host, port) =>
+            withBrowser {
+                for
+                    _      <- Browser.goto(s"http://$host:$port/", Browser.Settle.Load)
+                    _      <- Browser.eval("window.marker = 'preserved'")
+                    _      <- Browser.goto(s"http://$host:$port/next?note=a'b", Browser.Settle.Load)
+                    body   <- Browser.text(Browser.Selector.css("p"))
+                    query  <- Browser.eval("new URLSearchParams(location.search).get('note')")
+                    marker <- Browser.eval("window.marker || 'missing'")
+                yield
+                    assert(body == "next", body)
+                    assert(query == "a'b", query)
+                    assert(marker == "missing", marker)
+            }
+        }
+    }
+
+    "goto compares the live URL after interpreting an equivalent spelling" in {
+        val bytes   = Span.fromUnsafe("<html><body>root</body></html>".getBytes("UTF-8"))
+        val handler = HttpRoute.getRaw("/").response(_.bodyBinary).handler(_ =>
+            HttpResponse.ok(bytes).addHeader("Content-Type", "text/html; charset=utf-8")
+        )
+        withLocalhostServer(handler) { (host, port) =>
+            withBrowser {
+                val canonical = s"http://$host:$port/"
+                val requested = s"http://$host:$port/./"
+                for
+                    _ <- Browser.goto(canonical, Browser.Settle.Load)
+                    _ <- Browser.eval(s"""(() => {
+                        const NativeURL = window.URL;
+                        window.URL = class extends NativeURL {
+                            constructor(...args) {
+                                super(...args);
+                                if (args[0] === ${Json.encode(requested)}) history.replaceState({}, '', '/moved');
+                            }
+                        };
+                        return 'installed';
+                    })()""")
+                    _   <- Browser.goto(requested, Browser.Settle.Load)
+                    url <- Browser.url
+                yield assert(url == canonical, s"requested=$requested, actual=$url")
+                end for
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // NetworkIdle graceful degradation to Load
     //
@@ -825,6 +913,91 @@ class BrowserSettlementTest extends BrowserTest:
             }
         }
     }
+
+    private def gotoWithControlledDeadline(url: String)(using Frame): Result[BrowserReadException, Unit] < (Browser & Async) =
+        Browser.use { tab =>
+            Clock.withTimeControl { control =>
+                Scope.run {
+                    for
+                        navigation <- Fiber.init {
+                            Browser.runOn(tab) {
+                                Abort.run[BrowserReadException] {
+                                    Browser.withConfig(_.navigationPollInterval(1.hour)
+                                        .loadSchedule(Schedule.fixed(1.hour).maxDuration(1.hour))) {
+                                        Browser.goto(url, Browser.Settle.Load)
+                                    }
+                                }
+                            }
+                        }
+                        // A no-op completes without a poll. A mistaken watcher registers this distinctive sleeper before time advances.
+                        advancer <- Fiber.init {
+                            control.awaitPendingSleeper(1.hour).andThen(control.advance(1.hour, Duration.Zero))
+                        }
+                        result <- navigation.get
+                        _      <- advancer.interrupt
+                    yield result
+                }
+            }
+        }
+
+    for spelling <- Chunk("canonical", "missing slash", "dot segments", "scheme case") do
+        s"goto equivalent URL with $spelling preserves the current document" in {
+            val bytes   = Span.fromUnsafe("<html><body><input id='state' value='original'></body></html>".getBytes("UTF-8"))
+            val handler = HttpRoute.getRaw("/").response(_.bodyBinary).handler(_ =>
+                HttpResponse.ok(bytes).addHeader("Content-Type", "text/html; charset=utf-8")
+            )
+            withLocalhostServer(handler) { (host, port) =>
+                withBrowser {
+                    val canonical = s"http://$host:$port/"
+                    val requested = spelling match
+                        case "missing slash" => s"http://$host:$port"
+                        case "dot segments"  => s"http://$host:$port/./"
+                        case "scheme case"   => s"HTTP://$host:$port/"
+                        case _               => canonical
+                    for
+                        _      <- Browser.goto(canonical, Browser.Settle.Load)
+                        _      <- Browser.eval("window.marker = 'preserved'; document.getElementById('state').value = 'typed'; 'set'")
+                        result <- gotoWithControlledDeadline(requested)
+                        marker <- Browser.eval("window.marker || 'missing'")
+                        value  <- Browser.value(Browser.Selector.id("state"))
+                        url    <- Browser.url
+                    yield
+                        assert(result.isSuccess, s"requested=$requested, marker=$marker, result=$result")
+                        assert(marker == "preserved", marker)
+                        assert(value == "typed", value)
+                        assert(url == canonical, url)
+                    end for
+                }
+            }
+        }
+    end for
+
+    for requested <- Chunk("", "relative", "http://[") do
+        s"goto invalid URL '$requested' preserves Chrome's typed failure and current page" in {
+            val bytes   = Span.fromUnsafe("<html><body>original</body></html>".getBytes("UTF-8"))
+            val handler = HttpRoute.getRaw("/").response(_.bodyBinary).handler(_ =>
+                HttpResponse.ok(bytes).addHeader("Content-Type", "text/html; charset=utf-8")
+            )
+            withLocalhostServer(handler) { (host, port) =>
+                withBrowser {
+                    val canonical = s"http://$host:$port/"
+                    for
+                        _      <- Browser.goto(canonical, Browser.Settle.Load)
+                        _      <- Browser.eval("window.marker = 'preserved'")
+                        result <- gotoWithControlledDeadline(requested)
+                        marker <- Browser.eval("window.marker || 'missing'")
+                        url    <- Browser.url
+                    yield
+                        result match
+                            case Result.Failure(error: BrowserProtocolErrorException) => assert(error.method == "Page.navigate")
+                            case other                                                => fail(s"expected Chrome's URL error, got $other")
+                        assert(marker == "preserved", marker)
+                        assert(url == canonical, url)
+                    end for
+                }
+            }
+        }
+    end for
 
     // -------------------------------------------------------------------------
     // Same-URL Browser.goto after a typed failure (B1)

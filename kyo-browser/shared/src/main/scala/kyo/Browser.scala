@@ -310,6 +310,9 @@ object Browser:
       * [[kyo.Browser.Settle.NetworkIdle]], which waits for the `load` event plus a quiet network window, strictly stronger than
       * `readyState === 'complete'`).
       *
+      * An absolute URL already naming the current page is a no-op, including equivalent spellings such as an omitted root slash.
+      * Use [[reload]] to explicitly refresh the current document.
+      *
       * @param url
       *   destination URL
       * @param settle
@@ -332,18 +335,26 @@ object Browser:
         val effectiveSettle =
             if url.startsWith("data:") && settle == Browser.Settle.NetworkIdle then Browser.Settle.Load
             else settle
-        // Same-URL no-op: Chrome's `Page.navigate` against the URL the tab is already at does NOT actually navigate, but the
-        // navigation watcher waits for a URL-change or push-state signal that will never arrive, timing out with "navigation
-        // never committed". Mirror the browser-native `location.assign(currentUrl)` semantics: short-circuit when the tab is
-        // already at the target URL. Callers wanting an explicit refresh have [[Browser.reload]].
+        // The watcher requires a changed URL. Equivalent spellings would reload the page then wait for a change that never arrives.
+        // Keep the exact-match fast path; only consult Chrome's URL serializer when the strings differ.
         Browser.url.map { currentUrl =>
             if currentUrl == url then Kyo.unit
             else
-                NavigationWatcher.armAroundNavigation(effectiveSettle, failOnHttpError) {
-                    Env.use[BrowserTab](tab => CdpBackend.navigate(tab.session, NavigateParams(url)))
+                BrowserEval.evalJs(currentUrlMatchJs(url)).map {
+                    case "same"      => Kyo.unit
+                    case "different" =>
+                        NavigationWatcher.armAroundNavigation(effectiveSettle, failOnHttpError) {
+                            Env.use[BrowserTab](tab => CdpBackend.navigate(tab.session, NavigateParams(url)))
+                        }
+                    case other => Abort.fail(BrowserProtocolErrorException.decodeFailure("goto", s"unexpected URL comparison '$other'"))
                 }
         }
     end goto
+
+    // Compare the live location after serialization in the same evaluation. Rejected inputs still reach Page.navigate unchanged.
+    private def currentUrlMatchJs(url: String): String =
+        val literal = s"'${JsStringUtil.escapeJsString(url)}'"
+        s"(() => { try { const target = new URL($literal).href; return location.href === target ? 'same' : 'different'; } catch (error) { return 'different'; } })()"
 
     /** Returns the current tab's navigation history: every entry the tab has visited plus an index pointing to the active entry. Use to
       * display a back/forward UI, to reason about whether `back` or `forward` is meaningful, or to assert on the navigation trace from a
