@@ -81,19 +81,54 @@ final class DoltFileSystem private (
         drained(loop(path, 0))
     end resolved
 
-    private def parents(path: Path, create: Boolean)(using Frame): Unit < (Async & Abort[FileNotFoundException | FileIOException]) =
+    /** `path` with the links in its parent followed, but not a link at `path` itself: the entry an operation on `path`
+      * acts on. Creating, removing, moving, and linking act on that entry, as they do on a host.
+      */
+    private def entry(path: Path)(using Frame): Path < (Async & Abort[FileReadException]) =
         path.parent match
-            case Absent          => ()
+            case Absent          => path
+            case Present(parent) =>
+                resolved(parent).map { resolvedParent =>
+                    if resolvedParent == parent then path else path.name.fold(resolvedParent)(resolvedParent / _)
+                }
+
+    /** Every read failure is also a write failure, so a lookup's failure passes through a write unchanged. */
+    private def writing[A, S](v: A < (S & Abort[FileReadException]))(using Frame): A < (S & Abort[FileWriteException]) =
+        Abort.recover[FileReadException] { case e: FileWriteException => Abort.fail(e) }(v)
+
+    /** The missing parents of `path`, outermost first, or the failure naming `subject` when an existing parent is not a
+      * directory. Only reads, so a caller can decide before it writes anything.
+      */
+    private def missingParents(subject: Path, path: Path, operation: FileSystemOperation)(using
+        Frame
+    ): Result[FileIOException, Chunk[Path]] < (Async & Abort[FileIOException]) =
+        path.parent match
+            case Absent          => Result.succeed(Chunk.empty)
             case Present(parent) =>
                 store.node(parent).map {
-                    case Present(_) => ()
-                    case Absent     =>
-                        if !create then Abort.fail(FileNotFoundException(parent))
-                        else
-                            parents(parent, create).andThen {
-                                now.map(at => store.putNode(DoltVfsNode(parent, Kind.Directory, Absent, 0L, at)))
-                            }
+                    case Present(node) if node.isDirectory => Result.succeed(Chunk.empty)
+                    case Present(_)                        => Result.fail(FileIOException(subject, operation, NotADirectory(parent)))
+                    case Absent                            => missingParents(subject, parent, operation).map(_.map(_.append(parent)))
                 }
+
+    /** Creates the missing parents of `path` when `create` allows, failing as the host does: a missing parent without it
+      * is not found, and an existing parent that is not a directory refuses the entry.
+      */
+    private def parents(path: Path, create: Boolean, operation: FileSystemOperation)(using
+        Frame
+    ): Unit < (Async & Abort[FileNotFoundException | FileIOException]) =
+        missingParents(path, path, operation).map {
+            case Result.Success(missing) =>
+                if missing.isEmpty then ()
+                else if !create then Abort.fail(FileNotFoundException(missing.last))
+                else now.map(at => createDirectories(missing, at))
+            case Result.Failure(refused) => Abort.fail(refused)
+            case Result.Panic(error)     => Abort.panic(error)
+        }
+
+    /** Creates directories by insert rather than replacement, so a directory another writer created meanwhile is kept. */
+    private def createDirectories(paths: Chunk[Path], at: Long)(using Frame): Unit < (Async & Abort[FileIOException]) =
+        Kyo.foreachDiscard(paths)(path => store.insertNode(DoltVfsNode(path, Kind.Directory, Absent, 0L, at)).unit)
 
     // --- Inspection ---
 
@@ -209,13 +244,15 @@ final class DoltFileSystem private (
         Frame
     ): Unit < (Async & Abort[FileWriteException]) =
         drained {
-            parents(path, options.createFolders).andThen {
-                now.map { at =>
-                    store.node(path).map { existing =>
-                        if existing.exists(_.isDirectory) then Abort.fail(FileIsADirectoryException(path))
-                        else
-                            store.putNode(DoltVfsNode(path, Kind.File, Absent, value.size.toLong, at))
-                                .andThen(store.writeAll(path, value, at))
+            writing(resolved(path)).map { target =>
+                parents(target, options.createFolders, FileSystemOperation.Write).andThen {
+                    now.map { at =>
+                        store.node(target).map { existing =>
+                            if existing.exists(_.isDirectory) then Abort.fail(FileIsADirectoryException(path))
+                            else
+                                store.putNode(DoltVfsNode(target, Kind.File, Absent, value.size.toLong, at))
+                                    .andThen(store.writeAll(target, value, at))
+                        }
                     }
                 }
             }
@@ -235,14 +272,16 @@ final class DoltFileSystem private (
         Frame
     ): Unit < (Async & Abort[FileReadException | FileWriteException]) =
         drained {
-            parents(path, options.createFolders).andThen {
-                now.map { at =>
-                    store.node(path).map {
-                        case Present(node) if node.isDirectory => Abort.fail(FileIsADirectoryException(path))
-                        case Present(node)                     => store.writeAt(path, node.sizeBytes, node.sizeBytes, value, at)
-                        case Absent                            =>
-                            store.putNode(DoltVfsNode(path, Kind.File, Absent, value.size.toLong, at))
-                                .andThen(store.writeAll(path, value, at))
+            resolved(path).map { target =>
+                parents(target, options.createFolders, FileSystemOperation.Write).andThen {
+                    now.map { at =>
+                        store.node(target).map {
+                            case Present(node) if node.isDirectory => Abort.fail(FileIsADirectoryException(path))
+                            case Present(node)                     => store.writeAt(target, node.sizeBytes, node.sizeBytes, value, at)
+                            case Absent                            =>
+                                store.putNode(DoltVfsNode(target, Kind.File, Absent, value.size.toLong, at))
+                                    .andThen(store.writeAll(target, value, at))
+                        }
                     }
                 }
             }
@@ -254,10 +293,12 @@ final class DoltFileSystem private (
         append(path, value.mkString("", "\n", "\n"), options)
 
     def truncate(path: Path, size: Long)(using Frame): Unit < (Async & Abort[FileReadException | FileWriteException]) =
-        requiredFile(path).map(node => now.map(at => drained(store.truncate(path, node.sizeBytes, size, at))))
+        resolved(path).map { target =>
+            requiredFile(target).map(node => now.map(at => drained(store.truncate(target, node.sizeBytes, size, at))))
+        }
 
     def setLastModified(path: Path, epochMs: Long)(using Frame): Unit < (Async & Abort[FileReadException | FileWriteException]) =
-        required(path).map(node => drained(store.touch(path, node.sizeBytes, epochMs)))
+        resolved(path).map(target => required(target).map(node => drained(store.touch(target, node.sizeBytes, epochMs))))
 
     // --- Write handles ---
 
@@ -268,15 +309,17 @@ final class DoltFileSystem private (
         Frame
     ): Path.WriteHandle < (Async & Abort[FileReadException | FileWriteException]) =
         drained {
-            parents(path, options.createFolders).andThen {
-                now.map { at =>
-                    store.node(path).map {
-                        case Present(node) if node.isDirectory => Abort.fail(FileIsADirectoryException(path))
-                        case Present(node) if append           => Sync.Unsafe.defer(newWriteHandle(path, node.sizeBytes))
-                        case _                                 =>
-                            store.putNode(DoltVfsNode(path, Kind.File, Absent, 0L, at))
-                                .andThen(store.writeAll(path, Span.empty[Byte], at))
-                                .andThen(Sync.Unsafe.defer(newWriteHandle(path, 0L)))
+            resolved(path).map { target =>
+                parents(target, options.createFolders, FileSystemOperation.Write).andThen {
+                    now.map { at =>
+                        store.node(target).map {
+                            case Present(node) if node.isDirectory => Abort.fail(FileIsADirectoryException(path))
+                            case Present(node) if append           => Sync.Unsafe.defer(newWriteHandle(target, node.sizeBytes))
+                            case _                                 =>
+                                store.putNode(DoltVfsNode(target, Kind.File, Absent, 0L, at))
+                                    .andThen(store.writeAll(target, Span.empty[Byte], at))
+                                    .andThen(Sync.Unsafe.defer(newWriteHandle(target, 0L)))
+                        }
                     }
                 }
             }
@@ -308,24 +351,29 @@ final class DoltFileSystem private (
 
     def mkDir(path: Path)(using Frame): Unit < (Async & Abort[FileReadException | FileStructureException]) =
         drained {
-            store.node(path).map {
-                case Present(node) if node.isDirectory => ()
-                case Present(_)                        => Abort.fail(FileAlreadyExistsException(path))
-                case Absent                            =>
-                    parents(path, create = true).andThen {
-                        now.map(at => store.putNode(DoltVfsNode(path, Kind.Directory, Absent, 0L, at)))
-                    }
+            entry(path).map { directory =>
+                store.node(directory).map {
+                    case Present(node) if node.isDirectory => ()
+                    case Present(_)                        => Abort.fail(FileAlreadyExistsException(path))
+                    case Absent                            =>
+                        parents(directory, create = true, FileSystemOperation.Create).andThen {
+                            now.map(at => store.insertNode(DoltVfsNode(directory, Kind.Directory, Absent, 0L, at))).map { created =>
+                                // Another writer created the entry first: a directory is what was asked for, anything else is not.
+                                if created then ()
+                                else
+                                    store.node(directory).map { node =>
+                                        if node.exists(_.isDirectory) then () else Abort.fail(FileAlreadyExistsException(path))
+                                    }
+                            }
+                        }
+                }
             }
         }
 
     def mkFile(path: Path)(using Frame): Unit < (Async & Abort[FileWriteException | FileStructureException]) =
         drained {
-            store.node(path).map {
-                case Present(_) => Abort.fail(FileAlreadyExistsException(path))
-                case Absent     =>
-                    parents(path, create = true).andThen {
-                        now.map(at => store.putNode(DoltVfsNode(path, Kind.File, Absent, 0L, at)))
-                    }
+            writing(entry(path)).map { file =>
+                created(path, file, DoltVfsNode(file, Kind.File, Absent, 0L, _), FileSystemOperation.Create)
             }
         }
 
@@ -334,30 +382,57 @@ final class DoltFileSystem private (
       */
     def symlink(link: Path, target: Path)(using Frame): Unit < (Async & Abort[FileWriteException | FileStructureException]) =
         drained {
-            store.node(link).map {
-                case Present(_) => Abort.fail(FileAlreadyExistsException(link))
-                case Absent     =>
-                    parents(link, create = true).andThen {
-                        now.map(at => store.putNode(DoltVfsNode(link, Kind.Symlink, Present(DoltVfsStore.key(target)), 0L, at)))
-                    }
+            writing(entry(link)).map { placed =>
+                created(
+                    link,
+                    placed,
+                    DoltVfsNode(placed, Kind.Symlink, Present(DoltVfsStore.key(target)), 0L, _),
+                    FileSystemOperation.Create
+                )
             }
         }
 
+    /** Creates the entry `node` describes at `placed` exclusively: one insert keyed by the path, so of several concurrent
+      * creators exactly one succeeds and every other is refused with [[FileAlreadyExistsException]] naming `path`.
+      */
+    private def created(path: Path, placed: Path, node: Long => DoltVfsNode, operation: FileSystemOperation)(using
+        Frame
+    ): Unit < (Async & Abort[FileNotFoundException | FileIOException | FileAlreadyExistsException]) =
+        store.node(placed).map {
+            case Present(_) => Abort.fail(FileAlreadyExistsException(path))
+            case Absent     =>
+                parents(placed, create = true, operation).andThen {
+                    now.map(at => store.insertNode(node(at))).map(won => if won then () else Abort.fail(FileAlreadyExistsException(path)))
+                }
+        }
+
+    /** Moves `from` to `to` in one transaction, so a reader sees the previous entry at `to` or the moved one and never
+      * neither, which satisfies [[Path.Atomicity.Required]]. Every check runs before the first write and reports its
+      * failure as a value, since the pool discards a session a failure crosses.
+      */
     def move(from: Path, to: Path, options: Path.MoveOptions)(using
         Frame
     ): Unit < (Async & Abort[FileReadException | FileWriteException | FileStructureException]) =
         drained {
-            required(from).andThen {
-                store.node(to).map { target =>
-                    val cleared =
-                        if target.isEmpty then Kyo.lift(())
-                        else if options.replace == Path.Replace.Never then Abort.fail(FileAlreadyExistsException(to))
-                        else removeAll(to)
-                    cleared.andThen {
-                        parents(to, options.createFolders).andThen {
-                            now.map(at => store.descendants(from).map(nodes => store.relocate(from, to, nodes, at)))
-                        }
-                    }
+            entry(from).map { source =>
+                entry(to).map { destination =>
+                    // Moving an entry onto itself changes nothing, as on a host; replacing the target first would delete it.
+                    if source == destination then required(source).unit
+                    else
+                        store.atomically(to, FileSystemOperation.Move) {
+                            placement(from, to, source, destination, options.replace, options.createFolders, FileSystemOperation.Move).map {
+                                case Result.Success(missing) =>
+                                    now.map { at =>
+                                        createDirectories(missing, at)
+                                            .andThen(store.removeNode(destination))
+                                            .andThen(store.descendants(source))
+                                            .map(nodes => store.relocate(source, destination, nodes, at))
+                                            .andThen(Result.unit)
+                                    }
+                                case Result.Failure(refused) => Result.fail(refused)
+                                case Result.Panic(error)     => Result.panic(error)
+                            }
+                        }.map(Abort.get(_))
                 }
             }
         }
@@ -366,45 +441,91 @@ final class DoltFileSystem private (
         Frame
     ): Unit < (Async & Abort[FileReadException | FileWriteException | FileStructureException]) =
         drained {
-            val source = if options.followLinks then resolved(from) else Kyo.lift(from)
+            val source = if options.followLinks then resolved(from) else entry(from)
             source.map { origin =>
-                required(origin).andThen {
-                    store.node(to).map { target =>
-                        val cleared =
-                            if target.isEmpty then Kyo.lift(())
-                            else if options.replace == Path.Replace.Never then Abort.fail(FileAlreadyExistsException(to))
-                            else removeAll(to)
-                        cleared.andThen {
-                            parents(to, options.createFolders).andThen {
+                entry(to).map { destination =>
+                    // Copying an entry onto itself changes nothing, as on a host; replacing the target first would delete it.
+                    if origin == destination then required(origin).unit
+                    else
+                        placement(from, to, origin, destination, options.replace, options.createFolders, FileSystemOperation.Copy).map {
+                            case Result.Success(missing) =>
                                 now.map { at =>
-                                    store.descendants(origin).map { nodes =>
-                                        Kyo.foreachDiscard(nodes) { node =>
-                                            val moved = DoltVfsStore.rebase(node.path, origin, to)
-                                            val stamp = if options.copyAttributes then node.modifiedMs else at
-                                            store.putNode(node.copy(path = moved, modifiedMs = stamp)).andThen {
-                                                if !node.isFile then ()
-                                                else store.readAll(node.path, node.sizeBytes).map(store.writeAll(moved, _, stamp))
+                                    createDirectories(missing, at).andThen(store.removeNode(destination)).andThen {
+                                        store.descendants(origin).map { nodes =>
+                                            Kyo.foreachDiscard(nodes) { node =>
+                                                val copied = DoltVfsStore.rebase(node.path, origin, destination)
+                                                val stamp  = if options.copyAttributes then node.modifiedMs else at
+                                                store.putNode(node.copy(path = copied, modifiedMs = stamp)).andThen {
+                                                    if !node.isFile then ()
+                                                    else store.readAll(node.path, node.sizeBytes).map(store.writeAll(copied, _, stamp))
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
+                            case Result.Failure(refused) => Abort.fail(refused)
+                            case Result.Panic(error)     => Abort.panic(error)
                         }
-                    }
                 }
             }
         }
 
+    /** Decides whether `source` can be placed at `destination`, answering the parents to create or why it cannot, before
+      * anything is written: the source must exist and must not be placed inside itself, an existing target is replaced
+      * only when `replace` allows and never when it is a directory with entries, and a missing parent is created only when
+      * `createFolders` allows.
+      */
+    private def placement(
+        from: Path,
+        to: Path,
+        source: Path,
+        destination: Path,
+        replace: Path.Replace,
+        createFolders: Boolean,
+        operation: FileSystemOperation
+    )(using
+        Frame
+    ): Result[FileReadException | FileWriteException | FileStructureException, Chunk[Path]] < (Async & Abort[FileIOException]) =
+        store.node(source).map {
+            case Absent                                                   => Result.fail(FileNotFoundException(from))
+            case Present(_) if destination.parts.startsWith(source.parts) =>
+                Result.fail(FileIOException(to, operation, IntoItself(from, to)))
+            case Present(_) =>
+                store.node(destination).map { existing =>
+                    val occupied = existing match
+                        case Absent                                      => Kyo.lift(Maybe.empty[FileStructureException])
+                        case Present(_) if replace == Path.Replace.Never => Kyo.lift(Maybe(FileAlreadyExistsException(to)))
+                        case Present(node) if node.isDirectory           =>
+                            store.children(destination).map(kids =>
+                                if kids.nonEmpty then Maybe(FileDirectoryNotEmptyException(to)) else Absent
+                            )
+                        case Present(_) => Kyo.lift(Maybe.empty[FileStructureException])
+                    occupied.map {
+                        case Present(refused) => Result.fail(refused)
+                        case Absent           =>
+                            missingParents(to, destination, operation).map {
+                                case Result.Success(missing) if missing.nonEmpty && !createFolders =>
+                                    Result.fail(FileNotFoundException(missing.last))
+                                case other => other
+                            }
+                    }
+                }
+        }
+
     def remove(path: Path)(using Frame): Boolean < (Async & Abort[FileReadException | FileStructureException]) =
         drained {
-            store.node(path).map {
-                case Absent        => false
-                case Present(node) =>
-                    val guard =
-                        if !node.isDirectory then Kyo.lift(())
-                        else
-                            store.children(path).map(kids => if kids.nonEmpty then Abort.fail(FileDirectoryNotEmptyException(path)) else ())
-                    guard.andThen(store.removeNode(path)).andThen(true)
+            entry(path).map { removed =>
+                store.node(removed).map {
+                    case Absent        => false
+                    case Present(node) =>
+                        val guard =
+                            if !node.isDirectory then Kyo.lift(())
+                            else
+                                store.children(removed).map(kids =>
+                                    if kids.nonEmpty then Abort.fail(FileDirectoryNotEmptyException(path)) else ()
+                                )
+                        guard.andThen(store.removeNode(removed)).andThen(true)
+                }
             }
         }
 
@@ -413,9 +534,11 @@ final class DoltFileSystem private (
 
     def removeAll(path: Path)(using Frame): Unit < (Async & Abort[FileReadException | FileStructureException]) =
         drained {
-            store.descendants(path).map { nodes =>
-                // Deepest first, so a directory is never removed while a child still refers to it.
-                Kyo.foreachDiscard(nodes.sortBy(-_.path.parts.size))(node => store.removeNode(node.path))
+            entry(path).map { removed =>
+                store.descendants(removed).map { nodes =>
+                    // Deepest first, so a directory is never removed while a child still refers to it.
+                    Kyo.foreachDiscard(nodes.sortBy(-_.path.parts.size))(node => store.removeNode(node.path))
+                }
             }
         }
 
@@ -479,23 +602,31 @@ final class DoltFileSystem private (
         Async & Abort[FileReadException | FileWriteException | FileStructureException]
     ) =
         drained {
-            store.node(path).map { existing =>
-                val prepared =
-                    (open, existing) match
-                        case (FileSystem.WriteOpen.Existing, Absent)      => Abort.fail(FileNotFoundException(path))
-                        case (FileSystem.WriteOpen.CreateNew, Present(_)) => Abort.fail(FileAlreadyExistsException(path))
-                        case (_, Present(node)) if node.isDirectory       => Abort.fail(FileIsADirectoryException(path))
-                        case (_, Present(_))                              => Kyo.lift(())
-                        case _                                            =>
-                            parents(path, create = true).andThen {
-                                now.map(at =>
-                                    store.putNode(DoltVfsNode(path, Kind.File, Absent, 0L, at))
-                                        .andThen(store.writeAll(path, Span.empty[Byte], at))
-                                )
-                            }
-                prepared.andThen {
-                    Sync.Unsafe.defer(new DoltChannel(path, store, AtomicBoolean.Unsafe.init(true))).map { channel =>
-                        (channel, () => channel.close)
+            // Create-new refuses a link at the path, as an exclusive host open does; every other open follows it.
+            val opened = if open == FileSystem.WriteOpen.CreateNew then entry(path) else resolved(path)
+            opened.map { target =>
+                store.node(target).map { existing =>
+                    val prepared =
+                        (open, existing) match
+                            case (FileSystem.WriteOpen.Existing, Absent)      => Abort.fail(FileNotFoundException(path))
+                            case (FileSystem.WriteOpen.CreateNew, Present(_)) => Abort.fail(FileAlreadyExistsException(path))
+                            case (_, Present(node)) if node.isDirectory       => Abort.fail(FileIsADirectoryException(path))
+                            case (_, Present(_))                              => Kyo.lift(())
+                            case _                                            =>
+                                parents(target, create = true, FileSystemOperation.Channel).andThen {
+                                    now.map { at =>
+                                        store.insertNode(DoltVfsNode(target, Kind.File, Absent, 0L, at)).map { won =>
+                                            if won then store.writeAll(target, Span.empty[Byte], at)
+                                            // Another opener created it first: only create-new must refuse an existing file.
+                                            else if open == FileSystem.WriteOpen.CreateNew then Abort.fail(FileAlreadyExistsException(path))
+                                            else ()
+                                        }
+                                    }
+                                }
+                    prepared.andThen {
+                        Sync.Unsafe.defer(new DoltChannel(target, store, AtomicBoolean.Unsafe.init(true))).map { channel =>
+                            (channel, () => channel.close)
+                        }
                     }
                 }
             }
@@ -586,6 +717,12 @@ object DoltFileSystem:
 
     final private[kyo] case class TooManyLinks(path: Path)
         extends RuntimeException(s"Too many symbolic links resolving $path")
+
+    final private[kyo] case class NotADirectory(path: Path)
+        extends RuntimeException(s"Not a directory: $path")
+
+    final private[kyo] case class IntoItself(source: Path, target: Path)
+        extends RuntimeException(s"Cannot place $source inside itself at $target")
 
     final private[kyo] case class ForeignHandle(handle: Path.WriteHandle)
         extends RuntimeException("Write handle was not created by this filesystem")

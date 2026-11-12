@@ -38,6 +38,34 @@ trait FileSystemChannelTest[S >: Async] extends kyo.test.Test[Any]:
                 }
             }
         }
+
+        "channel suite admits exactly one of several concurrent create-new openings" in {
+            withFileSystem { (fileSystem, root) =>
+                val path = root / "contended.bin"
+                for
+                    gate   <- Latch.init(1)
+                    fibers <- Kyo.foreach(Chunk.from(1 to 8)) { _ =>
+                        Fiber.initUnscoped {
+                            gate.await.andThen {
+                                Abort.run[FileSystemException](Scope.run(fileSystem.openWriteChannel(
+                                    path,
+                                    FileSystem.WriteOpen.CreateNew
+                                )).unit)
+                            }
+                        }
+                    }
+                    _       <- gate.release
+                    results <- Kyo.foreach(fibers)(_.get)
+                yield
+                    val created = results.count(_.isSuccess)
+                    val refused = results.count {
+                        case Result.Failure(_: FileAlreadyExistsException) => true
+                        case _                                             => false
+                    }
+                    assert(created == 1 && refused == 7, s"expected one creation and seven refusals, got $results")
+                end for
+            }
+        }
     }
 
 end FileSystemChannelTest
