@@ -15,6 +15,148 @@ class BrowserActionabilityTest extends BrowserTest:
     private def fastConfig[A, S](v: A < S)(using Frame): A < S =
         Browser.withConfig(_.retrySchedule(Schedule.fixed(20.millis).take(2)))(v)
 
+    private val pointHoverPage = """<body style="margin:0"><div id="area" style="position:absolute;left:0;top:0;width:300px;height:300px"
+        onmouseover="window.hovered=[event.clientX,event.clientY,event.isTrusted]">Area</div>
+        <div id="parking" style="position:absolute;left:500px;top:400px;width:20px;height:20px">Park</div>
+        <script>window.hovered=[];</script></body>"""
+
+    "point hover main control resolves viewport coordinates after document scrolling" in {
+        withBrowser {
+            onPage("""<body style="margin:0;height:3000px"><button id="target"
+                style="position:absolute;left:20px;top:1600px;width:80px;height:30px">Target</button></body>""") {
+                Browser.scrollTo(0, 1500).andThen(Browser.elementAt(60, 115)).map { at =>
+                    assert(at.map(info => (info.id, info.bounds.x, info.bounds.y)) == Present((Present("target"), 20.0, 100.0)))
+                }
+            }
+        }
+    }
+
+    "point hover main control selector composition moves to the element center" in {
+        withBrowser {
+            onPage(pointHoverPage) {
+                Browser.hover(Browser.Selector.id("parking")).andThen(Browser.elementAt(20, 30)).map {
+                    case Present(info) =>
+                        Browser.hover(Browser.Selector.css(info.selector)).andThen(Browser.eval("JSON.stringify(window.hovered)")).map {
+                            hovered =>
+                                assert(hovered == "[150,150,true]")
+                        }
+                    case Absent => fail("expected the area at the chosen point")
+                }
+            }
+        }
+    }
+
+    "point hover main control selector hover rejects an opacity-zero element" in {
+        withBrowser {
+            onPage("""<body><div id="target" style="opacity:0;width:100px;height:30px">Target</div></body>""") {
+                fastConfig(Abort.run[BrowserReadException](Browser.hover(Browser.Selector.id("target")))).map {
+                    case Result.Failure(error: BrowserElementNotActionableException) =>
+                        assert(error.reason == Reason.NotVisible(Reason.NotVisibleCause.OpacityZero))
+                    case other => fail(s"expected the visibility gate, got $other")
+                }
+            }
+        }
+    }
+
+    "point hover delivers a trusted event at the chosen point and viewport origin" in {
+        withBrowser {
+            onPage(pointHoverPage) {
+                for
+                    _      <- Browser.hover(Browser.Selector.id("parking"))
+                    _      <- Browser.hover(20, 30)
+                    chosen <- Browser.eval("JSON.stringify(window.hovered)")
+                    _      <- Browser.hover(Browser.Selector.id("parking"))
+                    _      <- Browser.hover(0, 0)
+                    origin <- Browser.eval("JSON.stringify(window.hovered)")
+                yield
+                    assert(chosen == "[20,30,true]")
+                    assert(origin == "[0,0,true]")
+            }
+        }
+    }
+
+    "point hover uses viewport coordinates after scrolling" in {
+        withBrowser {
+            onPage("""<body style="margin:0;height:3000px"><button id="target" style="position:absolute;left:20px;top:1600px;width:80px;height:30px"
+                onmouseover="window.hovered=[event.clientX,event.clientY,event.pageY,event.isTrusted]">Target</button></body>""") {
+                for
+                    _       <- Browser.scrollTo(0, 1500)
+                    _       <- Browser.hover(60, 115)
+                    hovered <- Browser.eval("JSON.stringify(window.hovered)")
+                yield assert(hovered == "[60,115,1615,true]")
+            }
+        }
+    }
+
+    "point hover can reveal an opacity-zero control" in {
+        withBrowser {
+            onPage("""<body style="margin:0"><style>#target { opacity:0 } #target:hover { opacity:1 }</style>
+                <div id="target" style="position:absolute;left:20px;top:20px;width:80px;height:30px">Target</div></body>""") {
+                for
+                    before <- Browser.eval("getComputedStyle(document.getElementById('target')).opacity")
+                    _      <- Browser.hover(60, 35)
+                    after  <- Browser.eval("getComputedStyle(document.getElementById('target')).opacity")
+                yield
+                    assert(before == "0")
+                    assert(after == "1")
+            }
+        }
+    }
+
+    "point hover negative coordinates fail before input dispatch" in {
+        withBrowser {
+            onPage(pointHoverPage) {
+                for
+                    _      <- Browser.hover(Browser.Selector.id("parking"))
+                    _      <- Browser.eval("window.hovered=[]; 'reset'")
+                    x      <- Abort.run[BrowserReadException](Browser.hover(-1, 30))
+                    y      <- Abort.run[BrowserReadException](Browser.hover(20, -1))
+                    events <- Browser.eval("JSON.stringify(window.hovered)")
+                yield
+                    assert(x == Result.fail(BrowserInvalidArgumentException("hover", "coordinates must be non-negative")))
+                    assert(y == Result.fail(BrowserInvalidArgumentException("hover", "coordinates must be non-negative")))
+                    assert(events == "[]")
+            }
+        }
+    }
+
+    "point hover keeps top-level coordinates and iframe query scope" in {
+        withBrowser {
+            val parent =
+                """<body style="margin:0"><script>window.rootMarker='main';</script>
+                <iframe id="frame" style="position:absolute;left:100px;top:150px;width:300px;height:200px;border:0" srcdoc="{srcdoc}"></iframe></body>"""
+            val child = """<body style="margin:0"><button id="target" style="position:absolute;left:20px;top:20px;width:80px;height:30px"
+                onmouseover="window.hovered=[event.clientX,event.clientY,event.isTrusted]">Target</button></body>"""
+            Browser.goto(srcdocPage(parent, child)).andThen {
+                for
+                    frame <- Browser.iframe(Browser.Selector.id("frame"))
+                    _     <- Browser.withIFrame(frame) {
+                        for
+                            at     <- Browser.elementAt(25, 25)
+                            _      <- Browser.hover(125, 175)
+                            events <- Browser.eval("JSON.stringify(window.hovered)")
+                        yield
+                            assert(at.flatMap(_.id) == Present("target"))
+                            assert(events == "[25,25,true]")
+                    }
+                    root <- Browser.eval("String(window.rootMarker)")
+                yield assert(root == "main")
+            }
+        }
+    }
+
+    "point hover coordinates are CSS pixels at device scale two" in {
+        withBrowser {
+            Browser.withViewport(800, 600, deviceScaleFactor = 2.0) {
+                onPage(pointHoverPage) {
+                    Browser.hover(Browser.Selector.id("parking")).andThen(Browser.hover(20, 30))
+                        .andThen(Browser.eval("JSON.stringify([devicePixelRatio,window.hovered])"))
+                        .map(events => assert(events == "[2,[20,30,true]]"))
+                }
+            }
+        }
+    }
+
     "click on a visible+enabled+stable+hittable button succeeds" in {
         withBrowser {
             onPage("""<body>

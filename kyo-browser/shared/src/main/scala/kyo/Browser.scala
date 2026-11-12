@@ -510,6 +510,13 @@ object Browser:
             }
         }
 
+    /** Moves the pointer to `(x, y)` in top-level viewport CSS pixels, without an element actionability gate. Negative coordinates abort
+      * before dispatch. Explicit points keep this coordinate system inside [[withIFrame]], matching [[boundingRect]].
+      */
+    def hover(x: Int, y: Int)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        if x < 0 || y < 0 then Abort.fail(BrowserInvalidArgumentException("hover", "coordinates must be non-negative"))
+        else Env.use[BrowserTab](tab => BrowserEval.dispatchMouse(tab, CdpTypes.MouseEventType.Moved, x, y, 0))
+
     /** Fills the input, textarea or editable element matched by the selector with the given text.
       *
       * For inputs and textareas, a single `Runtime.evaluate` JS dispatch sets the value via the prototype-resolved native setter
@@ -1726,7 +1733,7 @@ object Browser:
     def waitForStable(timeout: Duration)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
         MutationSettlement.waitForStable(timeout)
 
-    /** Returns the full DISCOVER snapshot for the element at page-document pixel `(x, y)` via `document.elementFromPoint`. Settled read:
+    /** Returns the full DISCOVER snapshot at viewport CSS point `(x, y)` in the active document via `document.elementFromPoint`. Settled read:
       * re-samples until stable. Returns `Absent` when no element occupies that point. Aborts `BrowserInvalidArgumentException` before any
       * page eval when `x` or `y` is negative.
       */
@@ -2832,13 +2839,14 @@ object Browser:
 
     // --- Frames ---
 
-    /** Scope every nested action to `frame`'s document for the duration of `v`.
+    /** Scope nested selector resolution and page JavaScript to `frame`'s document for the duration of `v`. Explicit mouse points retain
+      * their top-level viewport coordinate system.
       *
       * Restores the previous frame scope on exit (success, abort, or fiber interruption). Honors nesting: an inner [[withIFrame]] overrides
       * the outer; on inner exit the outer scope is restored. Concurrent fibers are isolated per the per-fiber semantics of `Local`.
       *
       * Aborts with [[BrowserIFrameInvalidException]] inside the body if the frame's execution context is destroyed (e.g. parent navigation,
-      * iframe removed from DOM); the next action issued through the scope will fail loudly rather than silently re-rooting at main.
+      * iframe removed from DOM); the next selector or JavaScript operation fails rather than silently re-rooting at main.
       *
       * Effect set: returns `Browser & S`. The frame handle was obtained from a live tab via [[iframe]] / [[mainFrame]] / [[iframes]], so an
       * active `Browser` is required to interpret the scoped actions. (Contrast with [[withConfig]], which is pure `Local.let` and does NOT
