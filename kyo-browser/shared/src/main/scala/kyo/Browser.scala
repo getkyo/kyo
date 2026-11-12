@@ -4129,6 +4129,7 @@ object Browser:
             executable = "chromium",
             headless = true,
             extraArgs = Chunk.empty,
+            environment = Absent,
             launchTimeout = 90.seconds,
             requestTimeout = 60.seconds,
             closeGrace = 30.seconds,
@@ -4192,6 +4193,8 @@ object Browser:
       *   when `true`, launch the browser without a visible window
       * @param extraArgs
       *   additional command-line arguments forwarded verbatim to the browser process
+      * @param environment
+      *   the browser process's complete environment when present; inherits the launching process's environment when absent
       * @param launchTimeout
       *   maximum time to wait for the browser process to come up and report a CDP endpoint
       *
@@ -4204,6 +4207,7 @@ object Browser:
         executable: String,
         headless: Boolean,
         extraArgs: Chunk[String],
+        environment: Maybe[Dict[String, String]],
         launchTimeout: Duration,
         requestTimeout: Duration,
         closeGrace: Duration,
@@ -4219,6 +4223,9 @@ object Browser:
 
         /** Returns a copy with [[extraArgs]] replaced by `v`. */
         def extraArgs(v: Seq[String]): LaunchConfig = copy(extraArgs = Chunk.from(v))
+
+        /** Returns a copy that launches the browser with `v` as its complete environment. An empty dictionary removes inherited variables. */
+        def environment(v: Dict[String, String]): LaunchConfig = copy(environment = Present(v))
 
         /** Returns a copy with the [[launchTimeout]] set to `v`. */
         def launchTimeout(v: Duration): LaunchConfig = copy(launchTimeout = v)

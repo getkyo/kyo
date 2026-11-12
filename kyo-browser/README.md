@@ -416,12 +416,15 @@ Viewport is not a `SessionConfig` field; use `Browser.withViewport(width, height
 | `executable` | Path to the Chrome binary; defaults to the downloaded `chrome-headless-shell` |
 | `headless` | Headless mode toggle (default `true`) |
 | `extraArgs` | Extra Chromium command-line args |
+| `environment` | Complete browser-process environment; `Absent` inherits the parent (default), while `Present(Dict.empty)` clears it |
 | `launchTimeout` | Upper bound on the launch handshake |
 | `requestTimeout` | Default per-CDP-request timeout |
 | `closeGrace` | Grace period for clean Chrome shutdown |
 | `tmpDirRemovalSchedule` | Retry schedule for cleaning up the per-launch tmp dir |
 | `devToolsActivePortPollInterval` | Polling interval while waiting for `DevToolsActivePort` |
 | `chromeDownloaderConfig` | Config for the bundled `chrome-headless-shell` downloader |
+
+Use `launch.environment(Dict("NAME" -> "value"))` to replace the inherited environment with exactly the supplied variables. This applies to the launched browser process; it does not change the host process or downloader environment.
 
 The split is compiler-enforced: `Browser.withConfig` accepts only a `SessionConfig`, so launch-time fields (executable, headless, extra args) cannot be changed after Chrome starts. They are settable only through `Browser.run(launch, ...)`.
 

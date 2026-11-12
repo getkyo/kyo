@@ -86,7 +86,8 @@ private[kyo] object BrowserLauncher:
         Frame
     )
         : Process < (Sync & Scope & Abort[BrowserSetupException]) =
-        val args = (config.executable +: chromiumFlags(tmpDir, config.headless)) ++ config.extraArgs
+        val args    = (config.executable +: chromiumFlags(tmpDir, config.headless)) ++ config.extraArgs
+        val command = config.environment.fold(Command(args*))(environment => Command(args*).envReplace(environment.toMap))
         Abort.recover[CommandException] { (ex: CommandException) =>
             Abort.fail[BrowserSetupException](
                 BrowserSetupFailedException(s"failed to start ${config.executable}", ex)
@@ -96,7 +97,7 @@ private[kyo] object BrowserLauncher:
             // returns: Chrome is a process tree, and the directory removal registered before this must not run while any
             // of it is still alive. The spawn is the bracket's acquire, so the release registers in the step the process
             // arrives and a stop cannot park between the two.
-            Scope.acquireRelease(Command(args*).inheritStderr.spawnUnscoped)(terminateTree).map { proc =>
+            Scope.acquireRelease(command.inheritStderr.spawnUnscoped)(terminateTree).map { proc =>
                 BrowserLauncherPlatform.registerShutdownHook(proc).andThen(proc)
             }
         }
