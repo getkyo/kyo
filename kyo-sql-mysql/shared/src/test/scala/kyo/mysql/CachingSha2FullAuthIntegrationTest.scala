@@ -1,17 +1,12 @@
 package kyo.mysql
 
 import kyo.*
-import kyo.OwnContainer
-import kyo.internal.TestContainers
 
 /** Integration test for caching_sha2_password full-auth via pure-Scala RSA-OAEP.
   *
-  * Connects to a fresh MySQL 8.0 container (cache is cold → server sends full-auth required / AuthMoreData 0x04). The client requests the
-  * RSA public key, encrypts the password with kyo-crypto's [[kyo.crypto.RsaOaep]] through [[kyo.internal.mysql.auth.PasswordEncryption]], and
-  * the server decrypts it.
-  *
-  * A fresh container per test ensures the server-side credential cache is empty so the full-auth path is always taken (no fast-path
-  * bypass).
+  * Connects to a MySQL 8.0 server whose credential cache was just emptied (cache is cold → server sends full-auth required / AuthMoreData
+  * 0x04). The client requests the RSA public key, encrypts the password with kyo-crypto's [[kyo.crypto.RsaOaep]] through
+  * [[kyo.internal.mysql.auth.PasswordEncryption]], and the server decrypts it.
   */
 class CachingSha2FullAuthIntegrationTest extends SqlContainerTest:
 
@@ -24,14 +19,11 @@ class CachingSha2FullAuthIntegrationTest extends SqlContainerTest:
 
     // ─── Integration leaf: cache-miss full-auth via pure-Scala RSA-OAEP ──────────
 
-    "caching_sha2_password full-auth via pure-Scala RSA-OAEP succeeds against fresh MySQL container".tagged(OwnContainer.name) in {
+    "caching_sha2_password full-auth via pure-Scala RSA-OAEP succeeds against a cold credential cache" in {
         Scope.run {
-            // Fresh container = cold auth cache → server will issue full-auth (AuthMoreData 0x04).
-            // Through `TestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-caching-sha2-full-auth").map { mysql =>
-                mysql.container.mappedPort(mysql.config.port).flatMap { port =>
+            // Emptied auth cache → server will issue full-auth (AuthMoreData 0x04).
+            MysqlSharedServers.default.map { mysql =>
+                MysqlSharedServers.emptyCredentialCache(mysql).andThen(mysql.container.mappedPort(mysql.config.port)).flatMap { port =>
                     // Connect without TLS: forces the RSA-OAEP encrypted full-auth path.
                     MysqlClient.init(
                         s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}",

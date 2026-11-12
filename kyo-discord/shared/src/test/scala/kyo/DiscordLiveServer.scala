@@ -1,8 +1,11 @@
 package kyo
 
+import kyo.internal.TestContainers
 import kyo.net.TlsTestCertShared
 
-/** A Spacebar container standing in for Discord for one leaf, removed when the leaf's `Scope` closes.
+/** A Spacebar container standing in for Discord, one per test process and shared by every leaf. Each leaf opens a Gateway session of
+  * its own, matches what it receives by the ids of what it sent, and deletes what it creates, so earlier leaves cannot change its
+  * outcome.
   *
   * Spacebar (github.com/spacebarchat/server) is AGPL-3.0. The suite only runs it: the image is built from
   * `shared/src/test/spacebar/Containerfile`, out of the source at a pinned commit fetched as GitHub's tarball and checked against its
@@ -131,10 +134,20 @@ object DiscordLiveServer:
     /** The client trusts the terminator's self-signed certificate; `TlsTestCertShared` is the one it serves. */
     val Tls: HttpTlsConfig = HttpTlsConfig(trustAll = true)
 
-    def init(using Frame): DiscordLiveServer < (Async & Scope & Abort[ContainerException | HttpException]) =
+    type Failure = ContainerException | HttpException
+
+    private val servers = TestContainers.memo[DiscordLiveServer, Failure]
+
+    /** The process's server, started and populated on first use. Populating is not repeatable (a second run registers a second person,
+      * application and guild), so it runs once per container.
+      */
+    def init(using Frame): DiscordLiveServer < (Async & Abort[Failure]) =
+        TestContainers.getOrInit(servers, "spacebar")(start)
+
+    private def start(using Frame): DiscordLiveServer < (Async & Abort[Failure]) =
         for
             _                 <- built
-            (container, port) <- started(PortAttempts)(port => Container.init(containerConfig(port)).map((_, port)))
+            (container, port) <- started(PortAttempts)(port => TestContainers.initShared(containerConfig(port), "spacebar").map((_, port)))
             server            <- populate(container, port)
         yield server
 
@@ -143,9 +156,9 @@ object DiscordLiveServer:
 
     // A port free on the host can still be held inside the container daemon's VM (podman publishes it from there), which the host's
     // check cannot see; the daemon then refuses it as allocated, and a fresh port is the answer.
-    private def started[A](attempts: Int)(start: Int => A < (Async & Scope & Abort[ContainerException | HttpException]))(using
+    private def started[A](attempts: Int)(start: Int => A < (Async & Abort[ContainerException | HttpException]))(using
         Frame
-    ): A < (Async & Scope & Abort[ContainerException | HttpException]) =
+    ): A < (Async & Abort[ContainerException | HttpException]) =
         freePort.map { port =>
             Abort.run[ContainerPortConflictException](start(port)).map {
                 case Result.Success(value)             => value

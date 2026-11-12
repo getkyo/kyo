@@ -110,6 +110,36 @@ class TestContainersItTest extends BasePodTest:
         end for
     }
 
+    // Shared containers outlive their scope, so each leaf below removes what it created.
+    private def removeAtEnd(containers: Container*)(using Frame): Unit < (Async & Scope) =
+        Scope.ensure(Kyo.foreachDiscard(containers)(c => Abort.run[ContainerException](c.remove(force = true, removeVolumes = true)).unit))
+
+    "a shared container is created once per tag and config and handed to every later caller" - runBackends {
+        val tag = uniqueName("kyo-pod-it-shared")
+        for
+            first  <- TestContainers.initShared(idle, tag)
+            again  <- TestContainers.initShared(idle, tag)
+            other  <- TestContainers.initShared(idle, uniqueName("kyo-pod-it-shared-other"))
+            _      <- removeAtEnd(first, other)
+            listed <- listByLabel(TestContainers.tagLabelKey, s"shared-$tag")
+        yield
+            assert(again.id == first.id, s"a second caller got ${again.id.value.take(12)}, not ${first.id.value.take(12)}")
+            assert(other.id != first.id, "a different tag must get a container of its own")
+            assert(listed.map(_.id) == Chunk(first.id), s"expected one container for the tag, got ${listed.map(_.id.value.take(12))}")
+        end for
+    }
+
+    // Shared leaves create server-wide state (roles, accounts) that another process running the same suite would collide on.
+    "a singleton under the same tag never adopts a shared container" - runBackends {
+        val tag = uniqueName("kyo-pod-it-shared-adopt")
+        for
+            shared    <- TestContainers.initShared(idle, tag)
+            singleton <- TestContainers.initSingleton(idle, tag)
+            _         <- removeAtEnd(shared, singleton)
+        yield assert(singleton.id != shared.id, "initSingleton adopted the shared container")
+        end for
+    }
+
     "a legacy-labelled dead-owner container is removed" - runBackends {
         val tag = uniqueName("kyo-pod-it-legacy")
         for

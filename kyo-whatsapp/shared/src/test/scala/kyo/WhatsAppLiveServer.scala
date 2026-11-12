@@ -1,13 +1,15 @@
 package kyo
 
-/** A whaloc container for one live leaf: an emulator of the WhatsApp Cloud API (Graph v25.0) that answers the module's requests with
-  * Meta's envelopes and error codes, stores uploaded media, and POSTs signed webhooks for inbound messages and the status ladder. It is
-  * removed when the leaf's `Scope` closes. Its control plane (`/api/...`) plays the part of the WhatsApp user and of Meta's console:
-  * it injects inbound messages, approves templates, injects failures and runs the verification handshake.
+import kyo.internal.TestContainers
+
+/** A whaloc container: an emulator of the WhatsApp Cloud API (Graph v25.0) that answers the module's requests with Meta's envelopes
+  * and error codes, stores uploaded media, and POSTs signed webhooks for inbound messages and the status ladder. One per webhook
+  * target per test process, shared by every leaf. Its control plane (`/api/...`) plays the part of the WhatsApp user and of Meta's
+  * console: it injects inbound messages, approves templates, injects failures and runs the verification handshake.
   *
-  * Two settings are read once at boot, which shapes how a leaf starts one. Media URLs are built from `WHALOC_PUBLIC_URL`, so the host
-  * port is chosen before the container starts and published as itself. The webhook URL is fixed too, so a leaf that receives webhooks
-  * binds its server first and passes its port. The container reaches that server through the name its daemon gives the host.
+  * Two settings are read once at boot, which shapes how one starts. Media URLs are built from `WHALOC_PUBLIC_URL`, so the host port is
+  * chosen before the container starts and published as itself. The webhook URL is fixed too, so the server that receives webhooks
+  * binds first and its port is passed. The container reaches that server through the name its daemon gives the host.
   *
   * Tokens are strict: only [[token]] is accepted, so a leaf can see the unauthorized answer.
   *
@@ -135,11 +137,21 @@ object WhatsAppLiveServer:
     val AppSecret: String   = "kyo-whatsapp-live-app-secret"
     val VerifyToken: String = "kyo-whatsapp-live-verify-token"
 
-    /** Starts a server on a free host port, posting webhooks to `webhook`'s port and path on the host when given. */
-    def init(webhook: Maybe[(Int, String)] = Absent)(using
-        Frame
-    ): WhatsAppLiveServer < (Async & Scope & Abort[ContainerException | HttpException]) =
-        pulled.andThen(started(PortAttempts)(port => start(port, webhook)))
+    type Failure = ContainerException | HttpException
+
+    private val servers = TestContainers.memo[WhatsAppLiveServer, Failure]
+
+    /** The process's server posting webhooks to `webhook`'s port and path on the host when given, started on a free host port on first
+      * use, with the `hello_world` template every Meta test number has created and approved once, when the server starts.
+      */
+    def init(webhook: Maybe[(Int, String)] = Absent)(using Frame): WhatsAppLiveServer < (Async & Abort[Failure]) =
+        val key = webhook.fold("whaloc")((port, path) => s"whaloc:$port/$path")
+        TestContainers.getOrInit(servers, key) {
+            pulled.andThen(started(PortAttempts)(port => start(port, webhook))).map { server =>
+                server.approvedTemplate("hello_world", "en_US", "Hello World").andThen(server)
+            }
+        }
+    end init
 
     // kyo-pod pulls a missing image on its own, which would reach the registry from inside the leaf.
     private def pulled(using Frame): Unit < (Async & Abort[ContainerException]) =
@@ -156,9 +168,9 @@ object WhatsAppLiveServer:
 
     // A port free on the host can still be held inside the container daemon's VM (podman publishes it from there), which the host's
     // check cannot see; the daemon then refuses it as allocated, and a fresh port is the answer.
-    private def started[A](attempts: Int)(start: Int => A < (Async & Scope & Abort[ContainerException | HttpException]))(using
+    private def started[A](attempts: Int)(start: Int => A < (Async & Abort[ContainerException | HttpException]))(using
         Frame
-    ): A < (Async & Scope & Abort[ContainerException | HttpException]) =
+    ): A < (Async & Abort[ContainerException | HttpException]) =
         freePort.map { port =>
             Abort.run[ContainerPortConflictException](start(port)).map {
                 case Result.Success(value)             => value
@@ -174,9 +186,9 @@ object WhatsAppLiveServer:
 
     private def start(port: Int, webhook: Maybe[(Int, String)])(using
         Frame
-    ): WhatsAppLiveServer < (Async & Scope & Abort[ContainerException | HttpException]) =
+    ): WhatsAppLiveServer < (Async & Abort[ContainerException | HttpException]) =
         Random.nextStringAlphanumeric(24).map { token =>
-            Container.init(containerConfig(port, token, webhook)).map { container =>
+            TestContainers.initShared(containerConfig(port, token, webhook), "whaloc").map { container =>
                 HttpClient.getJson[State](HttpUrl.parse(s"http://$Host:$port/api/state").getOrThrow).map { state =>
                     val waba = state.wabas.head
                     WhatsAppLiveServer(container, port, token, WhatsAppId.PhoneNumberId(waba.phoneNumbers.head.id), waba.id)

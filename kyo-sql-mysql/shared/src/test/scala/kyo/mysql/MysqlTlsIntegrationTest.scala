@@ -1,16 +1,12 @@
 package kyo.mysql
 
 import kyo.*
-import kyo.OwnContainer
-import kyo.internal.TestContainers
 import kyo.net.NetTlsConfig
 
 /** Integration tests for MySQL TLS upgrade (CLIENT_SSL mid-handshake).
   *
   * Uses a vanilla `mysql:8.0` container, the image runs `mysqld` with `--auto-generate-certs=ON`, so a self-signed server certificate is
   * generated on first start and TLS is ready out of the box. No bind mounts, no `mysql_ssl_rsa_setup`, no container restart.
-  *
-  * All TLS assertions run inside a single test body so the container setup occurs only once per test run.
   */
 class MysqlTlsIntegrationTest extends SqlContainerTest:
 
@@ -30,14 +26,11 @@ class MysqlTlsIntegrationTest extends SqlContainerTest:
         trustAllConfig: NetTlsConfig
     )
 
-    /** Starts a fresh MySQL container (with TLS auto-enabled by mysql:8) and runs `f` against connection details that request TLS. */
+    /** Runs `f` against the process's default MySQL server (TLS auto-enabled by mysql:8) with connection details that request TLS. */
     private def withTlsContainer[A](
         f: TlsConnDetails => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[Throwable] & Scope) =
-        // Through `TestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
-        // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-        // process leaves something the reaper can find.
-        TestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-tls").map { mysql =>
+        MysqlSharedServers.default.map { mysql =>
             mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                 val details = TlsConnDetails(
                     mysql.container.host,
@@ -68,7 +61,7 @@ class MysqlTlsIntegrationTest extends SqlContainerTest:
             )
         )
 
-    "MySQL TLS, InitTlsExchange, caching_sha2, and sequential queries".tagged(OwnContainer.name) in {
+    "MySQL TLS, InitTlsExchange, caching_sha2, and sequential queries" in {
         Scope.run {
             withTlsContainer { details =>
                 // ── Assertion 1: InitTlsExchange + handshake, isAlive=true after TLS upgrade ──

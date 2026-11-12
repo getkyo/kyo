@@ -149,13 +149,10 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     // ── Plaintext connect falls back to SCRAM-SHA-256 ─────────────────────────
 
-    "connecting plaintext to a PG that offers PLUS falls back to SCRAM-SHA-256".tagged(OwnContainer.name) in {
+    "connecting plaintext to a PG that offers PLUS falls back to SCRAM-SHA-256" in {
         Scope.run {
-            // Use a plain non-TLS Postgres container. Without TLS, no cert hash, so non-PLUS.
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram-plus-leaf").map { pg =>
+            // The process's plain non-TLS Postgres server. Without TLS, no cert hash, so non-PLUS.
+            TestContainers.initSharedPostgres(ContainerPredef.Postgres.Config.default, "postgres-default").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     AtomicRef.init("").flatMap { mechanismRef =>
                         PostgresConnection.connectWithCertHashOverride(

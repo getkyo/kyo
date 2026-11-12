@@ -1,7 +1,10 @@
 package kyo
 
-/** Microsoft 365 Agents Playground (formerly the Teams App Test Tool) in a container for one leaf: Microsoft's local emulation of the Bot
-  * Connector, served at `/_connector`. It is removed when the leaf's `Scope` closes.
+import kyo.internal.TestContainers
+
+/** Microsoft 365 Agents Playground (formerly the Teams App Test Tool) in a container: Microsoft's local emulation of the Bot Connector,
+  * served at `/_connector`. One per test process, shared by every leaf: a leaf asserts only on what it posts and reads back, never on
+  * the conversation's history, so what earlier leaves posted cannot change its outcome.
   *
   * Microsoft publishes it as an npm package, not an image, so the image is built from `shared/src/test/playground/Containerfile`: the Node
   * image pinned by digest with the package installed at a pinned version. A CI run that selects this module builds it before the tests
@@ -47,8 +50,10 @@ object TeamsPlayground:
 
     private val Context = "kyo-teams/shared/src/test/playground"
 
-    def init(using Frame): TeamsPlayground < (Async & Scope & Abort[ContainerException]) =
-        built.andThen(Container.init(containerConfig).map(container => container.mappedPort(Port).map(TeamsPlayground(container, _))))
+    def init(using Frame): TeamsPlayground < (Async & Abort[ContainerException]) =
+        built.andThen(TestContainers.initShared(containerConfig, "teams-playground").map(container =>
+            container.mappedPort(Port).map(TeamsPlayground(container, _))
+        ))
 
     // A missing local tag would otherwise be pulled from a registry named `localhost`, failing with a connection error that names
     // neither the image's origin nor the fix.

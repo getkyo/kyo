@@ -107,12 +107,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     // ── Leaf 1: sslmode=disable ───────────────────────────────────────────────
     // Uses ContainerPredef.Postgres, no TLS, no shared fixture needed.
 
-    "sslmode=disable connects without TLS".tagged(OwnContainer.name) in {
+    "sslmode=disable connects without TLS" in {
         Scope.run {
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
+            // The process's plain Postgres server: the leaf only connects and reads its own backend's state.
+            TestContainers.initSharedPostgres(ContainerPredef.Postgres.Config.default, "postgres-default").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}?sslmode=disable"
                     SqlClient.init(url).flatMap { client =>
@@ -367,13 +365,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 10: sslmode=allow connects plaintext when server permits plaintext ─
 
-    "sslmode=allow connects plaintext when server permits plaintext".tagged(OwnContainer.name) in {
+    "sslmode=allow connects plaintext when server permits plaintext" in {
         Scope.run {
             // Plain Postgres container (no cert mount → no TLS support)
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
+            TestContainers.initSharedPostgres(ContainerPredef.Postgres.Config.default, "postgres-default").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}?sslmode=allow"
                     SqlClient.init(url).flatMap { client =>
@@ -441,13 +436,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
 
     // ── Leaf 13: sslmode=prefer falls back to plaintext when server refuses TLS
 
-    "sslmode=prefer falls back to plaintext when server refuses TLS".tagged(OwnContainer.name) in {
+    "sslmode=prefer falls back to plaintext when server refuses TLS" in {
         Scope.run {
             // Plain Postgres container: no cert → SSLRequest returns 'N' → plaintext fallback.
-            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-            // process leaves something the reaper can find.
-            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
+            TestContainers.initSharedPostgres(ContainerPredef.Postgres.Config.default, "postgres-default").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}?sslmode=prefer"
                     SqlClient.init(url).flatMap { client =>

@@ -10,8 +10,8 @@ import kyo.internal.Platform
   * On Discord, `DISCORD_BOT_TOKEN` is a bot's token from the developer portal. The leaves that send need `DISCORD_TEST_CHANNEL_ID`, a
   * text channel the bot can view, send in, react in, read the history of and start and manage threads in, and the command leaves need
   * `DISCORD_TEST_GUILD_ID`, a guild the bot was added to with the `applications.commands` scope; without them those leaves are
-  * cancelled naming the variable. On the container, every leaf starts a server of its own, on every platform but Windows, whose
-  * container daemon cannot serve the Linux image; the server's person owns the bot and a guild with one text channel.
+  * cancelled naming the variable. On the container, the leaves share one server, on every platform but Windows, whose container
+  * daemon cannot serve the Linux image; the server's person owns the bot and a guild with one text channel.
   *
   * The suite deletes every message, thread and command it creates.
   *
@@ -74,7 +74,7 @@ class DiscordLiveTest extends kyo.test.Test[Any]:
         }
 
     /** The Discord a leaf runs against. `realOnly` is why Spacebar cannot stand in for this leaf, which is then cancelled before a
-      * container starts. A leaf that ends in error prints the container's log before it is removed.
+      * container starts. A leaf that ends in error prints the container's log.
       */
     private def target(realOnly: Maybe[String] = Absent)(using Frame): Target < (Async & Scope & Abort[Setup]) =
         System.env[String]("DISCORD_BOT_TOKEN").map {

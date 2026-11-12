@@ -10,9 +10,9 @@ import kyo.internal.TestContainers
   * `caching_sha2_password` plugin is active.
   *
   * Test structure:
-  *   - Each test that needs a fresh server cache starts its own container (container-per-test) to guarantee cache is empty (cache miss →
-  *     full-auth path).
-  *   - Tests that need a warm cache (fast-path) open a first connection then a second within the same container.
+  *   - The leaves share one server. A test that needs an empty credential cache (cache miss → full-auth path) empties it first
+  *     ([[MysqlSharedServers.emptyCredentialCache]]).
+  *   - Tests that need a warm cache (fast-path) open a first connection then a second.
   *
   * Container startup takes ~30-60 s, so each test has a 3-minute timeout.
   */
@@ -28,14 +28,13 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
     // Case class to carry connection details from the Kyo fiber to openClient.
     private case class ConnDetails(host: String, port: Int, user: String, password: String, db: String)
 
-    /** Starts a fresh MySQL container using caching_sha2_password as the default auth plugin, runs `f`, then stops the container. */
-    private def withCachingSha2Container[A](
+    /** Runs `f` against the process's MySQL server using caching_sha2_password as the default auth plugin. With `coldCache`, root
+      * empties the server's credential cache first, so `f`'s first connection as `test` takes the full-auth path.
+      */
+    private def withCachingSha2Container[A](coldCache: Boolean = false)(
         f: ConnDetails => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[Throwable] & Scope) =
-        // Through `TestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
-        // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
-        // process leaves something the reaper can find.
-        TestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-caching-sha2").map { mysql =>
+        MysqlSharedServers.default.map { mysql =>
             mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                 val details = ConnDetails(
                     mysql.container.host,
@@ -44,7 +43,8 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
                     mysql.password,
                     mysql.database
                 )
-                Abort.run[SqlException](f(details)).flatMap {
+                val flush = if coldCache then MysqlSharedServers.emptyCredentialCache(mysql) else Kyo.unit
+                Abort.run[SqlException](flush.andThen(f(details))).flatMap {
                     case Result.Success(a) => a
                     case Result.Failure(e) => Abort.fail(e: Throwable)
                     case Result.Panic(t)   =>
@@ -65,9 +65,9 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── caching_sha2 fast-path (warm cache) ───────────────────────────────────
 
-    "HandshakeExchange caching_sha2 fast-path (cache hit), second connection uses fast path".tagged(OwnContainer.name) in {
+    "HandshakeExchange caching_sha2 fast-path (cache hit), second connection uses fast path" in {
         Scope.run {
-            withCachingSha2Container { details =>
+            withCachingSha2Container(coldCache = true) { details =>
                 Scope.run {
                     // First connection: cache miss → full-auth via RSA, populates server cache.
                     openClient(details).flatMap { client1 =>
@@ -86,13 +86,13 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
         }
     }
 
-    // ── caching_sha2 full-auth via RSA (no TLS, fresh container) ─────────────
+    // ── caching_sha2 full-auth via RSA (no TLS, emptied cache) ───────────────
 
-    "HandshakeExchange caching_sha2 full-auth via RSA (no TLS), fresh container triggers full-auth path".tagged(OwnContainer.name) in {
+    "HandshakeExchange caching_sha2 full-auth via RSA (no TLS), an emptied cache triggers full-auth path" in {
         Scope.run {
-            withCachingSha2Container { details =>
+            withCachingSha2Container(coldCache = true) { details =>
                 Scope.run {
-                    // Fresh container → cache empty → full-auth: request RSA key, encrypt, send.
+                    // Emptied cache → full-auth: request RSA key, encrypt, send.
                     openClient(details).flatMap { client =>
                         client.query("SELECT 'full_auth_rsa_ok'").map { rows =>
                             val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
@@ -106,9 +106,9 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── wrong password raises SqlConnectionException ─────────────────────────
 
-    "HandshakeExchange caching_sha2 wrong password raises SqlConnectionException".tagged(OwnContainer.name) in {
+    "HandshakeExchange caching_sha2 wrong password raises SqlConnectionException" in {
         Scope.run {
-            withCachingSha2Container { details =>
+            withCachingSha2Container() { details =>
                 Abort.run[SqlException](
                     Scope.run {
                         MysqlClient.init(
@@ -126,9 +126,9 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── caching_sha2 full-auth populates cache for next connection ────────────
 
-    "HandshakeExchange caching_sha2 full-auth updates cache, second connect uses fast-path".tagged(OwnContainer.name) in {
+    "HandshakeExchange caching_sha2 full-auth updates cache, second connect uses fast-path" in {
         Scope.run {
-            withCachingSha2Container { details =>
+            withCachingSha2Container(coldCache = true) { details =>
                 Scope.run {
                     // First connection (full-auth): populates server's credential cache.
                     openClient(details).flatMap { client1 =>
@@ -146,9 +146,9 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── Test: sequential queries succeed over caching_sha2 connection ─────────
 
-    "caching_sha2 connection supports sequential queries after auth".tagged(OwnContainer.name) in {
+    "caching_sha2 connection supports sequential queries after auth" in {
         Scope.run {
-            withCachingSha2Container { details =>
+            withCachingSha2Container() { details =>
                 Scope.run {
                     openClient(details).flatMap { client =>
                         // `client.query` on MySQL routes unparameterised statements to the extended
@@ -205,9 +205,9 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── Test: isAlive returns true after caching_sha2 handshake ───────────────
 
-    "caching_sha2 connection isOpen returns true after successful handshake".tagged(OwnContainer.name) in {
+    "caching_sha2 connection isOpen returns true after successful handshake" in {
         Scope.run {
-            withCachingSha2Container { details =>
+            withCachingSha2Container() { details =>
                 Scope.run {
                     openClient(details).flatMap { client =>
                         client.isAlive.map { open => assert(open) }
@@ -219,9 +219,9 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── Test: ping works over caching_sha2 connection ────────────────────────
 
-    "caching_sha2 connection supports COM_PING after auth".tagged(OwnContainer.name) in {
+    "caching_sha2 connection supports COM_PING after auth" in {
         Scope.run {
-            withCachingSha2Container { details =>
+            withCachingSha2Container() { details =>
                 Scope.run {
                     openClient(details).flatMap { client =>
                         client.ping.map { _ => succeed }
@@ -233,27 +233,30 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── Test: CREATE + INSERT + SELECT works over caching_sha2 ───────────────
 
-    "caching_sha2 connection supports DDL and DML end-to-end".tagged(OwnContainer.name) in {
+    "caching_sha2 connection supports DDL and DML end-to-end" in {
         Scope.run {
-            withCachingSha2Container { details =>
-                Scope.run {
-                    openClient(details).flatMap { client =>
-                        client.executeRaw("CREATE TABLE IF NOT EXISTS csha2_test (id INT, name VARCHAR(64))").flatMap { _ =>
-                            client.executeRaw("INSERT INTO csha2_test VALUES (42, 'hello')").flatMap { affected =>
-                                assert(affected == 1L)
-                                client.query("SELECT id, name FROM csha2_test").flatMap { rows =>
-                                    assert(rows.size == 1)
-                                    val row = rows(0)
-                                    // Extended protocol: INT is a 4-byte little-endian LONG, VARCHAR is
-                                    // length-prefixed UTF-8. Decode typed.
-                                    for
-                                        idVal   <- row.decode[Int]("id")
-                                        nameVal <- row.decode[String]("name")
-                                        _ = assert(idVal == 42)
-                                        _ = assert(nameVal == "hello")
-                                        r <- client.executeRaw("DROP TABLE csha2_test").map(_ => succeed)
-                                    yield r
-                                    end for
+            withCachingSha2Container() { details =>
+                // A table of its own on the shared server, so a run that failed before its DROP cannot add a row to this one.
+                Random.nextLong.map(v => s"csha2_test_${(v & Long.MaxValue).toHexString}").flatMap { table =>
+                    Scope.run {
+                        openClient(details).flatMap { client =>
+                            client.executeRaw(s"CREATE TABLE IF NOT EXISTS $table (id INT, name VARCHAR(64))").flatMap { _ =>
+                                client.executeRaw(s"INSERT INTO $table VALUES (42, 'hello')").flatMap { affected =>
+                                    assert(affected == 1L)
+                                    client.query(s"SELECT id, name FROM $table").flatMap { rows =>
+                                        assert(rows.size == 1)
+                                        val row = rows(0)
+                                        // Extended protocol: INT is a 4-byte little-endian LONG, VARCHAR is
+                                        // length-prefixed UTF-8. Decode typed.
+                                        for
+                                            idVal   <- row.decode[Int]("id")
+                                            nameVal <- row.decode[String]("name")
+                                            _ = assert(idVal == 42)
+                                            _ = assert(nameVal == "hello")
+                                            r <- client.executeRaw(s"DROP TABLE $table").map(_ => succeed)
+                                        yield r
+                                        end for
+                                    }
                                 }
                             }
                         }
@@ -265,12 +268,12 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
 
     // ── AuthSwitchRequest to caching_sha2 from initial plugin ────────────────
 
-    "HandshakeExchange AuthSwitchRequest to caching_sha2_password, handled by switch handler".tagged(OwnContainer.name) in {
+    "HandshakeExchange AuthSwitchRequest to caching_sha2_password, handled by switch handler" in {
         // When server is configured with caching_sha2_password and client sends an initial native_password response,
         // the server issues AuthSwitchRequest to caching_sha2_password. Our handler re-runs fast-path with the new scramble.
         // This scenario is tested with the caching_sha2_password container.
         Scope.run {
-            withCachingSha2Container { details =>
+            withCachingSha2Container() { details =>
                 Scope.run {
                     openClient(details).flatMap { client =>
                         // If we got this far, the AuthSwitchRequest (if any) was handled correctly.
