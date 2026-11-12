@@ -115,6 +115,8 @@ object Sync:
       *
       * The finalizer receives a `Maybe[Error[Any]]`: `Absent` when the computation completed, the `Failure` when it aborted, and a `Panic`
       * when it threw or when its extent was ended from outside, as a scheduler does when it abandons a parked remainder.
+      * An interrupt carrying a panic supplies that same exception, including `Interrupted` for the default fiber interrupt. A handler
+      * discarding the remainder supplies a discard `KyoException` instead.
       *
       * @param f
       *   The finalizer function that receives information about potential errors and performs cleanup actions.

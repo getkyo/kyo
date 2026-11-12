@@ -5,12 +5,13 @@ import kyo.stats.internal.*
 
 /** Periodically collects metrics from the global `StatsRegistry` and exports them to an OTLP collector.
   *
-  * Counters and counter-gauges are exported as DELTA sums: they drain on read, so each data point carries the activity since the previous
-  * export and a counter with no activity is skipped. Histograms are exported with CUMULATIVE temporality and a fixed series-start time,
-  * because their buckets, count, min, max and sum are lifetime values that never drain; a histogram that has ever been observed is
-  * therefore re-sent on every export, carrying the same lifetime totals, rather than being skipped for having no new activity. Gauges
-  * report their current value. Weak references to metric instances are cleaned up during iteration to avoid a second pass that would
-  * deadlock on Scala Native.
+  * An instrument is the metric at its registry path, and its series, one per attribute set observed, are the metric's data points, each
+  * carrying its attributes as OTLP key-values. Counters and counter-gauges are exported as DELTA sums: they drain on read, so each data
+  * point carries the activity since the previous export and a series with no activity is skipped. Histograms are exported with CUMULATIVE
+  * temporality and a fixed series-start time, because their buckets, count, min, max and sum are lifetime values that never drain; a
+  * histogram series that has ever been observed is therefore re-sent on every export, carrying the same lifetime totals, rather than being
+  * skipped for having no new activity. Gauges report their current value. Weak references to metric instances are cleaned up during
+  * iteration to avoid a second pass that would deadlock on Scala Native.
   */
 object OTLPMetricsExporter:
 
@@ -43,6 +44,25 @@ object OTLPMetricsExporter:
             )(flush(config))
         }
 
+    /** Walks one store and hands each live instrument, with its path, description and unit, to `metric`; removes the entries whose
+      * instrument was collected. Inline gc during the iteration, to avoid a second forEach on the same map, which deadlocks on Scala
+      * Native. `metric` answers Absent for an instrument with nothing to report this export.
+      */
+    private def gather[A <: AnyRef](
+        store: StatsRegistry.internal.Store[A],
+        metrics: ChunkBuilder[Metric]
+    )(metric: (A, String, String, String) => Maybe[Metric])(using AllowUnsafe): Unit =
+        store.map.forEach { (path, entry) =>
+            val instrument = entry.reference.get()
+            if instrument == null then
+                store.map.remove(path, entry): Unit
+            else
+                metric(instrument, path.mkString("."), entry.description, entry.unit) match
+                    case Present(m) => metrics.addOne(m): Unit
+                    case Absent     => ()
+            end if
+        }
+
     private def flush(config: OTLPConfig)(using Frame): Unit < Async =
         Clock.now.map { now =>
             Sync.Unsafe.defer {
@@ -64,110 +84,83 @@ object OTLPMetricsExporter:
                 val registry = StatsRegistry.internal
                 val metrics  = ChunkBuilder.init[Metric]
 
-                // Inline gc (remove entries with collected WeakReferences) during iteration
-                // to avoid a second forEach on the same map, which deadlocks on Scala Native.
-                registry.counters.map.forEach { (path, tuple) =>
-                    val (ref, desc) = tuple
-                    val counter     = ref.get()
-                    if counter == null then
-                        registry.counters.map.remove(path): Unit
+                def sum(name: String, description: String, unit: String, points: Seq[NumberDataPoint]): Maybe[Metric] =
+                    if points.isEmpty then Absent
                     else
-                        val delta = counter.delta()
-                        if delta != 0L then
-                            metrics.addOne(Metric(
-                                name = path.mkString("."),
-                                description = desc,
-                                unit = "1",
-                                sum = Present(OTLPSum(
-                                    dataPoints = Seq(NumberDataPoint(
-                                        startTimeUnixNano = startStr,
-                                        timeUnixNano = nowStr,
-                                        asInt = Present(delta.toString)
-                                    )),
-                                    aggregationTemporality = OTLPModel.DeltaTemporality,
-                                    isMonotonic = true
-                                ))
+                        Present(Metric(
+                            name = name,
+                            description = description,
+                            unit = unit,
+                            sum = Present(OTLPSum(
+                                dataPoints = points,
+                                aggregationTemporality = OTLPModel.DeltaTemporality,
+                                isMonotonic = true
                             ))
-                        end if
-                    end if
+                        ))
+
+                def deltaPoints(series: Seq[(kyo.stats.Attributes, Long)]): Seq[NumberDataPoint] =
+                    series.collect {
+                        case (attributes, delta) if delta != 0L =>
+                            NumberDataPoint(
+                                startTimeUnixNano = startStr,
+                                timeUnixNano = nowStr,
+                                asInt = Present(delta.toString),
+                                attributes = KeyValue.of(attributes)
+                            )
+                    }
+
+                gather(registry.counters, metrics) { (counter, name, description, unit) =>
+                    sum(name, description, unit, deltaPoints(counter.series().map(s => (s.attributes, s.delta))))
+                }
+                gather(registry.counterGauges, metrics) { (gauge, name, description, unit) =>
+                    sum(name, description, unit, deltaPoints(gauge.series().map(s => (s.attributes, s.delta))))
                 }
 
-                registry.counterGauges.map.forEach { (path, tuple) =>
-                    val (ref, desc) = tuple
-                    val cg          = ref.get()
-                    if cg == null then
-                        registry.counterGauges.map.remove(path): Unit
+                gather(registry.histograms, metrics) { (histogram, name, description, unit) =>
+                    val points = histogram.series().collect {
+                        case series if series.summary.count != 0L =>
+                            val summary = series.summary
+                            HistogramDataPoint(
+                                startTimeUnixNano = seriesStr,
+                                timeUnixNano = nowStr,
+                                count = summary.count.toString,
+                                explicitBounds = summary.boundaries.toSeq,
+                                bucketCounts = summary.bucketCounts.map(_.toString).toSeq,
+                                min = summary.min,
+                                max = summary.max,
+                                sum = summary.sum,
+                                attributes = KeyValue.of(series.attributes)
+                            )
+                    }
+                    if points.isEmpty then Absent
                     else
-                        val delta = cg.delta()
-                        if delta != 0L then
-                            metrics.addOne(Metric(
-                                name = path.mkString("."),
-                                description = desc,
-                                unit = "1",
-                                sum = Present(OTLPSum(
-                                    dataPoints = Seq(NumberDataPoint(
-                                        startTimeUnixNano = startStr,
-                                        timeUnixNano = nowStr,
-                                        asInt = Present(delta.toString)
-                                    )),
-                                    aggregationTemporality = OTLPModel.DeltaTemporality,
-                                    isMonotonic = true
-                                ))
-                            ))
-                        end if
-                    end if
-                }
-
-                registry.histograms.map.forEach { (path, tuple) =>
-                    val (ref, desc) = tuple
-                    val histogram   = ref.get()
-                    if histogram == null then
-                        registry.histograms.map.remove(path): Unit
-                    else
-                        val summary = histogram.summary()
-                        if summary.count > 0 then
-                            metrics.addOne(Metric(
-                                name = path.mkString("."),
-                                description = desc,
-                                unit = "1",
-                                histogram = Present(OTLPHistogram(
-                                    dataPoints = Seq(HistogramDataPoint(
-                                        startTimeUnixNano = seriesStr,
-                                        timeUnixNano = nowStr,
-                                        count = summary.count.toString,
-                                        explicitBounds = summary.boundaries.toSeq,
-                                        bucketCounts = summary.bucketCounts.map(_.toString).toSeq,
-                                        min = summary.min,
-                                        max = summary.max,
-                                        sum = summary.sum
-                                    )),
-                                    aggregationTemporality = OTLPModel.CumulativeTemporality
-                                ))
-                            ))
-                        end if
-                    end if
-                }
-
-                registry.gauges.map.forEach { (path, tuple) =>
-                    val (ref, desc) = tuple
-                    val gauge       = ref.get()
-                    if gauge == null then
-                        registry.gauges.map.remove(path): Unit
-                    else
-                        val current = gauge.collect()
-                        metrics.addOne(Metric(
-                            name = path.mkString("."),
-                            description = desc,
-                            unit = "1",
-                            gauge = Present(OTLPGauge(
-                                dataPoints = Seq(NumberDataPoint(
-                                    startTimeUnixNano = startStr,
-                                    timeUnixNano = nowStr,
-                                    asDouble = Present(current)
-                                ))
+                        Present(Metric(
+                            name = name,
+                            description = description,
+                            unit = unit,
+                            histogram = Present(OTLPHistogram(
+                                dataPoints = points,
+                                aggregationTemporality = OTLPModel.CumulativeTemporality
                             ))
                         ))
                     end if
+                }
+
+                gather(registry.gauges, metrics) { (gauge, name, description, unit) =>
+                    val points = gauge.series().map { series =>
+                        NumberDataPoint(
+                            startTimeUnixNano = startStr,
+                            timeUnixNano = nowStr,
+                            asDouble = Present(series.value),
+                            attributes = KeyValue.of(series.attributes)
+                        )
+                    }
+                    Present(Metric(
+                        name = name,
+                        description = description,
+                        unit = unit,
+                        gauge = Present(OTLPGauge(dataPoints = points))
+                    ))
                 }
 
                 if metrics.knownSize > 0 then

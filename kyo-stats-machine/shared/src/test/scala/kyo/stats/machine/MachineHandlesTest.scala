@@ -24,13 +24,13 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
         StatsRegistry.internal.gauges.get(path.toList.reverse, "", new UnsafeGauge(() => -1d)).collect()
 
     private def gaugeRegistered(path: String*): Boolean =
-        StatsRegistry.internal.gauges.map.containsKey(path.toList)
+        StatsRegistry.internal.gauges.contains(path.toList)
 
     private def counterGaugeRegistered(path: String*): Boolean =
-        StatsRegistry.internal.counterGauges.map.containsKey(path.toList)
+        StatsRegistry.internal.counterGauges.contains(path.toList)
 
     private def histogramRegistered(path: String*): Boolean =
-        StatsRegistry.internal.histograms.map.containsKey(path.toList)
+        StatsRegistry.internal.histograms.contains(path.toList)
 
     private def histogramSummary(boundaries: Array[Double], path: String*): Summary =
         StatsRegistry.internal.histograms.get(path.toList.reverse, "", new UnsafeHistogram(boundaries)).summary()

@@ -307,6 +307,8 @@ val withCleanup: Int < (Async & Scope) =
 def compute: Int < Sync = ???
 ```
 
+The outcome-aware `Sync.ensure` overload also distinguishes interruption from a handler discarding the rest of a computation. A panic supplied to `fiber.interrupt` reaches the finalizer with the same exception; the default interrupt carries `Interrupted`. A handler dropping the remainder supplies a discard `KyoException`.
+
 ### Closing a scope
 
 `Scope.run` discharges `Scope` and closes it when its body ends. Its result is delivered after every release has run, and a failure from the body is raised again after them, so the caller never observes a half-closed scope. Releases run in reverse registration order. A failing release is logged with `Log.error` and the rest still run, so a release can never mask the body's own result or error.
@@ -952,6 +954,24 @@ def activeCount: Long = ???
 ```
 
 `Counter` exposes `inc`, `add(v)`, `get`. `Histogram` exposes `observe(v)` and `summary`, a non-destructive read of the whole distribution. `Gauge` and `CounterGauge` are read-only views: the registry calls the provided thunk on each scrape.
+
+An instrument's `unit` is the OpenTelemetry unit string an exporter sends with it (`"1"` for a count, `"ms"`, `"By"`, `"{request}"`), so a name carries no unit suffix. A measurement carries the attributes of the series it belongs to, the way an OpenTelemetry data point carries attributes beside the metric: a count of requests per model is one counter, and the model is an attribute of each increment.
+
+```scala
+import kyo.stats.Attributes
+
+val requests = Stat.initScope("kyo", "orders").initCounter("requests", "requests per model", unit = "{request}")
+
+val served: Unit < Sync =
+    for
+        _ <- requests.add(1L, Attributes.add("model", "sonnet"))
+        _ <- requests.add(2L, Attributes.add("model", "haiku"))
+    yield ()
+
+val perModel: Seq[kyo.stats.internal.UnsafeCounter.Series] < Sync = requests.series
+```
+
+A series is made the first time its attributes are observed and lives as long as the instrument does; the same attributes in another order are the same series. `series` reads every series of an instrument, the attribute-free one first, with a counter's delta since its last read or a histogram's summary; `get` and `summary` read the series with no attributes. A gauge's series is the thunk it is registered with: `initGauge("depth", attributes = Attributes.add("queue", "orders"))(depth)` registers `depth` as that series of the gauge at `depth`, and the `Gauge` returned reads it.
 
 The `init*` methods register, and registration is first-writer-wins. That makes them the wrong call for reading a metric somebody else publishes: `initGauge` supplies the thunk, so a consumer that calls it before the producer wins the path and the producer's real value becomes unreachable for the life of the process. To read without registering, ask:
 

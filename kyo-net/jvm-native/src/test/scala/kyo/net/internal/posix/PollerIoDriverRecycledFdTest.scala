@@ -28,18 +28,7 @@ class PollerIoDriverRecycledFdTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    /** Submit a marker engine op and return a promise that completes when the reap carrier runs it. submitEngineOp wakes the reap loop, so each
-      * barrier forces a reap turn (which runs reArmStalledSubmits) even with no CQE pending; two in sequence give a base re-arm of the parked recv
-      * its chance to submit a prep_recv on the closed fd, so the post-close recv count is settled deterministically without waiting on a CQE.
-      */
-    private def fifoBarrier(driver: IoUringDriver)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
-        val p = Promise.Unsafe.init[Unit, Any]()
-        driver.submitEngineOp(() => p.completeDiscard(Result.succeed(())))
-        p
-    end fifoBarrier
-
-    /** Allocate a REAL io_uring ring at `depth`, wrap it in a recording spy, build a driver with its reap loop started, run `body`, then close the
-      * driver. Mirrors IoUringRawWriteSqFullTest.
+    /** Allocate a real ring and recording driver without starting its reap loop, so the body can queue an entire first drain before starting it.
       */
     private def withRecordingDriver[A](depth: Int)(
         body: (IoUringDriver, RecordingIoUringBindings) => A < (Abort[Closed] & Async)
@@ -52,45 +41,56 @@ class PollerIoDriverRecycledFdTest extends Test:
             throw Closed("PollerIoDriverRecycledFdTest", summon[Frame], s"queue_init failed: rc=$rc")
         val recording = RecordingIoUringBindings(realUring, realRing)
         val driver    = TestDrivers.forBindings(recording, realRing)
-        discard(driver.start())
         Sync.ensure(Sync.defer(driver.close()))(body(driver, recording))
     end withRecordingDriver
 
     "a recv parked on SQ-full is failed Closed on close, never re-armed on the closed fd" in {
         PosixTestSockets.assumeUring()
-        // Depth-1 ring, reap carrier pinned by a latch so the filler read (consumes the one SQE), the parked recv (get_sqe Absent -> stalledSubmits),
-        // and the close all enqueue and drain in ONE pass before the wait submits anything. closeNow must drain stalledSubmits for the handle, so the
-        // parked recv is failed Closed and never re-armed: exactly one prep_recv (the filler) ever reaches the ring.
+        // Queue everything before start: the wake poll takes the depth-1 ring's only SQE before the first engine drain. Both reads therefore park.
+        // Observe the target before and after its close within that drain, then await the surviving read to prove stalled operations were re-armed.
         withRecordingDriver(1) { (drv, rec) =>
-            PosixTestSockets.loopbackPair().map { case (fillerClient, fillerAccepted) =>
+            PosixTestSockets.loopbackPair().map { case (controlClient, controlAccepted) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val fillerH = PosixHandle.socket(fillerAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val control = PosixHandle.socket(controlAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val handle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    val gate    = new java.util.concurrent.CountDownLatch(1)
-                    val pinIn   = Promise.Unsafe.init[Unit, Abort[Closed]]()
-                    drv.submitEngineOp { () =>
-                        pinIn.completeDiscard(Result.succeed(()))
-                        gate.await()
-                    }
-                    pinIn.safe.get.map { _ =>
-                        val fillerP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-                        drv.awaitRead(fillerH, fillerP) // consumes the one SQE, stays in flight (no peer bytes)
-                        val recvP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-                        drv.awaitRead(handle, recvP) // get_sqe Absent -> parks in stalledSubmits
-                        drv.closeHandle(handle)      // closeNow must drain stalledSubmits -> fail recvP Closed, NOT re-arm on the closed fd
-                        gate.countDown()
-                        Abort.run[Closed](recvP.safe.get).map { result =>
-                            // Settle a couple reap turns so a base re-arm (reArmStalledSubmits) would have submitted a recv on the closed fd by now.
-                            // Use engine-op barriers, not awaitReap: nothing is re-armed here so no CQE reaps, and an awaitReap would hang.
-                            fifoBarrier(drv).safe.get.andThen(fifoBarrier(drv).safe.get).map { _ =>
-                                drv.closeHandle(fillerH)
-                                discard(sock.close(fillerClient))
-                                discard(sock.close(client))
-                                assert(result.isFailure, s"the parked recv must be failed Closed by the close-time drain, got $result")
-                                assert(
-                                    rec.recvLens.size() == 1,
-                                    s"the closed handle's parked recv must NOT be re-armed on the closed fd; prep_recv count=${rec.recvLens.size()}"
-                                )
+                    Sync.ensure(Sync.defer {
+                        drv.closeHandle(handle)
+                        drv.closeHandle(control)
+                        discard(sock.close(client))
+                        discard(sock.close(controlClient))
+                    }) {
+                        val recvP        = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                        val controlP     = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                        val beforeClose  = Promise.Unsafe.init[(Boolean, Int, Boolean), Any]()
+                        val closeDrained = Promise.Unsafe.init[Boolean, Any]()
+                        drv.awaitRead(handle, recvP)
+                        drv.submitEngineOp { () =>
+                            beforeClose.completeDiscard(Result.succeed((
+                                recvP.poll().isEmpty,
+                                rec.recvLens.size(),
+                                rec.submittedKeys.size() == 1 && rec.submittedKeys.contains(IoUringDriver.WakeKey)
+                            )))
+                        }
+                        drv.closeHandle(handle)
+                        drv.submitEngineOp(() => closeDrained.completeDiscard(Result.succeed(recvP.poll().exists(_.isFailure))))
+                        drv.awaitRead(control, controlP)
+                        val payload = Array[Byte](42)
+                        val sendBuf = Buffer.fromArray[Byte](payload)
+                        val sent    =
+                            try sock.sendNow(controlClient, sendBuf, payload.length.toLong, PosixConstants.MSG_NOSIGNAL).value
+                            finally sendBuf.close()
+                        discard(drv.start())
+                        beforeClose.safe.get.map { state =>
+                            assert(state == (true, 0, true), s"the target must park behind the wake SQE before close, got $state")
+                            closeDrained.safe.get.map { drained =>
+                                assert(drained, "close must fail the parked read before any re-arm turn")
+                                assert(sent == 1L)
+                                controlP.safe.get.map { outcome =>
+                                    outcome match
+                                        case ReadOutcome.Bytes(bytes) => assert(bytes.toArray.toList == payload.toList)
+                                        case other => fail(s"the surviving parked read must deliver its byte, got $other")
+                                    assert(rec.recvLens.size() == 1, "only the surviving read may prepare a recv after the close")
+                                }
                             }
                         }
                     }

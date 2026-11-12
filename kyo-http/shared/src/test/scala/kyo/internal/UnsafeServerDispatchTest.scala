@@ -3419,7 +3419,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
                     pollUntil(outbound.pendingPuts().exists(_ > 0)).map { parked =>
                         assert(parked, s"a response must be waiting for the peer to read, observed ${outbound.pendingPuts()} queued spans")
-                        tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                        // Queuing the response precedes handler completion, whose continuation arms this timer.
+                        tc.awaitPendingSleeper(idleTimeout).andThen(tc.advance(idleTimeout.minusOrZero(1.milli))).andThen {
                             assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
                             tc.advance(1.milli).andThen {
                                 probe.closed.map(closed => assert(closed, "a peer that never reads its responses must be closed"))
