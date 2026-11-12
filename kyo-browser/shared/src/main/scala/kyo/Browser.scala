@@ -604,6 +604,53 @@ object Browser:
         }
     end select
 
+    /** Selects the first option whose displayed HTML label is `label`, where [[select]] takes the option's value.
+      *
+      * A nonempty `label` attribute supplies the label; otherwise the option's native text is used. Label matching is exact and
+      * case-sensitive. The matched option is selected even when another option has the same value. One bubbling `change` event is
+      * dispatched, including when that option is already selected; no `input` event is synthesized.
+      *
+      * Missing labels fail with [[BrowserOptionLabelNotFoundException]] without changing the selection or firing `change`.
+      * The session retry schedule applies.
+      */
+    def selectLabel(selector: Selector, label: String)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        val escaped = JsStringUtil.escapeJsString(label)
+        val jsExpr  = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        Actionability.withRetry {
+            Actionability.withActionable(selector, requireFillable = false, requireEnabled = true) { _ =>
+                val inner = BrowserEval.evalJs(s"""(() => {
+                    const el = $jsExpr;
+                    if (!el || !el.isConnected) return 'not_attached';
+                    const label = '$escaped';
+                    const options = el.options;
+                    if (options) {
+                        for (let i = 0; i < options.length; i++) {
+                            const option = options[i];
+                            if ((option.label || option.text) !== label) continue;
+                            const index = option.index;
+                            // A label getter can change the DOM. The matched node must still belong to this live select.
+                            if (!el.isConnected) return 'not_attached';
+                            if (options[index] !== option) return 'no_option';
+                            el.selectedIndex = index;
+                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                            return 'ok';
+                        }
+                    }
+                    return 'no_option';
+                })()""").map {
+                    case "ok"        => ()
+                    case "no_option" =>
+                        Abort.fail(BrowserOptionLabelNotFoundException(selectorNodeDescription(Selector.toNode(selector)), label))
+                    case "not_attached" =>
+                        Abort.fail(BrowserElementNotFoundException(selectorNodeDescription(Selector.toNode(selector))))
+                    case other =>
+                        Abort.fail(BrowserProtocolErrorException.decodeFailure("selectLabel", s"unexpected selection reply '$other'"))
+                }
+                MutationSettlement.afterAction(inner)(scopeSelector = Present(selector))
+            }
+        }
+    end selectLabel
+
     /** Presses the given key without targeting a specific element; dispatches `Input.dispatchKeyEvent` against whatever currently has focus
       * (typically `document.body` when no element is focused). Useful for global shortcuts (e.g. `Key.Escape` to dismiss a modal, `Key.Tab`
       * to move focus). Settlement is rooted at `document.body` since there is no scoped target.

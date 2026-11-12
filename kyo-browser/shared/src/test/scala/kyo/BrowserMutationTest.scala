@@ -1217,6 +1217,336 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
+    private def labelSelectPage(options: String, attributes: String) =
+        s"""<select id='size' style='min-width:150px' $attributes>$options</select><script>
+            window.selectChanges = []; window.selectInputs = 0;
+            const control = document.getElementById('size');
+            document.body.addEventListener('change', e => {
+                if (e.target === control) selectChanges.push([control.selectedIndex, control.value]);
+            });
+            document.body.addEventListener('input', e => { if (e.target === control) selectInputs++; });
+        </script>"""
+
+    private def labelSelectState(using Frame): String < (Browser & Abort[BrowserReadException]) =
+        Browser.eval("""(() => {
+            const el = document.getElementById('size');
+            return JSON.stringify([el.selectedIndex, el.value, selectChanges, selectInputs]);
+        })()""")
+
+    "selectLabel native control distinguishes label attributes from displayed-text fallbacks" in {
+        withBrowser {
+            onPage(labelSelectPage(
+                """<option value='a'>  Alpha
+                    label  </option><option value='b' label='  Tiny  '>ignored</option>
+                    <option value='c' label=''>Visible fallback</option><option value='d'></option>""",
+                ""
+            )) {
+                Browser.eval("JSON.stringify(Array.from(document.getElementById('size').options, o => [o.label, o.text]))").map { labels =>
+                    assert(labels == """[["Alpha label","Alpha label"],["  Tiny  ","ignored"],["","Visible fallback"],["",""]]""", labels)
+                }
+            }
+        }
+    }
+
+    "selectLabel native control preserves value-selection event semantics" in {
+        withBrowser {
+            onPage(labelSelectPage("<option value='one'>One</option><option value='two'>Two</option>", "")) {
+                Browser.select(Selector.id("size"), "two").andThen(labelSelectState).map { state =>
+                    assert(state == """[1,"two",[[1,"two"]],0]""", state)
+                }
+            }
+        }
+    }
+
+    "selectLabel native control permits programmatic selection of a disabled option" in {
+        withBrowser {
+            onPage(labelSelectPage("<option value='one' disabled>One</option><option value='two' selected>Two</option>", "")) {
+                Browser.select(Selector.id("size"), "one").andThen(labelSelectState).map { state =>
+                    assert(state == """[0,"one",[[0,"one"]],0]""", state)
+                }
+            }
+        }
+    }
+
+    for (name, options, label, index, value) <- Chunk(
+            ("text", "<option value='one'>One</option><option value='two' selected>Two</option>", "One", 0, "one"),
+            ("attribute", "<option value='one' label='Tiny'>Small</option><option value='two' selected>Two</option>", "Tiny", 0, "one"),
+            (
+                "text whitespace",
+                "<option value='one'>  Small\n  size </option><option value='two' selected>Two</option>",
+                "Small size",
+                0,
+                "one"
+            ),
+            (
+                "empty attribute fallback",
+                "<option value='one' label=''>Visible</option><option value='two' selected>Two</option>",
+                "Visible",
+                0,
+                "one"
+            ),
+            ("empty displayed label", "<option value='one' label=''>Visible</option><option value='blank'></option>", "", 1, "blank"),
+            (
+                "duplicate values",
+                "<option value='same'>First</option><option value='same'>Second</option><option value='other' selected>Other</option>",
+                "Second",
+                1,
+                "same"
+            ),
+            ("duplicate labels", "<option value='one'>Same</option><option value='two' selected>Same</option>", "Same", 0, "one"),
+            ("already selected", "<option value='one' selected>One</option><option value='two'>Two</option>", "One", 0, "one"),
+            (
+                "quoted text",
+                "<option value='one'>O'Reilly &amp; &quot;Tiny&quot;</option><option value='two' selected>Two</option>",
+                "O'Reilly & \"Tiny\"",
+                0,
+                "one"
+            ),
+            (
+                "optgroup",
+                "<optgroup label='Group'><option value='one'>One</option><option value='two'>Two</option></optgroup>",
+                "Two",
+                1,
+                "two"
+            ),
+            ("disabled option", "<option value='one' disabled>One</option><option value='two' selected>Two</option>", "One", 0, "one"),
+            ("empty value", "<option value='one'>One</option><option value=''>None</option>", "None", 1, "")
+        )
+    do
+        s"selectLabel chooses the requested option by $name and emits one change" in {
+            withBrowser {
+                onPage(labelSelectPage(options, "")) {
+                    Browser.selectLabel(Selector.id("size"), label).andThen(labelSelectState).map { state =>
+                        val expected = s"""[$index,${Json.encode(value)},[[$index,${Json.encode(value)}]],0]"""
+                        assert(state == expected, state)
+                    }
+                }
+            }
+        }
+    end for
+
+    for (name, options, requested, index, value) <- Chunk(
+            ("missing label", "<option value='one'>One</option><option value='two' selected>Two</option>", "Absent", 1, "two"),
+            ("value differs from label", "<option value='one'>One</option><option value='two' selected>Two</option>", "one", 1, "two"),
+            ("empty select", "", "Absent", -1, "")
+        )
+    do
+        s"selectLabel reports $name without mutating selection or events" in {
+            withBrowser {
+                onPage(labelSelectPage(options, "")) {
+                    for
+                        result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                            Abort.run[BrowserElementException](Browser.selectLabel(Selector.id("size"), requested))
+                        }
+                        state <- labelSelectState
+                    yield
+                        result match
+                            case Result.Failure(error: BrowserOptionLabelNotFoundException) =>
+                                assert(error.selector == "id(\"size\")")
+                                assert(error.label == requested)
+                            case other => fail(s"expected missing label, got $other")
+                        end match
+                        assert(state == s"""[$index,${Json.encode(value)},[],0]""", state)
+                }
+            }
+        }
+    end for
+
+    for (attributes, reason) <- Chunk(
+            ("disabled", Reason.Disabled(Reason.DisabledKind.Attribute)),
+            ("aria-disabled='true'", Reason.Disabled(Reason.DisabledKind.AriaDisabled))
+        )
+    do
+        s"selectLabel rejects a $attributes select without events" in {
+            withBrowser {
+                onPage(labelSelectPage("<option value='one'>One</option><option value='two'>Two</option>", attributes)) {
+                    for
+                        result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                            Abort.run[BrowserElementException](Browser.selectLabel(Selector.id("size"), "Two"))
+                        }
+                        state <- labelSelectState
+                    yield
+                        result match
+                            case Result.Failure(error: BrowserElementNotActionableException) => assert(error.reason == reason)
+                            case other => fail(s"expected disabled select, got $other")
+                        assert(state == """[0,"one",[],0]""", state)
+                }
+            }
+        }
+    end for
+
+    "selectLabel replaces multiple selections with the requested option" in {
+        withBrowser {
+            onPage(labelSelectPage(
+                "<option value='one' selected>One</option><option value='two'>Two</option><option value='three' selected>Three</option>",
+                "multiple"
+            )) {
+                for
+                    _        <- Browser.selectLabel(Selector.id("size"), "Two")
+                    state    <- labelSelectState
+                    selected <- Browser.eval("JSON.stringify(Array.from(document.getElementById('size').selectedOptions, o => o.value))")
+                yield
+                    assert(state == """[1,"two",[[1,"two"]],0]""", state)
+                    assert(selected == """["two"]""", selected)
+            }
+        }
+    }
+
+    "selectLabel retries a label that becomes available after a failed attempt" in {
+        withBrowser {
+            onPage(labelSelectPage("<option id='pending' value='one'>Waiting</option>", "") + """<script>
+                window.labelReads = 0;
+                const pending = document.getElementById('pending');
+                Object.defineProperty(pending, 'label', { get() {
+                    labelReads++;
+                    if (labelReads === 1) { pending.setAttribute('label', 'Ready'); return 'Waiting'; }
+                    return pending.getAttribute('label');
+                }});
+                </script>""") {
+                for
+                    _ <- Browser.withConfig(_.retrySchedule(Schedule.immediate.take(1))) {
+                        Browser.selectLabel(Selector.id("size"), "Ready")
+                    }
+                    state <- labelSelectState
+                    reads <- Browser.eval("labelReads.toString()")
+                yield
+                    assert(state == """[0,"one",[[0,"one"]],0]""", state)
+                    assert(reads == "2", reads)
+            }
+        }
+    }
+
+    "selectLabel rejects a non-select without writing its value" in {
+        withBrowser {
+            onPage("<input id='size' value='kept'>") {
+                for
+                    result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                        Abort.run[BrowserElementException](Browser.selectLabel(Selector.id("size"), "Wanted"))
+                    }
+                    value <- Browser.value(Selector.id("size"))
+                yield
+                    result match
+                        case Result.Failure(error: BrowserOptionLabelNotFoundException) => assert(error.label == "Wanted")
+                        case other                                                      => fail(s"expected no matching option, got $other")
+                    assert(value == "kept", value)
+            }
+        }
+    }
+
+    "selectLabel does not write an option moved to another select during label access" in {
+        withBrowser {
+            onPage(labelSelectPage("<option value='one'>One</option><option id='moving' value='two'>Two</option>", "") + """
+                <select id='other'><option value='untouched'>Other</option></select><script>
+                const moving = document.getElementById('moving');
+                Object.defineProperty(moving, 'label', { get() {
+                    document.getElementById('other').append(moving);
+                    return 'Two';
+                }});
+                </script>""") {
+                for
+                    result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                        Abort.run[BrowserElementException](Browser.selectLabel(Selector.id("size"), "Two"))
+                    }
+                    state <- labelSelectState
+                    other <- Browser.value(Selector.id("other"))
+                yield
+                    result match
+                        case Result.Failure(error: BrowserOptionLabelNotFoundException) => assert(error.label == "Two")
+                        case other => fail(s"expected moved option to be rejected, got $other")
+                    assert(state == """[0,"one",[],0]""", state)
+                    assert(other == "untouched", other)
+            }
+        }
+    }
+
+    "selectLabel does not write a select detached during label access" in {
+        withBrowser {
+            onPage(labelSelectPage("<option value='one'>One</option><option id='removing' value='two'>Two</option>", "") + """<script>
+                const removing = document.getElementById('removing');
+                Object.defineProperty(removing, 'label', { get() {
+                    window.removedSelect = document.getElementById('size');
+                    removedSelect.remove();
+                    return 'Two';
+                }});
+                </script>""") {
+                for
+                    result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                        Abort.run[BrowserElementException](Browser.selectLabel(Selector.id("size"), "Two"))
+                    }
+                    state <- Browser.eval("JSON.stringify([removedSelect.selectedIndex, removedSelect.value, selectChanges, selectInputs])")
+                yield
+                    result match
+                        case Result.Failure(error: BrowserElementNotFoundException) => assert(error.selector == "id(\"size\")")
+                        case other                                                  => fail(s"expected detached select, got $other")
+                    assert(state == """[0,"one",[],0]""", state)
+            }
+        }
+    }
+
+    "selectLabel follows an option's current index after label access reorders it" in {
+        withBrowser {
+            onPage(labelSelectPage("<option value='one'>One</option><option id='reordering' value='two'>Two</option>", "") + """<script>
+                const reordering = document.getElementById('reordering');
+                Object.defineProperty(reordering, 'label', { get() {
+                    document.getElementById('size').prepend(reordering);
+                    return 'Two';
+                }});
+                </script>""") {
+                Browser.selectLabel(Selector.id("size"), "Two").andThen(labelSelectState).map { state =>
+                    assert(state == """[0,"two",[[0,"two"]],0]""", state)
+                }
+            }
+        }
+    }
+
+    "selectLabel rejects a select in a disabled fieldset" in {
+        withBrowser {
+            onPage("<fieldset disabled>" + labelSelectPage("<option value='one'>One</option><option value='two'>Two</option>", "") +
+                "</fieldset>") {
+                for
+                    result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                        Abort.run[BrowserElementException](Browser.selectLabel(Selector.id("size"), "Two"))
+                    }
+                    state <- labelSelectState
+                yield
+                    result match
+                        case Result.Failure(error: BrowserElementNotActionableException) =>
+                            assert(error.reason == Reason.Disabled(Reason.DisabledKind.FieldsetDisabled))
+                        case other => fail(s"expected disabled fieldset, got $other")
+                    end match
+                    assert(state == """[0,"one",[],0]""", state)
+            }
+        }
+    }
+
+    "selectLabel composes with expectNavigation when the change handler navigates" in {
+        val firstBytes = Span.fromUnsafe(labelSelectPage(
+            "<option value='/'>Stay</option><option value='/next'>Next</option>",
+            "onchange=\"location.href=this.value\""
+        ).getBytes("UTF-8"))
+        val nextBytes = Span.fromUnsafe("<html><body><h1>navigated</h1></body></html>".getBytes("UTF-8"))
+        val first     = HttpRoute.getRaw("/").response(_.bodyBinary).handler(_ =>
+            HttpResponse.ok(firstBytes).addHeader("Content-Type", "text/html; charset=utf-8")
+        )
+        val next = HttpRoute.getRaw("/next").response(_.bodyBinary).handler(_ =>
+            HttpResponse.ok(nextBytes).addHeader("Content-Type", "text/html; charset=utf-8")
+        )
+        withLocalhostServer(first, next) { (host, port) =>
+            withBrowser {
+                for
+                    _ <- Browser.goto(s"http://$host:$port/", Browser.Settle.Load)
+                    _ <- Browser.expectNavigation(settle = Browser.Settle.Load) {
+                        Browser.selectLabel(Selector.id("size"), "Next")
+                    }
+                    url  <- Browser.url
+                    body <- Browser.text(Selector.css("h1"))
+                yield
+                    assert(url == s"http://$host:$port/next", url)
+                    assert(body == "navigated", body)
+            }
+        }
+    }
+
     // ---- typeText ----
 
     "typeText characters appear in focused input" in {
