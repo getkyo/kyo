@@ -254,6 +254,99 @@ class BrowserEmulationTest extends BrowserTest:
         }
     }
 
+    "persistent emulation survives a nested scoped override and resets to the host" in {
+        val dark = "String(matchMedia('(prefers-color-scheme: dark)').matches)"
+        withBrowser {
+            onPage("<html><body>persistent emulation</body></html>") {
+                for
+                    host       <- Browser.eval(dark)
+                    _          <- Scope.run(Browser.setEmulation(colorScheme = Present(Browser.ColorScheme.Dark)))
+                    afterSet   <- Browser.eval(dark)
+                    inner      <- Browser.withEmulation(colorScheme = Present(Browser.ColorScheme.Light))(Browser.eval(dark))
+                    afterInner <- Browser.eval(dark)
+                    _          <- Browser.resetEmulation
+                    afterReset <- Browser.eval(dark)
+                    cached     <- Browser.use(_.emulationOverride.get)
+                yield
+                    assert(afterSet == "true")
+                    assert(inner == "false")
+                    assert(afterInner == "true")
+                    assert(afterReset == host)
+                    assert(cached == Absent)
+            }
+        }
+    }
+
+    "persistent emulation replaces omitted features and survives navigation" in {
+        val reduced = "String(matchMedia('(prefers-reduced-motion: reduce)').matches)"
+        withBrowser {
+            onPage("<html><body>before</body></html>") {
+                for
+                    hostReduced <- Browser.eval(reduced)
+                    _           <- Browser.setEmulation(
+                        colorScheme = Present(Browser.ColorScheme.Dark),
+                        media = Present(Browser.MediaType.Print),
+                        reducedMotion = true
+                    )
+                    all <- Browser.eval(
+                        "JSON.stringify([matchMedia('print').matches,matchMedia('(prefers-color-scheme: dark)').matches,matchMedia('(prefers-reduced-motion: reduce)').matches])"
+                    )
+                    _      <- Browser.setEmulation(colorScheme = Present(Browser.ColorScheme.Light))
+                    _      <- onPage("<html><body>after</body></html>")(Kyo.unit)
+                    light  <- Browser.eval("String(matchMedia('(prefers-color-scheme: light)').matches)")
+                    print  <- Browser.eval("String(matchMedia('print').matches)")
+                    motion <- Browser.eval(reduced)
+                yield
+                    assert(all == "[true,true,true]", all)
+                    assert(light == "true")
+                    assert(print == "false")
+                    assert(motion == hostReduced)
+            }
+        }
+    }
+
+    "persistent emulation remains local to its tab" in {
+        val dark = "String(matchMedia('(prefers-color-scheme: dark)').matches)"
+        withBrowser {
+            onPage("<html><body>parent media</body></html>") {
+                for
+                    host  <- Browser.eval(dark)
+                    _     <- Browser.setEmulation(colorScheme = Present(Browser.ColorScheme.Dark))
+                    child <- Browser.withNewTab {
+                        onPage("<html><body>child media</body></html>") {
+                            for
+                                before <- Browser.eval(dark)
+                                _      <- Browser.setEmulation(colorScheme = Present(Browser.ColorScheme.Light))
+                                after  <- Browser.eval(dark)
+                            yield (before, after)
+                        }
+                    }
+                    parent <- Browser.eval(dark)
+                yield
+                    assert(child == (host, "false"))
+                    assert(parent == "true")
+            }
+        }
+    }
+
+    "resetting persistent emulation inside a scope preserves the enclosing restore" in {
+        val dark = "String(matchMedia('(prefers-color-scheme: dark)').matches)"
+        withBrowser {
+            onPage("<html><body>scoped reset</body></html>") {
+                for
+                    host  <- Browser.eval(dark)
+                    _     <- Browser.setEmulation(colorScheme = Present(Browser.ColorScheme.Dark))
+                    inner <- Browser.withEmulation(colorScheme = Present(Browser.ColorScheme.Light)) {
+                        Browser.resetEmulation.andThen(Browser.eval(dark))
+                    }
+                    after <- Browser.eval(dark)
+                yield
+                    assert(inner == host)
+                    assert(after == "true")
+            }
+        }
+    }
+
     // ---- withHighlights ----
 
     // the highlights overlay is settlement-transparent. The observer is installed via a

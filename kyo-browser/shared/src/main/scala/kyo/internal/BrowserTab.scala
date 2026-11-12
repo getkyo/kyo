@@ -46,12 +46,12 @@ private[kyo] object BrowserTab:
       */
     final case class ViewportOverride(width: Int, height: Int, dpr: Double) derives CanEqual
 
-    /** Cached per-tab emulated-media state backing the scoped restore in `Browser.withEmulation`.
+    /** Cached per-tab emulated-media state written by `Browser.setEmulation` and `Browser.withEmulation`, backing the scoped restore.
       *
       * Stored in the per-tab `emulationOverride: AtomicRef[Maybe[EmulatedMediaState]]`. A value of `Absent` means no active
       * override (the page sees its real media features). `colorScheme` and `media` hold the CDP wire strings sent to
       * `Emulation.setEmulatedMedia` (`"light"`, `"dark"`, `"screen"`, `"print"`, or `""` for a cleared / unset feature);
-      * `reducedMotion` mirrors the `reducedMotion: Boolean` argument passed to `withEmulation`. On scope exit `withEmulation`
+      * `reducedMotion` mirrors the `reducedMotion: Boolean` argument passed to either operation. On scope exit `withEmulation`
       * re-applies the cached prior state, or clears the override when the prior was `Absent`.
       */
     final case class EmulatedMediaState(

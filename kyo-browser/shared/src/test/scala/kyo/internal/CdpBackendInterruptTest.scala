@@ -3,6 +3,7 @@ package kyo.internal
 import CdpTypes.*
 import kyo.*
 import kyo.internal.cdp.PageDownload
+import kyo.kernel.ContextEffect
 
 /** Interrupts landing on the round trips a [[CdpBackend]] and the tab setup make, driven over an in-memory CDP wire whose browser side
   * this suite plays.
@@ -28,7 +29,9 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         wire: Wire,
         gates: Map[String, Latch],
         seenGates: Map[String, Latch],
-        rejectFirst: Set[String]
+        rejectFirst: Set[String],
+        rejectAt: Map[String, Int],
+        gateAt: Map[String, Int]
     )(using Frame): Fiber[Unit, Any] < Sync =
         def result(method: String): Structure.Value = method match
             case "Browser.getVersion" =>
@@ -48,17 +51,20 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                 browserEnd.incoming.foreach {
                     case req: JsonRpcRequest =>
                         wire.requests.updateAndGet(_.append(req)).andThen(wire.seen.updateAndGet(_.append(req.method))).map { seen =>
-                            val reply =
-                                if rejectFirst.contains(req.method) && seen.count(_ == req.method) == 1 then
+                            val selected = gateAt.get(req.method).forall(_ == seen.count(_ == req.method))
+                            val reply    =
+                                if (rejectFirst.contains(req.method) && seen.count(_ == req.method) == 1) ||
+                                    rejectAt.get(req.method).contains(seen.count(_ == req.method))
+                                then
                                     JsonRpcResponse.failure(req.id, JsonRpcImplementationError(-32000, s"${req.method} rejected"))
                                 else JsonRpcResponse.success(req.id, result(req.method))
                             (seenGates.get(req.method) match
-                                case Some(arrived) => arrived.release
-                                case None          => Kyo.unit
+                                case Some(arrived) if selected => arrived.release
+                                case _                         => Kyo.unit
                             ).andThen {
                                 gates.get(req.method) match
-                                    case Some(gate) => gate.await
-                                    case None       => Kyo.unit
+                                    case Some(gate) if selected => gate.await
+                                    case _                      => Kyo.unit
                             }.andThen(browserEnd.send(reply))
                         }
                     case _: JsonRpcResponse => wire.replies.incrementAndGet.unit
@@ -68,7 +74,13 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     end serve
 
-    private def wired[A](gates: Map[String, Latch], seenGates: Map[String, Latch] = Map.empty, rejectFirst: Set[String] = Set.empty)(
+    private def wired[A](
+        gates: Map[String, Latch],
+        seenGates: Map[String, Latch] = Map.empty,
+        rejectFirst: Set[String] = Set.empty,
+        rejectAt: Map[String, Int] = Map.empty,
+        gateAt: Map[String, Int] = Map.empty
+    )(
         f: (JsonRpcTransport, JsonRpcTransport, Wire) => A < (Async & Abort[Any] & Scope)
     )(using
         Frame
@@ -81,7 +93,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
             wire = new Wire(seen, replies, requests, served)
             pair <- JsonRpcTransport.inMemory
             (client, browser) = pair
-            server <- serve(browser, wire, gates, seenGates, rejectFirst)
+            server <- serve(browser, wire, gates, seenGates, rejectFirst, rejectAt, gateAt)
             _      <- Scope.ensure(server.interrupt.andThen(client.close).andThen(browser.close))
             a      <- f(client, browser, wire)
         yield a
@@ -134,6 +146,105 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         result.failure match
             case Present(e: BrowserProtocolErrorException) => e.method == method
             case _                                         => false
+
+    "a rejected persistent emulation leaves the tab's previous cache unchanged" in {
+        val method = "Emulation.setEmulatedMedia"
+        onTab(Set(method)) { _ =>
+            for
+                result <- Abort.run[BrowserReadException](Browser.setEmulation(colorScheme = Present(Browser.ColorScheme.Dark)))
+                cache  <- Browser.use(_.emulationOverride.get)
+            yield
+                assert(rejectedBy(result, method))
+                assert(cache == Absent)
+        }
+    }
+
+    "a rejected persistent emulation reset preserves the prior scoped restore" in {
+        val method = "Emulation.setEmulatedMedia"
+        wired(Map.empty, rejectAt = Map(method -> 2)) { (client, _, wire) =>
+            Scope.run {
+                for
+                    backend <- CdpBackend.initUnscoped(client, cfg)
+                    tab     <- BrowserTabSetup.mkBrowserTab(TargetId("target-1"), SessionId("session-1"), backend, Absent)
+                    _       <- Browser.runOn(tab) {
+                        Browser.withConfig(_.mutationQuiescenceWindow(Duration.Zero)) {
+                            for
+                                _        <- Browser.setEmulation(colorScheme = Present(Browser.ColorScheme.Dark))
+                                prior    <- tab.emulationOverride.get
+                                result   <- Abort.run[BrowserReadException](Browser.resetEmulation)
+                                after    <- tab.emulationOverride.get
+                                _        <- Browser.withEmulation(colorScheme = Present(Browser.ColorScheme.Light))(Kyo.unit)
+                                requests <- paramsSent[SetEmulatedMediaParams](wire, method)
+                            yield
+                                assert(rejectedBy(result, method))
+                                assert(after == prior, s"cache=$after, prior=$prior")
+                                assert(requests.size == 4)
+                                assert(requests(3).features.getOrElse(Seq.empty).map(f => s"${f.name}=${f.value}") ==
+                                    Seq("prefers-color-scheme=dark"))
+                        }
+                    }
+                yield ()
+            }
+        }
+    }
+
+    for reset <- Chunk(false, true) do
+        s"an abandoned persistent emulation ${if reset then "reset" else "set"} restores its prior state after a late reply" in {
+            val method  = "Emulation.setEmulatedMedia"
+            val ordinal = if reset then 2 else 1
+            for
+                gate <- Latch.init(1)
+                sent <- Latch.init(1)
+                _    <- Scope.ensure(gate.release)
+                _    <- wired(Map(method -> gate), Map(method -> sent), gateAt = Map(method -> ordinal)) { (client, _, wire) =>
+                    Scope.run {
+                        for
+                            backend <- CdpBackend.initUnscoped(client, cfg)
+                            tab     <- BrowserTabSetup.mkBrowserTab(TargetId("target-1"), SessionId("session-1"), backend, Absent)
+                            _       <- Browser.runOn(tab) {
+                                Browser.withConfig(_.mutationQuiescenceWindow(Duration.Zero)) {
+                                    if reset then Browser.setEmulation(colorScheme = Present(Browser.ColorScheme.Dark)) else Kyo.unit
+                                }
+                            }
+                            prior      <- tab.emulationOverride.get
+                            scopeReady <- Fiber.Promise.init[Scope.Finalizer, Any]
+                            fiber      <- Fiber.initUnscoped {
+                                Scope.run {
+                                    ContextEffect.suspendWith(Tag[Scope]) { owner =>
+                                        scopeReady.completeDiscard(Result.succeed(owner)).andThen {
+                                            Browser.runOn(tab) {
+                                                Browser.withConfig(_.mutationQuiescenceWindow(Duration.Zero)) {
+                                                    Abort.run[BrowserReadException] {
+                                                        if reset then Browser.resetEmulation
+                                                        else Browser.setEmulation(colorScheme = Present(Browser.ColorScheme.Dark))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _     <- Scope.ensure(fiber.interrupt)
+                            owner <- scopeReady.get
+                            _     <- sent.await
+                            _     <- fiber.interrupt
+                            _     <- owner.await
+                            cache <- tab.emulationOverride.get
+                            _ = assert(cache == prior, s"abandoned cache=$cache, prior=$prior")
+                            _        <- gate.release
+                            _        <- assertEventually(wire.seen.get.map(_.count(_ == method) == ordinal + 1))
+                            requests <- paramsSent[SetEmulatedMediaParams](wire, method)
+                        yield
+                            assert(requests.size == ordinal + 1)
+                            val expected = if reset then """{"features":[{"name":"prefers-color-scheme","value":"dark"}]}"""
+                            else """{"media":"","features":[]}"""
+                            assert(Json.encode(requests(ordinal)) == expected)
+                    }
+                }
+            yield ()
+            end for
+        }
+    end for
 
     /** Runs `wrap` around a body that records whether the tab's `registry` holds its session's entry and then fails, and
       * returns that record, the wrapper's outcome, and whether the entry is still held after the wrapper returned.

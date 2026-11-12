@@ -309,6 +309,19 @@ The read surface:
 
 `screenshot` and `screenshotElement` return a `Browser.Image`. The type exposes: `binary: Span[Byte]` (raw bytes), `base64: String` (Base64-encoded), `writeFileBinary(path)` / `writeFileBase64(path)` (write to disk), and `renderToConsole(charsWidth, charsHeight)` (terminal sixel/block rendering for debugging). `pdf` returns raw `Span[Byte]` PDF bytes directly (not a `Browser.Image`); it only works in headless Chrome. The capture methods take a format and quality: `screenshot(width, height, format, quality)` and `screenshotElement(selector, format, quality)`, where `format` is a `Browser.ScreenshotFormat` (`Png`, `Jpeg`, or `Webp`, default `Png`) and `quality` (0 to 100) applies only to the lossy formats (`Jpeg` and `Webp`) and is ignored for `Png`.
 
+`Browser.setEmulation` keeps a color scheme, media type, or reduced-motion override on
+the current tab until replaced or cleared by `Browser.resetEmulation`. A nested
+`Browser.withEmulation` restores that persistent state on exit. The override survives
+navigation on that tab; a newly opened tab starts with its own media settings.
+
+```scala
+import kyo.*
+
+val darkPage: Unit < (Browser & Abort[BrowserReadException]) =
+    Browser.setEmulation(colorScheme = Present(Browser.ColorScheme.Dark))
+        .andThen(Browser.resetEmulation)
+```
+
 ### Boolean predicates
 
 Point-in-time `Boolean` reads for branching logic. Unlike the `assertX` family, these do NOT retry: they answer the question "is this true right now?" and let the caller decide what to do with `false`.

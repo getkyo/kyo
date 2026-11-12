@@ -2350,6 +2350,49 @@ object Browser:
         }
     end withEmulation
 
+    /** Sets the current tab's media emulation until [[resetEmulation]] or another `setEmulation` call. A nested [[withEmulation]]
+      * restores this state on exit. Applies exactly the requested media features and settles after the change. Other tabs retain their
+      * own emulation state.
+      */
+    def setEmulation(
+        colorScheme: Maybe[Browser.ColorScheme] = Absent,
+        media: Maybe[Browser.MediaType] = Absent,
+        reducedMotion: Boolean = false
+    )(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        val state = BrowserTab.EmulatedMediaState(colorScheme.map(_.wire), media.map(_.wire), reducedMotion)
+        setEmulationOverride(Present(state), emulatedMediaParams(state.media, state.colorScheme, reducedMotion))
+    end setEmulation
+
+    /** Clears the current tab's media emulation and settles after the change. The page sees the host's real media features. */
+    def resetEmulation(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        setEmulationOverride(Absent, clearEmulatedMediaParams)
+
+    private def setEmulationOverride(state: Maybe[BrowserTab.EmulatedMediaState], params: SetEmulatedMediaParams)(using
+        Frame
+    ): Unit < (Browser & Abort[BrowserReadException]) =
+        MutationSettlement.afterAction {
+            Env.use[BrowserTab] { tab =>
+                // Until acceptance, this call owns rollback, including a late reply after interruption.
+                // Acknowledged sticky state belongs to the tab, so an enclosing scope must not clear it.
+                Scope.runUnowned {
+                    tab.emulationOverride.get.map { prior =>
+                        val restore = prior match
+                            case Present(value) => emulatedMediaParams(value.media, value.colorScheme, value.reducedMotion)
+                            case Absent         => clearEmulatedMediaParams
+                        Scope.ensure(tab.emulationOverride.set(prior)).andThen {
+                            ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+                                tab.emulationOverride.set(state).andThen {
+                                    tab.session.acquire[SetEmulatedMediaParams, Unit](finalizer, "Emulation.setEmulatedMedia", params)(_ =>
+                                        CdpBackend.setEmulatedMedia(tab.session, restore)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }(Absent)
+
     /** Composes a `SetEmulatedMediaParams` carrying only the features the caller requested.
       *
       * `media` becomes the top-level media-type override when `Present`, omitted otherwise. `colorScheme` (already a CDP wire string,

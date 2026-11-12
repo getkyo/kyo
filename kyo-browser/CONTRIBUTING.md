@@ -182,7 +182,7 @@ RAF callbacks stall on Chromium right after a JS dialog is dismissed, hanging th
 
 **2. Mutation settlement (state-changing actions: `click` / `fill` / `check` /
 `select` / `press` / `uncheck`, plus `setViewport` / `resetViewport` / `scrollTo` /
-`scrollToElement` / `withViewport` / `withEmulation` apply).** After a
+`scrollToElement` / `setEmulation` / `resetEmulation` / `withViewport` / `withEmulation` apply).** After a
 state-changing action fires, `MutationSettlement.afterAction` installs a
 window-level `MutationObserver`, records the timestamp of the last mutation, and
 polls until `now - lastMutation >= quiescenceWindow`, so the caller sees the settled
@@ -573,6 +573,8 @@ reports `(maxDurationMs, elapsed-ms)`, so the abort's two numbers always share o
 | `scrollTo(x, y)` | PUBLIC | settles after | `Browser.scala:2462-2465` |
 | `scrollToElement(selector)` | PUBLIC | `Actionability.withRetry`, settles after | `Browser.scala:2473-2486` |
 | `withEmulation(colorScheme, media, reducedMotion)(body)` | PUBLIC | settles on apply, LIFO restore | `Browser.scala:2264-2300` |
+| `setEmulation(colorScheme, media, reducedMotion)` | PUBLIC | settles on apply; persists on the current tab until replaced or reset | `Browser.scala` |
+| `resetEmulation` | PUBLIC | settles after clearing media overrides | `Browser.scala` |
 | `withHighlights(annotations)(body)` | PUBLIC | settlement-transparent overlay | `Browser.scala:2343-2390` |
 
 `setViewport` / `resetViewport` are now PUBLIC and settle after via
@@ -646,6 +648,13 @@ install (`internal/BrowserTab.scala:179`, `Browser.scala:2555-2557`); the record
 uses the body's `t0` from `Clock.now` (`Browser.scala:3166-3167`).
 
 ### Emulation
+
+`setEmulation(colorScheme, media, reducedMotion)` replaces the current tab's media
+emulation until another set or `resetEmulation`. Closing the caller's scope leaves an
+acknowledged update on the tab. A nested `withEmulation` restores that persistent
+state when it exits. A rejected or abandoned update rolls back the cache; the CDP
+acquisition owns restoring a late accepted update after abandonment. Reset uses the
+same handoff. Each tab has its own cache, including tabs opened with `withNewTab`.
 
 `withEmulation(colorScheme, media, reducedMotion)(body)` emulates media features for the
 body's duration through a single `Emulation.setEmulatedMedia` send, then restores the
