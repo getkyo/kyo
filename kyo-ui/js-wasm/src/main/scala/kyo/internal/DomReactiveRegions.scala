@@ -15,7 +15,7 @@ final private[kyo] class DomReactiveRegions private (
     private var open = true
 
     def replace(regionId: String, html: String)(using Frame): Unit < Sync =
-        replaceWith(regionId, html, keepCurrent = false)((_, _, _) => false)((_, _) => ())((_, _) => ())
+        replaceWith(regionId, html, keepCurrent = false)((_, _, _) => false)((_, _, _) => ())((_, _) => ())
 
     /** Replaces the range's content with `html`, morphing where `tryMorph` accepts.
       *
@@ -26,13 +26,14 @@ final private[kyo] class DomReactiveRegions private (
       * is deliberately left alone.
       */
     private[kyo] def replaceWith[A](regionId: String, html: String, keepCurrent: Boolean)(
-        tryMorph: (Seq[dom.Element], Seq[dom.Element], Boolean) => Boolean
+        tryMorph: AllowUnsafe ?=> (Seq[dom.Element], Seq[dom.Element], Boolean) => Boolean
     )(
-        before: (Seq[dom.Element], Seq[dom.Element]) => A
+        before: AllowUnsafe ?=> (Seq[dom.Element], Seq[dom.Element], Seq[dom.Element]) => A
     )(
-        after: (A, Seq[dom.Element]) => Unit
+        after: AllowUnsafe ?=> (A, Seq[dom.Element]) => Unit
     )(using Frame): Unit < Sync =
-        Sync.defer {
+        // Unsafe: parsing, registry reconciliation and callbacks are one synchronous DOM mutation.
+        Sync.Unsafe.defer {
             ensureOpen()
             if !ReactiveRegion.isValidHtmlId(regionId) then fail(s"Malformed reactive range id: $regionId")
             val endpoints = ranges.getOrElse(regionId, fail(s"Unknown reactive range: $regionId"))
@@ -95,15 +96,44 @@ final private[kyo] class DomReactiveRegions private (
         fragment: dom.DocumentFragment,
         incomingContent: DomReactiveRegions.IncomingContent
     )(
-        tryMorph: (Seq[dom.Element], Seq[dom.Element], Boolean) => Boolean
+        tryMorph: AllowUnsafe ?=> (Seq[dom.Element], Seq[dom.Element], Boolean) => Boolean
     )(
-        before: (Seq[dom.Element], Seq[dom.Element]) => A
+        before: AllowUnsafe ?=> (Seq[dom.Element], Seq[dom.Element], Seq[dom.Element]) => A
     )(
-        after: (A, Seq[dom.Element]) => Unit
-    )(using Frame): Unit =
-        val incoming = DomReactiveRegions.scan(document, fragment)
-        val removed  = ranges.iterator.collect {
-            case (id, nested) if id != regionId && intersects(range, nested.start) => id
+        after: AllowUnsafe ?=> (A, Seq[dom.Element]) => Unit
+    )(using Frame, AllowUnsafe): Unit =
+        val oldElements = elementsBetween(endpoints)
+        val newElements = incomingContent.semanticRoots
+        val sameHost    = (liveHost, incomingContent) match
+            case (_: DomReactiveRegions.LiveHost.Synthetic, _: DomReactiveRegions.IncomingContent.Synthetic) => true
+            case (_: DomReactiveRegions.LiveHost.Siblings, _: DomReactiveRegions.IncomingContent.Semantic)   => true
+            case _                                                                                           => false
+        val preserved: Map[dom.Element, dom.Element] =
+            if sameHost then
+                val byPath = mutable.HashMap.from(oldElements.filter { element =>
+                    element.hasAttribute("data-kyo-digest") && element.hasAttribute("data-kyo-path")
+                }.map(element => element.getAttribute("data-kyo-path") -> element))
+                newElements.flatMap { fresh =>
+                    Maybe(fresh.getAttribute("data-kyo-path")).flatMap { path =>
+                        Maybe(fresh.getAttribute("data-kyo-digest")).flatMap { digest =>
+                            Maybe.fromOption(byPath.get(path)).filter(_.getAttribute("data-kyo-digest") == digest).map { old =>
+                                discard(byPath.remove(path))
+                                fresh -> old
+                            }
+                        }
+                    }
+                }.toMap
+            else Map.empty
+        val retained       = preserved.values.toSeq
+        val parsedIncoming = DomReactiveRegions.scan(document, fragment)
+        // A retained row keeps its live anchors, but its restarted child subscriptions still need the freshly rendered initial markup.
+        val incomingMarkup = parsedIncoming.iterator.map((id, nested) => id -> serializeBetween(nested)).toSeq
+        val incoming       = parsedIncoming.filterInPlace { (_, nested) =>
+            !preserved.keysIterator.exists(_.contains(nested.start))
+        }
+        val removed = ranges.iterator.collect {
+            case (id, nested)
+                if id != regionId && intersects(range, nested.start) && !retained.exists(_.contains(nested.start)) => id
         }.toSet
 
         incoming.keysIterator.foreach { id =>
@@ -111,56 +141,81 @@ final private[kyo] class DomReactiveRegions private (
                 fail(s"Duplicate reactive range id: $id")
         }
 
-        val oldElements = elementsBetween(endpoints)
-        val newElements = incomingContent.semanticRoots
-        if !tryMorph(oldElements, newElements, incoming.isEmpty) then
-            val incomingMarkup = incoming.iterator.map((id, nested) => id -> serializeBetween(nested)).toSeq
-            val state          = before(oldElements, newElements)
-            range.deleteContents()
+        if preserved.nonEmpty || !tryMorph(oldElements, newElements, incoming.isEmpty) then
+            val state = before(oldElements, newElements, retained)
             removed.foreach { id =>
                 discard(ranges.remove(id))
                 discard(inserted.remove(id))
             }
-            val insertedRoots = (liveHost, incomingContent) match
-                case (
-                        DomReactiveRegions.LiveHost.Synthetic(host, _),
-                        DomReactiveRegions.IncomingContent.Synthetic(incomingHost, _)
-                    ) =>
-                    syncHostAttributes(host, incomingHost, regionId)
-                    var child = DomReactiveRegions.firstChild(incomingHost)
-                    while child.nonEmpty do
-                        val next = DomReactiveRegions.next(child.get)
-                        discard(host.insertBefore(child.get, endpoints.end))
-                        child = next
+            val insertedRoots =
+                if preserved.nonEmpty then
+                    val parent = endpoints.start.parentNode
+                    val source = (liveHost, incomingContent) match
+                        case (DomReactiveRegions.LiveHost.Synthetic(host, _), DomReactiveRegions.IncomingContent.Synthetic(fresh, _)) =>
+                            syncHostAttributes(host, fresh, regionId)
+                            fresh
+                        case _ => fragment
+                    var current = DomReactiveRegions.next(endpoints.start)
+                    while current.nonEmpty && (current.get ne endpoints.end) do
+                        val node = current.get
+                        current = DomReactiveRegions.next(node)
+                        if !retained.exists(_ eq node) then discard(parent.removeChild(node))
+                    end while
+                    var cursor = DomReactiveRegions.next(endpoints.start)
+                    current = DomReactiveRegions.firstChild(source)
+                    while current.nonEmpty do
+                        val node = current.get
+                        current = DomReactiveRegions.next(node)
+                        val placed = node match
+                            case element: dom.Element => preserved.getOrElse(element, element)
+                            case _                    => node
+                        if placed eq cursor.get then cursor = DomReactiveRegions.next(placed)
+                        else discard(parent.insertBefore(placed, cursor.get))
                     end while
                     elementsBetween(endpoints)
-                case (
-                        DomReactiveRegions.LiveHost.Synthetic(host, table),
-                        DomReactiveRegions.IncomingContent.Semantic(roots)
-                    ) =>
-                    discard(table.insertBefore(endpoints.start, host))
-                    discard(table.insertBefore(fragment, host))
-                    discard(table.insertBefore(endpoints.end, host))
-                    discard(table.removeChild(host))
-                    roots
-                case (
-                        DomReactiveRegions.LiveHost.Siblings(parent),
-                        DomReactiveRegions.IncomingContent.Synthetic(host, roots)
-                    ) =>
-                    discard(parent.insertBefore(fragment, endpoints.end))
-                    DomReactiveRegions.firstChild(host) match
-                        case Present(first) => discard(host.insertBefore(endpoints.start, first))
-                        case Absent         => discard(host.appendChild(endpoints.start))
-                    discard(host.appendChild(endpoints.end))
-                    roots
-                case (
-                        DomReactiveRegions.LiveHost.Siblings(parent),
-                        DomReactiveRegions.IncomingContent.Semantic(roots)
-                    ) =>
-                    discard(parent.insertBefore(fragment, endpoints.end))
-                    roots
+                else
+                    range.deleteContents()
+                    (liveHost, incomingContent) match
+                        case (
+                                DomReactiveRegions.LiveHost.Synthetic(host, _),
+                                DomReactiveRegions.IncomingContent.Synthetic(incomingHost, _)
+                            ) =>
+                            syncHostAttributes(host, incomingHost, regionId)
+                            var child = DomReactiveRegions.firstChild(incomingHost)
+                            while child.nonEmpty do
+                                val next = DomReactiveRegions.next(child.get)
+                                discard(host.insertBefore(child.get, endpoints.end))
+                                child = next
+                            end while
+                            elementsBetween(endpoints)
+                        case (
+                                DomReactiveRegions.LiveHost.Synthetic(host, table),
+                                DomReactiveRegions.IncomingContent.Semantic(roots)
+                            ) =>
+                            discard(table.insertBefore(endpoints.start, host))
+                            discard(table.insertBefore(fragment, host))
+                            discard(table.insertBefore(endpoints.end, host))
+                            discard(table.removeChild(host))
+                            roots
+                        case (
+                                DomReactiveRegions.LiveHost.Siblings(parent),
+                                DomReactiveRegions.IncomingContent.Synthetic(host, roots)
+                            ) =>
+                            discard(parent.insertBefore(fragment, endpoints.end))
+                            DomReactiveRegions.firstChild(host) match
+                                case Present(first) => discard(host.insertBefore(endpoints.start, first))
+                                case Absent         => discard(host.appendChild(endpoints.start))
+                            discard(host.appendChild(endpoints.end))
+                            roots
+                        case (
+                                DomReactiveRegions.LiveHost.Siblings(parent),
+                                DomReactiveRegions.IncomingContent.Semantic(roots)
+                            ) =>
+                            discard(parent.insertBefore(fragment, endpoints.end))
+                            roots
+                    end match
             ranges.addAll(incoming)
-            discard(inserted.addAll(incomingMarkup))
+            discard(inserted.addAll(incomingMarkup.filter((id, _) => ranges.contains(id))))
             after(state, insertedRoots)
         end if
     end replaceContent

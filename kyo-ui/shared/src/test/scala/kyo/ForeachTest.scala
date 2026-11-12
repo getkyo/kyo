@@ -295,6 +295,202 @@ class ForeachTest extends UITest:
         }
     }
 
+    "row retention: keyed append preserves the existing input node and typed text" in {
+        val app: UI < Async =
+            for items <- Signal.initRef(Chunk("A", "B"))
+            yield UI.div(
+                items.foreachKeyed(identity)(s => UI.input.id(s"in-$s")),
+                UI.button("Add").id("add").onClick(items.getAndUpdate(_.appended("C")).unit)
+            )
+        withUI(app) {
+            for
+                _        <- Browser.fill(Selector.id("in-A"), "typed")
+                _        <- Browser.eval("window.__originalRowInput = document.getElementById('in-A')")
+                _        <- Browser.click(Selector.id("add"))
+                _        <- Browser.assertExists(Selector.id("in-C"))
+                observed <- Browser.evalJson[String](
+                    "document.getElementById('in-A').value + '|' + (document.getElementById('in-A') === window.__originalRowInput)"
+                )
+            yield assert(observed == "typed|true", observed)
+        }
+    }
+
+    "row retention: an independent reactive update preserves the input node and typed text" in {
+        val app: UI < Async =
+            for
+                items <- Signal.initRef(Chunk("A", "B"))
+                count <- Signal.initRef(0)
+            yield UI.div(
+                items.foreachKeyed(identity)(s => UI.input.id(s"in-$s")),
+                count.map(n => UI.span(s"$n").id("count")),
+                UI.button("Count").id("increment").onClick(count.getAndUpdate(_ + 1).unit)
+            )
+        withUI(app) {
+            for
+                _        <- Browser.fill(Selector.id("in-A"), "typed")
+                _        <- Browser.eval("window.__originalRowInput = document.getElementById('in-A')")
+                _        <- Browser.click(Selector.id("increment"))
+                _        <- Browser.assertText(Selector.id("count"), "1")
+                observed <- Browser.evalJson[String](
+                    "document.getElementById('in-A').value + '|' + (document.getElementById('in-A') === window.__originalRowInput)"
+                )
+            yield assert(observed == "typed|true", observed)
+        }
+    }
+
+    "row retention: foreachKeyed keeps the typed text of the rows left when one is removed" in {
+        val app: UI < Async =
+            for items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
+            yield UI.div(
+                items.foreachKeyed(identity)(s => UI.input.id(s"in-$s")),
+                UI.button("Remove").id("remove").onClick(items.getAndUpdate(_.filter(_ != "B")).unit)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.fill(Selector.id("in-A"), "a")
+                _ <- Browser.fill(Selector.id("in-C"), "c")
+                _ <- Browser.click(Selector.id("remove"))
+                _ <- Browser.assertNotExists(Selector.id("in-B"))
+                a <- Browser.evalJson[String]("document.getElementById('in-A').value")
+                c <- Browser.evalJson[String]("document.getElementById('in-C').value")
+            yield assert(a == "a" && c == "c", s"in-A: '$a', in-C: '$c'")
+        }
+    }
+
+    "row retention: foreachKeyed keeps a moved row's text, focus and caret" in {
+        val app: UI < Async =
+            for items <- Signal.initRef(Chunk.from(Seq("A", "B")))
+            yield UI.div(
+                items.foreachKeyed(identity)(s => UI.input.id(s"in-$s")),
+                UI.button("Swap").id("swap").onClick(items.getAndUpdate(_.reverse).unit)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.fill(Selector.id("in-A"), "typed")
+                _ <- Browser.focus(Selector.id("in-A"))
+                // a click from script moves no focus, so the swap lands while in-A holds it
+                _      <- Browser.eval("document.getElementById('in-A').setSelectionRange(2, 2); document.getElementById('swap').click()")
+                _      <- Browser.assertSelectorOrder(Seq(Selector.id("in-B"), Selector.id("in-A")))
+                text   <- Browser.evalJson[String]("document.getElementById('in-A').value")
+                active <- Browser.evalJson[String]("document.activeElement.id")
+                caret  <- Browser.selectionStart(Selector.id("in-A"))
+            yield assert(text == "typed" && active == "in-A" && caret == 2, s"text: '$text', active: '$active', caret: $caret")
+        }
+    }
+
+    "row retention: foreachKeyed replaces a row whose markup changed and keeps the others" in {
+        val app: UI < Async =
+            for items <- Signal.initRef(Chunk.from(Seq("A" -> 1, "B" -> 1)))
+            yield UI.div(
+                items.foreachKeyed(_._1)((k, n) => UI.div(UI.span(s"$k:$n").id(s"label-$k"), UI.input.id(s"in-$k"))),
+                UI.button("Bump").id("bump").onClick(items.getAndUpdate(_.map((k, n) => if k == "B" then k -> (n + 1) else k -> n)).unit)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.fill(Selector.id("in-A"), "a")
+                _ <- Browser.fill(Selector.id("in-B"), "b")
+                _ <- Browser.click(Selector.id("bump"))
+                _ <- Browser.assertText(Selector.id("label-B"), "B:2")
+                a <- Browser.evalJson[String]("document.getElementById('in-A').value")
+                b <- Browser.evalJson[String]("document.getElementById('in-B').value")
+            yield assert(a == "a" && b == "", s"in-A: '$a', in-B: '$b'")
+        }
+    }
+
+    "row retention: foreachKeyed keeps a kept row's select choice" in {
+        val app: UI < Async =
+            for items <- Signal.initRef(Chunk.from(Seq("A")))
+            yield UI.div(
+                items.foreachKeyed(identity)(s => UI.select(UI.option("x").value("x"), UI.option("y").value("y")).id(s"sel-$s")),
+                UI.button("Add").id("add").onClick(items.getAndUpdate(_.appended("B")).unit)
+            )
+        withUI(app) {
+            for
+                _      <- Browser.select(Selector.id("sel-A"), "y")
+                _      <- Browser.click(Selector.id("add"))
+                _      <- Browser.assertExists(Selector.id("sel-B"))
+                chosen <- Browser.evalJson[String]("document.getElementById('sel-A').value")
+            yield assert(chosen == "y", s"sel-A: '$chosen'")
+        }
+    }
+
+    "row retention: foreachKeyed keeps a row's unbound and bound inputs" in {
+        val app: UI < Async =
+            for
+                items <- Signal.initRef(Chunk.from(Seq("A")))
+                name  <- Signal.initRef("")
+            yield UI.div(
+                items.foreachKeyed(identity)(s => UI.div(UI.input.id(s"free-$s"), UI.input.value(name).id(s"bound-$s"))),
+                UI.button("Add").id("add").onClick(items.getAndUpdate(_.appended("B")).unit)
+            )
+        withUI(app) {
+            for
+                _     <- Browser.fill(Selector.id("free-A"), "free")
+                _     <- Browser.fill(Selector.id("bound-A"), "bound")
+                _     <- Browser.click(Selector.id("add"))
+                _     <- Browser.assertExists(Selector.id("free-B"))
+                free  <- Browser.evalJson[String]("document.getElementById('free-A').value")
+                bound <- Browser.evalJson[String]("document.getElementById('bound-A').value")
+            yield assert(free == "free" && bound == "bound", s"free-A: '$free', bound-A: '$bound'")
+        }
+    }
+
+    "row retention: foreachKeyed keeps the typed text of a nested list's row inside a kept row" in {
+        val app: UI < Async =
+            for
+                outer <- Signal.initRef(Chunk.from(Seq("A")))
+                inner <- Signal.initRef(Chunk.from(Seq("x")))
+            yield UI.div(
+                outer.foreachKeyed(identity)(o => UI.div(inner.foreachKeyed(identity)(i => UI.input.id(s"in-$o-$i")))),
+                UI.button("Outer").id("outer").onClick(outer.getAndUpdate(_.appended("B")).unit),
+                UI.button("Inner").id("inner").onClick(inner.getAndUpdate(_.appended("y")).unit)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.fill(Selector.id("in-A-x"), "typed")
+                _ <- Browser.click(Selector.id("outer"))
+                // the nested list's next frame follows every frame it sends after the outer list emits
+                _    <- Browser.click(Selector.id("inner"))
+                _    <- Browser.assertExists(Selector.id("in-A-y"))
+                text <- Browser.evalJson[String]("document.getElementById('in-A-x').value")
+            yield assert(text == "typed", s"in-A-x: '$text'")
+        }
+    }
+
+    "row retention: foreachKeyed keeps a table row's typed text" in {
+        val app: UI < Async =
+            for items <- Signal.initRef(Chunk.from(Seq("A")))
+            yield UI.div(
+                UI.table(items.foreachKeyed(identity)(s => UI.tr(UI.td(UI.input.id(s"in-$s"))))),
+                UI.button("Add").id("add").onClick(items.getAndUpdate(_.appended("B")).unit)
+            )
+        withUI(app) {
+            for
+                _    <- Browser.fill(Selector.id("in-A"), "typed")
+                _    <- Browser.click(Selector.id("add"))
+                _    <- Browser.assertExists(Selector.id("in-B"))
+                text <- Browser.evalJson[String]("document.getElementById('in-A').value")
+            yield assert(text == "typed", s"in-A: '$text'")
+        }
+    }
+
+    "row retention: foreach keeps the typed text of the rows before an appended one" in {
+        val app: UI < Async =
+            for items <- Signal.initRef(Chunk.from(Seq("A")))
+            yield UI.div(
+                items.foreach(s => UI.input.id(s"in-$s")),
+                UI.button("Add").id("add").onClick(items.getAndUpdate(_.appended("B")).unit)
+            )
+        withUI(app) {
+            for
+                _    <- Browser.fill(Selector.id("in-A"), "typed")
+                _    <- Browser.click(Selector.id("add"))
+                _    <- Browser.assertExists(Selector.id("in-B"))
+                text <- Browser.evalJson[String]("document.getElementById('in-A').value")
+            yield assert(text == "typed", s"in-A: '$text'")
+        }
+    }
+
     "foreachKeyed add at beginning" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("B", "C")))

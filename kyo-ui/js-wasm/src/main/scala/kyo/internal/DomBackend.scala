@@ -169,7 +169,8 @@ private[kyo] object DomBackend:
         selectionEnd: Maybe[Int],
         oldEnter: Set[String],
         ghosts: Seq[(dom.Element, String)],
-        oldFocusAuto: Set[String]
+        oldFocusAuto: Set[String],
+        oldElements: Seq[dom.Element]
     )
 
     final private case class RangeFocus(path: Maybe[String], rootIndex: Int, childIndexes: Seq[Int])
@@ -220,7 +221,7 @@ private[kyo] object DomBackend:
             oldElements: Seq[dom.Element],
             newElements: Seq[dom.Element],
             incomingRangesEmpty: Boolean
-        ): Boolean =
+        )(using AllowUnsafe): Boolean =
             val active = document.activeElement
             if active == null ||
                 (active eq document.body) ||
@@ -257,7 +258,11 @@ private[kyo] object DomBackend:
             end if
         end tryMorphRange
 
-        private def prepareRangePatch(oldElements: Seq[dom.Element], newElements: Seq[dom.Element]): RangePatchState =
+        private def prepareRangePatch(
+            oldElements: Seq[dom.Element],
+            newElements: Seq[dom.Element],
+            retained: Seq[dom.Element]
+        )(using AllowUnsafe): RangePatchState =
             val active = Maybe(document.activeElement).filter(el => (el ne document.body) && containsAny(oldElements, el))
             val (selectionStart, selectionEnd) = active.map(readSelection).getOrElse((Absent, Absent))
             RangePatchState(
@@ -265,25 +270,28 @@ private[kyo] object DomBackend:
                 selectionStart,
                 selectionEnd,
                 enterPaths(oldElements),
-                prepareLeaveGhosts(oldElements, leavePaths(newElements)),
-                focusAutoPaths(oldElements)
+                prepareLeaveGhosts(oldElements.filterNot(retained.contains), leavePaths(newElements)),
+                focusAutoPaths(oldElements),
+                oldElements
             )
         end prepareRangePatch
 
-        private def finishRangePatch(state: RangePatchState, newElements: Seq[dom.Element]): Unit =
-            newElements.foreach { element =>
+        private def finishRangePatch(state: RangePatchState, newElements: Seq[dom.Element])(using AllowUnsafe): Unit =
+            val insertedElements = newElements.filterNot(element => state.oldElements.exists(_ eq element))
+            insertedElements.foreach { element =>
                 applyJsPropsSync(element)
                 beginAnimationsSync(element)
             }
             state.active.flatMap(resolveFocus(newElements, _)).foreach { target =>
-                discard(target.asInstanceOf[scalajs.js.Dynamic].focus())
+                if document.activeElement ne target then
+                    discard(target.asInstanceOf[scalajs.js.Dynamic].focus(scalajs.js.Dynamic.literal(preventScroll = true)))
                 (state.selectionStart, state.selectionEnd) match
                     case (Present(start), Present(end)) => setSelection(target, start, end)
                     case _                              => ()
             }
-            seedEnter(newElements, state.oldEnter)
+            seedEnter(insertedElements, state.oldEnter)
             // Seed after focus restoration so a newly appeared focus-auto element wins over the trigger.
-            seedFocusAuto(newElements, state.oldFocusAuto)
+            seedFocusAuto(insertedElements, state.oldFocusAuto)
             spawnGhosts(state.ghosts)
             sweepFocusAuto()
         end finishRangePatch

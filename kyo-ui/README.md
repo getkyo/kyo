@@ -312,6 +312,8 @@ val unkeyedLosesFocusOnReorder: UI < Async =
     yield ul(items.foreach(t => li(input.id(s"row-${t.id}"))))
 ```
 
+An HTML element row whose own declared markup is unchanged keeps its DOM nodes, including typed text, selected values, focus and caret. Moving that row moves its existing nodes. Changes to the row's own markup still update its DOM; updates inside its nested reactive parts remain independent. `foreach` matches rows by position, while `foreachKeyed` follows the provided key.
+
 ### Signal-typed setters return `UI`, not `Self`
 
 Several attribute setters have a signal overload:

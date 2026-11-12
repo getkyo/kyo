@@ -152,6 +152,35 @@ class HtmlRendererReactiveRangesTest extends UITest:
             assert(!nestedIds.contains(keyedIds.head))
     }
 
+    "a row digest covers its own markup and excludes nested reactive content" in {
+        def digest(label: String, inner: String) =
+            for
+                items <- Signal.initRef(Chunk(label))
+                count <- Signal.initRef(inner)
+                html  <- kyo.internal.HtmlRenderer.render(
+                    UI.div(items.foreachKeyed(_ => "k")(value => UI.div(UI.span(value), count.map(Text(_))))),
+                    Seq("app")
+                )
+            yield "data-kyo-digest=\"([0-9a-f]{64})\"".r.findFirstMatchIn(html).map(_.group(1)).getOrElse(fail("Missing row digest"))
+        for
+            original <- digest("A", "1")
+            nested   <- digest("A", "2")
+            changed  <- digest("B", "1")
+        yield
+            assert(original == nested)
+            assert(original != changed)
+        end for
+    }
+
+    "row digests distinguish UTF-16 code units that UTF-8 replaces" in {
+        Kyo.foreach(Chunk("\ud800", "\ud801")) { text =>
+            for
+                rows <- Signal.initRef(Chunk(text))
+                html <- kyo.internal.HtmlRenderer.render(UI.div(rows.foreachKeyed(_ => "k")(UI.span(_))), Seq("app"))
+            yield "data-kyo-digest=\"([0-9a-f]{64})\"".r.findFirstMatchIn(html).map(_.group(1)).getOrElse(fail("Missing row digest"))
+        }.map(digests => assert(digests(0) != digests(1)))
+    }
+
     "server-push reactive rows retain legal table topology across repeated updates" in {
         val app: UI < Async =
             for

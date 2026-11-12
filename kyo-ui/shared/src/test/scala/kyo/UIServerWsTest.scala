@@ -136,10 +136,39 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         yield capturedData match
             case Present(data) =>
                 Json.decode[HtmlOp](data) match
-                    case Result.Success(HtmlOp.ReplaceRange(_, html)) => assert(html.contains("after"))
-                    case other                                        => fail(s"expected HtmlOp.ReplaceRange with 'after', got: $other")
+                    case Result.Success(HtmlOp.ReplaceRange(_, html, _)) => assert(html.contains("after"))
+                    case other                                           => fail(s"expected HtmlOp.ReplaceRange with 'after', got: $other")
             case Absent => fail("client did not receive a second frame after the click")
         end for
+    }
+
+    "row retention: only a subscription's first frame permits retaining inserted markup".notNative in {
+        Scope.run {
+            for
+                ref <- Signal.initRef("before")
+                app = UI.div(ref.map(value => UI.span(value)))
+                _ <- HttpWebSocket.connect(
+                    (serverWs: HttpWebSocket) => UIServer.serveSession(serverWs, app),
+                    (clientWs: HttpWebSocket) =>
+                        for
+                            _       <- clientWs.take()
+                            initial <- clientWs.take()
+                            _       <- ref.set("after")
+                            update  <- clientWs.take()
+                        yield (initial, update) match
+                            case (HttpWebSocket.Payload.Text(first), HttpWebSocket.Payload.Text(next)) =>
+                                (Json.decode[HtmlOp](first), Json.decode[HtmlOp](next)) match
+                                    case (
+                                            Result.Success(HtmlOp.ReplaceRange(_, initialHtml, true)),
+                                            Result.Success(HtmlOp.ReplaceRange(_, updatedHtml, false))
+                                        ) =>
+                                        assert(initialHtml.contains("before"))
+                                        assert(updatedHtml.contains("after"))
+                                    case other => fail(s"Unexpected subscription frames: $other")
+                            case other => fail(s"Unexpected payloads: $other")
+                )
+            yield ()
+        }
     }
 
     // ==================== Leaf 2: disconnect tears down ====================
@@ -193,9 +222,13 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         val encoded = Json.encode[HtmlOp](op)
         assert(
             encoded ==
-                """{"ReplaceRange":{"regionId":"r000000010030","html":"<tbody><tr><td>x</td></tr></tbody>"}}"""
+                """{"ReplaceRange":{"regionId":"r000000010030","html":"<tbody><tr><td>x</td></tr></tbody>","keepCurrent":false}}"""
         )
         assert(Json.decode[HtmlOp](encoded) == Result.Success(op))
+        assert(
+            Json.decode[HtmlOp]("""{"ReplaceRange":{"regionId":"r000000010030","html":"<tbody><tr><td>x</td></tr></tbody>"}}""") ==
+                Result.Success(op)
+        )
     }
 
     // ==================== Leaf 4: UIEvent JSON codec (cross-platform) ====================

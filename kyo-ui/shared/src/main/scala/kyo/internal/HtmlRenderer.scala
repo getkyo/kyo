@@ -12,6 +12,37 @@ private[kyo] object HtmlRenderer:
     // costs nothing on the render(...) path (cssRules stays Absent there).
     private type CssCollector = scala.collection.mutable.LinkedHashMap[String, String]
 
+    // The spans of a row's buffer that the regions inside the row wrote, nested ones included. Each region sends its own frame, so
+    // the row's digest leaves them out and a kept row's regions are brought up to date by those frames. The host markers around a
+    // span stay in the digest, so a region that moves within the row changes it.
+    final private class RegionSpans:
+        private val spans = scala.collection.mutable.ArrayBuffer.empty[(Int, Int)]
+
+        def add(start: Int, end: Int)(using AllowUnsafe): Unit = discard(spans += ((start, end)))
+
+        // SHA-256 rather than a short hash: a row's markup holds text people write, and a collision someone can make would keep a
+        // stale row on screen.
+        def digest(buffer: StringBuilder)(using AllowUnsafe): String =
+            val sorted = spans.sortBy(_._1)
+            @scala.annotation.tailrec
+            def outside(i: Int, from: Int, parts: Chunk[Span[Byte]]): Chunk[Span[Byte]] =
+                if i == sorted.length then parts :+ utf16(buffer.substring(from, buffer.length))
+                else
+                    val (start, end) = sorted(i)
+                    if start < from then outside(i + 1, from.max(end), parts)
+                    else outside(i + 1, end, parts :+ utf16(buffer.substring(from, start)))
+            Hex.encode(kyo.crypto.Sha256.hashAll(outside(0, 0, Chunk.empty)))
+        end digest
+
+        private def utf16(text: String): Span[Byte] =
+            // Preserve every DOM string code unit, including unpaired surrogates that UTF-8 would replace with the same byte.
+            // Unsafe: the hash only reads this freshly allocated array.
+            Span.fromUnsafe(Array.tabulate(text.length * 2) { index =>
+                val code = text.charAt(index / 2).toInt
+                (if index % 2 == 0 then code >>> 8 else code).toByte
+            })
+    end RegionSpans
+
     /** Render a UI tree to HTML with data-kyo-path attributes. */
     def render(ui: UI, path: Seq[String])(using Frame): String < Sync =
         val sb = new StringBuilder
@@ -22,7 +53,8 @@ private[kyo] object HtmlRenderer:
             ReactiveRegion.RegionIdentity.root(path),
             ReactiveRegion.Namespace.Html,
             parentContext = ReactiveRegion.ParentContext.Other,
-            boundaryMode = ReactiveRegion.BoundaryMode.Emit
+            boundaryMode = ReactiveRegion.BoundaryMode.Emit,
+            regionSpans = Absent
         ).andThen(sb.toString)
     end render
 
@@ -74,7 +106,8 @@ private[kyo] object HtmlRenderer:
             ReactiveRegion.Namespace.Html,
             cssRules = Present(css),
             parentContext = ReactiveRegion.ParentContext.Other,
-            boundaryMode = ReactiveRegion.BoundaryMode.Emit
+            boundaryMode = ReactiveRegion.BoundaryMode.Emit,
+            regionSpans = Absent
         )
             .andThen((sb.toString, Chunk.from(css)))
     end renderWithCss
@@ -133,7 +166,8 @@ private[kyo] object HtmlRenderer:
                     ReactiveRegion.Namespace.Html,
                     cssRules,
                     ReactiveRegion.ParentContext.Other,
-                    boundaryMode
+                    boundaryMode,
+                    Absent
                 ).andThen(w(sb, "</tbody>"))
             case host =>
                 renderTo(
@@ -144,7 +178,8 @@ private[kyo] object HtmlRenderer:
                     ReactiveRegion.namespace(host),
                     cssRules,
                     ReactiveRegion.contentParent(host),
-                    boundaryMode
+                    boundaryMode,
+                    Absent
                 )
     end renderHostedContent
 
@@ -240,19 +275,20 @@ private[kyo] object HtmlRenderer:
         namespace: ReactiveRegion.Namespace,
         cssRules: Maybe[CssCollector] = Absent,
         parentContext: ReactiveRegion.ParentContext,
-        boundaryMode: ReactiveRegion.BoundaryMode
+        boundaryMode: ReactiveRegion.BoundaryMode,
+        regionSpans: Maybe[RegionSpans]
     )(using
         Frame
     ): Unit < Sync =
         ui match
             case dd: Dropdown =>
-                renderBoundElementBoundary(sb, dd, context, namespace, parentContext, boundaryMode) {
+                renderBoundElementBoundary(sb, dd, context, namespace, parentContext, boundaryMode, regionSpans) {
                     renderDropdown(sb, dd, path, cssRules)
                 }
             case elem: Element =>
                 val tag  = tagName(elem)
                 val void = elem.isInstanceOf[Void]
-                renderBoundElementBoundary(sb, elem, context, namespace, parentContext, boundaryMode) {
+                renderBoundElementBoundary(sb, elem, context, namespace, parentContext, boundaryMode, regionSpans) {
                     w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}"""")
                     renderCommonAttrs(sb, elem, cssRules)
                     renderEventAttr(sb, elem)
@@ -296,7 +332,8 @@ private[kyo] object HtmlRenderer:
                                         childNamespace,
                                         cssRules,
                                         childParentContext,
-                                        ReactiveRegion.BoundaryMode.Emit
+                                        ReactiveRegion.BoundaryMode.Emit,
+                                        regionSpans
                                     )
                                 }.andThen(w(sb, s"</$tag>"))
                             )
@@ -314,17 +351,25 @@ private[kyo] object HtmlRenderer:
                 // Use key for KeyedChild, index for everything else. This matches the path scheme
                 // walkStatic uses, so server-side event routing aligns with rendered data-kyo-path.
                 Kyo.foreachDiscard(children.toSeq.zipWithIndex) { (child, i) =>
-                    val childPath = child match
-                        case kc: KeyedChild[?] => path :+ kc.key
-                        case _                 => path :+ i.toString
-                    val childContext = child match
-                        case kc: KeyedChild[?] => context.child(kc.key)
-                        case _                 => context.child(i.toString)
-                    renderTo(sb, child, childPath, childContext, namespace, cssRules, parentContext, ReactiveRegion.BoundaryMode.Emit)
+                    child match
+                        case kc: KeyedChild[?] =>
+                            renderRow(sb, kc.child, path :+ kc.key, context.child(kc.key), namespace, cssRules, parentContext)
+                        case _ =>
+                            renderTo(
+                                sb,
+                                child,
+                                path :+ i.toString,
+                                context.child(i.toString),
+                                namespace,
+                                cssRules,
+                                parentContext,
+                                ReactiveRegion.BoundaryMode.Emit,
+                                regionSpans
+                            )
                 }
 
             case KeyedChild(_, child) =>
-                renderTo(sb, child, path, context, namespace, cssRules, parentContext, boundaryMode)
+                renderTo(sb, child, path, context, namespace, cssRules, parentContext, boundaryMode, regionSpans)
 
             case r: Reactive[?] =>
                 val region = ReactiveRegion.from(context, namespace)
@@ -332,6 +377,7 @@ private[kyo] object HtmlRenderer:
                 yield
                     val host = ReactiveRegion.renderHost(region, parentContext, ReactiveRegion.tableContent(current))
                     openInitialHost(sb, host)
+                    val start = sb.length
                     renderTo(
                         sb,
                         current,
@@ -340,8 +386,15 @@ private[kyo] object HtmlRenderer:
                         ReactiveRegion.namespace(host),
                         cssRules,
                         ReactiveRegion.contentParent(host),
-                        ReactiveRegion.BoundaryMode.Emit
-                    ).andThen(closeInitialHost(sb, host))
+                        ReactiveRegion.BoundaryMode.Emit,
+                        regionSpans
+                    ).andThen {
+                        // Unsafe: both buffers belong to this render and are used only by its sequential traversal.
+                        Sync.Unsafe.defer {
+                            regionSpans.foreach(_.add(start, sb.length))
+                            closeInitialHost(sb, host)
+                        }
+                    }
                 end for
 
             case fe: Foreach[?, ?] @unchecked =>
@@ -359,21 +412,57 @@ private[kyo] object HtmlRenderer:
                             val content = ReactiveRegion.tableContent(rendered.iterator.map(_._2))
                             val host    = ReactiveRegion.renderHost(region, parentContext, content)
                             openInitialHost(sb, host)
+                            val start = sb.length
                             Kyo.foreachDiscard(rendered) { (key, child) =>
-                                renderTo(
+                                renderRow(
                                     sb,
                                     child,
                                     path :+ key,
                                     context.child(key),
                                     ReactiveRegion.namespace(host),
                                     cssRules,
-                                    ReactiveRegion.contentParent(host),
-                                    ReactiveRegion.BoundaryMode.Emit
+                                    ReactiveRegion.contentParent(host)
                                 )
-                            }.andThen(closeInitialHost(sb, host))
+                            }.andThen {
+                                // Unsafe: both buffers belong to this render and are used only by its sequential traversal.
+                                Sync.Unsafe.defer {
+                                    regionSpans.foreach(_.add(start, sb.length))
+                                    closeInitialHost(sb, host)
+                                }
+                            }
                         end for
                 }
     end renderTo
+
+    // A row whose root is an HTML element and not a region of its own renders into a buffer of its own, so its root can carry the
+    // digest of its markup, which the client compares with the row it shows to keep it with what was typed and chosen in it.
+    private def renderRow(
+        sb: StringBuilder,
+        row: UI,
+        path: Seq[String],
+        context: ReactiveRegion.RegionIdentity,
+        namespace: ReactiveRegion.Namespace,
+        cssRules: Maybe[CssCollector],
+        parentContext: ReactiveRegion.ParentContext
+    )(using Frame): Unit < Sync =
+        row match
+            case elem: Element if namespace == ReactiveRegion.Namespace.Html && ReactiveUI.collectSignalRef(elem).isEmpty =>
+                val buffer = new StringBuilder
+                val spans  = new RegionSpans
+                renderTo(buffer, row, path, context, namespace, cssRules, parentContext, ReactiveRegion.BoundaryMode.Emit, Present(spans))
+                    .andThen {
+                        // Unsafe: the completed row buffer and its spans are confined to this render.
+                        Sync.Unsafe.defer {
+                            val digest = spans.digest(buffer)
+                            // The root writes its data-kyo-path before its descendants.
+                            val marker = s"""data-kyo-path="${pathAttr(path)}""""
+                            buffer.insert(buffer.indexOf(marker) + marker.length, s""" data-kyo-digest="$digest"""")
+                            w(sb, buffer.toString)
+                        }
+                    }
+            case _ =>
+                renderTo(sb, row, path, context, namespace, cssRules, parentContext, ReactiveRegion.BoundaryMode.Emit, Absent)
+    end renderRow
 
     private def renderBoundElementBoundary(
         sb: StringBuilder,
@@ -381,7 +470,8 @@ private[kyo] object HtmlRenderer:
         context: ReactiveRegion.RegionIdentity,
         namespace: ReactiveRegion.Namespace,
         parentContext: ReactiveRegion.ParentContext,
-        boundaryMode: ReactiveRegion.BoundaryMode
+        boundaryMode: ReactiveRegion.BoundaryMode,
+        regionSpans: Maybe[RegionSpans]
     )(render: => Unit < Sync)(using Frame): Unit < Sync =
         val host = (namespace, boundaryMode, ReactiveUI.collectSignalRef(elem)) match
             case (ReactiveRegion.Namespace.Html, ReactiveRegion.BoundaryMode.Emit, Present(_)) =>
@@ -394,7 +484,16 @@ private[kyo] object HtmlRenderer:
                 )
             case _ => Absent
         host.foreach(openInitialHost(sb, _))
-        render.andThen(host.foreach(closeInitialHost(sb, _)))
+        val start = sb.length
+        render.andThen {
+            // Unsafe: the render owns the span accumulator and this callback runs after its content is complete.
+            Sync.Unsafe.defer {
+                host.foreach { h =>
+                    regionSpans.foreach(_.add(start, sb.length))
+                    closeInitialHost(sb, h)
+                }
+            }
+        }
     end renderBoundElementBoundary
 
     private def openInitialHost(sb: StringBuilder, host: ReactiveRegion.RenderHost): Unit =
@@ -1134,7 +1233,19 @@ private[kyo] object HtmlRenderer:
           |  var value=active.tagName==="TEXTAREA"?fresh.textContent:(fresh.getAttribute("value")||"");if(value!==active.value)active.value=value;
           |  applyJsProps(active);return true;
           |}
-          |function kyoRangeReplace(id,html){
+          |// Pairs each new root that carries a digest with the old root at the same path holding the same digest: a list's row whose
+          |// markup outside its regions is unchanged, so the old one stays with what was typed and chosen in it.
+          |function kyoRangeKept(oldRoots,newRoots){
+          |  var byPath=new Map(),kept=new Map();
+          |  for(var i=0;i<oldRoots.length;i++)if(oldRoots[i].hasAttribute("data-kyo-digest"))byPath.set(oldRoots[i].getAttribute("data-kyo-path"),oldRoots[i]);
+          |  for(var i=0;i<newRoots.length;i++){var digest=newRoots[i].getAttribute("data-kyo-digest");if(digest===null)continue;
+          |    var path=newRoots[i].getAttribute("data-kyo-path"),old=byPath.get(path);
+          |    if(old&&old.getAttribute("data-kyo-digest")===digest){kept.set(newRoots[i],old);byPath.delete(path);}}
+          |  return kept;
+          |}
+          |function kyoRangeMarkup(pair){var range=document.createRange();range.setStartAfter(pair.start);range.setEndBefore(pair.end);
+          |  var probe=document.createElement("div");probe.appendChild(range.cloneContents());return probe.innerHTML;}
+          |function kyoRangeReplace(id,html,keepCurrent){
           |  if(!kyoRangeId(id))kyoRangeFail("malformed replacement id: "+id);
           |  if(!__kyoRanges)kyoRangeFail("registry is closed");var endpoints=__kyoRanges.get(id);
           |  if(!endpoints)kyoRangeFail("unknown id: "+id);
@@ -1146,30 +1257,58 @@ private[kyo] object HtmlRenderer:
           |  var parent=endpoints.start.parentNode,synthetic=parent.tagName==="TBODY"&&parent.getAttribute("data-kyo-range-host")===id;
           |  var parser=range;if(synthetic){parser=document.createRange();parser.selectNode(parent);}
           |  var fragment=parser.createContextualFragment(html),incoming=kyoRangeScan(fragment),removed=[];
-          |  __kyoRanges.forEach(function(pair,key){if(key!==id&&range.intersectsNode(pair.start))removed.push(key);});
-          |  incoming.forEach(function(pair,key){if(__kyoRanges.has(key)&&removed.indexOf(key)<0)kyoRangeFail("duplicate id: "+key);});
           |  var oldRoots=kyoRangeRoots(endpoints.start,endpoints.end),newRoots=kyoRangeFragmentRoots(fragment),newSemanticRoots=kyoRangeSemanticRoots(newRoots,id),active=document.activeElement;
-          |  if(kyoRangeMorph(active,oldRoots,newSemanticRoots,incoming))return;
+          |  var newHost=newRoots.length===1&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id;
+          |  if(keepCurrent){var recorded=__kyoInserted.get(id);__kyoInserted.delete(id);
+          |    if(!synthetic&&!newHost&&recorded!==undefined){var probe=document.createElement("div");probe.appendChild(fragment.cloneNode(true));if(probe.innerHTML===recorded)return;}}
+          |  var incomingMarkup=new Map();incoming.forEach(function(pair,key){incomingMarkup.set(key,kyoRangeMarkup(pair));});
+          |  // A host that changes shape, a synthetic tbody on one side only, is replaced whole.
+          |  var kept=synthetic===newHost?kyoRangeKept(oldRoots,newSemanticRoots):new Map(),keptOld=[],dropped=[];
+          |  kept.forEach(function(old,fresh){keptOld.push(old);dropped.push(fresh);});
+          |  // The ranges inside a kept root stay registered, and the copies of them in its dropped new root are never registered.
+          |  __kyoRanges.forEach(function(pair,key){if(key!==id&&range.intersectsNode(pair.start)&&!kyoRangeContains(keptOld,pair.start))removed.push(key);});
+          |  incoming.forEach(function(pair,key){if(kyoRangeContains(dropped,pair.start))incoming.delete(key);});
+          |  incoming.forEach(function(pair,key){if(__kyoRanges.has(key)&&removed.indexOf(key)<0)kyoRangeFail("duplicate id: "+key);});
+          |  if(!kept.size&&kyoRangeMorph(active,oldRoots,newSemanticRoots,incoming))return;
           |  var inside=active&&active!==document.body&&kyoRangeContains(oldRoots,active);
           |  var activeLocator=inside?kyoRangeFocusLocator(oldRoots,active):null;
           |  var ss=inside&&typeof active.selectionStart==="number"?active.selectionStart:null;
           |  var se=inside&&typeof active.selectionEnd==="number"?active.selectionEnd:null;
-          |  var oldEnter=kyoEnterPathsRoots(oldRoots),ghosts=kyoLeavePrepareRoots(oldRoots,kyoLeavePathsRoots(newSemanticRoots));
+          |  var leaving=oldRoots.filter(function(root){return keptOld.indexOf(root)<0;});
+          |  var oldEnter=kyoEnterPathsRoots(oldRoots),ghosts=kyoLeavePrepareRoots(leaving,kyoLeavePathsRoots(newSemanticRoots));
           |  var oldFocus=kyoFocusPathsRoots(oldRoots);
-          |  range.deleteContents();for(var i=0;i<removed.length;i++)__kyoRanges.delete(removed[i]);
-          |  var finalRoots=newSemanticRoots;if(synthetic&&newRoots.length===1&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id){
-          |    var incomingHost=newRoots[0];kyoRangeSyncHost(parent,incomingHost,id);while(incomingHost.firstChild)parent.insertBefore(incomingHost.firstChild,endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);
-          |  }else if(synthetic){var table=parent.parentNode;if(!table)kyoRangeFail("table range host is detached: "+id);
-          |    table.insertBefore(endpoints.start,parent);table.insertBefore(fragment,parent);table.insertBefore(endpoints.end,parent);table.removeChild(parent);
-          |  }else{endpoints.end.parentNode.insertBefore(fragment,endpoints.end);if(newRoots.length&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id){
-          |    newRoots[0].insertBefore(endpoints.start,newRoots[0].firstChild);newRoots[0].appendChild(endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);}}
+          |  var finalRoots=newSemanticRoots,inserted=finalRoots;
+          |  if(kept.size){
+          |    var source=fragment;if(newHost){kyoRangeSyncHost(parent,newRoots[0],id);source=newRoots[0];}
+          |    var node=endpoints.start.nextSibling;while(node!==endpoints.end){var next=node.nextSibling;if(keptOld.indexOf(node)<0)parent.removeChild(node);node=next;}
+          |    for(var i=0;i<removed.length;i++){__kyoRanges.delete(removed[i]);__kyoInserted.delete(removed[i]);}
+          |    // Only the kept roots are left between the markers, in their old order: one in its place stays, one out of order moves.
+          |    var cursor=endpoints.start.nextSibling,nodes=Array.prototype.slice.call(source.childNodes);inserted=[];
+          |    for(var i=0;i<nodes.length;i++){var placed=kept.get(nodes[i])||nodes[i];
+          |      if(placed===cursor)cursor=cursor.nextSibling;
+          |      else{parent.insertBefore(placed,cursor);if(placed===nodes[i]&&placed.nodeType===1)inserted.push(placed);}}
+          |    finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);
+          |  }else{
+          |    range.deleteContents();for(var i=0;i<removed.length;i++){__kyoRanges.delete(removed[i]);__kyoInserted.delete(removed[i]);}
+          |    if(synthetic&&newHost){
+          |      var incomingHost=newRoots[0];kyoRangeSyncHost(parent,incomingHost,id);while(incomingHost.firstChild)parent.insertBefore(incomingHost.firstChild,endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);
+          |    }else if(synthetic){var table=parent.parentNode;if(!table)kyoRangeFail("table range host is detached: "+id);
+          |      table.insertBefore(endpoints.start,parent);table.insertBefore(fragment,parent);table.insertBefore(endpoints.end,parent);table.removeChild(parent);
+          |    }else{endpoints.end.parentNode.insertBefore(fragment,endpoints.end);if(newRoots.length&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id){
+          |      newRoots[0].insertBefore(endpoints.start,newRoots[0].firstChild);newRoots[0].appendChild(endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);}}
+          |    inserted=finalRoots;
+          |  }
           |  incoming.forEach(function(pair,key){__kyoRanges.set(key,pair);});
-          |  for(var i=0;i<finalRoots.length;i++){applyJsProps(finalRoots[i]);ba(finalRoots[i]);}
-          |  var restored=kyoRangeResolveFocus(finalRoots,activeLocator);if(restored){restored.focus();if(ss!==null)kyoSetCaret(restored,ss,se);}
-          |  kyoSeedEnterRoots(finalRoots,oldEnter);kyoSeedFocusRoots(finalRoots,oldFocus);kyoSpawnGhosts(ghosts);sweepFocusAuto();
+          |  incomingMarkup.forEach(function(markup,key){if(__kyoRanges.has(key))__kyoInserted.set(key,markup);});
+          |  for(var i=0;i<inserted.length;i++){applyJsProps(inserted[i]);ba(inserted[i]);}
+          |  // A kept root that moved while it held the focus lost it in the move.
+          |  if(inside&&kyoRangeContains(keptOld,active)){if(document.activeElement!==active){active.focus({preventScroll:true});if(ss!==null)kyoSetCaret(active,ss,se);}}
+          |  else{var restored=kyoRangeResolveFocus(finalRoots,activeLocator);if(restored){restored.focus();if(ss!==null)kyoSetCaret(restored,ss,se);}}
+          |  kyoSeedEnterRoots(inserted,oldEnter);kyoSeedFocusRoots(inserted,oldFocus);kyoSpawnGhosts(ghosts);sweepFocusAuto();
           |}
-          |var __kyoRanges=kyoRangeScan(document.body);
-          |window.addEventListener("pagehide",function(){if(__kyoRanges){__kyoRanges.clear();__kyoRanges=null;}});
+          |var __kyoRanges=kyoRangeScan(document.body),__kyoInserted=new Map();
+          |__kyoRanges.forEach(function(pair,key){__kyoInserted.set(key,kyoRangeMarkup(pair));});
+          |window.addEventListener("pagehide",function(){if(__kyoRanges){__kyoRanges.clear();__kyoRanges=null;__kyoInserted.clear();__kyoInserted=null;}});
           |function kyoClientError(error){if(window.console&&console.error)console.error(error);}""".stripMargin
 
     private def clientJs(basePath: String): String =
@@ -1268,7 +1407,7 @@ private[kyo] object HtmlRenderer:
            |  }else if(op.ReadDropFile||op.ReadDropDirectory||op.CancelDropRead){
            |    try{__dragRt.serveDropRead(op);}catch(error){kyoClientError(error);}
            |  }else if(op.ReplaceRange){
-           |    try{kyoRangeReplace(op.ReplaceRange.regionId,op.ReplaceRange.html);}catch(error){kyoClientError(error);}
+           |    try{kyoRangeReplace(op.ReplaceRange.regionId,op.ReplaceRange.html,op.ReplaceRange.keepCurrent);}catch(error){kyoClientError(error);}
            |  }else if(op.Replace){
            |    var p=op.Replace.path.join(".");
            |    var el=document.querySelector('[data-kyo-path="'+p+'"]');

@@ -21,6 +21,177 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             discard(dom.document.getElementById(id).asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
         }
 
+    "row retention: local keyed append preserves the existing input node and typed text" in {
+        Scope.run {
+            for
+                rows <- Signal.initRef(Chunk("A", "B"))
+                ui = UI.div(
+                    rows.foreachKeyed(identity)(s => UI.input.id(s"in-$s")),
+                    UI.button("Add").id("add").onClick(rows.getAndUpdate(_ :+ "C").unit)
+                )
+                ready = new DomTestEnv.MountReady
+                _ <- Scope.acquireRelease(Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready))))(fiber =>
+                    fiber.interrupt.andThen(fiber.getResult).unit
+                )
+                _        <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("in-A") != null))
+                original <- Sync.defer {
+                    // Unsafe: this tag-qualified selector only matches the fixture's UI.input.
+                    val input = dom.document.querySelector("input#in-A").asInstanceOf[dom.html.Input]
+                    input.value = "typed"
+                    input
+                }
+                _        <- click("add")
+                _        <- assertEventually(Sync.defer(dom.document.getElementById("in-C") != null))
+                observed <- Sync.defer {
+                    // Unsafe: this tag-qualified selector only matches the fixture's UI.input.
+                    val current = dom.document.querySelector("input#in-A").asInstanceOf[dom.html.Input]
+                    (current.value, current eq original)
+                }
+            yield assert(observed == ("typed", true), s"$observed")
+        }
+    }
+
+    "row retention: a local independent reactive update preserves the input node and typed text" in {
+        Scope.run {
+            for
+                rows  <- Signal.initRef(Chunk("A", "B"))
+                count <- Signal.initRef(0)
+                ui = UI.div(
+                    rows.foreachKeyed(identity)(s => UI.input.id(s"in-$s")),
+                    count.map(n => UI.span(s"$n").id("count")),
+                    UI.button("Count").id("increment").onClick(count.getAndUpdate(_ + 1).unit)
+                )
+                ready = new DomTestEnv.MountReady
+                _ <- Scope.acquireRelease(Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready))))(fiber =>
+                    fiber.interrupt.andThen(fiber.getResult).unit
+                )
+                _        <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("in-A") != null))
+                original <- Sync.defer {
+                    // Unsafe: this tag-qualified selector only matches the fixture's UI.input.
+                    val input = dom.document.querySelector("input#in-A").asInstanceOf[dom.html.Input]
+                    input.value = "typed"
+                    input
+                }
+                _        <- click("increment")
+                _        <- assertEventually(Sync.defer(dom.document.getElementById("count").textContent == "1"))
+                observed <- Sync.defer {
+                    // Unsafe: this tag-qualified selector only matches the fixture's UI.input.
+                    val current = dom.document.querySelector("input#in-A").asInstanceOf[dom.html.Input]
+                    (current.value, current eq original)
+                }
+            yield assert(observed == ("typed", true), s"$observed")
+        }
+    }
+
+    "row retention: local reorder and removal preserve state while changed markup replaces it" in {
+        Scope.run {
+            for
+                rows  <- Signal.initRef(Chunk("A" -> 1, "B" -> 1))
+                count <- Signal.initRef(0)
+                ui = UI.div(
+                    UI.div(rows.foreachKeyed(_._1) { (key, version) =>
+                        UI.div(
+                            UI.span(s"$key:$version").id(s"label-$key"),
+                            UI.input.id(s"field-$key"),
+                            UI.select(UI.option("x").value("x"), UI.option("y").value("y")).id(s"select-$key"),
+                            count.map(value => UI.span(s"$value").id(s"count-$key"))
+                        ).id(s"row-$key")
+                    }).id("rows"),
+                    UI.button("Swap").id("swap").onClick(rows.getAndUpdate(_.reverse).unit),
+                    UI.button("Count").id("increment").onClick(count.getAndUpdate(_ + 1).unit),
+                    UI.button("Remove").id("remove").onClick(rows.getAndUpdate(_.filter(_._1 != "B")).unit),
+                    UI.button("Change").id("change").onClick(rows.getAndUpdate(_.map((key, version) => key -> (version + 1))).unit)
+                )
+                ready = new DomTestEnv.MountReady
+                _ <- Scope.acquireRelease(Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready))))(fiber =>
+                    fiber.interrupt.andThen(fiber.getResult).unit
+                )
+                _        <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("field-A") != null))
+                original <- Sync.defer {
+                    // Unsafe: tag-qualified selectors match the input and select declared in this fixture.
+                    val input  = dom.document.querySelector("input#field-A").asInstanceOf[dom.html.Input]
+                    val select = dom.document.querySelector("select#select-A").asInstanceOf[dom.html.Select]
+                    input.value = "typed"
+                    select.value = "y"
+                    input.focus()
+                    input.setSelectionRange(2, 4)
+                    dom.document.getElementById("row-A")
+                }
+                _     <- click("swap")
+                _     <- assertEventually(Sync.defer(dom.document.getElementById("rows").firstElementChild.id == "row-B"))
+                moved <- Sync.defer {
+                    // Unsafe: tag-qualified selectors match the input and select declared in this fixture.
+                    val input  = dom.document.querySelector("input#field-A").asInstanceOf[dom.html.Input]
+                    val select = dom.document.querySelector("select#select-A").asInstanceOf[dom.html.Select]
+                    (
+                        dom.document.getElementById("row-A") eq original,
+                        input.value,
+                        select.value,
+                        dom.document.activeElement.id,
+                        input.selectionStart,
+                        input.selectionEnd
+                    )
+                }
+                _         <- click("increment")
+                _         <- assertEventually(Sync.defer(dom.document.getElementById("count-A").textContent == "1"))
+                _         <- click("remove")
+                _         <- assertEventually(Sync.defer(dom.document.getElementById("row-B") == null))
+                remaining <- Sync.defer(dom.document.getElementById("row-A") eq original)
+                _         <- click("change")
+                _         <- assertEventually(Sync.defer(dom.document.getElementById("label-A").textContent == "A:2"))
+                changed   <- Sync.defer {
+                    // Unsafe: tag-qualified selectors match the input and select declared in this fixture.
+                    val input  = dom.document.querySelector("input#field-A").asInstanceOf[dom.html.Input]
+                    val select = dom.document.querySelector("select#select-A").asInstanceOf[dom.html.Select]
+                    (
+                        dom.document.getElementById("row-A") ne original,
+                        input.value,
+                        select.value,
+                        dom.document.getElementById("count-A").textContent
+                    )
+                }
+            yield
+                assert(moved == (true, "typed", "y", "field-A", 2, 4), s"$moved")
+                assert(remaining)
+                assert(changed == (true, "", "x", "1"), s"$changed")
+        }
+    }
+
+    "row retention: different UTF-16 row declarations invalidate the retained node" in {
+        Scope.run {
+            for
+                rows <- Signal.initRef(Chunk("initial"))
+                ui = UI.div(
+                    rows.foreachKeyed(_ => "row")(value => UI.div(UI.span(value).id("label"), UI.input.id("field")).id("row")),
+                    UI.button("First").id("first").onClick(rows.set(Chunk("\ud800"))),
+                    UI.button("Second").id("second").onClick(rows.set(Chunk("\ud801")))
+                )
+                ready = new DomTestEnv.MountReady
+                _ <- Scope.acquireRelease(Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready))))(fiber =>
+                    fiber.interrupt.andThen(fiber.getResult).unit
+                )
+                _        <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("field") != null))
+                _        <- click("first")
+                _        <- assertEventually(Sync.defer(dom.document.getElementById("label").textContent == "\ud800"))
+                original <- Sync.defer {
+                    // Unsafe: the tag-qualified selector matches the input declared in this fixture.
+                    val input = dom.document.querySelector("input#field").asInstanceOf[dom.html.Input]
+                    input.value = "typed"
+                    input
+                }
+                applied <- Sync.defer(ready.applied)
+                _       <- click("second")
+                // The single collection region completed its update, even if it incorrectly retained the old row.
+                _        <- assertEventually(Sync.defer(ready.applied > applied))
+                observed <- Sync.defer {
+                    // Unsafe: the tag-qualified selector matches the input declared in this fixture.
+                    val input = dom.document.querySelector("input#field").asInstanceOf[dom.html.Input]
+                    (dom.document.getElementById("label").textContent.charAt(0).toInt, input.value, input ne original)
+                }
+            yield assert(observed == (0xd801, "", true), s"$observed")
+        }
+    }
+
     "local mount preserves direct table row topology through events and repeated updates" in {
         for
             rows <- Signal.initRef(Chunk("A"))

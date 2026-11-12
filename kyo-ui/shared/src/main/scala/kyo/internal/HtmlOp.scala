@@ -20,11 +20,13 @@ private[kyo] object HtmlOp:
 
     // --- Rendering operations ---
 
-    case class Replace(path: Seq[String], html: String)     extends HtmlOp derives Schema
-    case class ReplaceRange(regionId: String, html: String) extends HtmlOp derives Schema
-    case class Remove(path: Seq[String])                    extends HtmlOp derives Schema
-    case class InjectCss(css: String)                       extends HtmlOp derives Schema
-    case class ScrollIntoView(id: String)                   extends HtmlOp derives Schema
+    case class Replace(path: Seq[String], html: String) extends HtmlOp derives Schema
+
+    /** A first subscription value may retain identical inserted markup. Later updates always reconcile live state. */
+    case class ReplaceRange(regionId: String, html: String, keepCurrent: Boolean = false) extends HtmlOp derives Schema
+    case class Remove(path: Seq[String])                                                  extends HtmlOp derives Schema
+    case class InjectCss(css: String)                                                     extends HtmlOp derives Schema
+    case class ScrollIntoView(id: String)                                                 extends HtmlOp derives Schema
 
     // --- Drag operations ---
 

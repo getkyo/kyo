@@ -31,6 +31,54 @@ class HtmlRendererReactiveRangesJsTest extends kyo.test.Test[Any]:
     private def evalString(source: String): String =
         scalajs.Dynamic.global.eval(source).asInstanceOf[String]
 
+    "row retention preserves a nested region through its new subscription's first value" in {
+        Sync.defer {
+            val one     = "r000000010031"
+            val two     = "r000000010032"
+            val content = "<input id='field' value='one'>"
+            val row     = s"<div data-kyo-path='row' data-kyo-digest='same'><!--kyo-rs:$two-->$content<!--kyo-re:$two--></div>"
+            install(s"<!--kyo-rs:$one-->$row<!--kyo-re:$one-->")
+            val observed = evalString(s"""(function(){
+                |kyoRangeReplace('$two',${Json.encode(content)},true);
+                |var original=document.getElementById('field');original.value='typed';
+                |kyoRangeReplace('$one',${Json.encode(row + "<span>new</span>")});
+                |kyoRangeReplace('$two',${Json.encode(content)},true);
+                |return document.getElementById('field').value+'|'+(document.getElementById('field')===original);})()""".stripMargin)
+            assert(observed == "typed|true", observed)
+        }
+    }
+
+    "row retention caches initial markup only for live ranges" in {
+        Sync.defer {
+            val outer = "r000000010031"
+            val inner = "r000000010032"
+            val next  = "r00000001006e"
+            val row   = s"<div data-kyo-path='row' data-kyo-digest='same'><!--kyo-rs:$inner-->old<!--kyo-re:$inner--></div>"
+            val fresh =
+                s"<div data-kyo-path='row' data-kyo-digest='same'><!--kyo-rs:$inner--><span><!--kyo-rs:$next-->new<!--kyo-re:$next--></span><!--kyo-re:$inner--></div>"
+            install(s"<!--kyo-rs:$outer-->$row<!--kyo-re:$outer-->")
+            discard(scalajs.Dynamic.global.eval(s"kyoRangeReplace('$outer',${Json.encode(fresh)})"))
+            val observed = evalString(
+                "__kyoRanges.size+'|'+Array.from(__kyoInserted.keys()).filter(function(id){return !__kyoRanges.has(id);}).length"
+            )
+            assert(observed == "2|0", observed)
+        }
+    }
+
+    "row retention still applies ordinary updates with unchanged declared markup" in {
+        Sync.defer {
+            val id      = "r000000010031"
+            val content = "<input id='field' value='one'>"
+            install(s"<!--kyo-rs:$id-->$content<!--kyo-re:$id-->")
+            val observed = evalString(s"""(function(){
+                |kyoRangeReplace('$id',${Json.encode(content)},true);
+                |var original=document.getElementById('field');original.value='typed';
+                |kyoRangeReplace('$id',${Json.encode(content)},false);
+                |return document.getElementById('field').value+'|'+(document.getElementById('field')===original);})()""".stripMargin)
+            assert(observed == "one|false", observed)
+        }
+    }
+
     "embedded registry replaces table rows with contextual parsing and retains anchors" in {
         install("<table><tbody><!--kyo-rs:r--><tr id='old'><td>old</td></tr><!--kyo-re:r--></tbody></table>")
         discard(scalajs.Dynamic.global.eval("kyoRangeReplace('r',\"<tr id='new'><td>new</td></tr>\")"))

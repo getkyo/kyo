@@ -158,11 +158,10 @@ private[kyo] object UIServer:
             )(using Frame): Unit < Async =
                 val plan = UIDiff.plan(path, previous, ui)
                 if plan.size == 1 && plan.head._1 == path then
-                    // The whole region: sent unconditionally. The client compares against the LIVE DOM before
-                    // applying, which is what repairs a field the user has typed into; suppressing this here
-                    // would take that repair away.
+                    // The first value may already be present in the enclosing render, including a retained row's restarted children.
+                    // Later values must reconcile live state even when the declared markup repeats, to repair controlled inputs.
                     discard(sentBelowRegion.remove(path))
-                    sendRegion(region, path, contentContext, parentContext, ui)
+                    sendRegion(region, path, contentContext, parentContext, ui, keepCurrent = previous.isEmpty)
                 else
                     // Only the nodes that moved. For a chart on a 1 Hz signal that is the marks group: the
                     // background, axes, gridlines and legend render byte-identically to the tick before and
@@ -189,7 +188,8 @@ private[kyo] object UIServer:
                 path: Seq[String],
                 contentContext: ReactiveRegion.RegionIdentity,
                 parentContext: ReactiveRegion.ParentContext,
-                ui: UI
+                ui: UI,
+                keepCurrent: Boolean
             )(using Frame): Unit < Async =
                 val boundaryMode =
                     if ReactiveRegion.owns(region, contentContext) then ReactiveRegion.BoundaryMode.Suppress
@@ -197,7 +197,7 @@ private[kyo] object UIServer:
                 HtmlRenderer.renderRegionWithCss(ui, path, contentContext, region, parentContext, boundaryMode).map {
                     (html, rules) =>
                         val replaceOp = region match
-                            case ReactiveRegion.HtmlRange(id) => HtmlOp.ReplaceRange(id, html)
+                            case ReactiveRegion.HtmlRange(id) => HtmlOp.ReplaceRange(id, html, keepCurrent)
                             case _: ReactiveRegion.SvgElement => HtmlOp.Replace(path, HtmlRenderer.wrapReactiveRegion(region, html))
                         send(replaceOp, rules)
                 }

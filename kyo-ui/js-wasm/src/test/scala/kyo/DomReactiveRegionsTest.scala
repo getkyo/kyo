@@ -39,6 +39,44 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
         }
     }
 
+    "row retention pairs each existing node at most once" in {
+        val row = "<input data-kyo-path='row' data-kyo-digest='same'>"
+        Scope.run {
+            for
+                root    <- Sync.defer(host(s"<!--kyo-rs:$One-->$row<!--kyo-re:$One-->"))
+                regions <- DomReactiveRegions.init(root)
+                _       <- regions.replace(One, row + row)
+                count   <- Sync.defer(root.querySelectorAll("input").length)
+            yield assert(count == 2)
+        }
+    }
+
+    "row retention preserves a nested region through its new subscription's first value" in {
+        val content = "<input id='field' value='one'>"
+        val row     =
+            s"<div data-kyo-path='row' data-kyo-digest='same'><!--kyo-rs:$Two-->$content<!--kyo-re:$Two--></div>"
+        Scope.run {
+            for
+                root     <- Sync.defer(host(s"<!--kyo-rs:$One-->$row<!--kyo-re:$One-->"))
+                regions  <- DomReactiveRegions.init(root)
+                _        <- keepCurrent(regions, Two, content)
+                original <- Sync.defer {
+                    // Unsafe: the tag-qualified selector matches the input declared in this fixture.
+                    val input = root.querySelector("input#field").asInstanceOf[dom.html.Input]
+                    input.value = "typed"
+                    input
+                }
+                _        <- regions.replace(One, row + "<span>new</span>")
+                _        <- keepCurrent(regions, Two, content)
+                observed <- Sync.defer {
+                    // Unsafe: the tag-qualified selector matches the input declared in this fixture.
+                    val input = root.querySelector("input#field").asInstanceOf[dom.html.Input]
+                    (input.value, input eq original)
+                }
+            yield assert(observed == ("typed", true), s"$observed")
+        }
+    }
+
     "initial scan rejects duplicate ids" in {
         initResult(s"<!--kyo-rs:$One--><!--kyo-re:$One--><!--kyo-rs:$One--><!--kyo-re:$One-->")
             .map(result => assertPanicContains(result, s"Duplicate reactive range id: $One"))
@@ -113,9 +151,10 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
                     One,
                     s"<tbody data-kyo-range-host='$One'><tr id='new-row'><td>new</td></tr></tbody>",
                     keepCurrent = false
-                )((_, _, _) => false) { (oldRoots, newRoots) =>
+                )((_, _, _) => false) { (oldRoots, newRoots, retained) =>
                     assert(oldRoots.map(_.id) == Seq("authored"))
                     assert(newRoots.map(_.id) == Seq("new-row"))
+                    assert(retained.isEmpty)
                 } { (_, insertedRoots) =>
                     assert(insertedRoots.map(_.id) == Seq("new-row"))
                 }
@@ -260,7 +299,7 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
     }
 
     private def keepCurrent(regions: DomReactiveRegions, regionId: String, html: String)(using Frame): Unit < Sync =
-        regions.replaceWith(regionId, html, keepCurrent = true)((_, _, _) => false)((_, _) => ())((_, _) => ())
+        regions.replaceWith(regionId, html, keepCurrent = true)((_, _, _) => false)((_, _, _) => ())((_, _) => ())
 
     "a first value with the inserted markup keeps the range once, and a later or different value replaces it" in {
         val root = host(s"<div><!--kyo-rs:$One--><input id='field' value='one'><!--kyo-re:$One--></div>")
