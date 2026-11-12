@@ -39,6 +39,7 @@ Every entry point below lives on the `Browser` companion object (so `run` means 
 | `iframe` / `iframes` / `mainFrame` / `withIFrame` | Cross-frame access |
 | `consoleLogs` | Captured console messages (`ConsoleMessage` / `ConsoleLevel`) |
 | `withConfig` / `withTimeout` / `withViewport` / `withDialogs` | Scoped configuration |
+| `timeout` / `timeoutWithError` | Bound a joined computation on the current tab |
 | `withNewTab` / `withFork` / `withPopup` / `isolate.fresh` / `isolate.clone` | Sub-tab and concurrent isolation |
 | `dataUrl` | Build a `data:text/html` URL for inline-HTML fixtures |
 
@@ -386,6 +387,24 @@ Browser.withViewport(width = 1440, height = 900) {
     Browser.screenshot
 }
 ```
+
+`withTimeout` limits the retry and load schedules of individual operations. To bound a whole computation on the current tab, use `Browser.timeout`. Expiry interrupts the body and returns `Timeout`, following `Async.timeout` semantics. The caller awaits the body; page mutations remain visible afterward, including changes made before expiry.
+
+```scala
+val bounded: String < (Browser & Abort[BrowserReadException | Timeout]) =
+    Browser.timeout(5.seconds) {
+        Browser.fill(Browser.Selector.label("Email"), "alice@example.com")
+            .andThen(Browser.title)
+    }
+
+val custom: String < (Browser & Abort[BrowserReadException | String]) =
+    Browser.timeoutWithError(5.seconds, Result.Failure("Sign-in expired")) {
+        Browser.fill(Browser.Selector.label("Email"), "alice@example.com")
+            .andThen(Browser.title)
+    }
+```
+
+Additional effects use the caller's `Isolate` strategy, as with `Async.timeout`. These methods keep current-tab isolation private to the joined operation; concurrent browser combinators still require an explicit `Browser.isolate.fresh` or `Browser.isolate.clone` strategy.
 
 `Browser.SessionConfig` fields (settable individually via `withConfig`):
 
