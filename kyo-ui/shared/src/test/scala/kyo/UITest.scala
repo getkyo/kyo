@@ -71,22 +71,59 @@ abstract class UITest extends kyo.test.Test[Any]:
         // frame has arrived, so the first interaction reaches the session instead of the client's reconnect buffer. That
         // is the client's `__kyoLive` promise. Network-idle settling cannot see it (the WebSocket is not a fetch) and would
         // only add its idle window on top of the load event.
-        cancelOnUnsupportedPlatform {
-            for
-                uiTree <- ui
-                _      <- SharedUIServer.set(uiTree)
-                url    <- SharedUIServer.url
-                result <- Browser.runShared() {
-                    Browser.goto(url, Browser.Settle.Load)
-                        .andThen(kyo.internal.BrowserEval.evalJsAwaiting("window.__kyoLive()"))
-                        .andThen(f)
-                }
-            yield result
+        UITest.withDiagnostics {
+            cancelOnUnsupportedPlatform {
+                for
+                    uiTree <- UITest.at("build UI")(ui)
+                    _      <- UITest.at("set shared UI")(SharedUIServer.set(uiTree))
+                    url    <- UITest.at("bind shared server")(SharedUIServer.url)
+                    result <- UITest.at("attach browser") {
+                        Browser.runShared() {
+                            UITest.at("navigate")(Browser.goto(url, Browser.Settle.Load))
+                                .andThen(UITest.at("wait for UI session")(kyo.internal.BrowserEval.evalJsAwaiting("window.__kyoLive()")))
+                                .andThen(Sync.ensure(UITest.at("browser cleanup")(Kyo.unit)) {
+                                    UITest.at("browser body")(f).map { result =>
+                                        UITest.at("browser cleanup")(Kyo.unit).andThen(result)
+                                    }
+                                })
+                        }
+                    }
+                yield result
+            }
         }
     end withUI
 
     /** Asserts that the body text contains the given substring. */
     def assertContains(text: String)(using Frame) =
         Browser.assertTextSatisfies(Browser.Selector.css("body"), s"contains '$text'")(_.contains(text))
+
+end UITest
+
+object UITest:
+
+    private val phase: Local[Maybe[AtomicRef[String]]] = Local.init(Absent)
+
+    /** Records a fixed operation label before running the body. The diagnostic never renders its values. */
+    private[kyo] def at[A, S](label: String)(body: => A < S)(using Frame): A < (S & Sync) =
+        phase.use {
+            case Present(ref) => ref.set(label).andThen(body)
+            case Absent       => body
+        }
+
+    /** Owns the diagnostic in the same call as the UI session, including startup and cleanup. Labels contain no page or input data. */
+    private[kyo] def withDiagnostics[A, S](body: => A < S)(using frame: Frame): A < (S & Async) =
+        Scope.run {
+            for
+                ref <- AtomicRef.init("starting UI")
+                _   <- Scope.acquireRelease(Sync.defer {
+                    kyo.internal.Diagnostics.register("UITest@" + java.lang.System.identityHashCode(ref)) { () =>
+                        // Unsafe: the reporter reads one atomic value without running effects or touching the browser.
+                        import AllowUnsafe.embrace.danger
+                        s"caller=${frame.position.show} phase=${ref.unsafe.get()}"
+                    }
+                })(registration => Sync.defer(registration.close()))
+                result <- phase.let(Present(ref))(body)
+            yield result
+        }
 
 end UITest
