@@ -54,7 +54,7 @@ end CompileBench
 
 object CompileBench:
 
-    private val resources = "kyo-kernel/jvm/src/jmh/resources"
+    private val resources = "kyo-kernel/bench/src/main/resources"
 
     /** A fixture file by set and name, resolved from the closest ancestor of the working directory holding the fixture sets, since the
       * forked JVM starts in the project directory.
