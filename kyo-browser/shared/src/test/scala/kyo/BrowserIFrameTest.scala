@@ -6,6 +6,31 @@ class BrowserIFrameTest extends BrowserTest:
 
     override def timeout = 60.seconds
 
+    "form-state reads use the selected iframe document and restore the parent" in {
+        withBrowser {
+            val outer =
+                """<body><input id='field' type='checkbox'><iframe id='frame' data-testid='frame' srcdoc="{srcdoc}"></iframe></body>"""
+            onSrcdoc(outer, "<body><input id='field' type='text'></body>") {
+                for
+                    parentEditable <- Browser.isTextEditable(Browser.Selector.id("field"))
+                    frame          <- discoverSingleFrame
+                    child          <- Browser.withIFrame(frame) {
+                        for
+                            _        <- Browser.focus(Browser.Selector.id("field"))
+                            focused  <- Browser.focusedElement
+                            editable <- Browser.isTextEditable(Browser.Selector.id("field"))
+                        yield (focused, editable)
+                    }
+                    parent <- Browser.focusedElement
+                yield
+                    assert(!parentEditable)
+                    assert(child._1.map(info => (info.tag, info.id)) == Present(("input", Present("field"))))
+                    assert(child._2)
+                    assert(parent.map(info => (info.tag, info.id)) == Present(("iframe", Present("frame"))))
+            }
+        }
+    }
+
     // ─── Page templates ──────────────────────────────────────────────────────────
 
     /** Parent page hosting a single iframe whose body the test specifies. The `{srcdoc}` placeholder is filled in by [[srcdocPage]]. The
