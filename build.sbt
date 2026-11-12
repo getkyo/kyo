@@ -3388,11 +3388,12 @@ lazy val `kyo-lsp` =
         .withKyoTest
         .dependsOn(`kyo-jsonrpc`)
         .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-schema-msgpack` % "test->compile")
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .wasmSettings(`wasm-settings`)
-        .jsSettings(`js-settings`)
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
 
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)

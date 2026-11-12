@@ -425,6 +425,38 @@ class LspClientTest extends Test:
         }
     }
 
+    "definition request round-trips a result union (Location[]) through the custom schema" in {
+        val targets = Chunk(
+            LspHandler.Location(mainUri, LspHandler.Range.of(2, 0, 2, 4)),
+            LspHandler.Location(mainUri, LspHandler.Range.of(5, 2, 5, 6))
+        )
+        val definition = LspHandler.TextDocument.definition { _ =>
+            LspHandler.DefinitionResult.Many(targets)
+        }
+        val params = LspHandler.DefinitionParams(LspHandler.TextDocumentIdentifier(mainUri), LspHandler.Position(0, 0))
+        Scope.run(serve(definition)(_.definition(params))).map {
+            case Result.Success(result) => assert(result == Present(LspHandler.DefinitionResult.Many(targets)))
+            case other                  => fail(s"definition: $other")
+        }
+    }
+
+    "definition request round-trips a result union (LocationLink[]) through the custom schema" in {
+        val links = Chunk(LspHandler.LocationLink(
+            originSelectionRange = Present(LspHandler.Range.of(0, 0, 0, 3)),
+            targetUri = mainUri,
+            targetRange = LspHandler.Range.of(2, 0, 3, 1),
+            targetSelectionRange = LspHandler.Range.of(2, 4, 2, 8)
+        ))
+        val definition = LspHandler.TextDocument.definition { _ =>
+            LspHandler.DefinitionResult.Links(links)
+        }
+        val params = LspHandler.DefinitionParams(LspHandler.TextDocumentIdentifier(mainUri), LspHandler.Position(0, 0))
+        Scope.run(serve(definition)(_.definition(params))).map {
+            case Result.Success(result) => assert(result == Present(LspHandler.DefinitionResult.Links(links)))
+            case other                  => fail(s"definition: $other")
+        }
+    }
+
     "executeCommand[T] decodes the typed result the server returns" in {
         val command = LspHandler.Workspace.executeCommand[ReindexResult] { _ => Present(ReindexResult(7)) }
         val params  = LspHandler.ExecuteCommandParams(command = "todo.reindex", arguments = Chunk.empty)
@@ -443,6 +475,31 @@ class LspClientTest extends Test:
         Scope.run(serve(command)(_.executeCommand[ReindexResult](params))).map {
             case Result.Failure(LspRemoteException(code, _, _)) => assert(code == -32099)
             case other                                          => fail(s"expected LspRemoteException(-32099), got: $other")
+        }
+    }
+
+    "a TextDocument.publishDiagnostics handler receives the uri, version and diagnostics the server publishes" in {
+        val diagnostics = Chunk(
+            LspHandler.Diagnostic.error(LspHandler.Range.of(2, 28, 2, 29), "Too few arguments to function call, expected 2, have 1"),
+            LspHandler.Diagnostic.warning(LspHandler.Range.of(4, 0, 4, 3), "unused variable 'x'")
+        )
+        Fiber.Promise.init[LspHandler.PublishDiagnosticsParams, Any].map { received =>
+            val pushed = LspHandler.TextDocument.publishDiagnostics(params => received.completeDiscard(Result.succeed(params)))
+            Scope.run {
+                JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
+                    LspServer.init(ta).flatMap { server =>
+                        Abort.run[LspException](
+                            LspClient.init(tb, clientInfo, clientCaps, pushed)
+                                .andThen(server.publishDiagnostics(mainUri, diagnostics, Present(3)))
+                                .andThen(received.get)
+                        )
+                    }
+                }
+            }.map {
+                case Result.Success(params) =>
+                    assert(params == LspHandler.PublishDiagnosticsParams(mainUri, Present(3), diagnostics))
+                case other => fail(s"publishDiagnostics: $other")
+            }
         }
     }
 

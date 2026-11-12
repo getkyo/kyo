@@ -28,7 +28,7 @@ val longRunningWork: LspHandler.DocumentSymbolResult < Async =
 
 Language Server Protocol 3.17 implementation for building editor-tooling servers (and clients) on top of `kyo-jsonrpc`. A server is a `JsonRpcTransport` plus a list of typed `LspHandler[In, Out, +E]` values, one per LSP endpoint (`textDocument/hover`, `workspace/executeCommand`, ...). The engine drives the `initialize` handshake, advertises capabilities, maintains an in-memory document registry, runs progress and cancellation, and dispatches each inbound message to the matching handler. Handler bodies receive typed parameter records, return typed responses, and reach for per-request state (the live server, the document registry, the cancellation promise) through `Lsp.*` accessors.
 
-The same handler vocabulary works in both directions. Server-handled endpoints come from `LspHandler.TextDocument.*` and `LspHandler.Workspace.*`; the corresponding reverse-direction (server-initiated) endpoints that a client must answer come from `LspHandler.Window.*` and `LspHandler.Client.*`. One sealed `LspException` hierarchy carries every protocol error: two per-operation failure traits (`LspRequestFailure` for every request, `LspInitFailure` for the eager handshake) name exactly what each call can produce, and a closed transport is the typed `LspConnectionClosedException` rather than a raw `Closed`. User-domain errors are registered per-handler via `.error[E2](code, message)` and arrive on the peer as `LspRemoteException`. The module is `shared/`-only Scala source; tests run on JVM, JavaScript, and Scala Native against an in-memory `JsonRpcTransport`.
+The same handler vocabulary works in both directions. Server-handled endpoints come from `LspHandler.TextDocument.*` and `LspHandler.Workspace.*`; the corresponding reverse-direction (server-initiated) endpoints that a client must answer come from `LspHandler.Window.*` and `LspHandler.Client.*`, and from the few `TextDocument.*` and `Workspace.*` factories the Handlers table marks client-handled. One sealed `LspException` hierarchy carries every protocol error: two per-operation failure traits (`LspRequestFailure` for every request, `LspInitFailure` for the eager handshake) name exactly what each call can produce, and a closed transport is the typed `LspConnectionClosedException` rather than a raw `Closed`. User-domain errors are registered per-handler via `.error[E2](code, message)` and arrive on the peer as `LspRemoteException`. The module is `shared/`-only Scala source; tests run on JVM, JavaScript, and Scala Native against an in-memory `JsonRpcTransport`.
 
 ```scala doctest:scope=inherited
 val hover =
@@ -130,7 +130,7 @@ val res: Maybe[ReindexResult] < (Async & Scope & Abort[LspInitFailure | LspReque
     }
 ```
 
-Reverse-direction requests are handled by passing client-side handlers to `LspClient.init`. The same factory shape applies: `LspHandler.Window.showMessage { params => ... }` registers an observer for `window/showMessage` notifications the server may send. Passing a server-side handler (anything from `TextDocument.*` or the request-shaped `Workspace.*` factories) to `LspClient.init` aborts at init time with `LspWrongDirectionException`, before any transport traffic flows; the engine catalog checks every registered handler's `direction` against the side that owns the call. When you need to issue a raw JSON-RPC call the typed client API does not cover, reach for `client.underlying: JsonRpcHandler`.
+Reverse-direction requests are handled by passing client-side handlers to `LspClient.init`. The same factory shape applies: `LspHandler.Window.showMessage { params => ... }` registers an observer for `window/showMessage` notifications the server may send. Passing a handler the Handlers table marks server-handled, such as `TextDocument.completion`, to `LspClient.init` aborts at init time with `LspWrongDirectionException`, before any transport traffic flows; the engine catalog checks every registered handler's `direction` against the side that owns the call. When you need to issue a raw JSON-RPC call the typed client API does not cover, reach for `client.underlying: JsonRpcHandler`.
 
 ## Handlers
 
@@ -138,7 +138,7 @@ Every endpoint is constructed through a namespaced factory and yields an `LspHan
 
 | Namespace | Direction | Examples |
 |--|--|--|
-| `LspHandler.TextDocument.*` | server-handled | `completion`, `hover`, `definition`, `formatting`, `codeAction`, `didOpen`, `didChange` |
+| `LspHandler.TextDocument.*` | mixed | `completion`, `hover`, `definition`, `formatting`, `codeAction`, `didOpen`, `didChange` (server-handled); `publishDiagnostics` (client-handled) |
 | `LspHandler.Workspace.*` | mixed | `symbol`, `executeCommand[Out]`, `didChangeConfiguration[T]`, the `willCreateFiles`/`willRenameFiles`/`willDeleteFiles` file-operation family with their `did*` notification counterparts (server-handled); `applyEdit`, `configuration[T]`, `workspaceFolders`, `refreshSemanticTokens` (client-handled) |
 | `LspHandler.NotebookDocument.*` | server-handled | `didOpen`, `didChange`, `didSave`, `didClose` |
 | `LspHandler.Window.*` | client-handled | `showMessage`, `showMessageRequest`, `showDocument`, `logMessage`, `createWorkDoneProgress` |
@@ -363,6 +363,14 @@ LspHandler.LspDocument.Uri.parse("")                        // Absent
 ```
 
 `parse` rejects empty and whitespace-only inputs by returning `Absent`, so user code that builds a URI from external input gets the validation for free.
+
+Use `Uri.file(path)` to percent-encode a filesystem path, resolving relative paths against the working directory. The reverse `uri.file` returns `Maybe[Path]`: it accepts local `file` URIs and rejects other schemes, remote hosts, malformed escapes and invalid path characters. A URI for an unsaved editor buffer can still be a valid document URI while having no filesystem path.
+
+```scala
+val documentUri: LspHandler.LspDocument.Uri < Sync =
+    LspHandler.LspDocument.Uri.file(Path("tasks.todo"))
+val documentPath: Maybe[Path] < Sync = documentUri.map(_.file)
+```
 
 ### Applying edits
 

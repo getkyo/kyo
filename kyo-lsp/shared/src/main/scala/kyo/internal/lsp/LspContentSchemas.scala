@@ -1035,111 +1035,21 @@ private[kyo] object LspContentSchemas:
 
     // MARK: -- Location-family result schemas (DefinitionResult, DeclarationResult, TypeDefinitionResult, ImplementationResult)
 
-    private def readOneLocationOrLink(reader: Codec.Reader): Either[LspHandler.Location, LspHandler.LocationLink] =
-        // Read one Location or LocationLink object in a single pass; detect type from field presence
-        var uri: String                                   = ""
-        var range: Maybe[LspHandler.Range]                = Absent
-        var originSelectionRange: Maybe[LspHandler.Range] = Absent
-        var targetUri: String                             = ""
-        var targetRange: Maybe[LspHandler.Range]          = Absent
-        var targetSelectionRange: Maybe[LspHandler.Range] = Absent
-        var hasTargetUri                                  = false
-        discard(reader.objectStart())
-        while reader.hasNextField() do
-            reader.fieldParse()
-            if reader.matchField("uri".getBytes("UTF-8")) then uri = reader.string()
-            else if reader.matchField("range".getBytes("UTF-8")) then
-                range = Present(summon[Schema[LspHandler.Range]].serializeRead(reader))
-            else if reader.matchField("targetUri".getBytes("UTF-8")) then
-                hasTargetUri = true
-                targetUri = reader.string()
-            else if reader.matchField("targetRange".getBytes("UTF-8")) then
-                targetRange = Present(summon[Schema[LspHandler.Range]].serializeRead(reader))
-            else if reader.matchField("targetSelectionRange".getBytes("UTF-8")) then
-                targetSelectionRange = Present(summon[Schema[LspHandler.Range]].serializeRead(reader))
-            else if reader.matchField("originSelectionRange".getBytes("UTF-8")) then
-                originSelectionRange = Present(summon[Schema[LspHandler.Range]].serializeRead(reader))
-            else reader.skip()
-            end if
-        end while
-        reader.objectEnd()
-        if hasTargetUri then
-            val defaultRange = LspHandler.Range(LspHandler.Position(0, 0), LspHandler.Position(0, 0))
-            Right(LspHandler.LocationLink(
-                originSelectionRange,
-                LspHandler.LspDocument.Uri.fromWire(targetUri),
-                targetRange.getOrElse(defaultRange),
-                targetSelectionRange.getOrElse(defaultRange)
-            ))
-        else
-            Left(LspHandler.Location(
-                LspHandler.LspDocument.Uri.fromWire(uri),
-                range.getOrElse(LspHandler.Range(LspHandler.Position(0, 0), LspHandler.Position(0, 0)))
-            ))
-        end if
-    end readOneLocationOrLink
-
     private def readLocationFamilyFromReader[T](
         reader: Codec.Reader,
         oneFactory: LspHandler.Location => T,
         manyFactory: Chunk[LspHandler.Location] => T,
         linksFactory: Chunk[LspHandler.LocationLink] => T
     ): T =
-        val captured = reader.captureValue()
-        try
-            // Try as array
-            val count = captured.arrayStart()
-            if count == 0 then
-                captured.arrayEnd()
-                manyFactory(Chunk.empty)
-            else
-                val locations    = scala.collection.mutable.ArrayBuffer[LspHandler.Location]()
-                val links        = scala.collection.mutable.ArrayBuffer[LspHandler.LocationLink]()
-                var isLink       = false
-                var isDetermined = false
-
-                def readElements(): Unit =
-                    if count < 0 then
-                        while captured.hasNextElement() do
-                            val elem = readOneLocationOrLink(captured)
-                            elem match
-                                case Left(loc) =>
-                                    if !isDetermined then
-                                        isLink = false; isDetermined = true
-                                    locations += loc
-                                case Right(ll) =>
-                                    if !isDetermined then
-                                        isLink = true; isDetermined = true
-                                    links += ll
-                            end match
-                    else
-                        var j = 0
-                        while j < count do
-                            val elem = readOneLocationOrLink(captured)
-                            elem match
-                                case Left(loc) =>
-                                    if !isDetermined then
-                                        isLink = false; isDetermined = true
-                                    locations += loc
-                                case Right(ll) =>
-                                    if !isDetermined then
-                                        isLink = true; isDetermined = true
-                                    links += ll
-                            end match
-                            j += 1
-                        end while
-                end readElements
-
-                readElements()
-                captured.arrayEnd()
-                if isLink then linksFactory(Chunk.from(links))
-                else manyFactory(Chunk.from(locations))
-            end if
-        catch
-            case _: Exception =>
-                // Single object - Location
-                oneFactory(summon[Schema[LspHandler.Location]].serializeRead(captured))
-        end try
+        // Untagged values need their shape before selecting a decoder. LSP already holds a Structure.Value here;
+        // its reader returns that same tree, without capturing or allocating a second one.
+        given Frame = reader.frame
+        readLocationFamilyFromSv(
+            summon[Schema[Structure.Value]].serializeRead(reader),
+            oneFactory,
+            manyFactory,
+            linksFactory
+        ).getOrThrow
     end readLocationFamilyFromReader
 
     private def readLocationFamilyFromSv[T](
@@ -1152,22 +1062,22 @@ private[kyo] object LspContentSchemas:
             case Structure.Value.Sequence(elems) =>
                 if elems.isEmpty then Result.Success(manyFactory(Chunk.empty))
                 else
-                    // Check first element for targetUri (LocationLink indicator)
-                    val isLink = elems.head match
+                    def isLink(value: Structure.Value): Boolean = value match
                         case Structure.Value.Record(fields) =>
-                            fields.iterator.toMap.contains("targetUri")
+                            fields.exists(_._1 == "targetUri")
                         case _ => false
-                    if isLink then
-                        val results = elems.map(e => summon[Schema[LspHandler.LocationLink]].fromStructureValue(e))
+                    val links = isLink(elems.head)
+                    if elems.exists(e => isLink(e) != links) then
+                        Result.Failure(TypeMismatchException(Seq.empty, "Location[] or LocationLink[]", "an array of both"))
+                    else if links then
                         val initAcc: Result[DecodeException, Chunk[LspHandler.LocationLink]] = Result.Success(Chunk.empty)
-                        results.foldLeft(initAcc) { (acc, r) =>
-                            acc.flatMap(chunk => r.map(ll => chunk.append(ll)))
+                        elems.foldLeft(initAcc) { (acc, value) =>
+                            acc.flatMap(chunk => summon[Schema[LspHandler.LocationLink]].fromStructureValue(value).map(chunk.append))
                         }.map(linksFactory)
                     else
-                        val results = elems.map(e => summon[Schema[LspHandler.Location]].fromStructureValue(e))
                         val initAcc: Result[DecodeException, Chunk[LspHandler.Location]] = Result.Success(Chunk.empty)
-                        results.foldLeft(initAcc) { (acc, r) =>
-                            acc.flatMap(chunk => r.map(l => chunk.append(l)))
+                        elems.foldLeft(initAcc) { (acc, value) =>
+                            acc.flatMap(chunk => summon[Schema[LspHandler.Location]].fromStructureValue(value).map(chunk.append))
                         }.map(manyFactory)
                     end if
             case Structure.Value.Record(_) =>

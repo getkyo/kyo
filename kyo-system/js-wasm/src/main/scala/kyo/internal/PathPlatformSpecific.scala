@@ -1301,8 +1301,11 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                 else new NodePathUnsafe("").safe
             else
                 // Don't prepend separator for Windows drive-letter paths (e.g. "C:")
-                val hasDrive = nonEmpty.headOption.exists(s => s.length == 2 && s(1) == ':')
-                val raw      =
+                val hasDrive = Platform.isWindows && nonEmpty.headOption.exists { s =>
+                    s.length == 2 && s(1) == ':' &&
+                    ((s(0) >= 'A' && s(0) <= 'Z') || (s(0) >= 'a' && s(0) <= 'z'))
+                }
+                val raw =
                     if isAbs && !hasDrive then "/" + nonEmpty.mkString("/")
                     else if hasDrive then
                         // A drive designator head is the volume root, matching the JVM/Native
