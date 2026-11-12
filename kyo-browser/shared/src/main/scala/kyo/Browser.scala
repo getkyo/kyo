@@ -1719,6 +1719,19 @@ object Browser:
         }
     end scrollPosition
 
+    /** Returns the document's content extent in CSS pixels, never smaller than the viewport. Settles the dimensions as
+      * [[scrollPosition]] does.
+      */
+    def contentSize(using Frame): Browser.ContentSize < (Browser & Abort[BrowserReadException]) =
+        val valueExpr =
+            "JSON.stringify({width: Math.max(document.documentElement.scrollWidth, window.innerWidth), height: Math.max(document.documentElement.scrollHeight, window.innerHeight)})"
+        SettleRead.settle("contentSize", valueExpr) { raw =>
+            Json.decode[Browser.ContentSize](raw) match
+                case Result.Success(size) => size
+                case _                    => Abort.fail(BrowserProtocolErrorException.decodeFailure("contentSize", raw))
+        }
+    end contentSize
+
     /** Waits until the page DOM stops mutating for the configured quiescence window, then returns. Aborts `BrowserAssertionTimedOutException`
       * when the DOM has not quiesced within `timeout`. Delegates to the strict `MutationSettlement.waitForStable` entry; the entire wait runs
       * inside a single `awaitPromise=true` eval.
@@ -1887,6 +1900,47 @@ object Browser:
                 }
         }
     end textAll
+
+    /** Returns one whitespace-collapsed line per text node whose layout box center lies in the document region, in document order.
+      * Coordinates and dimensions are CSS pixels. Left/top edges are inclusive; right/bottom edges are exclusive, assigning each
+      * node to one region when regions tile the document. Reads the body's DOM text, excluding metadata, zero-area boxes and text
+      * suppressed by CSS display, visibility, opacity or content visibility. Visible descendants and `display:contents` text are retained.
+      * Nonpositive dimensions return an empty string. This is a point-in-time read and does not scroll the document.
+      */
+    def textRegion(x: Int, y: Int, width: Int, height: Int)(using Frame): String < (Browser & Abort[BrowserReadException]) =
+        if width <= 0 || height <= 0 then ""
+        else
+            BrowserEval.evalJs(s"""(() => {
+            const left = $x, top = $y, right = left + $width, bottom = top + $height;
+            const scrollX = window.scrollX, scrollY = window.scrollY;
+            const skipped = ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'];
+            const lines = [];
+            const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+            const range = document.createRange();
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const text = node.textContent.replace(/\\s+/g, ' ').trim();
+                const parent = node.parentElement;
+                if (!text || !parent || skipped.includes(parent.tagName)) continue;
+                const style = getComputedStyle(parent);
+                // Visibility is inherited but can be restored by a descendant; opacity cannot.
+                if (style.visibility === 'hidden' || style.visibility === 'collapse') continue;
+                let hidden = false;
+                for (let ancestor = parent; ancestor; ancestor = ancestor.parentElement) {
+                    const css = ancestor === parent ? style : getComputedStyle(ancestor);
+                    if (css.display === 'none' || (css.display !== 'contents' && (css.opacity === '0' || css.contentVisibility === 'hidden'))) {
+                        hidden = true;
+                        break;
+                    }
+                }
+                if (hidden) continue;
+                range.selectNodeContents(node);
+                const box = range.getBoundingClientRect();
+                if (box.width <= 0 || box.height <= 0) continue;
+                const cx = box.left + box.width / 2 + scrollX, cy = box.top + box.height / 2 + scrollY;
+                if (cx >= left && cx < right && cy >= top && cy < bottom) lines.push(text);
+            }
+            return lines.join('\\n');
+        })()""")
 
     /** Returns the attribute values of all elements matching the selector.
       *
@@ -3924,6 +3978,17 @@ object Browser:
       * `ScreenshotFrame`.
       */
     final case class ScrollPosition(x: Int, y: Int) derives Schema, CanEqual
+
+    /** Document content dimensions in CSS pixels.
+      *
+      * [[contentSize]] settles the extent and includes at least the active document's viewport.
+      *
+      * @param width
+      *   horizontal extent
+      * @param height
+      *   vertical extent
+      */
+    final case class ContentSize(width: Int, height: Int) derives Schema, CanEqual
 
     /** JS heap occupancy in bytes. `used` is live plus not-yet-collected data; `total` is what V8 has reserved. */
     final case class HeapUsage(used: Long, total: Long) derives Schema, CanEqual
