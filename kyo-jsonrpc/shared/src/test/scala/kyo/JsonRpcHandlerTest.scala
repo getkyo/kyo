@@ -713,7 +713,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             @scala.annotation.publicInBinary
             private[kyo] def setter(value: JsonRpcEnvelope, next: Any): JsonRpcEnvelope =
                 strictCodec.setter(value, next)
-            override def structure: Structure.Type = strictCodec.structure
+            override private[kyo] def sourceStructure: Structure.Type = strictCodec.structure
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val cfg = JsonRpcHandler.Config(codec = bothFieldsCodec)
             JsonRpcHandler.init(ta, Seq.empty, cfg).map { a =>

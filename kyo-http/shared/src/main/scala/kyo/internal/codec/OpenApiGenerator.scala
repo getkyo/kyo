@@ -282,7 +282,7 @@ private[kyo] object OpenApiGenerator:
                     description = description.toOption
                 )
 
-            case JsonSchema.Str(minLength, maxLength, pattern, format, description) =>
+            case JsonSchema.Str(minLength, maxLength, pattern, format, description, enumValues) =>
                 HttpOpenApi.SchemaObject(
                     `type` = Some("string"),
                     format = format.toOption,
@@ -291,7 +291,7 @@ private[kyo] object OpenApiGenerator:
                     required = None,
                     additionalProperties = None,
                     oneOf = None,
-                    `enum` = None,
+                    `enum` = if enumValues.isEmpty then None else Some(enumValues),
                     `$ref` = None,
                     minLength = minLength.toOption,
                     maxLength = maxLength.toOption,

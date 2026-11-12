@@ -5,6 +5,10 @@ import kyo.internal.codec.OpenApiGenerator
 
 class OpenApiGeneratorTest extends kyo.BaseHttpTest:
 
+    @kyo.schema.tagOnly
+    enum OpenApiTone derives Schema:
+        case Low, High
+
     "OpenApiGenerator" - {
 
         "empty handlers" in {
@@ -268,6 +272,13 @@ class OpenApiGeneratorTest extends kyo.BaseHttpTest:
         }
 
         "constraint forwarding" - {
+
+            "a tag-only enum keeps its accepted strings" in {
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(Json.jsonSchema[OpenApiTone])
+                assert(obj.`type` == Some("string"))
+                assert(obj.`enum` == Some(List("Low", "High")))
+                assert(obj.oneOf == None)
+            }
 
             "Str: minLength, maxLength, and pattern" in {
                 val js  = Json.JsonSchema.Str(minLength = Present(2), maxLength = Present(50), pattern = Present("[a-z]+"))

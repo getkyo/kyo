@@ -86,6 +86,64 @@ final private[kyo] class WireLayout private (
       */
     def writtenKeys: Chunk[String] = slots.collect { case s if !s.flattened => s.wire }
 
+    private val ownSlots: Map[String, Slot] = slots.collect { case s if s.origin == Origin.Own => s.source -> s }.toMap
+
+    /** `source` as written: each field at its key, a dropped field left out, a flattened one marked, with its record's fields at their
+      * keys at this level, or a sum's keys as this record's convention cases them. `source` is the product as derived, so a field
+      * without a slot of its own is a dropped one. No field type is forced here, so a recursive product projects: a flattened field's
+      * type is renamed when it is first read.
+      */
+    def structure(source: Structure.Type.Product): Structure.Type.Product =
+        val fields = source.fields.flatMap { field =>
+            ownSlots.get(field.name) match
+                case None                         => Chunk.empty
+                case Some(slot) if slot.flattened =>
+                    Chunk(Structure.Field(
+                        slot.wire,
+                        flatType(slot.source, field.fieldType),
+                        field.doc,
+                        field.default,
+                        field.optional,
+                        field.annotations,
+                        flattened = true
+                    ))
+                case Some(slot) if slot.wire != field.name => Chunk(field.copy(name = slot.wire))
+                case Some(_)                               => Chunk(field)
+        }
+        if fields.size == source.fields.size && fields.indices.forall(i => fields(i) eq source.fields(i)) then source
+        else source.copy(fields = fields)
+    end structure
+
+    private def flatType(parent: String, tpe: Structure.Type): Structure.Type =
+        tpe match
+            case child: Structure.Type.Product =>
+                child.copy(fields = child.fields.map(f => f.copy(name = flatWire(parent, f.name).getOrElse(f.name))))
+            case optional: Structure.Type.Optional              => optional.copy(innerType = flatType(parent, optional.innerType))
+            case sum: Structure.Type.Sum if convention.nonEmpty => flatSumType(sum)
+            case other                                          => other
+
+    // Encode writes a flattened sum only through a self-describing codec, which expresses the sum's first representation, so the keys
+    // the parent's convention cases are that representation's.
+    private def flatSumType(sum: Structure.Type.Sum): Structure.Type.Sum =
+        def casedFields(tpe: Structure.Type): Structure.Type =
+            tpe match
+                case p: Structure.Type.Product => p.copy(fields = p.fields.map(f => f.copy(name = casedFlatSumKey(f.name))))
+                case other                     => other
+        def casedKeys(representation: Schema.UnionRepresentation): Schema.UnionRepresentation =
+            representation match
+                case Schema.UnionRepresentation.Internal(tagKey)             => Schema.UnionRepresentation.Internal(casedFlatSumKey(tagKey))
+                case Schema.UnionRepresentation.Adjacent(tagKey, contentKey) =>
+                    Schema.UnionRepresentation.Adjacent(casedFlatSumKey(tagKey), casedFlatSumKey(contentKey))
+                case other => other
+        val variants = sum.representation match
+            case Schema.UnionRepresentation.External =>
+                sum.variants.map(v => v.copy(name = casedFlatSumKey(v.name)))
+            case Schema.UnionRepresentation.Internal(_) | Schema.UnionRepresentation.Untagged =>
+                sum.variants.map(v => v.copy(variantType = casedFields(v.variantType)))
+            case _ => sum.variants
+        sum.copy(variants = variants, representation = casedKeys(sum.representation), fallbacks = sum.fallbacks.map(casedKeys))
+    end flatSumType
+
     /** A flattened sum whose variant writes, beside its tag, a key the parent's own fields write, as the problem the first write or read
       * raises with its own `Frame`, before anything is written: the variant schemas cannot be read while the parent is built. A
       * catch-all variant, and a variant that is itself a sum with one, holds the input it was read from, the parent's keys included,
@@ -128,8 +186,8 @@ private[kyo] object WireLayout:
         case Flattened(parent: String, childKey: String)
     end Origin
 
-    /** One key a record writes. `flattened` marks a field written as its record's keys rather than under `wire` on a self-describing
-      * format; it keeps its slot because a format that cannot flatten writes it nested, under `wire`.
+    /** One key a record writes. `flattened` marks a field written as its record's keys rather than under `wire`; it keeps its slot
+      * because the record is materialized nested, under `wire`, before its keys move to this level.
       */
     final case class Slot(
         source: String,

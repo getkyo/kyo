@@ -10,9 +10,10 @@ import scala.annotation.publicInBinary
   */
 @publicInBinary private[kyo] object JsonSchemaEnricher:
 
-    /** Enriches a JsonSchema.Obj with runtime metadata: doc, field docs, field deprecations, examples, and constraints.
+    /** Enriches a JsonSchema.Obj with runtime metadata: doc, field docs, field deprecations and examples.
       *
-      * Separated from the inline enrichJsonSchema method so that all operations on the Obj are typed at the concrete JsonSchema.Obj level.
+      * The properties are the keys the schema writes, while docs and deprecations name a field by its source name or by the name a
+      * rename gave it; `renamedFields` maps each source field whose key is not its name to that key.
       */
     def enrichObj(
         obj: Json.JsonSchema.Obj,
@@ -20,54 +21,93 @@ import scala.annotation.publicInBinary
         fieldDocs: Map[Seq[String], String],
         fieldDeprecated: Map[Seq[String], String],
         examples: Chunk[Structure.Value],
-        constraints: Seq[Schema.Constraint] = Seq.empty,
-        droppedFields: Set[String] = Set.empty,
         renamedFields: Map[String, String] = Map.empty
     ): Json.JsonSchema.Obj =
+        def key(source: String): String  = renamedFields.getOrElse(source, source)
+        val docs                         = fieldDocs.collect { case (Seq(source), d) => key(source) -> d }
+        val deprecated                   = fieldDeprecated.keySet.collect { case Seq(source) => key(source) }
         val withDoc: Json.JsonSchema.Obj =
             if doc.isEmpty then obj else obj.copy(description = doc)
         val withExamples: Json.JsonSchema.Obj =
             if examples.isEmpty then withDoc else withDoc.copy(examples = examples)
-        val withMeta: Json.JsonSchema.Obj =
-            if fieldDocs.isEmpty && fieldDeprecated.isEmpty then withExamples
-            else
-                withExamples.copy(
-                    properties = withExamples.properties.map { (name, schema) =>
-                        val docced =
-                            fieldDocs.get(Seq(name)) match
-                                case Some(d) => addDescription(schema, d)
-                                case None    => schema
-                        val depped =
-                            if fieldDeprecated.contains(Seq(name)) then addDeprecated(docced)
-                            else docced
-                        (name, depped)
-                    }
-                )
-        val withConstraints: Json.JsonSchema.Obj =
-            if constraints.isEmpty then withMeta
-            else
-                withMeta.copy(
-                    properties = withMeta.properties.map { (name, schema) =>
-                        val matching = constraints.filter(_.segments.lastOption.contains(name))
-                        val enriched = matching.foldLeft(schema)((s, c) => applyConstraint(s, c))
-                        (name, enriched)
-                    }
-                )
-        val withTransforms: Json.JsonSchema.Obj =
-            if droppedFields.isEmpty && renamedFields.isEmpty then withConstraints
-            else
-                // Filter out dropped fields from properties
-                val filteredProps = withConstraints.properties.filterNot((name, _) => droppedFields.contains(name))
-                // Rename fields in properties
-                val renamedProps = filteredProps.map { (name, schema) =>
-                    renamedFields.getOrElse(name, name) -> schema
+        if docs.isEmpty && deprecated.isEmpty then withExamples
+        else
+            withExamples.copy(
+                properties = withExamples.properties.map { (name, schema) =>
+                    val docced =
+                        docs.get(name) match
+                            case Some(d) => addDescription(schema, d)
+                            case None    => schema
+                    val depped =
+                        if deprecated.contains(name) then addDeprecated(docced)
+                        else docced
+                    (name, depped)
                 }
-                // Filter and rename in required list
-                val filteredRequired = withConstraints.required.filterNot(droppedFields.contains)
-                val renamedRequired  = filteredRequired.map(name => renamedFields.getOrElse(name, name))
-                withConstraints.copy(properties = renamedProps, required = renamedRequired)
-        withTransforms
+            )
+        end if
     end enrichObj
+
+    /** Each constraint a schema's JSON schema states, with the keys from the root to the node it applies to.
+      *
+      * A derived product's fields come first, each field's own schema's constraints under the field's key, then the schema's own
+      * constraints, so a bound declared on the holder is applied after the one its field's type declares. A field schema already
+      * entered on the way down is not entered again, which ends a recursive type.
+      */
+    def keyedConstraints(schema: Schema[?]): Chunk[(List[String], Schema.Constraint)] =
+        def loop(schema: Schema[?], entered: List[Schema[?]]): Chunk[(List[String], Schema.Constraint)] =
+            val fields = schema.fieldSchemas().flatMap { (source, field) =>
+                if entered.exists(_ eq field) then Chunk.empty
+                else
+                    ownSlot(schema, source) match
+                        case Present(slot) =>
+                            loop(field, field :: entered).map((keys, c) => (underSlot(schema, slot, keys), c))
+                        case Absent => Chunk.empty
+            }
+            val own = Chunk.from(schema.constraints).flatMap(c => Chunk.from(keysOf(schema, c.segments.toList).map((_, c))))
+            fields ++ own
+        end loop
+        loop(schema, List(schema))
+    end keyedConstraints
+
+    /** Applies a constraint to the node `keys` leads to from `schema`, through the properties of each object on the way. */
+    def placeConstraint(schema: Json.JsonSchema, keys: List[String], constraint: Schema.Constraint): Json.JsonSchema =
+        keys match
+            case Nil         => applyConstraint(schema, constraint)
+            case key :: rest =>
+                schema match
+                    case obj: Json.JsonSchema.Obj =>
+                        obj.copy(properties = obj.properties.map { (name, property) =>
+                            if name == key then (name, placeConstraint(property, rest, constraint)) else (name, property)
+                        })
+                    case other => other
+    end placeConstraint
+
+    // The keys a path of source names is written under. A laid-out product names each field by its slot and continues in the field's
+    // own schema; a field it has no slot for was dropped, so the path leads nowhere. Past a schema that lays out no fields, the source
+    // names are the keys.
+    private def keysOf(schema: Schema[?], path: List[String]): Maybe[List[String]] =
+        path match
+            case Nil            => Present(Nil)
+            case source :: rest =>
+                ownSlot(schema, source) match
+                    case Present(slot) =>
+                        val inner = schema.fieldSchemas().find(_._1 == source) match
+                            case Some((_, field)) => keysOf(field, rest)
+                            case None             => Present(rest)
+                        inner.map(keys => underSlot(schema, slot, keys))
+                    case Absent =>
+                        if schema.wireLayout.slots.isEmpty then Present(path) else Absent
+    end keysOf
+
+    private def ownSlot(schema: Schema[?], source: String): Maybe[WireLayout.Slot] =
+        Maybe.fromOption(schema.wireLayout.slots.find(s => s.origin == WireLayout.Origin.Own && s.source == source))
+
+    // Flattened records contribute their keys at the parent; other fields keep their own key before their nested path.
+    private def underSlot(schema: Schema[?], slot: WireLayout.Slot, keys: List[String]): List[String] =
+        keys match
+            case key :: rest if slot.flattened => schema.wireLayout.flatWire(slot.source, key).getOrElse(key) :: rest
+            case _ if slot.flattened           => keys
+            case _                             => slot.wire :: keys
 
     /** Applies a single Constraint to a JsonSchema property, returning the enriched schema.
       *

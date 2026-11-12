@@ -194,24 +194,19 @@ object IonSchema:
                     if seen.contains(product.name) then TypeExpr.AnyType
                     else
                         val nextSeen = seen + product.name
-                        // The schema's keys name its own record's fields; a nested record is written by its own schema.
-                        val root    = path.isEmpty
-                        val renamed = if root then schema.wireLayout.renamedKeys else Map.empty[String, String]
-                        val dropped = if root then schema.droppedFields else Set.empty[String]
+                        // A field is named by its key; a root field's constraints are found under its source name.
+                        val sources = if path.isEmpty then schema.wireLayout.fieldReverse else Map.empty[String, String]
                         val fields  =
-                            product.fields.flatMap { field =>
-                                if dropped.contains(field.name) then Chunk.empty
-                                else
-                                    val wireName  = renamed.getOrElse(field.name, field.name)
-                                    val fieldPath = path :+ field.name
-                                    val fieldType =
-                                        fromStructure(field.fieldType, constraints, fieldPath, schema, config, nextSeen)
-                                    Chunk(Field(
-                                        wireName,
-                                        applyAnnotations(fieldType, field.annotations, config),
-                                        field.default.isEmpty && !field.optional,
-                                        field.doc
-                                    ))
+                            product.fields.map { field =>
+                                val fieldPath = path :+ sources.getOrElse(field.name, field.name)
+                                val fieldType =
+                                    fromStructure(field.fieldType, constraints, fieldPath, schema, config, nextSeen)
+                                Field(
+                                    field.name,
+                                    applyAnnotations(fieldType, field.annotations, config),
+                                    field.default.isEmpty && !field.optional,
+                                    field.doc
+                                )
                             }
                         TypeExpr.Struct(fields, config.closedStructs)
                 case sum: Structure.Type.Sum =>

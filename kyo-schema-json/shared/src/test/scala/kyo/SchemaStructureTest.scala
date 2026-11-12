@@ -13,6 +13,71 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
+    "JSON Schema uses nested wire names" in {
+        case class Named(@schema.rename("wire_name") sourceName: String) derives Schema
+        case class Holder(inner: Named) derives Schema
+        val value = Holder(Named("Ada"))
+        assert(Json.encode(value) == """{"inner":{"wire_name":"Ada"}}""")
+        assert(Json.JsonSchema.from[Holder] == JsonSchema.Obj(
+            List("inner" -> JsonSchema.Obj(List("wire_name" -> JsonSchema.Str()), List("wire_name"))),
+            List("inner")
+        ))
+    }
+
+    "tag-only descriptions enumerate the strings accepted by the codec" in {
+        assert(Json.encode(WCHigh: WCLevel) == "\"hi\"")
+        assert(Json.encode(Json.jsonSchema[WCLevel]) == """{"type":"string","enum":["WCLow","hi"]}""")
+    }
+
+    "an abstract metadata parameter needs no codec when no field uses it" in {
+        assert(scala.compiletime.testing.typeChecks("""
+            import kyo.*
+            case class WirePhantom[A](name: String)
+            object WirePhantom:
+                given [A]: Schema[WirePhantom[A]] = Schema.derived
+        """))
+    }
+
+    "duration metadata distinguishes nanoseconds from an untyped count" in {
+        assert(!Structure.Type.compatible(Schema.longSchema.structure, Schema.kyoDurationSchema.structure))
+    }
+
+    "a configured product's description uses the keys its codec writes" in {
+        val schema = Schema[MTPerson].rename("name", "full_name").drop("age")
+        assert(schema.encodeString[Json](MTPerson("Alice", 30)) == """{"full_name":"Alice"}""")
+        schema.structure match
+            case product: Structure.Type.Product => assert(product.fields.map(_.name) == Chunk("full_name"))
+            case other                           => fail(s"Expected product, got $other")
+        assert(JsonSchema.fromStructure(schema.structure) ==
+            JsonSchema.Obj(List("full_name" -> JsonSchema.Str()), List("full_name")))
+    }
+
+    "a flattened product description uses the keys its codec writes" in {
+        import SchemaStructureTest.*
+
+        val schema = Schema[WireOrder].flatten(_.billingAddress).renameAllFields(Schema.NameCase.SnakeCase)
+        assert(schema.encodeString[Json](WireOrder(1, WireAddress("Oak", "Porto"))) ==
+            """{"id":1,"street_name":"Oak","city":"Porto"}""")
+        assert(JsonSchema.fromStructure(schema.structure) == JsonSchema.Obj(
+            List("id" -> JsonSchema.Integer(), "street_name" -> JsonSchema.Str(), "city" -> JsonSchema.Str()),
+            List("id", "street_name", "city")
+        ))
+    }
+
+    "a flattened optional product keeps its keys optional" in {
+        import SchemaStructureTest.*
+
+        case class MaybeOrder(id: Int, billingAddress: Maybe[WireAddress]) derives Schema
+        val schema = Schema[MaybeOrder].flatten(_.billingAddress).renameAllFields(Schema.NameCase.SnakeCase)
+        assert(schema.encodeString[Json](MaybeOrder(1, Absent)) == """{"id":1}""")
+        assert(schema.encodeString[Json](MaybeOrder(1, Present(WireAddress("Oak", "Porto")))) ==
+            """{"id":1,"street_name":"Oak","city":"Porto"}""")
+        assert(JsonSchema.fromStructure(schema.structure) == JsonSchema.Obj(
+            List("id" -> JsonSchema.Integer(), "street_name" -> JsonSchema.Str(), "city" -> JsonSchema.Str()),
+            List("id")
+        ))
+    }
+
     private val highBitsUuidText = "fedcba98-7654-3210-89ab-cdef01234567"
 
     private def parseUuid(value: String): UUID =
@@ -1535,6 +1600,27 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
                 case other                 => fail(s"Expected Sum but got $other")
             end match
         }
+        "resultSchema is written with its tag under $type and its value under value" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            assert(schema.encodeString[Json](Result.succeed(1)) == """{"$type":"success","value":1}""")
+            val structure = sumOf(schema.structure)
+            assert(structure.representation == Schema.UnionRepresentation.Adjacent("$type", "value"))
+            assert(wireTags(structure) == Chunk(
+                "success" -> Maybe(Structure.VariantTag.Name("success")),
+                "failure" -> Maybe(Structure.VariantTag.Name("failure")),
+                "panic"   -> Maybe(Structure.VariantTag.Name("panic"))
+            ))
+        }
+        "eitherSchema is written with its tag under $type and its value under value" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            assert(schema.encodeString[Json](Left(1)) == """{"$type":"Left","value":1}""")
+            val structure = sumOf(schema.structure)
+            assert(structure.representation == Schema.UnionRepresentation.Adjacent("$type", "value"))
+            assert(wireTags(structure) == Chunk(
+                "Left"  -> Maybe(Structure.VariantTag.Name("Left")),
+                "Right" -> Maybe(Structure.VariantTag.Name("Right"))
+            ))
+        }
     }
 
     "Map/Dict structure" - {
@@ -1999,6 +2085,48 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
+    // type arguments of a derived schema
+    // =========================================================================
+
+    "type arguments of a derived schema" - {
+        import SchemaStructureTest.*
+
+        "a type argument with a Schema records that schema's structure" in {
+            summon[Schema[Keyed[Int, String]]].structure match
+                case p: Structure.Type.Product => assert(p.typeParams(1) eq summon[Schema[String]].structure)
+                case other                     => fail(s"Expected Product but got $other")
+            end match
+        }
+        "a type argument with a Tag and no Schema is open under its tag" in {
+            summon[Schema[Keyed[Int, String]]].structure match
+                case p: Structure.Type.Product =>
+                    p.typeParams(0) match
+                        case Structure.Type.Open(tag) => assert(tag =:= Tag[Int].asInstanceOf[Tag[Any]])
+                        case other                    => fail(s"Expected Open but got $other")
+                case other => fail(s"Expected Product but got $other")
+            end match
+        }
+        "a type argument with neither a Schema nor a Tag is open under Tag[Any]" in {
+            summon[Schema[Boxed[Int]]].structure match
+                case p: Structure.Type.Product =>
+                    p.typeParams(0) match
+                        case Structure.Type.Open(tag) => assert(tag =:= Tag[Any])
+                        case other                    => fail(s"Expected Open but got $other")
+                case other => fail(s"Expected Product but got $other")
+            end match
+        }
+        "a sum's type argument with a Tag and no Schema is open under its tag" in {
+            summon[Schema[Marked[Int]]].structure match
+                case s: Structure.Type.Sum =>
+                    s.typeParams(0) match
+                        case Structure.Type.Open(tag) => assert(tag =:= Tag[Int].asInstanceOf[Tag[Any]])
+                        case other                    => fail(s"Expected Open but got $other")
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+    }
+
+    // =========================================================================
     // transform structure propagation
     // =========================================================================
 
@@ -2039,8 +2167,12 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
             assert(Schema.kyoInstantSchema.structure.eq(Schema.instantSchema.structure))
         }
 
-        "kyoDurationSchema.structure is the same reference as longSchema.structure" in {
-            assert(Schema.kyoDurationSchema.structure.eq(Schema.longSchema.structure))
+        "kyoDurationSchema.structure is a Long under Tag[kyo.Duration]" in {
+            Schema.kyoDurationSchema.structure match
+                case Structure.Type.Primitive(Structure.PrimitiveKind.Long, tag) =>
+                    assert(tag =:= Tag[kyo.Duration].asInstanceOf[Tag[Any]])
+                case other => fail(s"Expected Primitive(Long) but got $other")
+            end match
         }
 
     }
@@ -2051,8 +2183,8 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
 
     "transform Structure.compatible" - {
 
-        "Structure.Type.compatible(longSchema.structure, kyoDurationSchema.structure) returns true" in {
-            assert(Structure.Type.compatible(Schema.longSchema.structure, Schema.kyoDurationSchema.structure))
+        "Structure.Type.compatible(longSchema.structure, kyoDurationSchema.structure) returns false: the tags differ" in {
+            assert(!Structure.Type.compatible(Schema.longSchema.structure, Schema.kyoDurationSchema.structure))
         }
 
         "Structure.Type.compatible(instantSchema.structure, kyoInstantSchema.structure) returns true" in {
@@ -2163,6 +2295,199 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
                 case other => fail(s"Expected Sum but got $other")
         }
 
+    }
+
+    private def fieldNames(structure: Structure.Type)(using Frame, kyo.test.AssertScope): Chunk[String] =
+        structure match
+            case p: Structure.Type.Product => p.fields.map(_.name)
+            case other                     => fail(s"Expected Product but got $other")
+
+    private def sumOf(structure: Structure.Type)(using Frame, kyo.test.AssertScope): Structure.Type.Sum =
+        structure match
+            case s: Structure.Type.Sum => s
+            case other                 => fail(s"Expected Sum but got $other")
+
+    private def wireTags(structure: Structure.Type)(using Frame, kyo.test.AssertScope): Chunk[(String, Maybe[Structure.VariantTag])] =
+        sumOf(structure).variants.map(v => v.name -> v.wireTag)
+
+    "the structure describes the wire" - {
+        import SchemaStructureTest.*
+
+        val jsonCapabilities     = Codec.Capabilities(canWriteTopLevelNonObject = true)
+        val protobufCapabilities = Codec.Capabilities(canWriteTopLevelNonObject = false)
+        val circle: WireShape    = WireShape.BigCircle(1.0)
+
+        "a renamed field is named by its key" in {
+            val schema = Schema[WireInner]
+            assert(schema.encodeString[Json](WireInner("a", 1)) == """{"wire_name":"a","otherField":1}""")
+            assert(fieldNames(schema.structure) == Chunk("wire_name", "otherField"))
+            assert(fieldNames(schema.sourceStructure) == Chunk("scalaName", "otherField"))
+        }
+
+        "a field cased by renameAllFields is named by its key" in {
+            val schema = Schema.derived[WireCased].renameAllFields(Schema.NameCase.SnakeCase)
+            assert(schema.encodeString[Json](WireCased("a", "b")) == """{"first_name":"a","last_name":"b"}""")
+            assert(fieldNames(schema.structure) == Chunk("first_name", "last_name"))
+            assert(fieldNames(schema.sourceStructure) == Chunk("firstName", "lastName"))
+        }
+
+        "a dropped field is left out" in {
+            val schema = Schema[WireDropped].drop("secret")
+            assert(schema.encodeString[Json](WireDropped(1, "s")) == """{"kept":1}""")
+            assert(fieldNames(schema.structure) == Chunk("kept"))
+            assert(fieldNames(schema.sourceStructure) == Chunk("kept", "secret"))
+        }
+
+        "a field renamed by the builder is named by its key" in {
+            val schema = Schema[WireDropped].rename("kept", "kept_value")
+            assert(schema.encodeString[Json](WireDropped(1, "s")) == """{"kept_value":1,"secret":"s"}""")
+            assert(fieldNames(schema.structure) == Chunk("kept_value", "secret"))
+        }
+
+        "a flattened field is marked and its record names the keys it writes at the parent" in {
+            val schema = Schema[WireOrder].flatten(_.billingAddress)
+            val order  = WireOrder(1, WireAddress("Main", "Lisbon"))
+            assert(schema.encodeString[Json](order) == """{"id":1,"streetName":"Main","city":"Lisbon"}""")
+            val fields = schema.structure match
+                case p: Structure.Type.Product => p.fields
+                case other                     => fail(s"Expected Product but got $other")
+            assert(fields.map(f => f.name -> f.flattened) == Chunk("id" -> false, "billingAddress" -> true))
+            assert(fieldNames(fields(1).fieldType) == Chunk("streetName", "city"))
+        }
+
+        "a flattened field's keys follow the parent's convention" in {
+            val schema = Schema[WireOrder].flatten(_.billingAddress).renameAllFields(Schema.NameCase.SnakeCase)
+            val order  = WireOrder(1, WireAddress("Main", "Lisbon"))
+            assert(schema.encodeString[Json](order) == """{"id":1,"street_name":"Main","city":"Lisbon"}""")
+            val fields = schema.structure match
+                case p: Structure.Type.Product => p.fields
+                case other                     => fail(s"Expected Product but got $other")
+            assert(fields.map(f => f.name -> f.flattened) == Chunk("id" -> false, "billing_address" -> true))
+            assert(fieldNames(fields(1).fieldType) == Chunk("street_name", "city"))
+        }
+
+        "a configured schema nested in a field carries its configuration" in {
+            assert(Json.encode(WireCasedHolder(WireCased("a", "b"))) == """{"cased":{"first_name":"a","last_name":"b"}}""")
+            val fields = Schema[WireCasedHolder].structure match
+                case p: Structure.Type.Product => p.fields
+                case other                     => fail(s"Expected Product but got $other")
+            assert(fieldNames(fields(0).fieldType) == Chunk("first_name", "last_name"))
+            assert(Json.encode(WireOuter(WireInner("a", 1))) == """{"inner":{"wire_name":"a","otherField":1}}""")
+            val outer = Schema[WireOuter].structure match
+                case p: Structure.Type.Product => p.fields
+                case other                     => fail(s"Expected Product but got $other")
+            assert(fieldNames(outer(0).fieldType) == Chunk("wire_name", "otherField"))
+        }
+
+        "a sum written by its variant's key is External, each variant tagged by its name" in {
+            val structure = sumOf(Schema[WireShape].structure)
+            assert(Schema[WireShape].encodeString[Json](circle) == """{"BigCircle":{"radiusLength":1.0}}""")
+            assert(structure.representation == Schema.UnionRepresentation.External)
+            assert(structure.fallbacks.isEmpty)
+            assert(structure.unionAmbiguityPolicy == Schema.UnionAmbiguity.Strict)
+            assert(wireTags(structure) == Chunk(
+                "BigCircle"   -> Maybe(Structure.VariantTag.Name("BigCircle")),
+                "SmallSquare" -> Maybe(Structure.VariantTag.Name("SmallSquare"))
+            ))
+        }
+
+        "a tag-only sum renamed by convention keeps each variant's name and tags it by its key" in {
+            val schema = Schema[WireTone].renameAllVariants(Schema.NameCase.SnakeCase)
+            assert(schema.encodeString[Json](WireTone.FirstTone) == "\"first_tone\"")
+            val structure = sumOf(schema.structure)
+            assert(structure.representation == Schema.UnionRepresentation.TagOnly)
+            assert(wireTags(structure) == Chunk(
+                "FirstTone"  -> Maybe(Structure.VariantTag.Name("first_tone")),
+                "SecondTone" -> Maybe(Structure.VariantTag.Name("second_tone"))
+            ))
+            assert(wireTags(schema.sourceStructure) == Chunk(
+                "FirstTone"  -> Maybe(Structure.VariantTag.Name("FirstTone")),
+                "SecondTone" -> Maybe(Structure.VariantTag.Name("SecondTone"))
+            ))
+        }
+
+        "a discriminated sum says its tag key and the tag each variant writes" in {
+            val schema = Schema[WireShape].discriminator("type").renameAllVariants(Schema.NameCase.SnakeCase)
+            assert(schema.encodeString[Json](circle) == """{"type":"big_circle","radiusLength":1.0}""")
+            val structure = sumOf(schema.structure)
+            assert(structure.representation == Schema.UnionRepresentation.Internal("type"))
+            assert(wireTags(structure) == Chunk(
+                "BigCircle"   -> Maybe(Structure.VariantTag.Name("big_circle")),
+                "SmallSquare" -> Maybe(Structure.VariantTag.Name("small_square"))
+            ))
+        }
+
+        "an adjacent, untagged, tuple-tagged and tuple-flat sum each say how they are written" in {
+            assert(Schema[WireShape].adjacent("t", "c").encodeString[Json](circle) == """{"t":"BigCircle","c":{"radiusLength":1.0}}""")
+            assert(sumOf(Schema[WireShape].adjacent("t", "c").structure).representation == Schema.UnionRepresentation.Adjacent("t", "c"))
+            assert(Schema[WireShape].untagged.encodeString[Json](circle) == """{"radiusLength":1.0}""")
+            assert(sumOf(Schema[WireShape].untagged.structure).representation == Schema.UnionRepresentation.Untagged)
+            assert(Schema[WireShape].tupleTagged.encodeString[Json](circle) == """["BigCircle",{"radiusLength":1.0}]""")
+            assert(sumOf(Schema[WireShape].tupleTagged.structure).representation == Schema.UnionRepresentation.Tuple)
+            assert(Schema[WireShape].tupleFlat.encodeString[Json](circle) == """["BigCircle",1.0]""")
+            assert(sumOf(Schema[WireShape].tupleFlat.structure).representation == Schema.UnionRepresentation.TupleFlat)
+        }
+
+        "a numbered sum tags each variant by its number" in {
+            val schema = Schema[WireShape].discriminator("type").variantNumbers("BigCircle" -> 1, "SmallSquare" -> 2)
+            assert(schema.encodeString[Json](circle) == """{"type":1,"radiusLength":1.0}""")
+            assert(wireTags(schema.structure) == Chunk(
+                "BigCircle"   -> Maybe(Structure.VariantTag.Number(1)),
+                "SmallSquare" -> Maybe(Structure.VariantTag.Number(2))
+            ))
+        }
+
+        "the catch-all has no tag of its own" in {
+            val schema = Schema[WireEvent].discriminator("type").catchAll("WireOther")
+            val input  = """{"type":"custom","x":1}"""
+            val read   = schema.decodeString[Json](input).getOrThrow
+            read match
+                case WireOther(tag, _) => assert(tag == "custom")
+                case other             => fail(s"Expected the catch-all, got $other")
+            assert(schema.encodeString[Json](read) == input)
+            assert(wireTags(schema.structure) == Chunk(
+                "WireClick" -> Maybe(Structure.VariantTag.Name("WireClick")),
+                "WireOther" -> Absent
+            ))
+        }
+
+        "a chain of representations is the head and its fallbacks" in {
+            val schema = Schema[WireShape].representations(
+                Schema.UnionRepresentation.TupleFlat,
+                Schema.UnionRepresentation.Adjacent("t", "c")
+            )
+            val structure = sumOf(schema.structure)
+            assert(structure.representation == Schema.UnionRepresentation.TupleFlat)
+            assert(structure.fallbacks == Chunk(Schema.UnionRepresentation.Adjacent("t", "c")))
+            assert(structure.representationFor(jsonCapabilities) == Maybe(Schema.UnionRepresentation.TupleFlat))
+            assert(structure.representationFor(protobufCapabilities) == Maybe(Schema.UnionRepresentation.Adjacent("t", "c")))
+            assert(structure.representationFor(protobufCapabilities) == schema.representationFor(protobufCapabilities))
+        }
+
+        "an untagged sum says its ambiguity policy" in {
+            val schema = Schema[WireShape].untagged.unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)
+            assert(sumOf(schema.structure).unionAmbiguityPolicy == Schema.UnionAmbiguity.FirstMatch)
+        }
+
+        "a union type is untagged" in {
+            val schema = summon[Schema[Int | String]]
+            assert(schema.encodeString[Json](1) == "1")
+            assert(sumOf(schema.structure).representation == Schema.UnionRepresentation.Untagged)
+        }
+
+        "a sum's field convention does not reach its variants' fields" in {
+            val schema = Schema[WireShape].renameAllFields(Schema.NameCase.SnakeCase)
+            assert(schema.encodeString[Json](circle) == """{"BigCircle":{"radiusLength":1.0}}""")
+            val variant = sumOf(schema.structure).variants(0)
+            assert(fieldNames(variant.variantType) == Chunk("radiusLength"))
+        }
+
+        "an installed structure is reported as given" in {
+            val installed = Schema[WireInner].sourceStructure
+            val schema    = Schema[WireInner].withStructure(installed)
+            assert(schema.structure eq installed)
+            assert(schema.encodeString[Json](WireInner("a", 1)) == """{"wire_name":"a","otherField":1}""")
+        }
     }
 
     "missing Schema produces precise error" - {
@@ -2368,4 +2693,42 @@ object SchemaStructureTest:
 
     final case class DroppedHolder(ab: Int, secret: String, v: Structure.Value) derives CanEqual, Schema
     final case class DefaultedHolder(ab: Int, v: Structure.Value) derives CanEqual, Schema
+
+    final case class WireInner(@schema.rename("wire_name") scalaName: String, otherField: Int) derives CanEqual, Schema
+    final case class WireOuter(inner: WireInner) derives CanEqual, Schema
+
+    final case class WireCased(firstName: String, lastName: String) derives CanEqual
+    given wireCasedSchema: Schema[WireCased] = Schema.derived[WireCased].renameAllFields(Schema.NameCase.SnakeCase)
+    final case class WireCasedHolder(cased: WireCased) derives CanEqual, Schema
+
+    final case class WireDropped(kept: Int, secret: String) derives CanEqual, Schema
+
+    final case class WireAddress(streetName: String, city: String) derives CanEqual, Schema
+    final case class WireOrder(id: Int, billingAddress: WireAddress) derives CanEqual, Schema
+
+    enum WireShape derives CanEqual, Schema:
+        case BigCircle(radiusLength: Double)
+        case SmallSquare(sideLength: Double)
+    end WireShape
+
+    @schema.tagOnly
+    enum WireTone derives CanEqual, Schema:
+        case FirstTone, SecondTone
+    end WireTone
+
+    sealed trait WireEvent derives CanEqual, Schema
+    final case class WireClick(x: Int)                              extends WireEvent derives CanEqual
+    final case class WireOther(tag: String, input: Structure.Value) extends WireEvent derives CanEqual
+
+    // Derived by hand over abstract type arguments: K has a Tag and no Schema, V a Schema, A neither.
+    final case class Keyed[K, V](name: String, values: List[V]) derives CanEqual
+    object Keyed:
+        given [K, V](using Tag[K], Schema[V]): Schema[Keyed[K, V]] = Schema.derived
+    final case class Boxed[A](name: String) derives CanEqual
+    object Boxed:
+        given [A]: Schema[Boxed[A]] = Schema.derived
+    sealed trait Marked[K] derives CanEqual
+    object Marked:
+        final case class One[K](name: String) extends Marked[K]
+        given [K](using Tag[K]): Schema[Marked[K]] = Schema.derived
 end SchemaStructureTest

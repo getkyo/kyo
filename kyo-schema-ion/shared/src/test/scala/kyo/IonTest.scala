@@ -75,7 +75,7 @@ object IonAnnotated:
             @publicInBinary override private[kyo] def setter(value: IonAnnotated, next: Any): IonAnnotated =
                 next.asInstanceOf[IonAnnotated]
 
-            override def structure: Structure.Type = annotatedStructure
+            override private[kyo] def sourceStructure: Structure.Type = annotatedStructure
         end new
     end given
 end IonAnnotated
@@ -138,7 +138,7 @@ object IonSpecAnnotated:
             @publicInBinary override private[kyo] def setter(value: IonSpecAnnotated, next: Any): IonSpecAnnotated =
                 next.asInstanceOf[IonSpecAnnotated]
 
-            override def structure: Structure.Type = annotatedStructure
+            override private[kyo] def sourceStructure: Structure.Type = annotatedStructure
         end new
     end given
 end IonSpecAnnotated
@@ -197,7 +197,7 @@ object IonNestedAnnotated:
             @publicInBinary override private[kyo] def setter(value: IonNestedAnnotated, next: Any): IonNestedAnnotated =
                 next.asInstanceOf[IonNestedAnnotated]
 
-            override def structure: Structure.Type = annotatedStructure
+            override private[kyo] def sourceStructure: Structure.Type = annotatedStructure
         end new
     end given
 end IonNestedAnnotated

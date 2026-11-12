@@ -65,8 +65,8 @@ private[kyo] object JsonRpcEnvelopeSchema:
                     case _                  => value
 
             // Open: the envelope is a dynamic wire union, not a fixed product/sum (see JsonRpcError/JsonRpcId).
-            private lazy val _structure: Structure.Type = Structure.Type.Open(Tag[JsonRpcEnvelope].asInstanceOf[Tag[Any]])
-            override def structure: Structure.Type      = _structure
+            private lazy val _structure: Structure.Type               = Structure.Type.Open(Tag[JsonRpcEnvelope].asInstanceOf[Tag[Any]])
+            override private[kyo] def sourceStructure: Structure.Type = _structure
 
             // --- encode helpers ---
 

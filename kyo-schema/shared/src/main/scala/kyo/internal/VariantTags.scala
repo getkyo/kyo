@@ -2,18 +2,7 @@ package kyo.internal
 
 import kyo.*
 import kyo.Codec.Reader
-
-/** A variant's tag on the wire: a name, or a number for a sum whose variants are numbered. A number is never carried as text. */
-private[kyo] enum VariantTag derives CanEqual:
-    case Name(value: String)
-    case Number(value: Long)
-
-    /** The tag as it reads in a failure message. */
-    def show: String =
-        this match
-            case Name(value)   => value
-            case Number(value) => value.toString
-end VariantTag
+import kyo.Structure.VariantTag
 
 /** A sum's tags, one table per schema: each variant's tag, the aliases that also read as it, and the kind the wire carries.
   *
@@ -29,7 +18,7 @@ final private[kyo] class VariantTags private (
     val entries: Chunk[VariantTags.Entry],
     val numbered: Boolean,
     catchAll: Maybe[CatchAll],
-    structure: => Structure.Type,
+    source: => Structure.Type,
     deferred: => Maybe[VariantTags.Problem]
 ):
     private val byTag: Map[VariantTag, String] =
@@ -54,6 +43,10 @@ final private[kyo] class VariantTags private (
 
     /** The tag `scalaName` writes, or `Absent` for the catch-all. */
     def tagOf(scalaName: String): Maybe[VariantTag] = Maybe.fromOption(bySource.get(scalaName))
+
+    /** `source` with each variant's tag from this table. */
+    def structure(source: Structure.Type.Sum): Structure.Type.Sum =
+        source.copy(variants = source.variants.map(v => v.copy(wireTag = tagOf(v.name))))
 
     /** The Scala name of the variant `tag` names, as its primary tag or an alias. */
     def variantOf(tag: VariantTag): Maybe[String] = Maybe.fromOption(byTag.get(tag))
@@ -88,11 +81,11 @@ final private[kyo] class VariantTags private (
 
     /** Whether the catch-all's tag field is an `Int` or a `Long`, read from the variant's structure. */
     lazy val catchAllTagIsNumber: Boolean =
-        (catchAll, structure) match
-            case (Present(c), Structure.Type.Sum(_, _, _, variants, _, _)) if c.tagIndex >= 0 =>
-                variants.find(_.name == c.variant).exists(_.variantType match
-                    case Structure.Type.Product(_, _, _, fields, _) if c.tagIndex < fields.size =>
-                        fields(c.tagIndex).fieldType match
+        (catchAll, source) match
+            case (Present(c), sum: Structure.Type.Sum) if c.tagIndex >= 0 =>
+                sum.variants.find(_.name == c.variant).exists(_.variantType match
+                    case p: Structure.Type.Product if c.tagIndex < p.fields.size =>
+                        p.fields(c.tagIndex).fieldType match
                             case p: Structure.Type.Primitive =>
                                 p.kind == Structure.PrimitiveKind.Int || p.kind == Structure.PrimitiveKind.Long
                             case _ => false
@@ -116,7 +109,7 @@ private[kyo] object VariantTags:
         variantNames: Chunk[String],
         naming: Schema.VariantNaming,
         catchAll: Maybe[CatchAll],
-        structure: => Structure.Type
+        source: => Structure.Type
     ): VariantTags =
         val catchAllName = catchAll.map(_.variant)
         if naming.numbered then
@@ -129,7 +122,7 @@ private[kyo] object VariantTags:
                 entries,
                 numbered = true,
                 catchAll,
-                structure,
+                source,
                 if unnumbered.isEmpty then Absent else Present(Problem.Unnumbered(unnumbered))
             )
         else
@@ -154,7 +147,7 @@ private[kyo] object VariantTags:
                 entries,
                 numbered = false,
                 catchAll,
-                structure,
+                source,
                 collision.map((wire, sources) => Problem.Collision(wire, sources))
             )
         end if

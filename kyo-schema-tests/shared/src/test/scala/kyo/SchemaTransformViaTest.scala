@@ -53,6 +53,15 @@ class SchemaTransformViaTest extends kyo.test.Test[Any]:
             assert(schema.decodeString[Json]("-1") == Result.succeed(STVPort.unsafe(-1)))
         }
 
+        "keeps the source schema's constraints, as it keeps its structure" in {
+            val bounded = Schema[Int].checkMin(i => i)(0.0).checkMax(i => i)(65535.0)
+            val schema  = bounded.transformVia(STVPort.parse)(_.value)
+            assert(schema.constraints == Seq(
+                Schema.Constraint.Min(Seq.empty, 0.0, exclusive = false),
+                Schema.Constraint.Max(Seq.empty, 65535.0, exclusive = false)
+            ))
+        }
+
         "a constructor's rejection carries the decoding caller's Frame, not the given's" in {
             Json.decode[STVCode]("\"\"") match
                 case Result.Failure(e: ConstructorRejectedException) =>

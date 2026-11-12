@@ -82,9 +82,11 @@ private[completion] object StrictSchema:
                             description.map(d => Chunk("description" -> Structure.Value.Str(d))).getOrElse(Chunk.empty)
                     )
                 }
-            case JsonSchema.Str(minLength, maxLength, pattern, format, description) =>
+            case JsonSchema.Str(minLength, maxLength, pattern, format, description, enumValues) =>
                 Result.Success(Structure.Value.Record(
                     Chunk("type" -> Structure.Value.Str("string")) ++
+                        (if enumValues.isEmpty then Chunk.empty
+                         else Chunk("enum" -> Structure.Value.Sequence(Chunk.from(enumValues).map(Structure.Value.Str(_))))) ++
                         minLength.map(n => Chunk("minLength" -> Structure.Value.Integer(n))).getOrElse(Chunk.empty) ++
                         maxLength.map(n => Chunk("maxLength" -> Structure.Value.Integer(n))).getOrElse(Chunk.empty) ++
                         pattern.map(p => Chunk("pattern" -> Structure.Value.Str(p))).getOrElse(Chunk.empty) ++

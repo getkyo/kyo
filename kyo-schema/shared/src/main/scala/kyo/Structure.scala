@@ -82,7 +82,8 @@ object Structure:
       *
       *   - Product: the value must be a Record carrying every non-optional, non-defaulted field;
       *     present fields are checked recursively. Extra record fields are accepted (readers ignore
-      *     them).
+      *     them). A flattened record field is checked against the same record, its keys at this
+      *     level; a flattened sum or optional record is accepted.
       *   - Collection: the value must be a Sequence; elements are checked recursively.
       *   - Primitive: gross kind mismatches are rejected (a boolean where a string was declared);
       *     numeric kinds accept any numeric value shape, Char accepts its string form, Unit accepts
@@ -101,6 +102,10 @@ object Structure:
                         }
                         p.fields.foldLeft(Maybe.empty[String]) { (acc, f) =>
                             if acc.nonEmpty then acc
+                            else if f.flattened then
+                                f.fieldType match
+                                    case child: Type.Product if !f.optional => conform(value, child)
+                                    case _                                  => Absent
                             else
                                 byName.get(f.name) match
                                     case Some(v) =>
@@ -159,6 +164,18 @@ object Structure:
 
     // --- Type hierarchy ---
 
+    /** A variant's tag on the wire: a name, or a number for a sum whose variants are numbered. A number is never carried as text. */
+    enum VariantTag derives CanEqual, Schema:
+        case Name(value: String)
+        case Number(value: Long)
+
+        /** The tag as it reads in a failure message. */
+        def show: String =
+            this match
+                case Name(value)   => value
+                case Number(value) => value.toString
+    end VariantTag
+
     /** Structural type descriptor for a Scala type.
       *
       * Each variant captures the shape of one category of Scala type. The tree is produced at compile time by `Structure.of[A]` and can be
@@ -209,7 +226,7 @@ object Structure:
           * @param typeParams
           *   type arguments if the class is generic
           * @param fields
-          *   the fields in declaration order
+          *   the fields the schema writes, in declaration order: each under its wire key, a dropped field left out
           */
         case class Product(
             name: String,
@@ -246,6 +263,13 @@ object Structure:
           *   the case sub-types
           * @param enumValues
           *   simple enum case names when the sum has no-arg cases
+          * @param representation
+          *   how the sum is written: the variant's key, its tag beside or around the payload, a positional array, the payload alone,
+          *   or the tag alone
+          * @param fallbacks
+          *   the representations after `representation`, in order, that a codec unable to express it writes instead
+          * @param unionAmbiguityPolicy
+          *   whether a payload two variants read is refused or read as the first of them, where no tag tells them apart
           */
         case class Sum(
             name: String,
@@ -253,15 +277,28 @@ object Structure:
             typeParams: Chunk[Structure.Type],
             variants: Chunk[Structure.Variant],
             enumValues: Chunk[String],
-            annotations: Chunk[Any] = Chunk.empty
+            annotations: Chunk[Any] = Chunk.empty,
+            representation: Schema.UnionRepresentation = Schema.UnionRepresentation.External,
+            fallbacks: Chunk[Schema.UnionRepresentation] = Chunk.empty,
+            unionAmbiguityPolicy: Schema.UnionAmbiguity = Schema.UnionAmbiguity.Strict
         ) extends Type:
+
+            /** The representation a codec with `capabilities` writes: the first of `representation` and its `fallbacks` the codec
+              * expresses, or `Absent` when it expresses none, where encode raises `RepresentationUnsupportedException`.
+              */
+            def representationFor(capabilities: Codec.Capabilities): Maybe[Schema.UnionRepresentation] =
+                Schema.representationFor(representation, fallbacks, capabilities)
+
             override def equals(other: Any): Boolean = other match
                 case that: Sum =>
                     name == that.name &&
                     tag.equals(that.tag) &&
                     typeParams.equals(that.typeParams) &&
                     variants.equals(that.variants) &&
-                    enumValues.equals(that.enumValues)
+                    enumValues.equals(that.enumValues) &&
+                    representation == that.representation &&
+                    fallbacks == that.fallbacks &&
+                    unionAmbiguityPolicy == that.unionAmbiguityPolicy
                 case _ => false
             override def hashCode(): Int =
                 var h = name.hashCode
@@ -269,6 +306,9 @@ object Structure:
                 h = h * 31 + typeParams.hashCode
                 h = h * 31 + variants.hashCode
                 h = h * 31 + enumValues.hashCode
+                h = h * 31 + representation.hashCode
+                h = h * 31 + fallbacks.hashCode
+                h = h * 31 + unionAmbiguityPolicy.hashCode
                 h
             end hashCode
         end Sum
@@ -365,11 +405,12 @@ object Structure:
         def compatible(a: Type, b: Type): Boolean = (a, b) match
             case (Product(_, _, _, fa, _), Product(_, _, _, fb, _)) =>
                 fa.size == fb.size && fa.zip(fb).forall { (f1, f2) =>
-                    f1.name == f2.name && compatible(f1.fieldType, f2.fieldType)
+                    f1.name == f2.name && f1.flattened == f2.flattened && compatible(f1.fieldType, f2.fieldType)
                 }
-            case (Sum(_, _, _, va, _, _), Sum(_, _, _, vb, _, _)) =>
-                va.size == vb.size && va.zip(vb).forall { (v1, v2) =>
-                    v1.name == v2.name && compatible(v1.variantType, v2.variantType)
+            case (sa: Sum, sb: Sum) =>
+                sa.representation == sb.representation && sa.fallbacks == sb.fallbacks &&
+                sa.variants.size == sb.variants.size && sa.variants.zip(sb.variants).forall { (v1, v2) =>
+                    v1.name == v2.name && v1.wireTag == v2.wireTag && compatible(v1.variantType, v2.variantType)
                 }
             case (Primitive(_, ta), Primitive(_, tb))                   => ta =:= tb
             case (Collection(_, _, ea), Collection(_, _, eb))           => compatible(ea, eb)
@@ -382,22 +423,25 @@ object Structure:
         def fold[R](tpe: Type)(init: R)(f: (R, Type) => R): R =
             val acc = f(init, tpe)
             tpe match
-                case Product(_, _, _, fields, _)  => fields.foldLeft(acc)((r, field) => fold(field.fieldType)(r)(f))
-                case Sum(_, _, _, variants, _, _) => variants.foldLeft(acc)((r, v) => fold(v.variantType)(r)(f))
-                case Collection(_, _, elem)       => fold(elem)(acc)(f)
-                case Optional(_, _, inner)        => fold(inner)(acc)(f)
-                case Mapping(_, _, k, v, _)       => fold(v)(fold(k)(acc)(f))(f)
-                case _: Primitive                 => acc
-                case _: Open                      => acc
+                case Product(_, _, _, fields, _) => fields.foldLeft(acc)((r, field) => fold(field.fieldType)(r)(f))
+                case sum: Sum                    => sum.variants.foldLeft(acc)((r, v) => fold(v.variantType)(r)(f))
+                case Collection(_, _, elem)      => fold(elem)(acc)(f)
+                case Optional(_, _, inner)       => fold(inner)(acc)(f)
+                case Mapping(_, _, k, v, _)      => fold(v)(fold(k)(acc)(f))(f)
+                case _: Primitive                => acc
+                case _: Open                     => acc
             end match
         end fold
 
-        /** Collect all field paths (for Product types). */
+        /** Collect all field paths (for Product types), as the wire keys a self-describing format writes: a flattened record's keys
+          * sit at its parent's level.
+          */
         def fieldPaths(tpe: Type): Chunk[Chunk[String]] = tpe match
             case Product(_, _, _, fields, _) =>
                 fields.flatMap { f =>
                     val nested = fieldPaths(f.fieldType)
                     if nested.isEmpty then Chunk(Chunk(f.name))
+                    else if f.flattened then nested
                     else nested.map(f.name +: _)
                 }
             case _ => Chunk.empty
@@ -410,7 +454,9 @@ object Structure:
           * case fields and would summon the missing instance. This hand-roll reproduces the derived
           * sum wire and EXCLUDES `annotations` from the `Product` and `Sum` payloads, the same
           * exclusion discipline as `structureFieldSchema` and the `Variant` hand-roll. The five
-          * annotation-free variants derive unchanged, so their wire shape is byte-identical.
+          * annotation-free variants derive unchanged, so their wire shape is byte-identical. A
+          * `Sum` written without its representation, fallbacks or ambiguity policy reads with the
+          * external representation, no fallbacks and the strict policy.
           *
           * Authors update this declaration when a variant is added to the sum, so the wire shape
           * changes only with explicit code review.
@@ -464,7 +510,7 @@ object Structure:
                             next match
                                 case p: Product => p
                                 case _          => value
-                        override def structure: Structure.Type =
+                        override private[kyo] def sourceStructure: Structure.Type =
                             Structure.Type.Open(Tag[Product].asInstanceOf[Tag[Any]])
                     end new
                 end productSchema
@@ -472,7 +518,7 @@ object Structure:
                 private lazy val sumSchema: Schema[Sum] =
                     new Schema[Sum](Seq.empty):
                         @publicInBinary private[kyo] def serializeWrite(value: Sum, writer: Codec.Writer): Unit =
-                            writer.objectStart("Sum", 5)
+                            writer.objectStart("Sum", 8)
                             writer.field("name", kyo.internal.CodecMacro.fieldId("name"))
                             summon[Schema[String]].serializeWrite(value.name, writer)
                             writer.field("tag", kyo.internal.CodecMacro.fieldId("tag"))
@@ -483,36 +529,51 @@ object Structure:
                             summon[Schema[Chunk[Structure.Variant]]].serializeWrite(value.variants, writer)
                             writer.field("enumValues", kyo.internal.CodecMacro.fieldId("enumValues"))
                             summon[Schema[Chunk[String]]].serializeWrite(value.enumValues, writer)
+                            writer.field("representation", kyo.internal.CodecMacro.fieldId("representation"))
+                            summon[Schema[Schema.UnionRepresentation]].serializeWrite(value.representation, writer)
+                            writer.field("fallbacks", kyo.internal.CodecMacro.fieldId("fallbacks"))
+                            summon[Schema[Chunk[Schema.UnionRepresentation]]].serializeWrite(value.fallbacks, writer)
+                            writer.field("unionAmbiguityPolicy", kyo.internal.CodecMacro.fieldId("unionAmbiguityPolicy"))
+                            summon[Schema[Schema.UnionAmbiguity]].serializeWrite(value.unionAmbiguityPolicy, writer)
                             writer.objectEnd()
                         end serializeWrite
                         @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): Sum =
                             discard(reader.objectStart())
-                            var name: String                       = ""
-                            var tag: Tag[Any]                      = Tag[Any]
-                            var typeParams: Chunk[Structure.Type]  = Chunk.empty
-                            var variants: Chunk[Structure.Variant] = Chunk.empty
-                            var enumValues: Chunk[String]          = Chunk.empty
+                            var name: String                                 = ""
+                            var tag: Tag[Any]                                = Tag[Any]
+                            var typeParams: Chunk[Structure.Type]            = Chunk.empty
+                            var variants: Chunk[Structure.Variant]           = Chunk.empty
+                            var enumValues: Chunk[String]                    = Chunk.empty
+                            var representation: Schema.UnionRepresentation   = Schema.UnionRepresentation.External
+                            var fallbacks: Chunk[Schema.UnionRepresentation] = Chunk.empty
+                            var unionAmbiguityPolicy: Schema.UnionAmbiguity  = Schema.UnionAmbiguity.Strict
                             // Codec.Reader field iteration
                             while reader.hasNextField() do
                                 reader.fieldParse()
                                 reader.lastFieldName() match
-                                    case "name"       => name = summon[Schema[String]].serializeRead(reader)
-                                    case "tag"        => tag = summon[Schema[Tag[Any]]].serializeRead(reader)
-                                    case "typeParams" => typeParams = summon[Schema[Chunk[Structure.Type]]].serializeRead(reader)
-                                    case "variants"   => variants = summon[Schema[Chunk[Structure.Variant]]].serializeRead(reader)
-                                    case "enumValues" => enumValues = summon[Schema[Chunk[String]]].serializeRead(reader)
-                                    case _            => reader.skip()
+                                    case "name"           => name = summon[Schema[String]].serializeRead(reader)
+                                    case "tag"            => tag = summon[Schema[Tag[Any]]].serializeRead(reader)
+                                    case "typeParams"     => typeParams = summon[Schema[Chunk[Structure.Type]]].serializeRead(reader)
+                                    case "variants"       => variants = summon[Schema[Chunk[Structure.Variant]]].serializeRead(reader)
+                                    case "enumValues"     => enumValues = summon[Schema[Chunk[String]]].serializeRead(reader)
+                                    case "representation" =>
+                                        representation = summon[Schema[Schema.UnionRepresentation]].serializeRead(reader)
+                                    case "fallbacks" =>
+                                        fallbacks = summon[Schema[Chunk[Schema.UnionRepresentation]]].serializeRead(reader)
+                                    case "unionAmbiguityPolicy" =>
+                                        unionAmbiguityPolicy = summon[Schema[Schema.UnionAmbiguity]].serializeRead(reader)
+                                    case _ => reader.skip()
                                 end match
                             end while
                             reader.objectEnd()
-                            Sum(name, tag, typeParams, variants, enumValues)
+                            Sum(name, tag, typeParams, variants, enumValues, Chunk.empty, representation, fallbacks, unionAmbiguityPolicy)
                         end serializeRead
                         @publicInBinary private[kyo] def getter(value: Sum): Maybe[Any]     = Maybe(value)
                         @publicInBinary private[kyo] def setter(value: Sum, next: Any): Sum =
                             next match
                                 case s: Sum => s
                                 case _      => value
-                        override def structure: Structure.Type =
+                        override private[kyo] def sourceStructure: Structure.Type =
                             Structure.Type.Open(Tag[Sum].asInstanceOf[Tag[Any]])
                     end new
                 end sumSchema
@@ -571,7 +632,7 @@ object Structure:
                         case t: Structure.Type => t
                         case _                 => value
 
-                override def structure: Structure.Type =
+                override private[kyo] def sourceStructure: Structure.Type =
                     Structure.Type.Open(Tag[Structure.Type].asInstanceOf[Tag[Any]])
             end new
         end structureTypeSchema
@@ -607,13 +668,16 @@ object Structure:
       * `() => Structure.Type` and not the forced value.
       *
       * @param name
-      *   the field name as declared in the case class
+      *   the key the field is written under: its declared name, or the name a rename or a naming convention gives it
       * @param doc
       *   optional human-readable description
       * @param default
       *   optional default value expressed as a Structure.Value
       * @param optional
       *   true when the field's type is Option or Maybe
+      * @param flattened
+      *   true when the field's record or sum is written as its keys at this record's level, with no key `name`; a codec that is not
+      *   self-describing refuses to write such a record with [[TransformUnsupportedException]]
       */
     case class Field(
         name: String,
@@ -621,7 +685,8 @@ object Structure:
         doc: Maybe[String],
         default: Maybe[Structure.Value],
         optional: Boolean,
-        annotations: Chunk[Any]
+        annotations: Chunk[Any],
+        flattened: Boolean
     ):
         def fieldType: Structure.Type = _fieldType()
 
@@ -636,6 +701,7 @@ object Structure:
                 doc == that.doc &&
                 default == that.default &&
                 optional == that.optional &&
+                flattened == that.flattened &&
                 fieldType.equals(that.fieldType)
             case _ => false
 
@@ -645,6 +711,7 @@ object Structure:
             h = h * 31 + doc.hashCode
             h = h * 31 + default.hashCode
             h = h * 31 + optional.hashCode
+            h = h * 31 + flattened.hashCode
             h
         end hashCode
     end Field
@@ -668,21 +735,22 @@ object Structure:
             doc: Maybe[String] = Maybe.empty,
             default: Maybe[Structure.Value] = Maybe.empty,
             optional: Boolean = false,
-            annotations: Chunk[Any] = Chunk.empty
+            annotations: Chunk[Any] = Chunk.empty,
+            flattened: Boolean = false
         ): Field =
-            new Field(name, () => fieldType, doc, default, optional, annotations)
+            new Field(name, () => fieldType, doc, default, optional, annotations, flattened)
 
         /** Hand-rolled Schema for Structure.Field.
           *
-          * The wire shape is a 5-key object: `name, fieldType, doc, default, optional`. The
+          * The wire shape is a 6-key object: `name, fieldType, doc, default, optional, flattened`. The
           * Field roundtrip in StructureTest verifies the shape. An auto-derived Schema would
           * walk the case-class fields and emit the storage member
           * `_fieldType: Function0[Structure.Type]` as a wire field, which is wrong on two
           * counts: the wire field name would be the storage name (not the public
           * `fieldType`), and the wire field type would be `Function0[Structure.Type]` for
-          * which no Schema can be summoned. The hand-roll mirrors the public 5-key face and
+          * which no Schema can be summoned. The hand-roll mirrors the public face and
           * reads via the public `def fieldType` accessor; constructs via the by-name
-          * companion `apply`.
+          * companion `apply`. A field written without `flattened` reads as not flattened.
           *
           * The Reader loop uses the canonical Codec.Reader contract at `Codec.scala:63-130`:
           * `hasNextField()` is the loop predicate (returns Boolean), `fieldParse()` advances
@@ -693,12 +761,13 @@ object Structure:
             new Schema[Field](Seq.empty):
                 import scala.annotation.publicInBinary
                 @publicInBinary private[kyo] def serializeWrite(value: Field, writer: Codec.Writer): Unit =
-                    writer.objectStart("Field", 5)
+                    writer.objectStart("Field", 6)
                     writer.field("name", 0); summon[Schema[String]].serializeWrite(value.name, writer)
                     writer.field("fieldType", 1); summon[Schema[Structure.Type]].serializeWrite(value.fieldType, writer)
                     writer.field("doc", 2); summon[Schema[Maybe[String]]].serializeWrite(value.doc, writer)
                     writer.field("default", 3); summon[Schema[Maybe[Structure.Value]]].serializeWrite(value.default, writer)
                     writer.field("optional", 4); summon[Schema[Boolean]].serializeWrite(value.optional, writer)
+                    writer.field("flattened", 5); summon[Schema[Boolean]].serializeWrite(value.flattened, writer)
                     writer.objectEnd()
                 end serializeWrite
                 @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): Field =
@@ -708,6 +777,7 @@ object Structure:
                     var doc: Maybe[String]              = Maybe.empty
                     var default: Maybe[Structure.Value] = Maybe.empty
                     var optional: Boolean               = false
+                    var flattened: Boolean              = false
                     while reader.hasNextField() do
                         reader.fieldParse()
                         reader.lastFieldName() match
@@ -716,11 +786,12 @@ object Structure:
                             case "doc"       => doc = summon[Schema[Maybe[String]]].serializeRead(reader)
                             case "default"   => default = summon[Schema[Maybe[Structure.Value]]].serializeRead(reader)
                             case "optional"  => optional = summon[Schema[Boolean]].serializeRead(reader)
+                            case "flattened" => flattened = summon[Schema[Boolean]].serializeRead(reader)
                             case _           => reader.skip()
                         end match
                     end while
                     reader.objectEnd()
-                    Field(name, fieldType, doc, default, optional)
+                    Field(name, fieldType, doc, default, optional, flattened = flattened)
                 end serializeRead
                 @publicInBinary private[kyo] def getter(value: Field): Maybe[Any]       = Maybe(value)
                 @publicInBinary private[kyo] def setter(value: Field, next: Any): Field =
@@ -749,10 +820,11 @@ object Structure:
                                 Maybe.empty,
                                 optional = true
                             ),
-                            Structure.Field("optional", summon[Schema[Boolean]].structure, Maybe.empty, Maybe.empty, optional = false)
+                            Structure.Field("optional", summon[Schema[Boolean]].structure, Maybe.empty, Maybe.empty, optional = false),
+                            Structure.Field("flattened", summon[Schema[Boolean]].structure, Maybe.empty, Maybe.empty, optional = false)
                         )
                     )
-                override def structure: Structure.Type = _structure
+                override private[kyo] def sourceStructure: Structure.Type = _structure
             end new
         end structureFieldSchema
 
@@ -768,23 +840,29 @@ object Structure:
     /** Descriptor for a single variant (case) in a sum type.
       *
       * @param name
-      *   the variant name as declared in the sealed trait or enum
+      *   the variant name as declared in the sealed trait or enum, the key the external representation writes
       * @param variantType
       *   the structural type of the variant's payload
+      * @param wireTag
+      *   the tag the variant writes under every representation but the external one; Absent for the catch-all alone, which writes
+      *   the tag it holds
       */
     case class Variant(
         name: String,
         variantType: Structure.Type,
-        annotations: Chunk[Any] = Chunk.empty
+        annotations: Chunk[Any],
+        wireTag: Maybe[Structure.VariantTag]
     ):
         override def equals(other: Any): Boolean = other match
             case that: Variant =>
                 name == that.name &&
+                wireTag == that.wireTag &&
                 variantType.equals(that.variantType)
             case _ => false
         override def hashCode(): Int =
             var h = name.hashCode
             h = h * 31 + variantType.hashCode
+            h = h * 31 + wireTag.hashCode
             h
         end hashCode
     end Variant
@@ -793,36 +871,41 @@ object Structure:
 
         /** Hand-rolled Schema for Structure.Variant.
           *
-          * The wire shape is a 2-key object: `name, variantType`. The `annotations` carrier is
+          * The wire shape is a 3-key object: `name, variantType, wireTag`. The `annotations` carrier is
           * introspection metadata excluded from the wire (no Schema exists for the `Chunk[Any]`
           * element type, and the wire shape must stay stable). The hand-roll mirrors the public face
-          * and reads via the public accessors, the same discipline as `structureFieldSchema`.
+          * and reads via the public accessors, the same discipline as `structureFieldSchema`. A variant
+          * written without `wireTag` reads with it Absent.
           */
         given variantSchema: Schema[Variant] =
             new Schema[Variant](Seq.empty):
                 import scala.annotation.publicInBinary
                 @publicInBinary private[kyo] def serializeWrite(value: Variant, writer: Codec.Writer): Unit =
-                    writer.objectStart("Variant", 2)
+                    writer.objectStart("Variant", 3)
                     writer.field("name", 0); summon[Schema[String]].serializeWrite(value.name, writer)
                     writer.field("variantType", 1)
                     summon[Schema[Structure.Type]].serializeWrite(value.variantType, writer)
+                    writer.field("wireTag", 2)
+                    summon[Schema[Maybe[Structure.VariantTag]]].serializeWrite(value.wireTag, writer)
                     writer.objectEnd()
                 end serializeWrite
                 @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): Variant =
                     discard(reader.objectStart())
-                    var name: String                = ""
-                    var variantType: Structure.Type = Structure.Type.Open(Tag[Any])
+                    var name: String                         = ""
+                    var variantType: Structure.Type          = Structure.Type.Open(Tag[Any])
+                    var wireTag: Maybe[Structure.VariantTag] = Maybe.empty
                     // Codec.Reader field iteration
                     while reader.hasNextField() do
                         reader.fieldParse()
                         reader.lastFieldName() match
                             case "name"        => name = summon[Schema[String]].serializeRead(reader)
                             case "variantType" => variantType = summon[Schema[Structure.Type]].serializeRead(reader)
+                            case "wireTag"     => wireTag = summon[Schema[Maybe[Structure.VariantTag]]].serializeRead(reader)
                             case _             => reader.skip()
                         end match
                     end while
                     reader.objectEnd()
-                    Variant(name, variantType)
+                    Variant(name, variantType, Chunk.empty, wireTag)
                 end serializeRead
                 @publicInBinary private[kyo] def getter(value: Variant): Maybe[Any]         = Maybe(value)
                 @publicInBinary private[kyo] def setter(value: Variant, next: Any): Variant =
@@ -842,10 +925,17 @@ object Structure:
                                 Maybe.empty,
                                 Maybe.empty,
                                 optional = false
+                            ),
+                            Structure.Field(
+                                "wireTag",
+                                summon[Schema[Maybe[Structure.VariantTag]]].structure,
+                                Maybe.empty,
+                                Maybe.empty,
+                                optional = true
                             )
                         )
                     )
-                override def structure: Structure.Type = _structure
+                override private[kyo] def sourceStructure: Structure.Type = _structure
             end new
         end variantSchema
 
@@ -1011,7 +1101,7 @@ object Structure:
                         case _         => value
                 private lazy val _structure: Structure.Type =
                     Structure.Type.Open(Tag[Structure.Value].asInstanceOf[Tag[Any]])
-                override def structure: Structure.Type                                                               = _structure
+                override private[kyo] def sourceStructure: Structure.Type                                            = _structure
                 override private[kyo] def fromStructureValue(sv: Value)(using Frame): Result[DecodeException, Value] =
                     Result.Success(sv)
 

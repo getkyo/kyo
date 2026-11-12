@@ -8,6 +8,20 @@ class StrictSchemaTest extends kyo.test.Test[Any]:
 
     case class StrictProbe(name: String, note: Maybe[String]) derives Schema
 
+    @kyo.schema.tagOnly
+    enum StrictTone derives Schema:
+        case Low, High
+
+    "result keeps a tag-only enum's accepted strings" in {
+        val description = Json.jsonSchema[StrictTone]
+        assert(StrictSchema.requireAll(description) == description)
+        StrictSchema.result(description) match
+            case Result.Success(strict) =>
+                assert(Json.encode(strict) == """{"type":"string","enum":["Low","High"]}""")
+            case other => fail(s"expected a strict string enum, got: $other")
+        end match
+    }
+
     "result transforms a nested object to strict all-required, additionalProperties:false form" in {
         val schema = JsonSchema.Obj(
             properties = List("a" -> JsonSchema.Str(), "b" -> JsonSchema.Str()),

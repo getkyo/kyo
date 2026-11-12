@@ -171,7 +171,9 @@ object Json:
     /** Generates a JSON Schema for type A, enriched with runtime Schema metadata.
       *
       * Requires a `Schema[A]` in scope. The returned schema incorporates documentation, field descriptions, deprecation markers, examples,
-      * validation constraints, dropped fields, and renamed fields registered on the Schema.
+      * validation constraints, dropped fields, and renamed fields registered on the Schema. A constraint is placed by its whole path from
+      * the root: one on the value itself, such as `Schema[Double].checkMin(d => d)(0.0)`, applies to the root, whatever its kind. A
+      * derived product's field states the constraints of its own schema, and then those the product declares on it.
       *
       * @param schema
       *   the Schema[A] providing runtime metadata and structure
@@ -179,8 +181,8 @@ object Json:
       *   a JsonSchema derived from the Schema's structure and enriched with all metadata
       */
     def jsonSchema[A](using schema: Schema[A]): JsonSchema =
-        val base = JsonSchema.fromStructure(schema.structure)
-        base match
+        val base     = JsonSchema.fromStructure(schema.structure)
+        val enriched = base match
             case obj: JsonSchema.Obj =>
                 Json.enrichJsonSchemaObj(
                     obj,
@@ -189,12 +191,12 @@ object Json:
                     schema.fieldDeprecated,
                     if schema.examples.isEmpty then Chunk.empty
                     else schema.examples.map(kyo.internal.declaredValue(schema, _)),
-                    schema.constraints,
-                    schema.droppedFields,
                     schema.wireLayout.renamedKeys
                 )
             case other => other
-        end match
+        kyo.internal.JsonSchemaEnricher.keyedConstraints(schema).foldLeft(enriched) { (js, keyed) =>
+            kyo.internal.JsonSchemaEnricher.placeConstraint(js, keyed._1, keyed._2)
+        }
     end jsonSchema
 
     import scala.annotation.publicInBinary
@@ -204,8 +206,6 @@ object Json:
         fieldDocs: Map[Seq[String], String],
         fieldDeprecated: Map[Seq[String], String],
         examples: Chunk[Structure.Value],
-        constraints: Seq[Schema.Constraint],
-        droppedFields: Set[String],
         renamedFields: Map[String, String]
     ): JsonSchema.Obj =
         kyo.internal.JsonSchemaEnricher.enrichObj(
@@ -214,8 +214,6 @@ object Json:
             fieldDocs,
             fieldDeprecated,
             examples,
-            constraints,
-            droppedFields,
             renamedFields
         )
     end enrichJsonSchemaObj
@@ -245,13 +243,14 @@ object Json:
             description: Maybe[String] = Maybe.empty
         )
 
-        /** String type. */
+        /** String type. A non-empty `enumValues` is the JSON Schema `enum`: the only strings the schema accepts. */
         case Str(
             minLength: Maybe[Int] = Maybe.empty,
             maxLength: Maybe[Int] = Maybe.empty,
             pattern: Maybe[String] = Maybe.empty,
             format: Maybe[String] = Maybe.empty,
-            description: Maybe[String] = Maybe.empty
+            description: Maybe[String] = Maybe.empty,
+            enumValues: List[String] = List.empty
         )
 
         /** Numeric type (floating-point). */
@@ -308,7 +307,7 @@ object Json:
                         case _              => value
                 private lazy val _structure: Structure.Type =
                     Structure.Type.Open(Tag[JsonSchema].asInstanceOf[Tag[Any]])
-                override def structure: Structure.Type = _structure
+                override private[kyo] def sourceStructure: Structure.Type = _structure
             end new
         end jsonSchemaSchema
 
@@ -374,6 +373,13 @@ object Json:
                         case _                => ()
                 case str: Str =>
                     discard(entries.addOne("type" -> (() => writer.string("string"))))
+                    if str.enumValues.nonEmpty then
+                        discard(entries.addOne("enum" -> { () =>
+                            writer.arrayStart(str.enumValues.size)
+                            str.enumValues.foreach(writer.string)
+                            writer.arrayEnd()
+                        }))
+                    end if
                     str.minLength match
                         case Maybe.Present(n) => discard(entries.addOne("minLength" -> (() => writer.int(n))))
                         case _                => ()
@@ -589,7 +595,10 @@ object Json:
             val description = byName.get("description") match
                 case Some(Structure.Value.Str(s)) => Maybe(s)
                 case _                            => Maybe.empty
-            Str(minLength, maxLength, pattern, format, description)
+            val enumValues = byName.get("enum") match
+                case Some(Structure.Value.Sequence(elems)) => elems.iterator.collect { case Structure.Value.Str(s) => s }.toList
+                case _                                     => List.empty
+            Str(minLength, maxLength, pattern, format, description, enumValues)
         end fromStr
 
         private def numericMaybe(sv: Option[Structure.Value]): Maybe[Double] =
@@ -750,27 +759,39 @@ object Json:
                     val key = (applied(product), tag)
                     if seen.contains(key) then Obj(List.empty, List.empty)
                     else
-                        val newSeen    = seen + key
-                        val properties = fields.toList.map { f =>
-                            (f.name, withDescription(fromStructure(f.fieldType, newSeen), f.doc))
+                        val newSeen = seen + key
+                        val nodes   = fields.toList.map { f =>
+                            (f, withDescription(fromStructure(f.fieldType, newSeen), f.doc))
                         }
-                        val required = fields.toList.collect {
-                            case f if f.default.isEmpty && !f.optional => f.name
+                        val properties = nodes.flatMap {
+                            case (f, obj: Obj) if f.flattened              => obj.properties
+                            case (f, Nullable(obj: Obj, _)) if f.flattened => obj.properties
+                            case (f, node)                                 => List(f.name -> node)
+                        }
+                        val required = nodes.flatMap {
+                            case (f, _) if f.default.nonEmpty || f.optional => List.empty
+                            case (f, obj: Obj) if f.flattened               => obj.required
+                            case (f, _: Nullable) if f.flattened            => List.empty
+                            case (f, _)                                     => List(f.name)
                         }
                         Obj(properties, required)
                     end if
 
-                case sum @ Structure.Type.Sum(_, tag, _, variants, _, _) =>
-                    val key = (applied(sum), tag)
+                case sum: Structure.Type.Sum =>
+                    val key = (applied(sum), sum.tag)
                     if seen.contains(key) then Obj(List.empty, List.empty)
                     else
-                        val newSeen = seen + key
-                        // A case's @doc reaches the structure only as an annotation of its variant, which the field docs do not carry.
-                        val variantList = variants.toList.map { v =>
-                            val doc = Maybe.fromOption(v.annotations.collectFirst { case d: kyo.schema.doc => d.text })
-                            (v.name, withDescription(fromStructure(v.variantType, newSeen), doc))
-                        }
-                        OneOf(variantList)
+                        val names = sum.variants.toList.map(_.wireTag).collect { case Present(Structure.VariantTag.Name(n)) => n }
+                        sum.representation match
+                            case Schema.UnionRepresentation.TagOnly if names.size == sum.variants.size => Str(enumValues = names)
+                            case _                                                                     =>
+                                val newSeen     = seen + key
+                                val variantList = sum.variants.toList.map { v =>
+                                    val doc = Maybe.fromOption(v.annotations.collectFirst { case d: kyo.schema.doc => d.text })
+                                    (v.name, withDescription(fromStructure(v.variantType, newSeen), doc))
+                                }
+                                OneOf(variantList)
+                        end match
                     end if
 
                 case Structure.Type.Mapping(_, _, keyType, valueType, form) =>
@@ -803,7 +824,7 @@ object Json:
                 if args.isEmpty then name else args.map(applied).mkString(s"$name[", ",", "]")
             rt match
                 case Structure.Type.Product(name, _, typeParams, _, _)      => withArgs(name, typeParams)
-                case Structure.Type.Sum(name, _, typeParams, _, _, _)       => withArgs(name, typeParams)
+                case sum: Structure.Type.Sum                                => withArgs(sum.name, sum.typeParams)
                 case Structure.Type.Optional(name, _, inner)                => withArgs(name, Chunk(inner))
                 case Structure.Type.Collection(name, _, elem)               => withArgs(name, Chunk(elem))
                 case Structure.Type.Mapping(name, _, keyType, valueType, _) => withArgs(name, Chunk(keyType, valueType))
@@ -854,7 +875,9 @@ object Json:
                         path,
                         anyTag,
                         Chunk.empty,
-                        Chunk.from(variants.map((name, sub) => Structure.Variant(name, toStructure(sub, s"$path.$name")))),
+                        Chunk.from(variants.map((name, sub) =>
+                            Structure.Variant(name, toStructure(sub, s"$path.$name"), Chunk.empty, Maybe(Structure.VariantTag.Name(name)))
+                        )),
                         Chunk.empty
                     )
 

@@ -1925,7 +1925,8 @@ import scala.util.control.NonFatal
                     kyo.Structure.Variant(
                         ${ Expr(memberNames(idx)) },
                         ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.structure,
-                        $memberAnnots
+                        $memberAnnots,
+                        kyo.Maybe(kyo.Structure.VariantTag.Name(${ Expr(memberNames(idx)) }))
                     )
                 }
             }
@@ -2521,9 +2522,11 @@ import scala.util.control.NonFatal
                 if record.isDefined || tpe.typeArgs.isEmpty then '{ kyo.Chunk.empty[Structure.Type] }
                 else
                     val perParam: List[Expr[Structure.Type]] = tpe.typeArgs.map { tp =>
-                        tp.asType match
-                            case '[t] =>
-                                '{ ${ Ref(hoistedSchemaSym(tp)).asExprOf[Schema[t]] }.structure }
+                        openTypeArgument(tp).getOrElse {
+                            tp.asType match
+                                case '[t] =>
+                                    '{ ${ Ref(hoistedSchemaSym(tp)).asExprOf[Schema[t]] }.structure }
+                        }
                     }
                     '{ kyo.Chunk.from[Structure.Type](Array[Structure.Type](${ Varargs(perParam) }*)) }
             val nameExprS  = Expr(typeName)
@@ -2538,6 +2541,16 @@ import scala.util.control.NonFatal
                 )
             }
         end structureExpr
+
+        // Each field by its source name with the schema its structure is read from, so the field's constraints are the ones its
+        // property states.
+        def fieldSchemasExpr: Expr[() => kyo.Chunk[(String, Schema[?])]] =
+            val perField: List[Expr[(String, Schema[?])]] = types.zipWithIndex.map { (rawType, idx) =>
+                rawType.asType match
+                    case '[ft] => '{ (${ Expr(names(idx)) }, ${ Ref(hoistedSchemaSym(rawType)).asExprOf[Schema[ft]] }) }
+            }
+            '{ () => kyo.Chunk.from[(String, Schema[?])](Array[(String, Schema[?])](${ Varargs(perField) }*)) }
+        end fieldSchemasExpr
 
         // Build the Schema.init term first so every fieldSchemaExprTyped / structure call has
         // populated `hoistedSchemas`, then prepend the hoisted lazy vals as a wrapping block.
@@ -2571,6 +2584,7 @@ import scala.util.control.NonFatal
         val omitEmptyRef         = bound("_omitEmptyCollectionsAll", cfg.omitEmptyCollectionsAll)
         val materializedRef      = bound("_fieldMaterializedDefaults", cfg.fieldMaterializedDefaults)
         val fieldTransformsRef   = bound("_fieldTransforms", cfg.fieldTransforms)
+        val fieldSchemasRef      = bound("_fieldSchemas", fieldSchemasExpr)
         val structureArg         = structureExpr
         val schemaInitTerm: Term =
             '{
@@ -2589,6 +2603,7 @@ import scala.util.control.NonFatal
                     omitEmptyCollectionsAll = $omitEmptyRef,
                     fieldMaterializedDefaults = $materializedRef,
                     fieldTransforms = $fieldTransformsRef,
+                    fieldSchemas = $fieldSchemasRef,
                     structure = $structureArg
                 )
             }.asTerm
@@ -2794,12 +2809,11 @@ import scala.util.control.NonFatal
             val tpStructures: Expr[kyo.Chunk[Structure.Type]] =
                 if tpe.typeArgs.isEmpty then '{ kyo.Chunk.empty[Structure.Type] }
                 else
-                    val perParam: List[Expr[Structure.Type]] = tpe.typeArgs.map {
-                        // A wildcard argument (`Event[?]`) names no type, so there is no Schema to summon for it.
-                        case _: TypeBounds => '{ kyo.Structure.Type.Open(kyo.Tag[Any]) }
-                        case tp            =>
+                    val perParam: List[Expr[Structure.Type]] = tpe.typeArgs.map { tp =>
+                        openTypeArgument(tp).getOrElse {
                             tp.asType match
                                 case '[t] => '{ summonInline[Schema[t]].structure }
+                        }
                     }
                     '{ kyo.Chunk.from[Structure.Type](Array[Structure.Type](${ Varargs(perParam) }*)) }
             val variantStructs: List[Expr[kyo.Structure.Variant]] = (0 until n).toList.map { idx =>
@@ -2808,7 +2822,8 @@ import scala.util.control.NonFatal
                     kyo.Structure.Variant(
                         ${ Expr(childNames(idx)) },
                         ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.structure,
-                        $childAnnots
+                        $childAnnots,
+                        kyo.Maybe(kyo.Structure.VariantTag.Name(${ Expr(childNames(idx)) }))
                     )
                 }
             }
@@ -2994,6 +3009,27 @@ import scala.util.control.NonFatal
                     case None          => '{ Tag[Any] }
         end match
     end summonSchemaTag
+
+    /** The structure a derived schema records for a type argument `tp` of its class that has no `Schema`: open under its `Tag`, or
+      * under `Tag[Any]` where it has none, as a wildcard argument (`Event[?]`) names no type. `None` where `tp` has a `Schema`, for the
+      * site to record that schema's structure. Only an abstract argument, a parameter the given abstracts over, is searched: a concrete
+      * type with no `Schema` is a defect its summon reports.
+      */
+    private def openTypeArgument(using Quotes)(tp: quotes.reflect.TypeRepr): Option[Expr[Structure.Type]] =
+        import quotes.reflect.*
+        tp match
+            case _: TypeBounds                     => Some('{ Structure.Type.Open(Tag[Any]) })
+            case _ if tp.typeSymbol.isAbstractType =>
+                tp.asType match
+                    case '[t] =>
+                        Expr.summon[Schema[t]] match
+                            case Some(_) => None
+                            case None    =>
+                                val tag = summonSchemaTag(tp)
+                                Some('{ Structure.Type.Open($tag) })
+            case _ => None
+        end match
+    end openTypeArgument
 
     // ==========================================================================
     // Focus.focus / focusChain / foreachChain

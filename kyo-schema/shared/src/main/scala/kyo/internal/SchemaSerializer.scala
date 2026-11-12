@@ -3,6 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.Codec.Reader
 import kyo.Codec.Writer
+import kyo.Structure.VariantTag
 import scala.annotation.tailrec
 
 /** Serialization logic for Schema instances: transform-aware write/read, Structure.Value utilities, and the TransformAwareReader.
@@ -128,7 +129,7 @@ private[kyo] object SchemaSerializer:
         // The generated read body names a failing or missing field by its source name; the wire carries it under the renamed or
         // convention-cased key. A sum's renames do not reach its variants' fields, so only a product's names are rewritten.
         val renamesFields = (layout.renamedAway.nonEmpty || schema.variantNaming.fieldCase.nonEmpty) &&
-            (schema.structure match
+            (schema.sourceStructure match
                 case _: Structure.Type.Product => true
                 case _                         => false)
 
@@ -332,7 +333,7 @@ private[kyo] object SchemaSerializer:
         // are excluded entirely, so their value falls back to no shape hint (today's behavior). A
         // schema whose structure is not a Product (e.g. a Sum, matching the case below that skips
         // field-transform application entirely) carries no shape hint either.
-        val topShape: Maybe[Structure.Type] = schema.structure match
+        val topShape: Maybe[Structure.Type] = schema.sourceStructure match
             case p: Structure.Type.Product =>
                 Maybe(p.copy(fields =
                     p.fields.filterNot(f => transformOverrideNames.contains(f.name))
@@ -400,7 +401,7 @@ private[kyo] object SchemaSerializer:
 
         val transformed = original match
             case Structure.Value.Record(_) =>
-                schema.structure match
+                schema.sourceStructure match
                     case _: Structure.Type.Product =>
                         // Field-level transforms (drop/rename/computed/convention) apply only to a product's
                         // own fields. For a sum schema the materialized Record is a single-field wrapper whose
@@ -577,10 +578,9 @@ private[kyo] object SchemaSerializer:
     private def selectRepresentation[A](schema: Schema[A], writer: Writer)(using Frame): Schema.UnionRepresentation =
         schema.representationChain match
             case Maybe.Present(chain) =>
-                val caps = writer.capabilities
-                chain.find(rep => Schema.representationExpressibleBy(rep, caps)) match
-                    case Some(rep) => rep
-                    case None      =>
+                schema.representationFor(writer.capabilities) match
+                    case Maybe.Present(rep) => rep
+                    case Maybe.Absent       =>
                         throw RepresentationUnsupportedException(writer.codecName, chain.mkString(", "))
                 end match
             case Maybe.Absent =>
@@ -959,7 +959,7 @@ private[kyo] object SchemaSerializer:
 
     /** A sum's variant Scala names in variant order: the names a derived sum passes, else its structure's. */
     private[kyo] def variantNamesOf(schema: Schema[?]): Chunk[String] =
-        if schema.variantNames.nonEmpty then schema.variantNames else Schema.variantScalaNames(schema.structure)
+        if schema.variantNames.nonEmpty then schema.variantNames else Schema.variantScalaNames(schema.sourceStructure)
 
     private def flattenWithDiscriminator(
         value: Structure.Value,
@@ -1712,7 +1712,7 @@ private[kyo] object SchemaSerializer:
       */
     def readTupleFlat[A](schema: Schema[A], reader: Reader): A =
         given Frame         = reader.frame
-        val fieldsByVariant = tupleFlatFieldNames(schema.structure)
+        val fieldsByVariant = tupleFlatFieldNames(schema)
         val tfReader        =
             reader match
                 case _: Codec.IntrospectingReader =>
@@ -1737,8 +1737,8 @@ private[kyo] object SchemaSerializer:
         // to detect ambiguity. Nominal sealed sums use first-declared-wins below.
         // The discriminant is the Structure.Type.Sum name: union derivation always
         // produces "Union", while nominal sums always use the sealed type's own name.
-        schema.structure match
-            case Structure.Type.Sum(name, _, _, _, _, _) if name == "Union" =>
+        schema.sourceStructure match
+            case sum: Structure.Type.Sum if sum.name == "Union" =>
                 readUnionMultiProbe(schema, reader)
             case _ =>
                 given Frame               = reader.frame
@@ -1752,7 +1752,8 @@ private[kyo] object SchemaSerializer:
                 val decoders  = schema.variantDecoders
                 val wireNames = untaggedVariantWireNames(schema)
                 // The catch-all takes what no other variant matches, so its own decoder is not one of the attempts.
-                val catchAllIndex = schema.catchAll.map(c => Schema.variantScalaNames(schema.structure).indexOf(c.variant)).getOrElse(-1)
+                val catchAllIndex =
+                    schema.catchAll.map(c => Schema.variantScalaNames(schema.sourceStructure).indexOf(c.variant)).getOrElse(-1)
                 @tailrec def attempt(idx: Int): A =
                     if idx >= decoders.size then
                         throw NoVariantMatchException(Seq.empty, wireNames)
@@ -1829,17 +1830,21 @@ private[kyo] object SchemaSerializer:
     private def untaggedVariantWireNames[A](schema: Schema[A])(using Frame): Chunk[String] =
         tagsOf(schema).entries.map(entry => entry.tag.fold(entry.scalaName)(_.show))
 
-    /** Maps each Scala variant name to its declaration-ordered field names, read from the schema's
-      * materialized Structure.Type.Sum variants. Used by TupleFlat decode to restore the field
-      * names the positional wire dropped and to know the expected arity.
+    /** Maps each Scala variant name to its declaration-ordered field names, read from each variant's source structure. Used by
+      * TupleFlat decode to restore the field names the positional wire dropped and to know the expected arity. A derived sum's own
+      * structure holds each variant as written, so the names come from the variant schemas; a hand-built sum has none and holds its
+      * variants as built.
       */
-    private def tupleFlatFieldNames(structure: Structure.Type): Map[String, Chunk[String]] =
-        structure match
-            case Structure.Type.Sum(_, _, _, variants, _, _) =>
-                variants.map { variant =>
-                    val fieldNames = variant.variantType match
-                        case Structure.Type.Product(_, _, _, fields, _) => fields.map(_.name)
-                        case _                                          => Chunk.empty[String]
+    private def tupleFlatFieldNames[A](schema: Schema[A]): Map[String, Chunk[String]] =
+        schema.sourceStructure match
+            case sum: Structure.Type.Sum =>
+                val sources =
+                    if schema.variantSchemas.nonEmpty then schema.variantSchemas.map(_().sourceStructure)
+                    else sum.variants.map(_.variantType)
+                sum.variants.zip(sources).map { (variant, source) =>
+                    val fieldNames = source match
+                        case p: Structure.Type.Product => p.fields.map(_.name)
+                        case _                         => Chunk.empty[String]
                     variant.name -> fieldNames
                 }.toMap
             case _ => Map.empty

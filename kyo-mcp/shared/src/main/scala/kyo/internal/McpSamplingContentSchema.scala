@@ -99,7 +99,7 @@ private[kyo] object McpSamplingContentSchema:
         // Open: see JsonRpcId for rationale.
         private lazy val _structure: Structure.Type =
             Structure.Type.Open(Tag[McpServer.SamplingContent].asInstanceOf[Tag[Any]])
-        override def structure: Structure.Type = _structure
+        override private[kyo] def sourceStructure: Structure.Type = _structure
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using
             Frame
         )

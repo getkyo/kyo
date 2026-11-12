@@ -206,7 +206,7 @@ object Protobuf:
       * @see [[FieldNumberInfo]]
       */
     inline def fieldNumberAudit[A](using schema: Schema[A], frame: Frame): Chunk[FieldNumberInfo] =
-        auditStructure(schema.structure, schema.fieldIdNameOverrides, schema.pinnedFieldNames)
+        auditStructure(schema.sourceStructure, schema.fieldIdNameOverrides, schema.pinnedFieldNames)
 
     /** Field-number provenance for one field of a message tree.
       *
@@ -350,11 +350,11 @@ object Protobuf:
                 else
                     val visited = state.copy(seen = state.seen + name)
                     tpe match
-                        case Structure.Type.Sum(name, _, _, variants, _, _) =>
+                        case sum: Structure.Type.Sum =>
                             val sb = new StringBuilder
-                            sb.append(s"message $name {\n")
+                            sb.append(s"message ${sum.name} {\n")
                             sb.append("  oneof value {\n")
-                            val afterVariants = variants.toList.zipWithIndex.foldLeft(visited) { case (acc, (variant, idx)) =>
+                            val afterVariants = sum.variants.toList.zipWithIndex.foldLeft(visited) { case (acc, (variant, idx)) =>
                                 val nextAcc = variant.variantType match
                                     case ps: (Structure.Type.Product | Structure.Type.Sum) => collect(ps, acc)
                                     case _                                                 => acc

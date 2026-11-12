@@ -355,6 +355,119 @@ class SchemaConstraintTest extends kyo.test.Test[Any]:
             end match
         }
 
+        "a constraint on the value itself applies to the root, whatever its kind" in {
+            assert(Json.jsonSchema(using Schema[Double].checkMin(d => d)(0.0).checkMax(d => d)(1.0)) ==
+                JsonSchema.Num(minimum = Maybe(0.0), maximum = Maybe(1.0)))
+            assert(Json.jsonSchema(using Schema[Int].checkExclusiveMin(i => i)(0)) == JsonSchema.Integer(exclusiveMinimum = Maybe(0L)))
+            assert(Json.jsonSchema(using Schema[String].checkMinLength(s => s)(1).checkPattern(s => s)("^a")) ==
+                JsonSchema.Str(minLength = Maybe(1), pattern = Maybe("^a")))
+        }
+
+        "a field states the constraints its own schema declares" in {
+            assert(Json.jsonSchema[SCTHeld] == JsonSchema.Obj(
+                List("lead" -> JsonSchema.Num(minimum = Maybe(0.0), maximum = Maybe(1.0)), "count" -> JsonSchema.Integer()),
+                List("lead", "count")
+            ))
+        }
+
+        "a record field states the constraints its own schema declares" in {
+            type Shares = Record["lead" ~ SCTShares.SCTShare & "count" ~ Int]
+            assert(Json.jsonSchema[Shares] == JsonSchema.Obj(
+                List("lead" -> JsonSchema.Num(minimum = Maybe(0.0), maximum = Maybe(1.0)), "count" -> JsonSchema.Integer()),
+                List("lead", "count")
+            ))
+        }
+
+        "a nested product's field states its type's constraints under its whole path" in {
+            val held = JsonSchema.Obj(
+                List("lead" -> JsonSchema.Num(minimum = Maybe(0.0), maximum = Maybe(1.0)), "count" -> JsonSchema.Integer()),
+                List("lead", "count")
+            )
+            assert(Json.jsonSchema[SCTNested] == JsonSchema.Obj(List("held" -> held), List("held")))
+        }
+
+        "a constraint is placed by its whole path, not its last segment" in {
+            val js = Json.jsonSchema(using Schema[SCTOuter].checkMin(_.inner.value)(5.0))
+            assert(js == JsonSchema.Obj(
+                List(
+                    "inner" -> JsonSchema.Obj(List("value" -> JsonSchema.Num(minimum = Maybe(5.0))), List("value")),
+                    "value" -> JsonSchema.Num()
+                ),
+                List("inner", "value")
+            ))
+        }
+
+        "a bound the holder declares on a field applies after the one its type declares" in {
+            val range = JsonSchema.Obj(List("low" -> JsonSchema.Num(minimum = Maybe(0.0))), List("low"))
+            assert(Json.jsonSchema[SCTSpan] == JsonSchema.Obj(List("range" -> range), List("range")))
+            val narrowed = JsonSchema.Obj(List("low" -> JsonSchema.Num(minimum = Maybe(0.25))), List("low"))
+            assert(Json.jsonSchema(using Schema[SCTSpan].checkMin(_.range.low)(0.25)) ==
+                JsonSchema.Obj(List("range" -> narrowed), List("range")))
+        }
+
+        "a field's constraints follow its rename, and a dropped field's reach no other field" in {
+            assert(Json.jsonSchema(using Schema[SCTHeld].rename(_.lead, "share")) == JsonSchema.Obj(
+                List("share" -> JsonSchema.Num(minimum = Maybe(0.0), maximum = Maybe(1.0)), "count" -> JsonSchema.Integer()),
+                List("share", "count")
+            ))
+            assert(Json.jsonSchema(using Schema[SCTPair].drop(_.first).rename(_.second, "first")) ==
+                JsonSchema.Obj(List("first" -> JsonSchema.Num()), List("first")))
+        }
+
+        "a constraint added after a rename describes the same field as validation" in {
+            val expected = JsonSchema.Obj(
+                List("name" -> JsonSchema.Str(), "years" -> JsonSchema.Integer(minimum = Maybe(18L))),
+                List("name", "years")
+            )
+            val before = Schema[Person].checkMin(_.age)(18).rename(_.age, "years")
+            assert(Json.jsonSchema(using before) == expected)
+            val after = Schema[Person].rename(_.age, "years").checkMin(_.years)(18)
+            assert(after.encodeString[Json](Person("Ada", 20)) == """{"name":"Ada","years":20}""")
+            assert(after.validate(Person("Ada", 17)).map(_.path) == Chunk(List("years")))
+            assert(after.validate(Person("Ada", 18)) == Chunk.empty)
+            assert(Json.jsonSchema(using after) == expected)
+            val chained = after.rename("years", "ageYears")
+            assert(Json.jsonSchema(using chained) == JsonSchema.Obj(
+                List("name" -> JsonSchema.Str(), "ageYears" -> JsonSchema.Integer(minimum = Maybe(18L))),
+                List("name", "ageYears")
+            ))
+            val format = Schema[Person].rename(_.name, "display").checkFormat(_.display)("name").rename("display", "label")
+            assert(Json.jsonSchema(using format) == JsonSchema.Obj(
+                List("label" -> JsonSchema.Str(format = Maybe("name")), "age" -> JsonSchema.Integer()),
+                List("label", "age")
+            ))
+        }
+
+        "a constraint below a renamed parent retains its nested path" in {
+            val schema = Schema[PersonWithAddress].rename(_.address, "home").checkMinLength(_.home.city)(3)
+            assert(schema.validate(PersonWithAddress("Ada", 20, Address("Oak", "ab"))).map(_.path) == Chunk(List("home", "city")))
+            assert(Json.jsonSchema(using schema) == JsonSchema.Obj(
+                List(
+                    "name" -> JsonSchema.Str(),
+                    "age"  -> JsonSchema.Integer(),
+                    "home" -> JsonSchema.Obj(
+                        List("street" -> JsonSchema.Str(), "city" -> JsonSchema.Str(minLength = Maybe(3))),
+                        List("street", "city")
+                    )
+                ),
+                List("name", "age", "home")
+            ))
+        }
+
+        "a recursive product states its fields' constraints and ends" in {
+            assert(Json.jsonSchema[SCTSelf] == JsonSchema.Obj(
+                List("lead" -> JsonSchema.Num(minimum = Maybe(0.0), maximum = Maybe(1.0)), "next" -> JsonSchema.Obj(Nil, Nil)),
+                List("lead", "next")
+            ))
+        }
+
+        "a flattened field's record states its fields' constraints under the keys the parent's convention gives them" in {
+            assert(Json.jsonSchema[SCTWrapper] == JsonSchema.Obj(
+                List("id" -> JsonSchema.Integer(), "lead_share" -> JsonSchema.Num(minimum = Maybe(0.0), maximum = Maybe(1.0))),
+                List("id", "lead_share")
+            ))
+        }
+
         "no constraints produces same jsonSchema as JsonSchema.from" in {
             val fromSchema = Json.jsonSchema[Person]
             val fromMacro  = JsonSchema.from[Person]
@@ -518,3 +631,33 @@ class SchemaConstraintTest extends kyo.test.Test[Any]:
     }
 
 end SchemaConstraintTest
+
+object SCTShares:
+    opaque type SCTShare = Double
+    object SCTShare:
+        def parse(d: Double): Either[String, SCTShare] = if d >= 0.0 && d <= 1.0 then Right(d) else Left(s"$d is not between 0 and 1")
+        extension (share: SCTShare) def value: Double  = share
+        given Schema[SCTShare] = Schema[Double].checkMin(d => d)(0.0).checkMax(d => d)(1.0).transformVia(parse)(_.value)
+    end SCTShare
+end SCTShares
+
+import SCTShares.SCTShare
+
+case class SCTHeld(lead: SCTShare, count: Int) derives CanEqual
+case class SCTNested(held: SCTHeld) derives CanEqual
+case class SCTInner(value: Double) derives CanEqual
+case class SCTOuter(inner: SCTInner, value: Double) derives CanEqual
+case class SCTPair(first: SCTShare, second: Double) derives CanEqual
+case class SCTSelf(lead: SCTShare, next: SCTSelf) derives CanEqual, Schema
+
+case class SCTRange(low: Double) derives CanEqual
+object SCTRange:
+    given Schema[SCTRange] = Schema[SCTRange].checkMin(_.low)(0.0)
+
+case class SCTSpan(range: SCTRange) derives CanEqual
+
+case class SCTCamel(leadShare: SCTShare) derives CanEqual
+
+case class SCTWrapper(id: Int, held: SCTCamel) derives CanEqual
+object SCTWrapper:
+    given Schema[SCTWrapper] = Schema[SCTWrapper].flatten(_.held).renameAllFields(Schema.NameCase.SnakeCase)

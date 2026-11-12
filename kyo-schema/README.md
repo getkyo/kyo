@@ -1331,7 +1331,7 @@ case class Profile(@rename("user_name") name: String, @doc("age in years") age: 
 val product = Schema[Profile].structure.asInstanceOf[Structure.Type.Product]
 
 product.fields.fieldsWith[rename].map((field, r) => field.name -> r.wireName)
-// Chunk(("name", "user_name"))
+// Chunk(("user_name", "user_name"))
 
 product.fields.fieldsWith[doc].map((field, d) => field.name -> d.text)
 // Chunk(("age", "age in years"))

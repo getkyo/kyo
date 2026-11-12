@@ -51,7 +51,7 @@ private[kyo] object SchemaValidation:
                 case _ => Seq.empty
         Schema.copyWith(meta)(
             checks = meta.checks :+ check,
-            constraints = meta.constraints :+ constraint
+            constraints = meta.constraints :+ sourceConstraint(meta, constraint)
         )
     end fieldCheckWithConstraint
 
@@ -62,9 +62,32 @@ private[kyo] object SchemaValidation:
         constraint: Schema.Constraint
     ): Schema[A] { type Focused = meta.Focused } =
         Schema.copyWith(meta)(
-            constraints = meta.constraints :+ constraint
+            constraints = meta.constraints :+ sourceConstraint(meta, constraint)
         )
     end fieldConstraintOnly
+
+    // A focus names the field as the builder currently exposes it. Keep its source path in metadata so subsequent renames and
+    // drops can project the constraint without confusing a renamed field with a dropped field whose name was reused.
+    private def sourceConstraint(meta: Schema[?], constraint: Schema.Constraint): Schema.Constraint =
+        // Only this schema's Focused type carries its builder renames. Navigation below it uses each field's declared type.
+        // Do not force field schemas here: a recursive given can still be under construction when a check is installed.
+        val path = constraint.segments.toList match
+            case Nil          => Nil
+            case name :: rest => Schema.renamedSource(meta.renamedFields, name) :: rest
+        if path == constraint.segments then constraint
+        else
+            constraint match
+                case c: Schema.Constraint.Min         => c.copy(segments = path)
+                case c: Schema.Constraint.Max         => c.copy(segments = path)
+                case c: Schema.Constraint.MinLength   => c.copy(segments = path)
+                case c: Schema.Constraint.MaxLength   => c.copy(segments = path)
+                case c: Schema.Constraint.Pattern     => c.copy(segments = path)
+                case c: Schema.Constraint.Format      => c.copy(segments = path)
+                case c: Schema.Constraint.MinItems    => c.copy(segments = path)
+                case c: Schema.Constraint.MaxItems    => c.copy(segments = path)
+                case c: Schema.Constraint.UniqueItems => c.copy(segments = path)
+        end if
+    end sourceConstraint
 
     /** Internal helper for field-level doc accumulation. Called from inline doc method. */
     @nowarn("msg=anonymous")

@@ -165,7 +165,7 @@ private[kyo] object McpContentSchema:
         // Open: see JsonRpcId for rationale.
         private lazy val _structure: Structure.Type =
             Structure.Type.Open(Tag[McpContent].asInstanceOf[Tag[Any]])
-        override def structure: Structure.Type = _structure
+        override private[kyo] def sourceStructure: Structure.Type = _structure
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using
             Frame
         )
@@ -326,7 +326,7 @@ private[kyo] object McpContentSchema:
                 case _                               => value
         private lazy val _structure: Structure.Type =
             Structure.Type.Open(Tag[McpHandler.ResourceContents].asInstanceOf[Tag[Any]])
-        override def structure: Structure.Type = _structure
+        override private[kyo] def sourceStructure: Structure.Type = _structure
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using
             Frame
         )

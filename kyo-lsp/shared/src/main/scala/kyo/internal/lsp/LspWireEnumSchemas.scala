@@ -459,7 +459,7 @@ private[kyo] object LspWireEnumSchemas:
             // `Structure.Type.Open` site in this file.
             private lazy val _structure: Structure.Type =
                 Structure.Type.Open(Tag[LspHandler.BooleanOr[T]].asInstanceOf[Tag[Any]])
-            override def structure: Structure.Type = _structure
+            override private[kyo] def sourceStructure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.BooleanOr[T]] =
@@ -494,7 +494,7 @@ private[kyo] object LspWireEnumSchemas:
                     case _                         => value
             private lazy val _structure: Structure.Type =
                 Structure.Type.Open(Tag[LspHandler.StringOr[T]].asInstanceOf[Tag[Any]])
-            override def structure: Structure.Type = _structure
+            override private[kyo] def sourceStructure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.StringOr[T]] =

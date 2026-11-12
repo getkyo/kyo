@@ -168,12 +168,18 @@ class StructureTest extends kyo.test.Test[Any]:
         "sealed trait produces Sum with variants" in {
             val ref = Structure.of[MTShape]
             ref match
-                case Structure.Type.Sum(name, tag, _, variants, _, _) =>
-                    assert(name == "MTShape")
-                    assert(tag =:= Tag[MTShape])
+                case sum: Structure.Type.Sum =>
+                    val variants = sum.variants
+                    assert(sum.name == "MTShape")
+                    assert(sum.tag =:= Tag[MTShape])
                     assert(variants.size == 2)
                     assert(variants(0).name == "MTCircle")
                     assert(variants(1).name == "MTRectangle")
+                    assert(variants.map(_.wireTag) == Chunk(
+                        Maybe(Structure.VariantTag.Name("MTCircle")),
+                        Maybe(Structure.VariantTag.Name("MTRectangle"))
+                    ))
+                    assert(sum.representation == Schema.UnionRepresentation.External)
 
                     // Check variant types are Products
                     variants(0).variantType match
@@ -1962,7 +1968,7 @@ class StructureTest extends kyo.test.Test[Any]:
             val prodGolden =
                 """{"Product":{"name":"P","tag":"*8:C:java.io.Serializable:0:::4\n4:A\n5:C:java.lang.constant.Constable:0:::2\n0:C:java.lang.String:0:::1:5:6:7:8\n2:C:java.lang.Object:0:::3\n7:C:java.lang.Comparable:1:0:0:2\n3:C:scala.Matchable:0:::4\n6:C:java.lang.CharSequence:0:::2\n1:C:java.lang.constant.ConstantDesc:0:::2","typeParams":[],"fields":[]}}"""
             val sumGolden =
-                """{"Sum":{"name":"S","tag":"*8:C:java.io.Serializable:0:::4\n4:A\n5:C:java.lang.constant.Constable:0:::2\n0:C:java.lang.String:0:::1:5:6:7:8\n2:C:java.lang.Object:0:::3\n7:C:java.lang.Comparable:1:0:0:2\n3:C:scala.Matchable:0:::4\n6:C:java.lang.CharSequence:0:::2\n1:C:java.lang.constant.ConstantDesc:0:::2","typeParams":[],"variants":[],"enumValues":[]}}"""
+                """{"Sum":{"name":"S","tag":"*8:C:java.io.Serializable:0:::4\n4:A\n5:C:java.lang.constant.Constable:0:::2\n0:C:java.lang.String:0:::1:5:6:7:8\n2:C:java.lang.Object:0:::3\n7:C:java.lang.Comparable:1:0:0:2\n3:C:scala.Matchable:0:::4\n6:C:java.lang.CharSequence:0:::2\n1:C:java.lang.constant.ConstantDesc:0:::2","typeParams":[],"variants":[],"enumValues":[],"representation":{"External":{}},"fallbacks":[],"unionAmbiguityPolicy":{"Strict":{}}}}"""
 
             val tag              = Tag[String].asInstanceOf[Tag[Any]]
             val prodPlain        = Structure.Type.Product("P", tag, Chunk.empty, Chunk.empty)
@@ -2005,6 +2011,26 @@ class StructureTest extends kyo.test.Test[Any]:
             )
         }
 
+        "a structure written before the wire fields reads with External, no fallbacks, Strict, no tags and no flattening" in {
+            val tag     = Tag[String].asInstanceOf[Tag[Any]]
+            val tagWire = Json.encode(tag)
+            val intWire = Json.encode[Structure.Type](Structure.Type.Primitive(Structure.PrimitiveKind.Int, tag))
+            val sumWire =
+                s"""{"Sum":{"name":"S","tag":$tagWire,"typeParams":[],"variants":[{"name":"V","variantType":$intWire}],"enumValues":[]}}"""
+            Json.decode[Structure.Type](sumWire).getOrThrow match
+                case sum: Structure.Type.Sum =>
+                    assert(sum.representation == Schema.UnionRepresentation.External)
+                    assert(sum.fallbacks.isEmpty)
+                    assert(sum.unionAmbiguityPolicy == Schema.UnionAmbiguity.Strict)
+                    assert(sum.variants.map(v => v.name -> v.wireTag) == Chunk("V" -> Absent))
+                case other => fail(s"Expected Sum, got $other")
+            end match
+            val fieldWire = s"""{"name":"f","fieldType":$intWire,"optional":false}"""
+            val field     = Json.decode[Structure.Field](fieldWire).getOrThrow
+            assert(field.name == "f")
+            assert(!field.flattened)
+        }
+
         "Product equals and hashCode ignore annotations" in {
             val tag = Tag[String].asInstanceOf[Tag[Any]]
             val a1  = new L1NodeAnnotation
@@ -2036,18 +2062,21 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "Variant equals and hashCode ignore annotations" in {
-            val vt = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
-            val a1 = new L1NodeAnnotation
-            val a2 = new L1NodeAnnotation
-            val v1 = Structure.Variant("V", vt, Chunk[Any](a1))
-            val v2 = Structure.Variant("V", vt, Chunk[Any](a2))
-            val v3 = Structure.Variant("V", vt)
+            val vt   = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            val a1   = new L1NodeAnnotation
+            val a2   = new L1NodeAnnotation
+            val name = Maybe(Structure.VariantTag.Name("V"))
+            val v1   = Structure.Variant("V", vt, Chunk[Any](a1), name)
+            val v2   = Structure.Variant("V", vt, Chunk[Any](a2), name)
+            val v3   = Structure.Variant("V", vt, Chunk.empty, name)
             assert(v1 == v2, s"Variant.equals must ignore annotations: v1=$v1 v2=$v2")
             assert(v1.hashCode == v2.hashCode, s"Variant.hashCode must ignore annotations: v1.hc=${v1.hashCode} v2.hc=${v2.hashCode}")
             assert(v1 == v3, s"Annotated Variant must equal annotation-stripped twin: v1=$v1 v3=$v3")
             assert(v1.hashCode == v3.hashCode, "Annotated Variant hashCode must equal annotation-stripped twin hashCode")
-            val v4 = Structure.Variant("W", vt)
+            val v4 = Structure.Variant("W", vt, Chunk.empty, Maybe(Structure.VariantTag.Name("W")))
             assert(v1 != v4, "Variants with different names must not be equal")
+            val v5 = Structure.Variant("V", vt, Chunk.empty, Maybe(Structure.VariantTag.Number(1)))
+            assert(v1 != v5, "Variants with different wire tags must not be equal")
         }
 
     }
@@ -2153,6 +2182,29 @@ class StructureTest extends kyo.test.Test[Any]:
         "the Open type accepts anything" in {
             val open = summon[Schema[Structure.Value]].structure
             assert(Structure.conform(Structure.Value.Str("anything"), open) == Absent)
+        }
+
+        "a flattened record's keys are read at the parent's level" in {
+            val order = Structure.Type.Product(
+                "Order",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(
+                    Structure.Field("note", strType),
+                    Structure.Field("payload", payload, flattened = true)
+                )
+            )
+            val flat = Structure.Value.Record(Chunk[(String, Structure.Value)](
+                "note"   -> Structure.Value.Str("n"),
+                "active" -> Structure.Value.Bool(true),
+                "tags"   -> okTags
+            ))
+            assert(Structure.conform(flat, order) == Absent)
+            val missing = Structure.Value.Record(Chunk[(String, Structure.Value)](
+                "note"   -> Structure.Value.Str("n"),
+                "active" -> Structure.Value.Bool(true)
+            ))
+            assert(Structure.conform(missing, order) == Present("missing required field 'tags'"))
         }
     }
 

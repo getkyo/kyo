@@ -2001,6 +2001,17 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
                 assert(decoded.optional == v.optional)
             }
 
+            "Structure.Field flattened round-trip" in {
+                val v = Structure.Field(
+                    "address",
+                    Structure.Type.Product("Address", Tag[Any], Chunk.empty, Chunk.empty),
+                    flattened = true
+                )
+                val decoded = roundTrip(v)(using summon[Schema[Structure.Field]])
+                assert(decoded.flattened)
+                assert(decoded == v)
+            }
+
             // Structure.Variant codec round-trips
 
             "Structure.Variant round-trip" in {
@@ -2017,11 +2028,14 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
                             Maybe.empty,
                             false
                         ))
-                    )
+                    ),
+                    Chunk.empty,
+                    Maybe(Structure.VariantTag.Name("circle"))
                 )
                 val decoded = roundTrip(v)(using summon[Schema[Structure.Variant]])
                 assert(decoded.name == v.name)
                 assert(decoded.variantType.name == v.variantType.name)
+                assert(decoded.wireTag == Maybe(Structure.VariantTag.Name("circle")))
             }
 
             // Structure.Type codec round-trips
@@ -2056,6 +2070,41 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
                         assert(fields(0).name == "name")
                         assert(fields(1).name == "age")
                     case _ => fail("expected Product")
+                end match
+            }
+
+            "Structure.Type Sum round-trip keeps its representation, fallbacks and ambiguity policy" in {
+                val v = Structure.Type.Sum(
+                    "Shape",
+                    Tag[Any],
+                    Chunk.empty,
+                    Chunk(
+                        Structure.Variant(
+                            "Circle",
+                            Structure.Type.Product("Circle", Tag[Any], Chunk.empty, Chunk.empty),
+                            Chunk.empty,
+                            Maybe(Structure.VariantTag.Number(1))
+                        ),
+                        Structure.Variant(
+                            "Other",
+                            Structure.Type.Product("Other", Tag[Any], Chunk.empty, Chunk.empty),
+                            Chunk.empty,
+                            Absent
+                        )
+                    ),
+                    Chunk.empty,
+                    representation = Schema.UnionRepresentation.Adjacent("t", "c"),
+                    fallbacks = Chunk(Schema.UnionRepresentation.Untagged),
+                    unionAmbiguityPolicy = Schema.UnionAmbiguity.FirstMatch
+                )
+                val decoded = roundTrip(v)(using summon[Schema[Structure.Type]])
+                decoded match
+                    case sum: Structure.Type.Sum =>
+                        assert(sum.representation == Schema.UnionRepresentation.Adjacent("t", "c"))
+                        assert(sum.fallbacks == Chunk(Schema.UnionRepresentation.Untagged))
+                        assert(sum.unionAmbiguityPolicy == Schema.UnionAmbiguity.FirstMatch)
+                        assert(sum.variants.map(_.wireTag) == Chunk(Maybe(Structure.VariantTag.Number(1)), Absent))
+                    case other => fail(s"expected Sum, got $other")
                 end match
             }
 

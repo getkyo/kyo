@@ -82,7 +82,10 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     @publicInBinary private[kyo] val flattenedFields: Chunk[internal.FlattenedField] = Chunk.empty,
     @publicInBinary private[kyo] val catchAll: Maybe[internal.CatchAll] = Maybe.empty,
     @publicInBinary private[kyo] val variantNames: Chunk[String] = Chunk.empty,
-    @publicInBinary private[kyo] val builderProblem: Maybe[internal.BuilderProblem] = Maybe.empty
+    @publicInBinary private[kyo] val builderProblem: Maybe[internal.BuilderProblem] = Maybe.empty,
+    @publicInBinary private[kyo] val installedStructure: Maybe[Structure.Type] = Maybe.empty,
+    @publicInBinary private[kyo] val fieldSchemas: () => Chunk[(String, Schema[?])] = Schema.noFieldSchemas,
+    @publicInBinary private[kyo] val nominal: Boolean = true
 ):
 
     /** The structural representation type. Set by factory/transforms. */
@@ -155,14 +158,19 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** This schema's nominal identity (simple name plus runtime tag) when its structure is a Product
       * or Sum, absent otherwise. Container and primitive schemas have no nominal identity and never
-      * participate in transform-override resolution. Lazy: forcing `structure` during init would
-      * break recursive structure graphs.
+      * participate in transform-override resolution. Neither does a schema `transform` or `transformVia`
+      * built, nor a copy of one: it reports its source's structure for a value of another type, so it
+      * cannot read in the source's place, and pushed as the source's override it would read itself
+      * through the source without end. Lazy: forcing `structure` during init would break recursive
+      * structure graphs.
       */
     @publicInBinary private[kyo] lazy val nominalIdentity: Maybe[(String, Tag[Any])] =
-        structure match
-            case p: Structure.Type.Product => Maybe((p.name, p.tag))
-            case s: Structure.Type.Sum     => Maybe((s.name, s.tag))
-            case _                         => Maybe.empty
+        if !nominal then Maybe.empty
+        else
+            sourceStructure match
+                case p: Structure.Type.Product => Maybe((p.name, p.tag))
+                case s: Structure.Type.Sum     => Maybe((s.name, s.tag))
+                case _                         => Maybe.empty
 
     /** Resolves the innermost registered transform override matching this schema's nominal type.
       * `this` never matches itself, so a configured schema running its own raw write/read is not
@@ -299,7 +307,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** Where the catch-all takes the tag and the unmatched input under each representation this sum may select, or why it does not
       * fit, worked out once on first use. Builders set the representation, the numbers and the catch-all in any order, so a schema
-      * between two builder calls need not fit, and the fit reads the variants from `structure`.
+      * between two builder calls need not fit, and the fit reads the variants from `sourceStructure`.
       */
     @publicInBinary private[kyo] lazy val catchAllPlacement: Map[Schema.UnionRepresentation, Result[String, (Int, Int)]] =
         catchAll match
@@ -313,7 +321,9 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     @publicInBinary private[kyo] lazy val tagOnlyProblem: Maybe[String] = internal.SchemaSerializer.tagOnlyProblem(this, Maybe.empty)
 
-    /** The tables a transform-aware read consults; lazy because they read `structure`, which a recursive schema cannot force here. */
+    /** The tables a transform-aware read consults; lazy because they read `sourceStructure`, which a recursive schema cannot force
+      * here.
+      */
     @publicInBinary private[kyo] lazy val readTables: internal.SchemaSerializer.ReadTables[A] = internal.SchemaSerializer.readTables(this)
 
     /** The sum's tag table. A derived sum names its variants in `variantNames`; a sum built by hand leaves it empty, and its variants
@@ -321,20 +331,20 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     @publicInBinary private[kyo] lazy val variantTags: internal.VariantTags =
         internal.VariantTags(
-            if variantNames.nonEmpty then variantNames else Schema.variantScalaNames(structure),
+            if variantNames.nonEmpty then variantNames else Schema.variantScalaNames(sourceStructure),
             variantNaming,
             catchAll,
-            structure
+            sourceStructure
         )
 
     /** The variants of a sum that have fields, which tagOnly cannot write; lazy since only a tagOnly schema asks. */
     @publicInBinary private[kyo] lazy val fieldBearingVariants: Chunk[String] =
-        structure match
-            case Structure.Type.Sum(_, _, _, variants, _, _) =>
-                variants.collect {
+        sourceStructure match
+            case sum: Structure.Type.Sum =>
+                sum.variants.collect {
                     case v if (v.variantType match
-                            case Structure.Type.Product(_, _, _, fields, _) => fields.nonEmpty
-                            case _                                          => false
+                            case p: Structure.Type.Product => p.fields.nonEmpty
+                            case _                         => false
                         ) => v.name
                 }
             case _ => Chunk.empty
@@ -700,20 +710,18 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             builderProblem = configurationProblem.orElse(Schema.representationChainRepeat(chain).map(internal.BuilderProblem(call, _)))
         )
 
-    /** The representation this schema's chain selects for the given codec capabilities.
+    /** The representation encode writes this schema in for the given codec capabilities.
       *
       * Total and deterministic: the same `(schema, capabilities)` always returns the same
-      * representation. Returns the highest-priority chain entry the capabilities admit; with no
-      * chain configured, returns this schema's single `representation`. `External` is always
-      * admitted and is the chain floor, so this never throws. Exposed for tooling and tests.
+      * representation. Returns the highest-priority chain entry the capabilities admit, or with no
+      * chain configured this schema's single `representation` when they admit it. Absent where they
+      * admit none, where encode fails with `RepresentationUnsupportedException`. Exposed for tooling
+      * and tests.
       */
-    def representationFor(capabilities: Codec.Capabilities): Schema.UnionRepresentation =
+    def representationFor(capabilities: Codec.Capabilities): Maybe[Schema.UnionRepresentation] =
         representationChain match
-            case Maybe.Present(chain) =>
-                chain.find(rep => Schema.representationExpressibleBy(rep, capabilities))
-                    .getOrElse(Schema.UnionRepresentation.External)
-            case Maybe.Absent =>
-                representation
+            case Maybe.Present(chain) => Schema.representationFor(chain.head, chain.drop(1), capabilities)
+            case Maybe.Absent         => Schema.representationFor(representation, Chunk.empty, capabilities)
     end representationFor
 
     /** Sets the ambiguity policy for untagged union decode.
@@ -758,7 +766,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             variantNaming = variantNaming.copy(variantPairs = merged),
             builderProblem = configurationProblem.orElse(
                 Schema.namesWithNumbers(variantNaming, "variantNames")
-                    .orElse(Schema.unknownVariantName(Schema.variantScalaNames(structure), pairs.map(_._1)))
+                    .orElse(Schema.unknownVariantName(Schema.variantScalaNames(sourceStructure), pairs.map(_._1)))
                     .orElse(Schema.variantTargetClash(merged))
                     .map(internal.BuilderProblem(s"variantNames(${pairs.map((s, w) => s"$s -> $w").mkString(", ")})", _))
             )
@@ -794,7 +802,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             variantNaming = variantNaming.copy(variantNumbers = merged),
             builderProblem = configurationProblem.orElse(
                 named
-                    .orElse(Schema.unknownVariantName(Schema.variantScalaNames(structure), pairs.map(_._1)))
+                    .orElse(Schema.unknownVariantName(Schema.variantScalaNames(sourceStructure), pairs.map(_._1)))
                     .orElse(Schema.variantTargetClash(merged.map((name, number) => name -> number.toString)))
                     .map(internal.BuilderProblem(s"variantNumbers(${pairs.map((s, n) => s"$s -> $n").mkString(", ")})", _))
             )
@@ -816,7 +824,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     def renameAllVariants(nameCase: Schema.NameCase): Schema[A] { type Focused = Schema.this.Focused } =
         val updatedNaming   = variantNaming.copy(variantCase = Maybe(nameCase))
-        val newEffectiveSet = Schema.effectiveVariantWires(Schema.variantScalaNames(structure), updatedNaming).toSet
+        val newEffectiveSet = Schema.effectiveVariantWires(Schema.variantScalaNames(sourceStructure), updatedNaming).toSet
         Schema.copyWith(this)(
             variantNaming = updatedNaming,
             builderProblem = configurationProblem.orElse(
@@ -842,7 +850,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * }}}
       */
     def variantAlias(variantWireName: String, aliases: String*): Schema[A] { type Focused = Schema.this.Focused } =
-        val wires  = Schema.effectiveVariantWires(Schema.variantScalaNames(structure), variantNaming)
+        val wires  = Schema.effectiveVariantWires(Schema.variantScalaNames(sourceStructure), variantNaming)
         val merged = variantNaming.variantAliases ++ Chunk.from(aliases).map(a => (a, variantWireName))
         Schema.copyWith(this)(
             variantNaming = variantNaming.copy(variantAliases = merged),
@@ -1433,17 +1441,37 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     // --- Structure integration ---
 
+    /** The shape A has as derived or written by hand, before this schema's renames, drops, flattening and variant tags: what
+      * kyo-schema's own lookups read by Scala name. Handwritten subclasses implement this method; Schema.init accepts it through
+      * its by-name `structure` argument, which defaults to Open(Tag[Any]).
+      */
+    private[kyo] def sourceStructure: Structure.Type
+
     /** Runtime structural projection for A. Sole source of truth for "what shape does this Schema produce
       * on the wire": consumed by Json.JsonSchema.from[A], Protobuf.ProtoSchema.from[A], and the
       * case-class derivation macro to build product/sum structures.
       *
-      * Provided by every concrete Schema instance via Schema.init's anonymous-class override.
-      * Omitting `structure` when calling Schema.init is a compile error.
+      * A product's fields are the keys it writes, a dropped field left out and a flattened one marked. A sum carries the
+      * representation it writes, the fallbacks after it and its ambiguity policy, and each variant the tag it writes. A structure
+      * installed with [[withStructure]] is reported as given.
       *
       * The returned Structure.Type is one of: Primitive, Product, Sum, Collection, Optional,
       * Mapping, or Open. Schema.transform preserves the structure of the source schema.
       */
-    def structure: Structure.Type
+    final lazy val structure: Structure.Type =
+        installedStructure.getOrElse(
+            sourceStructure match
+                case product: Structure.Type.Product if sourceFields.nonEmpty && (wireLayout ne internal.WireLayout.empty) =>
+                    wireLayout.structure(product)
+                case sum: Structure.Type.Sum if variantSchemas.nonEmpty =>
+                    val chain = representationChain.getOrElse(Chunk(representation))
+                    variantTags.structure(sum).copy(
+                        representation = chain.head,
+                        fallbacks = chain.drop(1),
+                        unionAmbiguityPolicy = unionAmbiguityPolicy
+                    )
+                case other => other
+        )
 
     @publicInBinary private[kyo] def writerForAnnotations(writer: Writer): Writer =
         if writer.canWriteAnnotations then Schema.writerWithAnnotations(structure, writer)
@@ -1557,6 +1585,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
         Schema.init[B](
             writeFn = (b: B, w: Writer) => self.serializeWrite(from(b), w),
             readFn = (r: Reader) => to(self.serializeRead(r)),
+            nominal = false,
             structure = self.structure
         )
     end transform
@@ -1567,7 +1596,8 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * `construct`, and a rejection is a `ConstructorRejectedException` naming B, a decode failure like any other malformed input,
       * so B's invariant holds for every decoded value. `construct` may return B itself, or a `Result`, `Maybe`, `Option`, `Either`
       * or `Try` of B (see [[Schema.Constructed]]); the outcome decides B before `from` is typed, so `from` needs no annotation.
-      * Encode writes `from(b)`.
+      * Encode writes `from(b)`. B's schema reports A's structure and keeps A's constraints, so a bound declared on A before the
+      * transform is stated wherever B's JSON schema is.
       *
       * `construct` runs with the `Frame` of the decode call in scope, so a constructor that takes one, such as an
       * `init(value)(using Frame)`, builds its rejection with the reader's site rather than the site that defined the given. The given
@@ -1596,7 +1626,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * on a schema whose codec has a fixed shape makes the report and the wire disagree.
       */
     def withStructure(structure: Structure.Type): Schema[A] =
-        Schema.copyWith(this)(structure = structure)
+        Schema.copyWith(this)(installedStructure = Maybe(structure))
 
     /** Overrides the focused field's encode and decode functions.
       *
@@ -1996,6 +2026,8 @@ object Schema:
         fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
         variantNames: Chunk[String] = Chunk.empty,
         catchAll: Maybe[internal.CatchAll] = Maybe.empty,
+        fieldSchemas: () => Chunk[(String, Schema[?])] = Schema.noFieldSchemas,
+        nominal: Boolean = true,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] =
         // Lazy capture defers inner.structure access until structure is first queried.
@@ -2030,7 +2062,9 @@ object Schema:
             fieldTransforms,
             fieldMaterializedDefaults,
             catchAll = catchAll,
-            variantNames = variantNames
+            variantNames = variantNames,
+            fieldSchemas = fieldSchemas,
+            nominal = nominal
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 val writeWriter           = writerForAnnotations(writer)
@@ -2054,7 +2088,7 @@ object Schema:
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
             @publicInBinary def setter(value: A, next: Any): A                             = setterFn(value, next)
             @publicInBinary override private[kyo] def absentDefaultValue: Maybe[A]         = _absentDefaultValue
-            override def structure: Structure.Type                                         = _structure
+            override private[kyo] def sourceStructure: Structure.Type                      = _structure
         end new
     end init
 
@@ -2348,7 +2382,8 @@ object Schema:
 
     /** Typed constraint for a field in a Schema.
       *
-      * Constraints carry the field path (segments) so they can be matched to properties during JsonSchema enrichment. They also drive
+      * Constraints carry the source field path (segments), independent of builder renames, so they can be matched to properties during
+      * JsonSchema enrichment. They also drive
       * runtime validation checks (baked into _checks at add time, except Format which is advisory only).
       */
     sealed abstract class Constraint derives CanEqual, Schema:
@@ -2378,7 +2413,7 @@ object Schema:
       * variant's wire name alone, `"Red"`, for a sum whose variants carry no data. The carrier is the
       * internal `representation` slot, set by the matching builder.
       */
-    enum UnionRepresentation derives CanEqual:
+    enum UnionRepresentation derives CanEqual, Schema:
         case External
         case Internal(tagKey: String)
         case Adjacent(tagKey: String, contentKey: String)
@@ -2408,7 +2443,7 @@ object Schema:
       * Configure via `schema.unionAmbiguity(policy)`. The policy is decode-only: it does not affect
       * encode.
       */
-    enum UnionAmbiguity derives CanEqual:
+    enum UnionAmbiguity derives CanEqual, Schema:
         case Strict
         case FirstMatch
     end UnionAmbiguity
@@ -2583,6 +2618,13 @@ object Schema:
         })
     end variantTargetClash
 
+    /** The fields of a schema that is not a derived product: none.
+      *
+      * A derived product holds its fields, each by its source name with the field's own schema, behind a function read only when
+      * called: reading a field's schema while the product's is built would enter a recursive type's schema before it exists.
+      */
+    @publicInBinary private[kyo] val noFieldSchemas: () => Chunk[(String, Schema[?])] = () => Chunk.empty
+
     /** The schema [[Schema.transformVia]] builds; `typeName` is B's name as the rejection reports it. */
     @publicInBinary private[kyo] def transformViaWith[A, B, R](
         self: Schema[A],
@@ -2597,6 +2639,8 @@ object Schema:
                 internal.constructedOrThrow(constructed.asResult(construct(self.serializeRead(r))(using r.frame)), typeName)(using
                     r.frame
                 ),
+            constraints = self.constraints,
+            nominal = false,
             structure = self.structure
         )
     end transformViaWith
@@ -2641,6 +2685,17 @@ object Schema:
                 capabilities.canWriteTopLevelNonObject
             case _ => true
     end representationExpressibleBy
+
+    /** The first of `representation` and its `fallbacks` a codec with `capabilities` expresses, Absent where it expresses none: the
+      * selection encode, `Schema#representationFor` and `Structure.Type.Sum#representationFor` share.
+      */
+    private[kyo] def representationFor(
+        representation: UnionRepresentation,
+        fallbacks: Chunk[UnionRepresentation],
+        capabilities: Codec.Capabilities
+    ): Maybe[UnionRepresentation] =
+        if representationExpressibleBy(representation, capabilities) then Present(representation)
+        else Maybe.fromOption(fallbacks.find(representationExpressibleBy(_, capabilities)))
 
     /** A variant collision if a variant alias duplicates an effective primary wire name (from explicit pairs, convention, or raw Scala
       * name) or another alias. `effectivePrimaries` is the full set of effective wire names as computed by `effectiveVariantWires`, so
@@ -2707,8 +2762,8 @@ object Schema:
       */
     private[kyo] def variantScalaNames(structure: Structure.Type): Chunk[String] =
         structure match
-            case Structure.Type.Sum(_, _, _, variants, _, _) => variants.map(_.name)
-            case _                                           => Chunk.empty
+            case sum: Structure.Type.Sum => sum.variants.map(_.name)
+            case _                       => Chunk.empty
 
     /** The effective wire name of each of `variantNames`: the explicit pair if present, else the
       * convention-derived name if a case is set, else the raw Scala name. Mirrors the
@@ -2866,9 +2921,12 @@ object Schema:
     given kyoInstantSchema: Schema[kyo.Instant] =
         instantSchema.transform[kyo.Instant](kyo.Instant.fromJava)(_.toJava)
 
-    /** Schema for kyo.Duration values. */
+    /** Schema for kyo.Duration values: a Long of nanoseconds on the wire, whose structure carries the duration's own tag so a reader
+      * of the structure tells it from a count.
+      */
     given kyoDurationSchema: Schema[kyo.Duration] =
         longSchema.transform[kyo.Duration](kyo.Duration.fromNanos)(_.toNanos)
+            .withStructure(Structure.Type.Primitive(Structure.PrimitiveKind.Long, Tag[kyo.Duration].asInstanceOf[Tag[Any]]))
 
     /** Schema for scala.concurrent.duration.FiniteDuration values.
       *
@@ -3478,14 +3536,17 @@ object Schema:
                 Tag[Any],
                 typeParams = Chunk(eSchema.structure, aSchema.structure),
                 variants = Chunk(
-                    Structure.Variant("success", aSchema.structure),
-                    Structure.Variant("failure", eSchema.structure),
+                    Structure.Variant("success", aSchema.structure, Chunk.empty, Maybe(Structure.VariantTag.Name("success"))),
+                    Structure.Variant("failure", eSchema.structure, Chunk.empty, Maybe(Structure.VariantTag.Name("failure"))),
                     Structure.Variant(
                         "panic",
-                        Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+                        Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]),
+                        Chunk.empty,
+                        Maybe(Structure.VariantTag.Name("panic"))
                     )
                 ),
-                enumValues = Chunk.empty
+                enumValues = Chunk.empty,
+                representation = UnionRepresentation.Adjacent("$type", "value")
             )
         )
     end resultSchema
@@ -3541,10 +3602,11 @@ object Schema:
                 Tag[Any],
                 typeParams = Chunk(aSchema.structure, bSchema.structure),
                 variants = Chunk(
-                    Structure.Variant("Left", aSchema.structure),
-                    Structure.Variant("Right", bSchema.structure)
+                    Structure.Variant("Left", aSchema.structure, Chunk.empty, Maybe(Structure.VariantTag.Name("Left"))),
+                    Structure.Variant("Right", bSchema.structure, Chunk.empty, Maybe(Structure.VariantTag.Name("Right")))
                 ),
-                enumValues = Chunk.empty
+                enumValues = Chunk.empty,
+                representation = UnionRepresentation.Adjacent("$type", "value")
             )
         )
     end eitherSchema
@@ -4008,6 +4070,9 @@ object Schema:
         catchAll0: Maybe[internal.CatchAll] = Maybe.empty,
         variantNames0: Chunk[String] = Chunk.empty,
         builderProblem0: Maybe[internal.BuilderProblem] = Maybe.empty,
+        installedStructure0: Maybe[Structure.Type] = Maybe.empty,
+        fieldSchemas0: () => Chunk[(String, Schema[?])] = Schema.noFieldSchemas,
+        nominal0: Boolean = true,
         absentDefaultValue: => Maybe[A] = Maybe.empty,
         structure: => Structure.Type
     ): Schema[A] { type Focused = E } =
@@ -4042,7 +4107,10 @@ object Schema:
             flattenedFields0,
             catchAll0,
             variantNames0,
-            builderProblem0
+            builderProblem0,
+            installedStructure0,
+            fieldSchemas0,
+            nominal0
         ):
             type Focused = E
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
@@ -4067,7 +4135,7 @@ object Schema:
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
             @publicInBinary def setter(value: A, next: Any): A                             = setterFn(value, next)
             @publicInBinary override private[kyo] def absentDefaultValue: Maybe[A]         = _absentDefaultValue
-            override def structure: Structure.Type                                         = _structure
+            override private[kyo] def sourceStructure: Structure.Type                      = _structure
         end new
     end createWithFocused
 
@@ -4109,7 +4177,10 @@ object Schema:
         variantNames: Chunk[String] = self.variantNames,
         builderProblem: Maybe[internal.BuilderProblem] = self.configurationProblem,
         absentDefaultValue: => Maybe[A] = self.absentDefaultValue,
-        structure: => Structure.Type = self.structure
+        structure: => Structure.Type = self.sourceStructure,
+        installedStructure: Maybe[Structure.Type] = self.installedStructure,
+        fieldSchemas: () => Chunk[(String, Schema[?])] = self.fieldSchemas,
+        nominal: Boolean = self.nominal
     ): Schema[A] { type Focused = self.Focused } =
         createWithFocused[A, self.Focused](
             getterFn = (a: A) => self.getter(a),
@@ -4145,6 +4216,9 @@ object Schema:
             catchAll0 = catchAll,
             variantNames0 = variantNames,
             builderProblem0 = builderProblem,
+            installedStructure0 = installedStructure,
+            fieldSchemas0 = fieldSchemas,
+            nominal0 = nominal,
             absentDefaultValue = absentDefaultValue,
             structure = structure
         )

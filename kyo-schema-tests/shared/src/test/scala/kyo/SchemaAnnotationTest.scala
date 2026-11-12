@@ -352,8 +352,9 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
         assert(prodNote == Some("p"), s"product-type annotations must yield 'p'; got $prodNote")
 
         summon[Schema[SA14bSum]].structure match
-            case Structure.Type.Sum(_, _, _, variants, _, sumAnnots) =>
-                val sumNote = sumAnnots.collectFirst { case t: tagged => t.note }
+            case sum: Structure.Type.Sum =>
+                val variants = sum.variants
+                val sumNote  = sum.annotations.collectFirst { case t: tagged => t.note }
                 assert(sumNote == Some("s"), s"sum-type annotations must yield 's'; got $sumNote")
                 val v1 = variants.find(_.name == "SA14bV1").getOrElse(
                     fail(s"variant SA14bV1 not found; variants=${variants.map(_.name)}")
@@ -977,7 +978,7 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
     }
 
     "Variant.annotationOf returns the first annotation of type A or Maybe.empty when absent" in {
-        val carrying = Structure.Variant("V", Schema[Int].structure, Chunk(new tagged("v1")))
+        val carrying = Structure.Variant("V", Schema[Int].structure, Chunk(new tagged("v1")), Maybe(Structure.VariantTag.Name("V")))
         val present  = carrying.annotationOf[tagged].map(_.note)
         assert(present == Maybe("v1"), s"Variant.annotationOf[tagged] must be Maybe(\"v1\"): $present")
 
@@ -986,11 +987,16 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
     }
 
     "Variant.annotationsOf returns all matching annotations in order and Chunk.empty when none match" in {
-        val multi      = Structure.Variant("V", Schema[Int].structure, Chunk(new tagged("v1"), new tagged("v2"), new sampleAnn()))
+        val multi = Structure.Variant(
+            "V",
+            Schema[Int].structure,
+            Chunk(new tagged("v1"), new tagged("v2"), new sampleAnn()),
+            Maybe(Structure.VariantTag.Name("V"))
+        )
         val taggedAnns = multi.annotationsOf[tagged].map(_.note)
         assert(taggedAnns == Chunk("v1", "v2"), s"Variant.annotationsOf[tagged] must be Chunk(v1, v2) in order: $taggedAnns")
 
-        val empty     = Structure.Variant("E", Schema[Int].structure)
+        val empty     = Structure.Variant("E", Schema[Int].structure, Chunk.empty, Maybe(Structure.VariantTag.Name("E")))
         val emptyAnns = empty.annotationsOf[tagged]
         assert(emptyAnns == Chunk.empty, s"Variant.annotationsOf on annotation-free variant must be Chunk.empty: $emptyAnns")
     }
@@ -1030,7 +1036,8 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
         val fieldAnn   = new tagged("f")
         val variantAnn = new tagged("v")
         val field      = Structure.Field("myField", Schema[Int].structure, Maybe.empty, Maybe.empty, false, Chunk(fieldAnn))
-        val variant    = Structure.Variant("MyVariant", Schema[Int].structure, Chunk(variantAnn))
+        val variant    =
+            Structure.Variant("MyVariant", Schema[Int].structure, Chunk(variantAnn), Maybe(Structure.VariantTag.Name("MyVariant")))
 
         val fieldResult = (field: @unchecked) match
             case Structure.Field.Annotated(name, anns) => (name, anns)
@@ -1087,8 +1094,8 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
         val f2     = Structure.Field("f2", Schema[Int].structure, Maybe.empty, Maybe.empty, false, Chunk(new tagged("z")))
         val fields = Chunk(f0, f1, f2)
 
-        val v0       = Structure.Variant("V0", Schema[Int].structure)
-        val v1       = Structure.Variant("V1", Schema[Int].structure, Chunk(new tagged("w")))
+        val v0       = Structure.Variant("V0", Schema[Int].structure, Chunk.empty, Maybe(Structure.VariantTag.Name("V0")))
+        val v1       = Structure.Variant("V1", Schema[Int].structure, Chunk(new tagged("w")), Maybe(Structure.VariantTag.Name("V1")))
         val variants = Chunk(v0, v1)
 
         val fw = fields.fieldsWith[tagged]

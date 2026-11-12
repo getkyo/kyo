@@ -129,6 +129,32 @@ class SchemaUnknownFieldTest extends kyo.test.Test[Any]:
             assertUnknownField(result, "extra")
         }
 
+        "a transform of a record reads the record and rejects an extra field at the top and in a nested record" in {
+            val schema = Schema[StrictOuter].transform(StrictWrapped(_))(_.value).denyUnknownFields
+            val value  = schema.decodeString[Json]("""{"name":"root","inner":{"value":1}}""")
+            assert(value == Result.Success(StrictWrapped(StrictOuter("root", StrictInner(1)))))
+            assertUnknownField(schema.decodeString[Json]("""{"name":"root","extra":true,"inner":{"value":1}}"""), "extra")
+            assertUnknownField(schema.decodeString[Json]("""{"name":"root","inner":{"value":1,"extra":2}}"""), "extra")
+        }
+
+        "a transformVia of a record reads the record and rejects an extra field at the top and in a nested record" in {
+            val schema = Schema[StrictOuter].transformVia((outer: StrictOuter) => StrictWrapped(outer))(_.value).denyUnknownFields
+            val value  = schema.decodeString[Json]("""{"name":"root","inner":{"value":1}}""")
+            assert(value == Result.Success(StrictWrapped(StrictOuter("root", StrictInner(1)))))
+            assertUnknownField(schema.decodeString[Json]("""{"name":"root","extra":true,"inner":{"value":1}}"""), "extra")
+            assertUnknownField(schema.decodeString[Json]("""{"name":"root","inner":{"value":1,"extra":2}}"""), "extra")
+        }
+
+        "a transform of a recursive record renamed writes and reads its nested occurrences renamed" in {
+            val schema = Schema[StrictTree].renameAllFields(Schema.NameCase.SnakeCase).transform(StrictWrapped(_))(_.value)
+                .denyUnknownFields
+            val tree = StrictWrapped(StrictTree("root", Chunk(StrictTree("kid", Chunk.empty))))
+            val wire = """{"full_name":"root","branches":[{"full_name":"kid","branches":[]}]}"""
+            assert(schema.encodeString[Json](tree) == wire)
+            assert(schema.decodeString[Json](wire) == Result.Success(tree))
+            assertUnknownField(schema.decodeString[Json]("""{"full_name":"root","extra":true,"branches":[]}"""), "extra")
+        }
+
         "flatten accepts flattened child keys and rejects unrelated unknown keys" in {
             val schema   = Schema[StrictFlattenParent].flatten.denyUnknownFields
             val accepted = schema.decodeString[Json]("""{"id":1,"code":"sku","quantity":2}""")

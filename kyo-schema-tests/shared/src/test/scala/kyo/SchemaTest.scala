@@ -582,6 +582,8 @@ case class MTRenamedCityHolder(city: String, home: MTAddress) derives CanEqual, 
 case class StrictFieldCase(firstName: String, lastName: String) derives CanEqual, Schema
 case class StrictInner(value: Int) derives CanEqual, Schema
 case class StrictOuter(name: String, inner: StrictInner) derives CanEqual, Schema
+case class StrictWrapped[A](value: A) derives CanEqual
+case class StrictTree(fullName: String, branches: Chunk[StrictTree]) derives CanEqual, Schema
 case class StrictFlattenChild(code: String, quantity: Int) derives CanEqual, Schema
 case class StrictFlattenParent(id: Int, child: StrictFlattenChild) derives CanEqual, Schema
 

@@ -805,6 +805,23 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
+        "jsonSchema carries a renamed field's doc and constraint under its key, and leaves a dropped field out" in {
+            given schema: Schema[MTUser] =
+                Schema[MTUser].doc(_.name)("person name").checkMinLength(_.name)(2).rename("name", "full_name").drop("ssn")
+            Json.jsonSchema[MTUser] match
+                case obj: JsonSchema.Obj =>
+                    assert(obj.properties.map(_._1) == List("full_name", "age", "email"))
+                    assert(obj.required == List("full_name", "age", "email"))
+                    obj.properties.find(_._1 == "full_name").map(_._2) match
+                        case Some(np: JsonSchema.Str) =>
+                            assert(np.description == Maybe("person name"))
+                            assert(np.minLength == Maybe(2))
+                        case other => fail(s"Expected full_name property as Str, got $other")
+                    end match
+                case other => fail(s"Expected JsonSchema.Obj, got $other")
+            end match
+        }
+
     }
 
     // ===================================================================
@@ -1091,6 +1108,19 @@ class JsonTest extends kyo.test.Test[Any]:
             // Schema consumers require the object form; the kyo-schema-wide convention is "Unit = empty
             // object" (see Schema.unitSchema).
             assert(Json.jsonSchema[Unit] == Json.JsonSchema.Obj(List.empty, List.empty))
+        }
+
+        "a tag-only sum in a field is offered as the strings it writes" in {
+            import JsonTestGuardTypes.JSPick
+            val offered = Json.jsonSchema[JSPick]
+            assert(offered == Json.JsonSchema.Obj(List("level" -> Json.JsonSchema.Str(enumValues = List("WCLow", "hi"))), List("level")))
+            assert(
+                Json.encode(
+                    offered
+                ) == """{"type":"object","properties":{"level":{"type":"string","enum":["WCLow","hi"]}},"required":["level"]}"""
+            )
+            assert(Json.decode[Json.JsonSchema](Json.encode(offered)) == Result.succeed(offered))
+            assert(Json.encode(JSPick(WCHigh)) == """{"level":"hi"}""")
         }
 
         "Json.encode(()) emits an empty object" in {
@@ -2419,4 +2449,5 @@ object JsonTestGuardTypes:
         given [A](using Schema[A]): Schema[JSCell[String, A]] = Schema.derived[JSCell[String, A]]
     final case class JSInnerCell(name: String, cell: JSCell[String, Int]) derives Schema
     final case class JSOuterCell(cell: JSCell[String, JSInnerCell]) derives Schema
+    final case class JSPick(level: WCLevel) derives Schema
 end JsonTestGuardTypes

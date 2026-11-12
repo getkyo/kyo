@@ -65,7 +65,7 @@ private[kyo] object SchemaFactory:
             readFn = (r: Reader) => source.rawSerializeRead(r),
             getterFn = (a: A) => source.getter(a),
             setterFn = (a: A, v: Any) => source.setter(a, v),
-            structure = source.structure,
+            structure = source.sourceStructure,
             segments = source.segments,
             sourceFields = source.sourceFields,
             examples = source.examples,
@@ -93,7 +93,10 @@ private[kyo] object SchemaFactory:
             fieldMaterializedDefaults = source.fieldMaterializedDefaults,
             flattenedFields0 = source.flattenedFields ++ flattenedFields,
             catchAll0 = source.catchAll,
-            builderProblem0 = source.configurationProblem
+            builderProblem0 = source.configurationProblem,
+            installedStructure0 = source.installedStructure,
+            fieldSchemas0 = source.fieldSchemas,
+            nominal0 = source.nominal
         )
     end createFrom
 

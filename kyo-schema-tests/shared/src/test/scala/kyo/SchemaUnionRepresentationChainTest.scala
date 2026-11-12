@@ -24,10 +24,22 @@ class SchemaUnionRepresentationChainTest extends kyo.test.Test[Any]:
         )
         val capTrue  = Codec.Capabilities(canWriteTopLevelNonObject = true)
         val capFalse = Codec.Capabilities(canWriteTopLevelNonObject = false)
-        assert(schema.representationFor(capTrue) == Schema.UnionRepresentation.TupleFlat)
-        assert(schema.representationFor(capTrue) == Schema.UnionRepresentation.TupleFlat)
-        assert(schema.representationFor(capFalse) == Schema.UnionRepresentation.External)
-        assert(schema.representationFor(capFalse) == Schema.UnionRepresentation.External)
+        assert(schema.representationFor(capTrue) == Maybe(Schema.UnionRepresentation.TupleFlat))
+        assert(schema.representationFor(capTrue) == Maybe(Schema.UnionRepresentation.TupleFlat))
+        assert(schema.representationFor(capFalse) == Maybe(Schema.UnionRepresentation.External))
+        assert(schema.representationFor(capFalse) == Maybe(Schema.UnionRepresentation.External))
+    }
+
+    "representationFor is Absent when no chain entry fits the codec" in {
+        val schema = Schema[SSRShape].representations(
+            Schema.UnionRepresentation.TupleFlat,
+            Schema.UnionRepresentation.Tuple
+        )
+        val capFalse = Codec.Capabilities(canWriteTopLevelNonObject = false)
+        assert(schema.representationFor(capFalse) == Absent)
+        schema.structure match
+            case sum: Structure.Type.Sum => assert(sum.representationFor(capFalse) == Absent)
+            case other                   => fail(s"expected a Sum, got $other")
     }
 
     "duplicate chain is rejected at the first decode, naming the builder call" in {

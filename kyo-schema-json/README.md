@@ -120,14 +120,14 @@ When another system needs a machine-readable contract, derive JSON Schema from t
 
 ### Deriving an enriched schema
 
-Use `Json.jsonSchema[A]` to obtain a Draft 2020-12-compatible value. Documentation, field descriptions, deprecation markers, examples, constraints, dropped fields, and renamed fields registered on the runtime schema enrich the result:
+Use `Json.jsonSchema[A]` to obtain a Draft 2020-12-compatible value. Its properties are the keys the schema writes, after its renames, drops and naming convention, and the documentation, field descriptions, deprecation markers, examples and constraints registered on the runtime schema enrich the result:
 
 ```scala doctest:expect=runs
 val description: Json.JsonSchema = Json.jsonSchema[Event]
 assert(description.isInstanceOf[Json.JsonSchema.Obj])
 ```
 
-> **Unlike** `Json.JsonSchema.from[A]`, which derives structure only, `Json.jsonSchema[A]` applies runtime `Schema` metadata and transformations.
+> **Unlike** `Json.JsonSchema.from[A]`, which describes the same keys from the schema's structure alone, `Json.jsonSchema[A]` adds the runtime `Schema` metadata.
 
 The returned `Json.JsonSchema` enum represents object, array, string, numeric, integer, boolean, null, nullable, and `oneOf` shapes. Pattern matching lets tooling inspect the result without parsing generated JSON:
 
