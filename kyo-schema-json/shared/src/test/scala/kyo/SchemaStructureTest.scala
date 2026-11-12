@@ -155,19 +155,19 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
 
         "plain class" in {
             typeCheckFailure("kyo.Schema.derived[kyo.MTOpaque]")(
-                "not a case class or sealed trait"
+                "not a case class, record or sealed trait"
             )
         }
 
         "open trait" in {
             typeCheckFailure("kyo.Schema.derived[kyo.MTOpenTrait]")(
-                "not a case class or sealed trait"
+                "not a case class, record or sealed trait"
             )
         }
 
         "primitive" in {
             typeCheckFailure("kyo.Schema.derived[Int]")(
-                "not a case class or sealed trait"
+                "not a case class, record or sealed trait"
             )
         }
 
@@ -1285,6 +1285,40 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
             val encoded = Json.encode(value)
             assert(encoded == s""""$highBitsUuidText"""")
             assert(Json.decode[java.util.UUID](encoded) == Result.succeed(value))
+        }
+    }
+
+    "Tag schema and JSON codec" - {
+        "a tag reads back as the type it was written for" in {
+            val tags =
+                Chunk(
+                    Tag[Int].erased,
+                    Tag[String].erased,
+                    Tag["a:b\nc"].erased,
+                    Tag[List[Int]].erased,
+                    Tag[Int | String].erased,
+                    Tag[Map[String, List[Int]]].erased
+                )
+            assert(tags.map(tag => Json.decode[Tag[Any]](Json.encode(tag)).map(_ =:= tag)) == tags.map(_ => Result.succeed(true)))
+        }
+
+        "a dynamic tag is written as one encoding and reads back as its type" in {
+            def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]] = Tag.dynamic[Map[A, List[B]]]
+            val tag                                          = nested[String, Int].erased
+            val back                                         = Json.decode[Tag[Any]](Json.encode(tag))
+            assert(back.map(_ =:= tag) == Result.succeed(true))
+            assert(back.map(_ =:= Tag[Map[String, List[Int]]].erased) == Result.succeed(true))
+            assert(back.map(_.show) == Result.succeed(tag.show))
+        }
+
+        "a text that is not a tag's encoding is a typed decoding failure" in {
+            // a class name, nothing, an unknown kind, a parameter and a parent that name no entry, a count that is not a number
+            val texts = Chunk("example.Message", "", "*0:Q", ".0:C:scala.Some:1:1:5:", "*0:C:x:z:::")
+            assert(texts.map(text =>
+                Json.decode[Tag[Any]](Json.encode(text)) match
+                    case Result.Failure(_: TypeMismatchException) => true
+                    case _                                        => false
+            ) == texts.map(_ => true))
         }
     }
 

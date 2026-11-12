@@ -25,11 +25,12 @@ private[kyo] object DoltLiteStatements:
     private def call(client: SqlClient, function: String, args: Chunk[String])(using
         Frame
     ): String < (Async & Abort[SqlException]) =
-        query(client, callSql(function, args.size), args).map { rows =>
-            if rows.isEmpty then Abort.fail(DoltLiteFunctionAnsweredNothingException(function))
-            else lifted(rows.head.decode[Maybe[String]](0)).map(_.getOrElse(""))
-        }
+        query(client, callSql(function, args.size), args).map(rows => scalar(function, rows))
     end call
+
+    private def scalar(function: String, rows: Chunk[SqlRow])(using Frame): String < Abort[SqlException] =
+        if rows.isEmpty then Abort.fail(DoltLiteFunctionAnsweredNothingException(function))
+        else lifted(rows.head.decode[Maybe[String]](0)).map(_.getOrElse(""))
 
     private def callSql(function: String, arity: Int): String =
         s"SELECT $function(${Chunk.fill(arity)("?").mkString(", ")})"
@@ -128,8 +129,8 @@ private[kyo] object DoltLiteStatements:
 
     def commit(client: SqlClient, message: String, all: Boolean)(using Frame): Dolt.Commit < (Async & Abort[SqlException]) =
         val args = if all then Chunk("-Am", message) else Chunk("-m", message)
-        // NOT wrapped in a transaction, unlike the server backend's. This engine's version-control functions end the
-        // SQL transaction themselves, so an enclosing `COMMIT` answers "cannot commit - no transaction is active".
+        // This engine's version-control commit also ends the SQL transaction. DoltLiteConnection accepts that
+        // completed transaction at scope exit; writes committed here cannot subsequently be rolled back.
         // The read-back is by the hash the call returned rather than by HEAD, so no other writer can be mistaken for it.
         call(client, "dolt_commit", args).map(hash => commitAt(client, hash))
     end commit
@@ -297,47 +298,57 @@ private[kyo] object DoltLiteStatements:
             }
         }
 
-    /** Runs a merging function and answers `clean` of its message, or the conflicts it met.
-      *
-      * The engine never lets a conflict outlive a transaction. Under autocommit a conflicting merge raises and rolls back before anything
-      * can read it, and inside a transaction it raises with the conflicts readable until the transaction ends, whose COMMIT then refuses
-      * them. A clean merge, on the other hand, ends an enclosing transaction itself, so the call cannot run inside one. It runs under
-      * autocommit, and only a failure is replayed inside a transaction on one session, to read the conflicts it leaves before rolling
-      * back. The branch is then exactly as it was before the merge.
+    /** Reads a merge's conflicts in the transaction that produced them. Without an enclosing transaction, the temporary
+      * transaction aborts a conflicted merge after reading it, leaving the branch unchanged. Inside one, the caller can
+      * resolve the conflicts and commit them there. The operation is never replayed after a failure.
       */
     private def conflictAware[A](client: SqlClient, function: String, args: Chunk[String])(
         clean: String => A < (Async & Abort[SqlException])
     )(using Frame): (A | Dolt.Merge.Conflicted) < (Async & Abort[SqlException]) =
-        Abort.run[SqlException](call(client, function, args)).map {
+        client.enclosingTransaction.map {
+            case Present(ctx) => mergeIn(client, function, args, ctx.depth > 0)(clean)
+            case Absent       =>
+                client.transaction {
+                    mergeIn(client, function, args, nested = false)(clean).map {
+                        case conflict: Dolt.Merge.Conflicted =>
+                            callUnit(client, "dolt_merge", Chunk("--abort")).andThen(conflict)
+                        case result => result
+                    }
+                }
+        }
+
+    private def mergeIn[A](client: SqlClient, function: String, args: Chunk[String], nested: Boolean)(
+        clean: String => A < (Async & Abort[SqlException])
+    )(using Frame): (A | Dolt.Merge.Conflicted) < (Async & Abort[SqlException]) =
+        mergeCall(client, function, args).map {
             case Result.Success(message) => clean(message)
-            case Result.Failure(failure) =>
-                replayForConflicts(client, function, args).map { (data, schema) =>
-                    if data.isEmpty && schema.isEmpty then Abort.fail(failure)
-                    else
-                        failure match
-                            case e: SqlServerErrorException => Dolt.Merge.Conflicted(data, schema, e.serverMessage)
-                            case other                      => Dolt.Merge.Conflicted(data, schema, other.getMessage)
+            case Result.Failure(report)  =>
+                conflicts(client).map { data =>
+                    schemaConflicts(client).map { schema =>
+                        if data.nonEmpty || schema.nonEmpty then Dolt.Merge.Conflicted(data, schema, report.serverMessage)
+                        else if nested then Abort.fail(DoltLiteNestedMergeConflictException(report.serverMessage))
+                        else Abort.fail(report)
+                    }
                 }
             case Result.Panic(t) => Abort.panic(t)
         }
 
-    private def replayForConflicts(client: SqlClient, function: String, args: Chunk[String])(using
+    /** The pinned engine reports a merge conflict as SQLITE_ERROR while keeping its transaction usable. Convert that
+      * report to a value inside the routed statement, before SQL's failure tracking sees it. Every other error still
+      * crosses the routing boundary and marks the transaction failed in the ordinary way.
+      */
+    private def mergeCall(client: SqlClient, function: String, args: Chunk[String])(using
         Frame
-    ): (Chunk[Dolt.ConflictSummary], Chunk[Dolt.SchemaConflict]) < (Async & Abort[SqlException]) =
-        client.usePinnedConnection { conn =>
-            conn.beginTransaction(Absent, readOnly = false).andThen {
-                Abort.run[SqlException] {
-                    Abort.run[SqlException](conn.extendedQuery(callSql(function, args.size), args.map(text))).andThen {
-                        conn.extendedQuery(conflictsSql, Chunk.empty).map(decodeConflicts).map { data =>
-                            conn.extendedQuery(schemaConflictsSql, Chunk.empty).map(decodeSchemaConflicts).map((data, _))
-                        }
-                    }
-                }.map { read =>
-                    conn.rollbackTransaction.andThen(read match
-                        case Result.Success(found) => found
-                        case Result.Failure(e)     => Abort.fail(e)
-                        case Result.Panic(t)       => Abort.panic(t))
-                }
+    ): Result[SqlServerErrorException, String] < (Async & Abort[SqlException]) =
+        client.routedWith(client.config) { conn =>
+            Abort.run[SqlException](conn.extendedQuery(callSql(function, args.size), args.map(text))).map {
+                case Result.Success(rows) => scalar(function, rows).map(Result.succeed)
+                case Result.Failure(e: SqlServerErrorException)
+                    if e.sqlState == "HY000" && e.serverMessage.startsWith("Merge has ") &&
+                        e.serverMessage.endsWith(" conflict(s). Resolve and then commit with dolt_commit.") =>
+                    Result.fail(e)
+                case Result.Failure(e) => Abort.fail(e)
+                case Result.Panic(t)   => Abort.panic(t)
             }
         }
 

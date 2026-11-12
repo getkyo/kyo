@@ -17,8 +17,47 @@ class SlackEventTest extends kyo.test.Test[Any]:
         )))
         assert(Json.decode[SlackEvent.Message](threaded).map(_.threadTs) == Result.succeed(Present(SlackTs("1355517523.000005"))))
         assert(Json.decode[SlackEvent.Message](threaded).map(Json.encode(_)) == Result.succeed(
-            """{"channel":"C123ABC456","user":"U123ABC456","text":"reply","ts":"1355517524.000006","thread_ts":"1355517523.000005"}"""
+            """{"channel":"C123ABC456","user":"U123ABC456","text":"reply","ts":"1355517524.000006","thread_ts":"1355517523.000005","files":[]}"""
         ))
+    }
+
+    "a file_share message event's files are Slack's file objects, read by id, name and mimetype, and a message with none has none" in {
+        val shared =
+            """{"type":"message","subtype":"file_share","channel":"C123ABC456","user":"U123ABC456","text":"","ts":"1355517523.000005",""" +
+                """"files":[{"id":"F0S43PZDF","name":"tedair.gif","title":"tedair.gif","mimetype":"image/gif","filetype":"gif"},""" +
+                """{"id":"F0S43PZDG","name":null}]}"""
+        assert(Json.decode[SlackEvent.Message](shared).map(_.files) == Result.succeed(Chunk(
+            SlackFile(SlackId.FileId("F0S43PZDF"), Present("tedair.gif"), Present("image/gif")),
+            SlackFile(SlackId.FileId("F0S43PZDG"))
+        )))
+        assert(Json.decode[SlackEvent.Message](
+            """{"type":"message","channel":"C123ABC456","user":"U123ABC456","text":"hi","ts":"1355517523.000005"}"""
+        ).map(_.files) == Result.succeed(Chunk.empty))
+    }
+
+    "a file's size and url_private decode as its size and url, and a Slack Connect file decodes to its id alone" in {
+        val shared =
+            """{"type":"message","subtype":"file_share","channel":"C123ABC456","user":"U123ABC456","text":"","ts":"1355517523.000005",""" +
+                """"files":[{"id":"F0S43PZDF","name":"tedair.gif","mimetype":"image/gif","size":137531,""" +
+                """"url_private":"https://files.slack.com/files-pri/T0T7NNC7E-F0S43PZDF/tedair.gif"},""" +
+                """{"id":"F0S43PZDG","file_access":"check_file_info"}]}"""
+        assert(Json.decode[SlackEvent.Message](shared).map(_.files) == Result.succeed(Chunk(
+            SlackFile(
+                SlackId.FileId("F0S43PZDF"),
+                Present("tedair.gif"),
+                Present("image/gif"),
+                Present(ByteSize.fromBytes(137531)),
+                Present(SlackLiterals.urlOf("https://files.slack.com/files-pri/T0T7NNC7E-F0S43PZDF/tedair.gif"))
+            ),
+            SlackFile(SlackId.FileId("F0S43PZDG"))
+        )))
+    }
+
+    "a file whose size is negative, or whose url_private is not a url, fails to decode" in {
+        val negative = Json.decode[SlackFile]("""{"id":"F1","size":-1}""")
+        val text     = Json.decode[SlackFile]("""{"id":"F1","url_private":"not a url"}""")
+        assert(negative.failure.exists(_.getMessage.contains("a file size of -1 bytes")), negative.toString)
+        assert(text.failure.exists(_.getMessage.contains("url_private")), text.toString)
     }
 
     "an app_mention event decodes from Slack's object and writes its modelled keys" in {

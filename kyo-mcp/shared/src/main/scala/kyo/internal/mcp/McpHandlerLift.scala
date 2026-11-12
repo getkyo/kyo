@@ -3,8 +3,9 @@ package kyo.internal.mcp
 import kyo.*
 
 /** Lifts each [[McpHandler]] to a [[JsonRpcRoute]] that wraps the user closure in
-  * `Mcp.local.let(Present(RequestContext(jrCtx, server)))` so the closure can reach the
-  * per-request context through the `Mcp.*` accessors.
+  * `Mcp.local.let(Present(RequestContext(jrCtx, server, Absent)))` so the closure can reach the
+  * per-request context through the `Mcp.*` accessors. A lifted route decodes its whole params as the
+  * handler's `In`, so it binds no `_meta`.
   *
   * The `serverRef` is a forward reference that the engine populates once `JsonRpcHandler.initUnscoped`
   * completes; the wrapped closure reads it lazily on every invocation.
@@ -59,7 +60,7 @@ private[kyo] object McpHandlerLift:
         jrCtx: JsonRpcRoute.Context,
         serverRef: Fiber.Promise[McpServer.Unsafe, Any]
     )(body: => A < S)(using Frame): A < (S & Async) =
-        serverRef.get.map(srv => Mcp.local.let(Present(Mcp.RequestContext(jrCtx, srv.safe)))(body))
+        serverRef.get.map(srv => Mcp.local.let(Present(Mcp.RequestContext(jrCtx, srv.safe, Absent)))(body))
     end withCtx
 
     private def liftTool[In, Out, E](

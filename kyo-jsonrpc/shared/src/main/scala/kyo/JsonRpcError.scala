@@ -41,21 +41,17 @@ sealed abstract class JsonRpcError(
 end JsonRpcError
 
 object JsonRpcError:
-    /** Wire decoder: maps known error codes back to specific leaf types; unknown codes become [[JsonRpcCustomError]].
+    /** Wire decoder: rebuilds an error a peer sent, keeping its code, message and data.
       *
-      * Used by the codec when deserializing an `error` field from a JSON-RPC response envelope. Codes in the
-      * implementation-defined range (-32099 to -32000) are mapped to [[JsonRpcImplementationError]]; all other
-      * unknown codes become [[JsonRpcCustomError]].
+      * Used by the codec when deserializing an `error` field from a JSON-RPC response envelope. The codes JSON-RPC 2.0
+      * reserves (-32700, -32600 to -32603) become [[JsonRpcPeerError]]; codes in the implementation-defined range (-32099 to
+      * -32000) become [[JsonRpcImplementationError]]; all other codes become [[JsonRpcCustomError]].
       */
     def fromWire(code: Int, message: String, data: Maybe[Structure.Value])(using Frame): JsonRpcError =
         code match
-            case -32700 => JsonRpcParseError("[wire-received]", 0, JsonRpcParseError.Reason.TrailingContent)
-            case -32600 => JsonRpcInvalidRequestError(data.getOrElse(Structure.Value.Null), Chunk.empty)
-            case -32601 => JsonRpcMethodNotFoundError("[wire-received]", Chunk.empty)
-            case -32602 => JsonRpcInvalidParamsError("[wire-received]", data, Chunk.empty)
-            case -32603 => JsonRpcInternalError(JsonRpcInternalError.Operation.Other, new RuntimeException(message))
-            case c if c >= -32099 && c <= -32000 => JsonRpcImplementationError(c, message, data)
-            case _                               => JsonRpcCustomError(code, message, data)
+            case -32700 | -32600 | -32601 | -32602 | -32603 => JsonRpcPeerError(code, message, data)
+            case c if c >= -32099 && c <= -32000            => JsonRpcImplementationError(c, message, data)
+            case _                                          => JsonRpcCustomError(code, message, data)
 
     /** Hand-rolled [[Schema]] projecting any [[JsonRpcError]] to its wire triple `(code, message, data)`.
       *
@@ -414,6 +410,29 @@ object JsonRpcImplementationError:
         new JsonRpcImplementationError(code, label, data)
     end apply
 end JsonRpcImplementationError
+
+/** An error with a code JSON-RPC 2.0 reserves (-32700, -32600 to -32603), as a peer sent it.
+  *
+  * [[JsonRpcError.fromWire]] builds this leaf for those codes. The leaves kyo raises for the same codes compose their message
+  * from fields that only a local raise has, such as [[JsonRpcInvalidParamsError]]'s `method` and `errors`, which the wire does
+  * not carry; this one keeps the message and the data the peer sent.
+  *
+  * @param code   the reserved code the peer sent
+  * @param label  the message the peer sent
+  * @param data   the data the peer sent, if any
+  */
+case class JsonRpcPeerError(
+    override val code: Int,
+    label: String,
+    override val data: Maybe[Structure.Value]
+)(using Frame)
+    extends JsonRpcError(
+        code0 = code,
+        // As with JsonRpcImplementationError, the code is not folded into the message: a relayed error re-enters
+        // `fromWire` with the message it carries, so a prefix added here would be re-applied on every hop.
+        message = label,
+        data0 = data
+    ) with JsonRpcExecutionFailure
 
 // =============================================================================
 // Application-failure leaves

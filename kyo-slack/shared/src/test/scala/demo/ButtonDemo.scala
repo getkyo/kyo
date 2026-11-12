@@ -28,7 +28,7 @@ object ButtonDemo extends KyoApp:
                     env match
                         case e: SlackEnvelope.EventsApi =>
                             e.payload.event match
-                                case SlackEvent.Message(channel, _, text, _, _) if text.trim == "menu" =>
+                                case SlackEvent.Message(channel, _, text, _, _, _) if text.trim == "menu" =>
                                     Slack.send(SlackMessage(channel, "pick one:", blocks = menu))
                                         .andThen(SlackAck.Ack)
                                 case _ => SlackAck.Ack

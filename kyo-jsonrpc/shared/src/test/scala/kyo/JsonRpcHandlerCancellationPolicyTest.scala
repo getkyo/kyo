@@ -126,12 +126,11 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
 
     /** Returns once the peer has read every message `a` sent before it: a call to a method the peer does not know is answered
       * directly by the peer's reader, so its reply proves the reader got past everything sent earlier. Any other outcome means
-      * the barrier did not hold, so it fails the test. The method name is not checked: the reply crosses the engine's JSON codec,
-      * which rebuilds a -32601 error without it. The reply reaches this call only through the call's own id.
+      * the barrier did not hold, so it fails the test. The reply reaches this call only through the call's own id.
       */
     private def flush(a: JsonRpcHandler)(using Frame, kyo.test.AssertScope): Unit < Async =
         Abort.run[JsonRpcError | Closed](a.call[EchoReq, EchoResp]("no-such-method", EchoReq("flush"))).map {
-            case Result.Failure(e: JsonRpcMethodNotFoundError) if e.code == -32601 => ()
+            case Result.Failure(e: JsonRpcPeerError) if e.code == -32601 && e.message.contains("'no-such-method'") => ()
             case other => fail(s"flush expected the peer's -32601 reply for 'no-such-method', got $other")
         }
 

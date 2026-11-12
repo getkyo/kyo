@@ -291,4 +291,73 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
         }
     }
 
+    "a body that ends before its framing does" - {
+
+        /** Sends `dripReq`, answers it with `fragments` and then the peer's FIN, and drains the body: the text that arrived and how the
+          * stream ended.
+          */
+        def drained(fragments: String*)(using Frame): (String, Result[HttpException, Unit]) < (Async & Abort[Any]) =
+            val (clientConn, serverConn) = TransportConnection.inMemoryPair()
+            val http1                    = Http1ClientConnection.init(clientConn.inbound, clientConn.outbound)
+            val conn                     = new HttpConnection(clientConn, http1, "test", 80, false, "test")
+            val backend                  = HttpClientBackend.init(new TestChannelTransport(Seq.empty), 2, 60.seconds)
+            val respFiber                = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, Absent, Absent)
+            serverConn.inbound.safe.take.map { _ =>
+                // closeAwaitEmpty is a FIN after the bytes: the client reads every fragment before it sees the close.
+                Sync.Unsafe.defer {
+                    fragments.foreach(f => discard(serverConn.outbound.offer(spanOf(f))))
+                    discard(serverConn.outbound.closeAwaitEmpty())
+                }.andThen {
+                    respFiber.safe.get.map { resp =>
+                        AtomicRef.init("").map { seen =>
+                            Abort.run[HttpException](resp.fields.body.foreach(span => seen.updateAndGet(_ + spanToString(span)).unit))
+                                .map(result => seen.get.map((_, result)))
+                        }
+                    }
+                }
+            }
+        end drained
+
+        "a Content-Length body cut short fails with HttpConnectionClosedException after the bytes that arrived" in {
+            drained("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n", "fresh").map { (text, result) =>
+                assert(text == "fresh")
+                result match
+                    case Result.Failure(_: HttpConnectionClosedException) => succeed
+                    case other                                            => fail(s"Expected HttpConnectionClosedException, got $other")
+            }
+        }
+
+        "a chunked body cut short fails with HttpConnectionClosedException after the chunks that arrived" in {
+            drained(streamHeaders, chunk1).map { (text, result) =>
+                assert(text == "chunk1")
+                result match
+                    case Result.Failure(_: HttpConnectionClosedException) => succeed
+                    case other                                            => fail(s"Expected HttpConnectionClosedException, got $other")
+            }
+        }
+
+        "a chunked body with malformed framing fails with HttpMalformedBodyException after the chunks before it" in {
+            drained(streamHeaders, chunk1, "zz\r\nchunk2\r\n0\r\n\r\n").map { (text, result) =>
+                assert(text == "chunk1")
+                result match
+                    case Result.Failure(_: HttpMalformedBodyException) => succeed
+                    case other                                         => fail(s"Expected HttpMalformedBodyException, got $other")
+            }
+        }
+
+        "a complete chunked body ends cleanly" in {
+            drained(streamHeaders, chunk1, chunk2AndEnd).map { (text, result) =>
+                assert(text == "chunk1chunk2")
+                assert(result == Result.unit)
+            }
+        }
+
+        "a close-framed body streams every byte until the close, which is its end" in {
+            drained("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nabc", "def", "ghi").map { (text, result) =>
+                assert(text == "abcdefghi", text)
+                assert(result == Result.unit)
+            }
+        }
+    }
+
 end HttpClientBackendStreamingTest

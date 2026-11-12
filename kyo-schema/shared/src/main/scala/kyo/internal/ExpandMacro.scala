@@ -7,7 +7,7 @@ import scala.quoted.*
 /** Type expansion for Schema.apply[A] and navigation paths.
   *
   * Expands a case class type `A` to its structural Record shape (intersection of `"field" ~
-  * FieldType` pairs). A sealed trait expands to a union of `"Variant" ~ VariantType` pairs. Non-case
+  * FieldType` pairs). A record exposes its field intersection directly. A sealed trait expands to a union of `"Variant" ~ VariantType` pairs. Non-case
   * types (primitives, opaque types, type-parameterized type constructors with no case-class
   * specialization) are returned unchanged so navigation macros can still pattern-match on the raw
   * shape.
@@ -46,7 +46,7 @@ object ExpandMacro:
                     val variants  = children.map: child =>
                         val childName = child.name
                         val nameType  = ConstantType(StringConstant(childName))
-                        val childType = MacroUtils.sumCaseType(MacroUtils.sumCaseReference(dealiased, sym, child))
+                        val childType = MacroUtils.sumCaseType(dealiased, sym, MacroUtils.sumCaseReference(dealiased, sym, child))
                         tildeType.appliedTo(List(nameType, childType))
                     variants.reduce(OrType(_, _))
                 else if sym.flags.is(Flags.Case) then
@@ -60,7 +60,8 @@ object ExpandMacro:
                 // The recursion is structural; it does NOT introduce any classifier specialization
                 // of `tycon` symbols (List, Option, etc. are not enumerated).
                 dealiased match
-                    case AppliedType(tycon, args) =>
+                    case AppliedType(tycon, List(fields)) if tycon =:= TypeRepr.of[Record] => fields
+                    case AppliedType(tycon, args)                                          =>
                         tycon.appliedTo(args.map(expandType))
                     case _ =>
                         dealiased

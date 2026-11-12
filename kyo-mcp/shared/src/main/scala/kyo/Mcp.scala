@@ -2,15 +2,16 @@ package kyo
 
 /** Handler-side accessors for the per-request MCP context.
   *
-  * The engine binds the per-request `(JsonRpcRoute.Context, McpServer)` pair into a `Local` for
-  * the lifetime of a single handler invocation. Handler code reaches into that local through the
-  * accessors here:
+  * The engine binds the per-request `JsonRpcRoute.Context`, `McpServer` and params' `_meta` into a
+  * `Local` for the lifetime of a single handler invocation. Handler code reaches into that local
+  * through the accessors here:
   *
   *   - `Mcp.server`        ; the live `McpServer` for reverse-direction calls
   *   - `Mcp.progress(...)` ; emits an MCP-shaped progress notification
   *   - `Mcp.requestId`     ; the JSON-RPC id of the inbound request
   *   - `Mcp.cancelled`     ; the promise that completes when the peer cancels this request
   *   - `Mcp.extras`        ; protocol-specific extra fields from the inbound envelope
+  *   - `Mcp.meta`          ; the `_meta` of the inbound request's params
   *
   * Calling any of these outside an active route-handler invocation raises an
   * `IllegalStateException` (surfaced as a kernel panic). This is a programmer-error path, not a
@@ -18,8 +19,8 @@ package kyo
   */
 object Mcp:
 
-    /** The pair of per-request context fields the engine binds for each dispatch. */
-    final private[kyo] case class RequestContext(jsonRpc: JsonRpcRoute.Context, server: McpServer)
+    /** The per-request context fields the engine binds for each dispatch. */
+    final private[kyo] case class RequestContext(jsonRpc: JsonRpcRoute.Context, server: McpServer, meta: Maybe[Structure.Value])
 
     /** Local holding the current request context. The engine sets `Present(ctx)` for the duration
       * of a single handler invocation; outside that scope it is `Absent`.
@@ -104,8 +105,9 @@ object Mcp:
     /** Protocol-specific extra fields from the inbound envelope, if any (raw storage form). */
     def extras(using Frame): Maybe[Structure.Value] < Sync = ctx("extras").map(_.jsonRpc.extras)
 
-    /** Decodes the open `_meta` slot to `T`. `Absent` when no extras are present; a non-conforming
-      * payload aborts `McpDecodeException` on an honestly-widened row (the decode can fail).
+    /** Decodes the extra fields of the inbound envelope to `T`. `Absent` when no extras are present; a
+      * non-conforming payload aborts `McpDecodeException` on an honestly-widened row (the decode can fail).
+      * MCP's open metadata slot is the params' `_meta`, which [[metaAs]] reads.
       */
     def extras[T](using Schema[T], Frame): Maybe[T] < (Sync & Abort[McpDecodeException]) =
         extras.map {
@@ -114,6 +116,27 @@ object Mcp:
                 Structure.decode[T](sv) match
                     case Result.Success(t) => Present(t)
                     case Result.Failure(e) => Abort.fail(McpDecodeException("_meta", e.getMessage, Present(e)))
+                    case Result.Panic(t)   => Abort.panic(t)
+        }
+
+    /** The `_meta` of the inbound request's params (raw storage form), as `tools/call`, `resources/read`,
+      * `prompts/get` and `completion/complete` send it; `Absent` when the request sent none.
+      *
+      * Custom methods and client-side reverse handlers do not populate this slot. A handler whose input
+      * includes the whole params object can declare `_meta` in that input.
+      */
+    def meta(using Frame): Maybe[Structure.Value] < Sync = ctx("meta").map(_.meta)
+
+    /** Decodes [[meta]] to `M`, or `Absent` when the request sent no `_meta`. A non-conforming payload
+      * aborts `McpDecodeException`.
+      */
+    def metaAs[M](using Schema[M], Frame): Maybe[M] < (Sync & Abort[McpDecodeException]) =
+        meta.map {
+            case Absent      => Maybe.empty
+            case Present(sv) =>
+                Structure.decode[M](sv) match
+                    case Result.Success(m) => Present(m)
+                    case Result.Failure(e) => Abort.fail(McpDecodeException("meta", e.getMessage, Present(e)))
                     case Result.Panic(t)   => Abort.panic(t)
         }
 

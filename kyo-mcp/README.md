@@ -277,7 +277,7 @@ The alternative overload reads the code and message from an `McpHandler.McpError
 
 ## Inside a handler: the per-request context
 
-A handler signature is just `In => Out`, with no context parameter, because the engine binds the per-request context into a `Local` for the duration of each dispatch. Handler code reaches into it through the `Mcp.*` accessors, which read that local: the live peer, the inbound request id, the cancellation signal, the inbound `_meta` extras, and the progress channel. Treat them as one mental model: ambient state the engine has already bound by the time your body runs.
+A handler signature is just `In => Out`, with no context parameter, because the engine binds the per-request context into a `Local` for the duration of each dispatch. Handler code reaches into it through the `Mcp.*` accessors: the live peer, the inbound request id, the cancellation signal, request metadata, envelope extras, and the progress channel.
 
 ```scala
 val slowForecast =
@@ -294,21 +294,23 @@ val slowForecast =
 
 > **Unlike** `Mcp.server`, `Mcp.serverMaybe` is total: it returns `Maybe[McpServer]`, `Absent` outside a handler. Use `serverMaybe` from code that might run in either place; use `server` inside a handler where the panic would only ever signal a bug.
 
-The remaining accessors round out the context: `Mcp.requestId` (the inbound JSON-RPC id, `Absent` for a notification), `Mcp.cancelled` (a promise that completes when the peer cancels this request, to race against your work), and the `_meta` readers. `Mcp.extras` returns the raw `Maybe[Structure.Value]`; `Mcp.extras[T]` decodes that slot to a typed `T`:
+The remaining accessors round out the context: `Mcp.requestId` (the inbound JSON-RPC id, `Absent` for a notification), `Mcp.cancelled` (a promise that completes when the peer cancels this request, to race against your work), and the request metadata readers. `Mcp.meta` returns the raw `Maybe[Structure.Value]` from `params._meta`; `Mcp.metaAs[T]` decodes it to a typed `T`:
 
 ```scala
 case class TraceMeta(traceId: String) derives Schema, CanEqual
 
 val traced =
     McpHandler.tool[WeatherIn]("weather.traced", "Forecast that reads trace metadata") { in =>
-        Mcp.extras[TraceMeta].map { meta =>
+        Mcp.metaAs[TraceMeta].map { meta =>
             val traceId = meta.map(_.traceId).getOrElse("untraced")
             lookupForecast(in.city).map(f => f.copy(summary = s"${f.summary} [$traceId]"))
         }
     }
 ```
 
-> **Caution:** `Mcp.extras[T]` decodes, so it can fail: its row is honestly `Sync & Abort[McpDecodeException]`. A present-but-non-conforming `_meta` aborts `McpDecodeException` rather than silently yielding `Absent`. The untyped `Mcp.extras` never fails because it does no decoding.
+`Mcp.metaAs[T]` has the row `Sync & Abort[McpDecodeException]`: absent metadata returns `Absent`, and present metadata that does not decode to `T` aborts `McpDecodeException`. `Mcp.meta` performs no decoding.
+
+The built-in `tools/call`, `resources/read`, `prompts/get` and `completion/complete` routes bind this metadata for each handler invocation. Custom methods and client-side reverse handlers leave `Mcp.meta` absent; handlers whose input is the whole params object can declare `_meta` in that input. `Mcp.extras` and `Mcp.extras[T]` read extra fields on the JSON-RPC envelope, separately from `params._meta`.
 
 For reverse-direction calls (the server asking the client to do something), `Mcp.requestSampling`, `Mcp.requestElicitation`, and `Mcp.requestRoots` reach the client directly without exposing the `McpServer` handle, so the handle cannot leak into a detached fiber. They are covered with their client-side answers under [Reverse direction](#reverse-direction-server-originated-requests).
 

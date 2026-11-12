@@ -81,7 +81,9 @@ class SlackExceptionTest extends kyo.test.Test[Any]:
             SlackInvalidConfigException(SlackInvalidConfigException.Problem.AckDeadline(Duration.Zero)) ->
                 s"SlackConfig.ackDeadline must be a positive, finite duration; got ${Duration.Zero.show}.",
             SlackInvalidConfigException(SlackInvalidConfigException.Problem.BaseUrl(SlackInvalidConfigException.UrlProblem.Query)) ->
-                "SlackConfig.baseUrl must be an absolute http or https url on a host: it has a query."
+                "SlackConfig.baseUrl must be an absolute http or https url on a host: it has a query.",
+            SlackInvalidConfigException(SlackInvalidConfigException.Problem.FileHost(1, SlackInvalidConfigException.UrlProblem.Query)) ->
+                "SlackConfig.fileHosts(1) must be an absolute http or https url on a host: it has a query."
         )
         leaves.foreach { case (ex, msg) =>
             assert(ex.getMessage.contains(msg), s"${ex.getClass.getSimpleName} message: ${ex.getMessage}")

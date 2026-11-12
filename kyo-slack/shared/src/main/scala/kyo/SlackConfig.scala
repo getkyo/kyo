@@ -10,6 +10,15 @@ package kyo
   * url on a host in printable ASCII, with no user info, no query and no trailing slash, since the
   * token-bearing requests go to it and the config's rendering shows it.
   *
+  * `fileHosts` lists the origins (scheme, host and port) the bot token may be sent to for a file's bytes, each held to the
+  * same check as `baseUrl`. The default is `https://files.slack.com`, the host Slack's documentation names: a remote file's
+  * `url_private` is the url its app supplied, and `Slack.download` refuses a url whose origin the list does not hold before a
+  * token is attached. `Slack.upload` sends a file's bytes, with no token, only to an `upload_url` on one of these origins.
+  *
+  * `shareInterval` and `shareTimeout` bound how `Slack.upload` waits for the message that shares its files: Slack answers the
+  * upload's completion without that message's `ts`, so `upload` reads `files.info` every `shareInterval` until the file's
+  * shares hold the channel, and fails once another read would start past `shareTimeout`.
+  *
   * `requestTimeout` bounds each Web API call and `response_url` POST, `connectTimeout` each
   * connection the client opens (the socket's included), and `maxResponseLength` the body of an
   * answer the client reads. `maxResponseLength` is not refused: the client narrows it where it is used, zero to
@@ -45,7 +54,10 @@ final case class SlackConfig private (
     baseUrl: HttpUrl,
     requestTimeout: Duration,
     connectTimeout: Duration,
-    maxResponseLength: ByteSize
+    maxResponseLength: ByteSize,
+    fileHosts: Chunk[HttpUrl],
+    shareInterval: Duration,
+    shareTimeout: Duration
 ) derives CanEqual:
 
     /** This config opening the socket with `appLevel`. */
@@ -68,6 +80,18 @@ final case class SlackConfig private (
     /** This config calling the Web API at `baseUrl`, or the problem. */
     def baseUrl(baseUrl: HttpUrl)(using Frame): Result[SlackInvalidConfigException, SlackConfig] =
         SlackConfig.checked(copy(baseUrl = baseUrl))
+
+    /** This config sending the bot token for a file's bytes to the origins `fileHosts` lists, or the problem. */
+    def fileHosts(fileHosts: Chunk[HttpUrl])(using Frame): Result[SlackInvalidConfigException, SlackConfig] =
+        SlackConfig.checked(copy(fileHosts = fileHosts))
+
+    /** This config with `shareInterval`, or the problem. */
+    def shareInterval(shareInterval: Duration)(using Frame): Result[SlackInvalidConfigException, SlackConfig] =
+        SlackConfig.checked(copy(shareInterval = shareInterval))
+
+    /** This config with `shareTimeout`, or the problem. */
+    def shareTimeout(shareTimeout: Duration)(using Frame): Result[SlackInvalidConfigException, SlackConfig] =
+        SlackConfig.checked(copy(shareTimeout = shareTimeout))
 
     /** This config with `requestTimeout`, or the problem. */
     def requestTimeout(requestTimeout: Duration)(using Frame): Result[SlackInvalidConfigException, SlackConfig] =
@@ -93,7 +117,10 @@ object SlackConfig:
         baseUrl: HttpUrl = SlackApi,
         requestTimeout: Duration = 10.seconds,
         connectTimeout: Duration = 10.seconds,
-        maxResponseLength: ByteSize = 16.mb
+        maxResponseLength: ByteSize = 16.mb,
+        fileHosts: Chunk[HttpUrl] = FileHosts,
+        shareInterval: Duration = 500.millis,
+        shareTimeout: Duration = 30.seconds
     )(using Frame): Result[SlackInvalidConfigException, SlackConfig] =
         checked(new SlackConfig(
             appLevel,
@@ -104,7 +131,10 @@ object SlackConfig:
             baseUrl,
             requestTimeout,
             connectTimeout,
-            maxResponseLength
+            maxResponseLength,
+            fileHosts,
+            shareInterval,
+            shareTimeout
         ))
 
     private def checked(config: SlackConfig)(using Frame): Result[SlackInvalidConfigException, SlackConfig] =
@@ -115,6 +145,9 @@ object SlackConfig:
     /** Slack's Web API, `https://slack.com/api`. */
     val SlackApi: HttpUrl = HttpUrl(Present("https"), "slack.com", 443, "/api", Absent)
 
+    /** The origin Slack's documentation names for a file's bytes, `https://files.slack.com`. */
+    val FileHosts: Chunk[HttpUrl] = Chunk(HttpUrl(Present("https"), "files.slack.com", 443, "/", Absent))
+
     private def problemOf(config: SlackConfig): Maybe[SlackInvalidConfigException.Problem] =
         import SlackInvalidConfigException.Problem
         def invalid(value: Duration): Boolean                                    = value == Duration.Zero || value == Duration.Infinity
@@ -122,10 +155,25 @@ object SlackConfig:
             if invalid(value) then Present(problem(value)) else Absent
         config.keepAliveInterval.filter(invalid).map(Problem.KeepAliveInterval(_))
             .orElse(check(config.ackDeadline, Problem.AckDeadline(_)))
+            .orElse(check(config.shareInterval, Problem.ShareInterval(_)))
+            .orElse(check(config.shareTimeout, Problem.ShareTimeout(_)))
             .orElse(check(config.requestTimeout, Problem.RequestTimeout(_)))
             .orElse(check(config.connectTimeout, Problem.ConnectTimeout(_)))
             .orElse(urlProblemOf(config.baseUrl).map(Problem.BaseUrl(_)))
+            .orElse(config.fileHosts.zipWithIndex.foldLeft(Maybe.empty[Problem]) { case (found, (url, position)) =>
+                found.orElse(urlProblemOf(url).map(Problem.FileHost(position, _)))
+            })
     end problemOf
+
+    /** Whether `url`'s origin is one of `origins`, comparing scheme and host in any ASCII case and the port exactly. */
+    private[kyo] def allowed(origins: Chunk[HttpUrl], url: HttpUrl): Boolean =
+        origins.exists(origin =>
+            origin.port == url.port &&
+                origin.scheme.map(asciiLower) == url.scheme.map(asciiLower) &&
+                asciiLower(origin.host) == asciiLower(url.host)
+        )
+
+    private def asciiLower(s: String): String = s.map(c => if c >= 'A' && c <= 'Z' then (c + 32).toChar else c)
 
     private def urlProblemOf(url: HttpUrl): Maybe[SlackInvalidConfigException.UrlProblem] =
         import SlackInvalidConfigException.UrlProblem
@@ -142,7 +190,6 @@ object SlackConfig:
       */
     private[kyo] def absoluteProblemOf(url: HttpUrl): Maybe[SlackInvalidConfigException.UrlProblem] =
         import SlackInvalidConfigException.UrlProblem
-        def asciiLower(s: String): String = s.map(c => if c >= 'A' && c <= 'Z' then (c + 32).toChar else c)
         if !url.scheme.map(asciiLower).exists(s => s == "http" || s == "https") then Present(UrlProblem.Scheme)
         else if url.host.isEmpty then Present(UrlProblem.Host)
         else if url.unixSocket.nonEmpty then Present(UrlProblem.UnixSocket)

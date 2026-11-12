@@ -29,6 +29,26 @@ class JsonRpcTransportTest extends JsonRpcTest:
 
     "send reports an envelope it could not encode" - {
 
+        "a response with both a result and an error" in {
+            Scope.run {
+                JsonRpcTransport.fromWire(JsonRpcWireTransport.empty, JsonRpcFramer.lineDelimited).map { transport =>
+                    val error    = JsonRpcCustomError(409, "conflict")
+                    val response = JsonRpcResponse(JsonRpcId.Num(1L), Present(Structure.Value.Null), Present(error), Absent)
+                    Abort.run[JsonRpcError](transport.send(response)).map {
+                        case Result.Failure(e: JsonRpcInvalidRequestError) =>
+                            assert(e.code == -32600)
+                            assert(e.data == Present(Structure.Value.Record(Chunk(
+                                "jsonrpc" -> Structure.Value.Str("2.0"),
+                                "id"      -> Structure.Value.Integer(1L),
+                                "result"  -> Structure.Value.Null,
+                                "error"   -> Structure.encode[JsonRpcError](error)
+                            ))))
+                        case other => fail(s"expected an invalid response failure, got $other")
+                    }
+                }
+            }
+        }
+
         // Both cases reach the wire adapter's Structure.encode and are unrepresentable there, so the
         // frame never leaves. send must say so: reporting success would tell the caller a message was
         // transmitted that no peer will ever see.

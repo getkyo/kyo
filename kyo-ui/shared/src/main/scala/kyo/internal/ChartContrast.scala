@@ -20,7 +20,7 @@ private[kyo] object ChartContrast:
     private[kyo] val MinRatio: Double = 3.0
 
     /** The sRGB components of `c`, or `Absent` for a color whose channels are not knowable here (a CSS
-      * variable, `transparent`, or a hex form with no opaque RGB reading).
+      * variable, `transparent`, a mix or a light-dark pair the page resolves, or a hex form with no opaque RGB reading).
       */
     private[kyo] def rgbOf(c: Style.Color): Maybe[(Int, Int, Int)] =
         c match
@@ -29,6 +29,8 @@ private[kyo] object ChartContrast:
             case Style.Color.Hex(v)           => hexRgb(v)
             case Style.Color.Transparent      => Absent
             case Style.Color.Var(_)           => Absent
+            case Style.Color.Mix(_, _, _)     => Absent
+            case Style.Color.LightDark(_, _)  => Absent
 
     private def hexRgb(value: String): Maybe[(Int, Int, Int)] =
         val v                   = if value.startsWith("#") then value.substring(1) else value

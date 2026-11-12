@@ -242,6 +242,16 @@ class LspServerTest extends Test:
         }
     }
 
+    "initUnscoped rejects TextDocument.publishDiagnostics, which a client handles" in {
+        JsonRpcTransport.inMemory.map { (ta, _) =>
+            Abort.run[LspWrongDirectionException](LspServer.initUnscoped(ta, LspHandler.TextDocument.publishDiagnostics(_ => ()))).map {
+                case Result.Failure(LspWrongDirectionException(kind, registeredOn)) =>
+                    assert(kind == LspHandler.Kind.PublishDiagnostics && registeredOn == LspHandler.Direction.ServerHandled)
+                case other => fail(s"expected LspWrongDirectionException, got: $other")
+            }
+        }
+    }
+
     // =========================================================================
     // Reverse-direction extension method types
     // =========================================================================

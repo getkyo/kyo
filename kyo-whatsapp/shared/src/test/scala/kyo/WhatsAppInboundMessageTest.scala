@@ -91,6 +91,24 @@ class WhatsAppInboundMessageTest extends BaseWhatsAppTest:
         )
     }
 
+    "a reaction taken back is Meta's reaction object without an emoji, read as the empty emoji" in {
+        roundTrips(
+            message("reaction", """"reaction":{"message_id":"wamid.ORIG"}"""),
+            WhatsAppInboundMessage.Reaction(
+                from,
+                id,
+                at,
+                Absent,
+                WhatsAppInboundMessage.Reaction.Body(WhatsAppId.MessageId("wamid.ORIG"), "")
+            )
+        )
+    }
+
+    "an explicit empty emoji also decodes as a reaction removal" in {
+        assert(Json.decode[WhatsAppInboundMessage.Reaction.Body]("""{"message_id":"wamid.ORIG","emoji":""}""") ==
+            Result.succeed(WhatsAppInboundMessage.Reaction.Body(WhatsAppId.MessageId("wamid.ORIG"), "")))
+    }
+
     "contacts and an order hold Meta's objects" in {
         roundTrips(
             message(

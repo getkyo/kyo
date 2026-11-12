@@ -149,6 +149,8 @@ val document = Json.encode(Json.jsonSchema[Event])
 assert(document.contains("\"properties\""))
 ```
 
+For a sum, each `oneOf` branch describes the encoded wrapper as an object with one required property named after the case. Decoding `JsonSchema` also accepts the earlier bare case wrappers. A case's `@doc`, including concatenated string literals, becomes its description. Nested generic products keep their fields when their type arguments differ; a recursive occurrence of the same type still stops expansion.
+
 ## Processing complete JSONL inputs
 
 When a complete JSONL value is already in memory, use the pure `Json.Lines` surface. `Json.Lines` is an alias for the public `JsonLines` object, so both names identify the same namespace while `Json.Lines` keeps JSON formats grouped at call sites.

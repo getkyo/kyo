@@ -31,16 +31,16 @@ class McpAccessorTest extends Test:
         }
     }
 
-    // Mcp.extras[T] decodes a conforming _meta payload to Present(t), and aborts
+    // Mcp.extras[T] decodes conforming envelope extras to Present(t), and aborts
     // McpDecodeException when the payload does not conform to T.
     // The Local is seeded directly via Mcp.local.let to simulate an in-handler invocation.
-    "extras[T] decodes conforming _meta to Present(t) and aborts on non-conforming payload" in {
+    "extras[T] decodes conforming envelope extras to Present(t) and aborts on non-conforming payload" in {
         case class MetaPayload(token: String) derives Schema, CanEqual
 
-        // Conforming path: _meta encodes a MetaPayload, extras[T] returns Present.
+        // Conforming path: extras encode a MetaPayload, extras[T] returns Present.
         val conformingSv = Structure.encode[MetaPayload](MetaPayload("abc"))
 
-        // Non-conforming path: _meta holds a Record that does not decode to MetaPayload.
+        // Non-conforming path: extras hold a Record that does not decode to MetaPayload.
         // Structure.Value.Integer is the integer scalar constructor (Long).
         val nonConformingSv = Structure.Value.Record(Chunk("wrong" -> Structure.Value.Integer(99L)))
 
@@ -71,7 +71,7 @@ class McpAccessorTest extends Test:
     private def buildCtx(extras: Maybe[Structure.Value]): Mcp.RequestContext < Sync =
         Fiber.Promise.init[Unit, Sync].map { promise =>
             val jrCtx = JsonRpcRoute.Context.forTest(promise, Absent, extras, Absent)
-            Mcp.RequestContext(jrCtx, StubServer.safe)
+            Mcp.RequestContext(jrCtx, StubServer.safe, Absent)
         }
 
     // Minimal stub McpServer.Unsafe that satisfies the RequestContext requirement.

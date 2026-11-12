@@ -104,6 +104,30 @@ class WhatsAppWebhookDecodeTest extends BaseWhatsAppTest:
     ): WhatsAppNotification =
         WhatsAppNotification.Status(metadata, WhatsAppStatus(WhatsAppId.MessageId(id), kind, epoch(timestamp), WhatsAppId.WaId(recipient)))
 
+    "a reaction without an emoji reaches the caller as a reaction removal" in {
+        val json = """{"object":"whatsapp_business_account","entry":[{"id":"WABA1","changes":[{
+          |"field":"messages","value":{"messaging_product":"whatsapp",
+          |"metadata":{"display_phone_number":"15550783881","phone_number_id":"111"},
+          |"messages":[{"from":"16505551234","id":"wamid.REACTION","timestamp":"1749000001",
+          |"type":"reaction","reaction":{"message_id":"wamid.ORIG"}}]}}]}]}""".stripMargin
+        decode(json).map { result =>
+            assert(
+                result == Result.succeed(Chunk[WhatsAppNotification](WhatsAppNotification.Message(
+                    meta("15550783881", "111"),
+                    Absent,
+                    WhatsAppInboundMessage.Reaction(
+                        WhatsAppId.WaId("16505551234"),
+                        WhatsAppId.MessageId("wamid.REACTION"),
+                        epoch(1749000001L),
+                        Absent,
+                        WhatsAppInboundMessage.Reaction.Body(WhatsAppId.MessageId("wamid.ORIG"), "")
+                    )
+                ))),
+                s"got $result"
+            )
+        }
+    }
+
     "multiple entry[] and changes[] in one POST all decode" in {
         val m1 = meta("15550783881", "111")
         val m2 = meta("15550783882", "222")

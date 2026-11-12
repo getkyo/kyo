@@ -32,16 +32,16 @@ object MachineRegistrySnapshot:
         val registry = StatsRegistry.internal
         val readings = ChunkBuilder.init[Reading]
 
-        registry.histograms.map.forEach { (path, tuple) =>
-            val h = tuple._1.get()
+        registry.histograms.map.forEach { (path, entry) =>
+            val h = entry.reference.get()
             if h != null && path.headOption.contains("machine") then
                 val s = h.summary()
                 if s.count > 0 then
                     val _ = readings.addOne(Reading(path.mkString("."), "histogram", s.max, s.count, s.sum))
             end if
         }
-        registry.counters.map.forEach { (path, tuple) =>
-            val c = tuple._1.get()
+        registry.counters.map.forEach { (path, entry) =>
+            val c = entry.reference.get()
             if c != null && path.headOption.contains("machine") then
                 // delta() is the exporter's own counter read (delta-temporality): it returns the cpu-time
                 // accumulated since the last flush and advances the baseline. As the terminal one-shot reader
@@ -53,14 +53,14 @@ object MachineRegistrySnapshot:
                         readings.addOne(Reading(path.mkString("."), "counter", cumulative.toDouble, cumulative, cumulative.toDouble))
             end if
         }
-        registry.counterGauges.map.forEach { (path, tuple) =>
-            val g = tuple._1.get()
+        registry.counterGauges.map.forEach { (path, entry) =>
+            val g = entry.reference.get()
             if g != null && path.headOption.contains("machine") then
                 val v = g.collect()
                 val _ = readings.addOne(Reading(path.mkString("."), "counter-gauge", v.toDouble, v, v.toDouble))
         }
-        registry.gauges.map.forEach { (path, tuple) =>
-            val g = tuple._1.get()
+        registry.gauges.map.forEach { (path, entry) =>
+            val g = entry.reference.get()
             if g != null && path.headOption.contains("machine") then
                 val v = g.collect()
                 val _ = readings.addOne(Reading(path.mkString("."), "gauge", v, 1L, v))

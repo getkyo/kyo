@@ -4,8 +4,9 @@ import kyo.*
 import kyo.internal.charset.Utf8
 import scala.reflect.TypeTest
 
-/** The one canonical request path of a [[kyo.Slack]] client. Every Web API verb delegates to `request`,
-  * `apps.connections.open` to `send`, and every `response_url` verb to `respond`. Each runs on the
+/** The one canonical request path of a [[kyo.Slack]] client. Web API verbs delegate to `request` or `requestForm`,
+  * `apps.connections.open` to `send`, every `response_url` verb to `respond`, the read of a file's bytes to `download`, and the
+  * bytes an upload sends to `upload`. Each runs on the
   * client's own `HttpClient` under `SlackConfig.httpConfig`, which replaces the caller's config, so
   * nothing of the caller's kyo-http context reaches a request that carries a credential.
   *
@@ -88,16 +89,25 @@ private[kyo] object WebApi:
         method: String,
         body: In
     )(using Frame, TypeTest[SlackException, F]): Out < (Async & Abort[F]) =
-        send[Out, F](client, method, client.config.bot.value, Json.encode(body))
+        send[Out, F](client, method, client.config.bot.value, Json.encode(body), "application/json")
 
-    /** POST a JSON body to `{baseUrl}/{method}` with a bearer token and map Slack's answer. Shared by `request` and the
+    /** A form-encoded Web API call with the bot token, for methods that do not accept JSON. */
+    private[kyo] def requestForm[In: HttpFormCodec, Out: Schema, F >: SlackException.Common](
+        client: Slack,
+        method: String,
+        body: In
+    )(using Frame, TypeTest[SlackException, F]): Out < (Async & Abort[F]) =
+        send[Out, F](client, method, client.config.bot.value, summon[HttpFormCodec[In]].encode(body), "application/x-www-form-urlencoded")
+
+    /** POST an encoded body to `{baseUrl}/{method}` with a bearer token and map Slack's answer. Shared by both request encodings and the
       * `apps.connections.open` call that opens the socket with the app-level token.
       */
     private[kyo] def send[Out: Schema, F >: SlackException.Common](
         client: Slack,
         method: String,
         bearer: String,
-        body: String
+        body: String,
+        contentType: String
     )(using Frame, TypeTest[SlackException, F]): Out < (Async & Abort[F]) =
         val target = SlackConfig.methodUrl(client.config.baseUrl, method)
         Abort.runWith[HttpException](
@@ -105,7 +115,7 @@ private[kyo] object WebApi:
                 HttpClient.postTextResponse(
                     target,
                     body,
-                    headers = Seq("Authorization" -> s"Bearer $bearer", "Content-Type" -> "application/json"),
+                    headers = Seq("Authorization" -> s"Bearer $bearer", "Content-Type" -> contentType),
                     failOnError = false
                 )
             }
@@ -278,6 +288,71 @@ private[kyo] object WebApi:
         val urls = Chunk(url.value) ++ Chunk(target.path).filter(_.length > 1)
         cleaned(envelope)(text => urls.foldLeft(redact(tokens, text))((t, s) => t.replace(s, "<response_url>")))
     end redacted
+
+    private[kyo] inline val FileDownloadMethod = "file-download"
+
+    /** GET a file's `url` with the bot token and answer the 2xx body's bytes.
+      *
+      * The token is sent only to a url `SlackConfig.absoluteProblemOf` accepts whose origin `SlackConfig.fileHosts` lists; any
+      * other is refused as `SlackRefusedUrlException` with nothing sent. Redirects are off (`SlackConfig.httpConfig`), so a url
+      * Slack redirects is an unexpected status and the token reaches no other host. A 429 is a rate limit and any other
+      * non-2xx an unexpected status: a download answers bytes, not a Slack envelope, so its body is never read for a code.
+      */
+    private[kyo] def download(client: Slack, url: HttpUrl)(using Frame): Span[Byte] < (Async & Abort[SlackDownloadFailure]) =
+        if SlackConfig.absoluteProblemOf(url).nonEmpty || !SlackConfig.allowed(client.config.fileHosts, url) then
+            Abort.fail(SlackRefusedUrlException(FileDownloadMethod))
+        else
+            Abort.runWith[HttpException](
+                onClient(client) {
+                    HttpClient.getBinaryResponse(
+                        url,
+                        HttpHeaders.empty.add("Authorization", s"Bearer ${client.config.bot.value}"),
+                        failOnError = false
+                    )
+                }
+            ) {
+                case Result.Success(response) => fileHostAnswer(FileDownloadMethod, response)
+                case Result.Failure(e)        => Abort.fail(transportFailure(FileDownloadMethod, url, e))
+                case Result.Panic(e)          => Abort.panic(e)
+            }
+    end download
+
+    private[kyo] inline val FileUploadMethod = "file-upload"
+
+    /** POST a file's `bytes` to the `upload_url` `files.getUploadURLExternal` answered, with no token, as Slack's documentation
+      * sends them.
+      *
+      * The bytes are sent only to a url `SlackConfig.absoluteProblemOf` accepts whose origin `SlackConfig.fileHosts` lists; any other,
+      * or a text that is not a url, is refused as `SlackRefusedUrlException` with nothing sent. A 2xx answer is the upload done, and
+      * its body is read within `maxResponseLength` and discarded.
+      */
+    private[kyo] def upload(client: Slack, url: String, bytes: Span[Byte])(using Frame): Unit < (Async & Abort[SlackUploadFailure]) =
+        HttpUrl.parse(url) match
+            case Result.Success(target)
+                if SlackConfig.absoluteProblemOf(target).isEmpty && SlackConfig.allowed(client.config.fileHosts, target) =>
+                Abort.runWith[HttpException](
+                    onClient(client)(HttpClient.postBinaryResponse(target, bytes, failOnError = false))
+                ) {
+                    case Result.Success(response) => fileHostAnswer(FileUploadMethod, response).unit
+                    case Result.Failure(e)        => Abort.fail(transportFailure(FileUploadMethod, target, e))
+                    case Result.Panic(e)          => Abort.panic(e)
+                }
+            case _ => Abort.fail(SlackRefusedUrlException(FileUploadMethod))
+    end upload
+
+    /** A file host's answer to `method`: a 429 is a rate limit and any other non-2xx an unexpected status, since a file host answers
+      * bytes and never a Slack envelope, so its body is never read for a code; a 2xx answer is its body.
+      */
+    private def fileHostAnswer(method: String, response: HttpResponse["body" ~ Span[Byte]])(using
+        Frame
+    ): Span[Byte] < Abort[SlackRateLimitException | SlackUnexpectedStatusException] =
+        val status = response.status
+        if status == HttpStatus.TooManyRequests then
+            Abort.fail(SlackRateLimitException(method, response.headers.get("Retry-After").flatMap(parseRetryAfter)))
+        else if status.isSuccess then response.fields.body
+        else Abort.fail(SlackUnexpectedStatusException(method, status))
+        end if
+    end fileHostAnswer
 
     /** The leaf for a kyo-http failure of a call to `target`: its kind, the url's host and port, and for a connection
       * that could not be made the kyo-net cause, which names a host and port and never a path. The match names every

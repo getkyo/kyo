@@ -44,7 +44,9 @@ class WebApiTest extends kyo.test.Test[Any]:
             "views.open",
             "views.update",
             "views.publish",
-            "users.list"
+            "users.list",
+            "files.info",
+            "files.getUploadURLExternal"
         )
 
     private val message     = SlackMessage(SlackId.ChannelId("C1"), "hi")
@@ -68,6 +70,10 @@ class WebApiTest extends kyo.test.Test[Any]:
         def publishView(u: SlackId.UserId, v: SlackView)(using Frame)              = Slack.run(config)(Slack.publishView(u, v))
         def custom[In: Schema, Out: Schema](method: String, body: In)(using Frame) =
             Slack.run(config)(Slack.custom[In, Out](methodOf(method), body))
+        def file(id: SlackId.FileId)(using Frame) = Slack.run(config)(Slack.file(id))
+        def download(url: HttpUrl)(using Frame)   = Slack.run(config)(Slack.download(url))
+        def upload(c: SlackId.ChannelId, f: Chunk[SlackUpload], t: Maybe[String], ts: Maybe[SlackTs])(using Frame) =
+            Slack.run(config)(Slack.upload(c, f, t, ts))
         def connectionsOpen(using Frame)                                      = Slack.run(config)(Env.get[Slack].map(Slack.openEngine(_)))
         def respondEphemeral(u: SlackResponseUrl, r: SlackReply)(using Frame) = Slack.run(config)(Slack.respondEphemeral(u, r))
         def respondInChannel(u: SlackResponseUrl, r: SlackReply, t: Maybe[SlackTs] = Absent)(using Frame) =
@@ -104,15 +110,18 @@ class WebApiTest extends kyo.test.Test[Any]:
     /** Each operation by the method name its failures carry, as a call returning nothing. */
     private def operations(slack: Verbs)(using Frame): Chunk[(String, Unit < (Async & Abort[SlackException]))] =
         Chunk(
-            "apps.connections.open" -> slack.connectionsOpen.unit,
-            "auth.test"             -> slack.identity.unit,
-            "chat.postMessage"      -> slack.send(message).unit,
-            "chat.postEphemeral"    -> slack.sendEphemeral(message, SlackId.UserId("U1")).unit,
-            "chat.update"           -> slack.edit(SlackId.ChannelId("C1"), SlackTs("1.0"), message).unit,
-            "views.open"            -> slack.openView(SlackId.TriggerId("T1"), view).unit,
-            "views.update"          -> slack.updateView(SlackId.ViewId("V1"), view).unit,
-            "views.publish"         -> slack.publishView(SlackId.UserId("U1"), view).unit,
-            "users.list"            -> slack.custom[NoArgs, Members]("users.list", NoArgs()).unit
+            "apps.connections.open"      -> slack.connectionsOpen.unit,
+            "auth.test"                  -> slack.identity.unit,
+            "chat.postMessage"           -> slack.send(message).unit,
+            "chat.postEphemeral"         -> slack.sendEphemeral(message, SlackId.UserId("U1")).unit,
+            "chat.update"                -> slack.edit(SlackId.ChannelId("C1"), SlackTs("1.0"), message).unit,
+            "views.open"                 -> slack.openView(SlackId.TriggerId("T1"), view).unit,
+            "views.update"               -> slack.updateView(SlackId.ViewId("V1"), view).unit,
+            "views.publish"              -> slack.publishView(SlackId.UserId("U1"), view).unit,
+            "users.list"                 -> slack.custom[NoArgs, Members]("users.list", NoArgs()).unit,
+            "files.info"                 -> slack.file(SlackId.FileId("F1")).unit,
+            "files.getUploadURLExternal" ->
+                slack.upload(SlackId.ChannelId("C1"), Chunk(SlackUpload("a.txt", Utf8.encode("hello"))), Absent, Absent).unit
         )
 
     private def call(op: Unit < (Async & Abort[SlackException]))(using Frame): Result[SlackException, Unit] < Async =
@@ -135,10 +144,12 @@ class WebApiTest extends kyo.test.Test[Any]:
         )
 
     private val tables: Map[String, Chunk[String]] = Map(
-        "apps.connections.open" -> credential,
-        "auth.test"             -> credential,
-        "users.list"            -> (credential :+ "invalid_arguments"),
-        "chat.postMessage"      ->
+        "apps.connections.open"      -> credential,
+        "auth.test"                  -> credential,
+        "users.list"                 -> (credential :+ "invalid_arguments"),
+        "files.info"                 -> (credential :+ "invalid_arguments"),
+        "files.getUploadURLExternal" -> (credential ++ Chunk("invalid_arguments", "channel_not_found", "not_in_channel")),
+        "chat.postMessage"           ->
             (credential ++ Chunk(
                 "invalid_arguments",
                 "channel_not_found",
@@ -188,15 +199,17 @@ class WebApiTest extends kyo.test.Test[Any]:
 
     /** Codes an operation does not list, each of which must fall to `SlackOtherApiException`. */
     private val offTable: Map[String, Chunk[String]] = Map(
-        "apps.connections.open" -> Chunk("missing_args", "invalid_arguments", "channel_not_found"),
-        "auth.test"             -> Chunk("missing_args", "invalid_arguments", "fatal_error"),
-        "users.list"            -> Chunk("missing_args", "channel_not_found", "team_not_found"),
-        "chat.postMessage"      -> Chunk("missing_args", "msg_too_long", "user_not_in_channel"),
-        "chat.postEphemeral"    -> Chunk("missing_args", "msg_blocks_too_long", "fatal_error"),
-        "chat.update"           -> Chunk("missing_args", "not_in_channel", "is_archived"),
-        "views.open"            -> Chunk("missing_args", "not_found", "channel_not_found"),
-        "views.update"          -> Chunk("missing_args", "expired_trigger_id", "invalid_trigger_id"),
-        "views.publish"         -> Chunk("missing_args", "not_found", "expired_trigger_id")
+        "apps.connections.open"      -> Chunk("missing_args", "invalid_arguments", "channel_not_found"),
+        "auth.test"                  -> Chunk("missing_args", "invalid_arguments", "fatal_error"),
+        "users.list"                 -> Chunk("missing_args", "channel_not_found", "team_not_found"),
+        "files.info"                 -> Chunk("file_not_found", "file_deleted", "channel_not_found"),
+        "files.getUploadURLExternal" -> Chunk("missing_args", "is_archived", "msg_too_long"),
+        "chat.postMessage"           -> Chunk("missing_args", "msg_too_long", "user_not_in_channel"),
+        "chat.postEphemeral"         -> Chunk("missing_args", "msg_blocks_too_long", "fatal_error"),
+        "chat.update"                -> Chunk("missing_args", "not_in_channel", "is_archived"),
+        "views.open"                 -> Chunk("missing_args", "not_found", "channel_not_found"),
+        "views.update"               -> Chunk("missing_args", "expired_trigger_id", "invalid_trigger_id"),
+        "views.publish"              -> Chunk("missing_args", "not_found", "expired_trigger_id")
     )
 
     private val slackMessages = Chunk("[ERROR] first", "[ERROR] second")
@@ -696,6 +709,331 @@ class WebApiTest extends kyo.test.Test[Any]:
         }
     }
 
+    "files.info sends the file's id with the bot token and answers the file whole" in {
+        AtomicRef.init(Maybe.empty[(String, Maybe[String], Maybe[String])]).map { sentRef =>
+            val answer =
+                """{"ok":true,"file":{"id":"F1","name":"a.png","mimetype":"image/png","size":3,"url_private":"https://files.slack.com/files-pri/T1-F1/a.png"}}"""
+            val route = HttpRoute.postRaw("files.info").request(_.bodyText).response(_.bodyText).handler { req =>
+                sentRef.set(Present((req.fields.body, req.headers.get("Authorization"), req.headers.get("Content-Type"))))
+                    .andThen(HttpResponse(HttpStatus.OK).addField("body", answer))
+            }
+            HttpServer.init(0, "127.0.0.1")(route).map { server =>
+                withSlackAt(s"http://127.0.0.1:${server.port}") { slack =>
+                    slack.file(SlackId.FileId("F1")).map { file =>
+                        sentRef.get.map { sent =>
+                            assert(sent == Present(("file=F1", Present("Bearer xoxb-test"), Present("application/x-www-form-urlencoded"))))
+                            assert(file == SlackFile(
+                                SlackId.FileId("F1"),
+                                Present("a.png"),
+                                Present("image/png"),
+                                Present(ByteSize.fromBytes(3)),
+                                Present(urlOf("https://files.slack.com/files-pri/T1-F1/a.png"))
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "download answers the bytes a file host serves with the bot token, and a url outside fileHosts is refused with nothing sent" in {
+        for
+            seen <- AtomicRef.init(Chunk.empty[Maybe[String]])
+            route = HttpRoute.getRaw("files/F1").response(_.bodyBinary).handler { req =>
+                seen.updateAndGet(_ :+ req.headers.get("Authorization"))
+                    .andThen(HttpResponse(HttpStatus.OK).addField("body", Span.from(Array[Byte](1, 2, 3))))
+            }
+            server <- HttpServer.init(0, "127.0.0.1")(route)
+            base   = s"http://127.0.0.1:${server.port}"
+            hosted = valid(slackConfig.fileHosts(Chunk(urlOf(base))))
+            bytes    <- withSlackAt(base, hosted)(_.download(urlOf(s"$base/files/F1")))
+            outside  <- withSlackAt(base)(slack => call(slack.download(urlOf(s"$base/files/F1")).unit))
+            received <- seen.get
+        yield
+            assert(bytes.toArray.toSeq == Seq[Byte](1, 2, 3))
+            assert(outside == Result.fail(SlackRefusedUrlException("file-download")))
+            assert(received == Chunk(Present("Bearer xoxb-test")))
+        end for
+    }
+
+    "a download answered 429 is a rate limit and any other non-2xx an unexpected status, and a redirect is not followed" in {
+        for
+            followed <- AtomicInt.init(0)
+            routes = Chunk(
+                HttpRoute.getRaw("files/F1").response(_.bodyBinary).handler { _ =>
+                    followed.incrementAndGet.andThen(HttpResponse(HttpStatus.OK).addField("body", Span.from(Array[Byte](1))))
+                },
+                HttpRoute.getRaw("files/moved").response(_.bodyBinary).handler { _ =>
+                    HttpResponse(HttpStatus.Found).addField("body", Span.empty[Byte]).addHeader("Location", "/files/F1")
+                },
+                HttpRoute.getRaw("files/forbidden").response(_.bodyBinary).handler { _ =>
+                    HttpResponse(HttpStatus.Forbidden).addField("body", Span.empty[Byte])
+                },
+                HttpRoute.getRaw("files/limited").response(_.bodyBinary).handler { _ =>
+                    HttpResponse(HttpStatus.TooManyRequests).addField("body", Span.empty[Byte]).addHeader("Retry-After", "4")
+                }
+            )
+            server <- HttpServer.init(0, "127.0.0.1")(routes*)
+            base   = s"http://127.0.0.1:${server.port}"
+            hosted = valid(slackConfig.fileHosts(Chunk(urlOf(base))))
+            results <- withSlackAt(base, hosted) { slack =>
+                Kyo.foreach(Chunk("moved", "forbidden", "limited"))(name => call(slack.download(urlOf(s"$base/files/$name")).unit))
+            }
+            hits <- followed.get
+        yield
+            assert(results == Chunk(
+                Result.fail(SlackUnexpectedStatusException("file-download", HttpStatus.Found)),
+                Result.fail(SlackUnexpectedStatusException("file-download", HttpStatus.Forbidden)),
+                Result.fail(SlackRateLimitException("file-download", Present(4.seconds)))
+            ))
+            assert(hits == 0)
+        end for
+    }
+
+    "upload requests its URL with form-encoded filename and length" in {
+        val route = HttpRoute.postRaw("files.getUploadURLExternal").request(_.bodyText).response(_.bodyText).handler { req =>
+            assert(req.headers.get("Content-Type") == Present("application/x-www-form-urlencoded"))
+            assert(req.fields.body == "filename=a+%26+%CE%BB.txt&length=5")
+            HttpResponse(HttpStatus.OK).addField("body", """{"ok":false,"error":"invalid_arguments"}""")
+        }
+        HttpServer.init(0, "127.0.0.1")(route).map { server =>
+            withSlackAt(s"http://127.0.0.1:${server.port}") { slack =>
+                call(slack.upload(SlackId.ChannelId("C1"), Chunk(SlackUpload("a & λ.txt", Utf8.encode("hello"))), Absent, Absent).unit)
+                    .map(result => assert(result == Result.fail(SlackInvalidArgumentsException("files.getUploadURLExternal", Chunk.empty))))
+            }
+        }
+    }
+
+    /** A request a local Slack received: its path, its Authorization header and its body. */
+    private case class Sent(path: String, authorization: Maybe[String], body: String) derives CanEqual
+
+    /** A local Slack serving an upload, recording every request in order. `files.getUploadURLExternal` hands out `F1`, then `F2`,
+      * each with an upload_url on the server's own origin, which answers `uploaded`; `files.completeUploadExternal` answers
+      * `completed`; and `files.info` answers `infos` in order, then the last of them for every later read.
+      */
+    private def withUploadSlack[A](uploaded: Reply, completed: String, infos: Chunk[String])(
+        test: (String, AtomicRef[Chunk[Sent]]) => A < (Async & Abort[SlackException | HttpException] & Scope)
+    )(using Frame): A < (Async & Abort[SlackException | HttpException] & Scope) =
+        for
+            sent   <- AtomicRef.init(Chunk.empty[Sent])
+            origin <- AtomicRef.init("")
+            handed <- AtomicInt.init(0)
+            reads  <- AtomicInt.init(0)
+            route = (path: String, answer: () => Reply < Sync) =>
+                HttpRoute.postRaw(path).request(_.bodyText).response(_.bodyText).handler { req =>
+                    sent.updateAndGet(_ :+ Sent(path, req.headers.get("Authorization"), req.fields.body)).andThen(answer()).map { r =>
+                        val response = HttpResponse(r.status).addField("body", r.body)
+                        r.retryAfter match
+                            case Present(v) => response.addHeader("Retry-After", v)
+                            case Absent     => response
+                    }
+                }
+            server <- HttpServer.init(0, "127.0.0.1")(
+                route(
+                    "files.getUploadURLExternal",
+                    () =>
+                        handed.incrementAndGet.map(n =>
+                            origin.get.map(o => Reply(HttpStatus.OK, s"""{"ok":true,"upload_url":"$o/upload/F$n","file_id":"F$n"}"""))
+                        )
+                ),
+                route("upload/F1", () => uploaded),
+                route("upload/F2", () => uploaded),
+                route("files.completeUploadExternal", () => Reply(HttpStatus.OK, completed)),
+                route("files.info", () => reads.getAndIncrement.map(n => Reply(HttpStatus.OK, infos(math.min(n, infos.size - 1)))))
+            )
+            base = s"http://127.0.0.1:${server.port}"
+            _      <- origin.set(base)
+            result <- test(base, sent)
+        yield result
+
+    /** The config on whose fileHosts the local Slack at `base` serves its upload_urls. */
+    private def sharing(base: String, interval: Duration, timeout: Duration)(using Frame): SlackConfig =
+        valid(slackConfig.fileHosts(Chunk(urlOf(base))).flatMap(_.shareInterval(interval)).flatMap(_.shareTimeout(timeout)))
+
+    private val uploadedOk = Reply(HttpStatus.OK, "OK")
+
+    private val bearer = Present("Bearer xoxb-test")
+
+    private def unshared(file: String): String = s"""{"ok":true,"file":{"id":"$file"}}"""
+
+    "upload sends each file's name and length, POSTs its bytes to its upload_url with no token, completes the files into the channel with the text and thread, and answers the ts of the share files.info shows there" in {
+        val completed = """{"ok":true,"files":[{"id":"F1","title":"a.txt"},{"id":"F2","title":"b.txt"}]}"""
+        val infos     = Chunk(
+            unshared("F1"),
+            """{"ok":true,"file":{"id":"F1","shares":{"public":{"C9":[{"ts":"9.0"}]}}}}""",
+            """{"ok":true,"file":{"id":"F1","shares":{"public":{"C1":[{"ts":"2.0"}]}}}}"""
+        )
+        withUploadSlack(uploadedOk, completed, infos) { (base, sent) =>
+            val files = Chunk(SlackUpload("a.txt", Utf8.encode("hello")), SlackUpload("b.txt", Utf8.encode("bye")))
+            for
+                ts <- Clock.withTimeControl { control =>
+                    for
+                        fiber <- Fiber.init(withSlackAt(base, sharing(base, 1.second, 30.seconds))(
+                            _.upload(SlackId.ChannelId("C1"), files, Present("hi"), Present(SlackTs("1.0")))
+                        ))
+                        _     <- control.awaitPendingSleeper(1.second)
+                        _     <- control.advance(1.second)
+                        _     <- control.awaitPendingSleeper(1.second)
+                        _     <- control.advance(1.second)
+                        value <- fiber.get
+                    yield value
+                }
+                requests <- sent.get
+            yield
+                assert(ts == SlackTs("2.0"))
+                assert(
+                    requests == Chunk(
+                        Sent("files.getUploadURLExternal", bearer, "filename=a.txt&length=5"),
+                        Sent("upload/F1", Absent, "hello"),
+                        Sent("files.getUploadURLExternal", bearer, "filename=b.txt&length=3"),
+                        Sent("upload/F2", Absent, "bye"),
+                        Sent(
+                            "files.completeUploadExternal",
+                            bearer,
+                            """{"files":[{"id":"F1","title":"a.txt"},{"id":"F2","title":"b.txt"}],"channel_id":"C1","initial_comment":"hi","thread_ts":"1.0"}"""
+                        )
+                    ) ++ Chunk.fill(3)(Sent("files.info", bearer, "file=F1")),
+                    requests.toString
+                )
+            end for
+        }
+    }
+
+    "an upload files.info shows shared in a private channel answers that share's ts, and one with no text or thread sends neither key" in {
+        val completed = """{"ok":true,"files":[{"id":"F1","title":"a.txt"}]}"""
+        val infos     = Chunk("""{"ok":true,"file":{"id":"F1","shares":{"private":{"C1":[{"ts":"3.0"}]}}}}""")
+        withUploadSlack(uploadedOk, completed, infos) { (base, sent) =>
+            for
+                ts <- withSlackAt(base, sharing(base, 1.millis, 30.seconds))(
+                    _.upload(SlackId.ChannelId("C1"), Chunk(SlackUpload("a.txt", Utf8.encode("hello"))), Absent, Absent)
+                )
+                requests <- sent.get
+            yield
+                assert(ts == SlackTs("3.0"))
+                assert(
+                    requests.filter(_.path == "files.completeUploadExternal").map(_.body) ==
+                        Chunk("""{"files":[{"id":"F1","title":"a.txt"}],"channel_id":"C1"}"""),
+                    requests.toString
+                )
+            end for
+        }
+    }
+
+    "an upload files.info never shows shared in the channel fails with the share timeout once another read would start past shareTimeout" in {
+        val completed = """{"ok":true,"files":[{"id":"F1","title":"a.txt"}]}"""
+        val infos     = Chunk("""{"ok":true,"file":{"id":"F1","shares":{"public":{"C9":[{"ts":"9.0"}]}}}}""")
+        withUploadSlack(uploadedOk, completed, infos) { (base, sent) =>
+            val upload = withSlackAt(base, sharing(base, 1.second, 3.seconds)) { slack =>
+                call(slack.upload(SlackId.ChannelId("C1"), Chunk(SlackUpload("a.txt", Utf8.encode("hello"))), Absent, Absent).unit)
+            }
+            for
+                timed <- Clock.withTimeControl { control =>
+                    for
+                        watch  <- Clock.stopwatch
+                        fiber  <- Fiber.initUnscoped(upload)
+                        _      <- control.awaitPendingSleeper(1.second)
+                        _      <- control.advance(1.second)
+                        _      <- control.awaitPendingSleeper(1.second)
+                        _      <- control.advance(1.second)
+                        _      <- control.awaitPendingSleeper(1.second)
+                        _      <- control.advance(1.second)
+                        result <- fiber.get
+                        spent  <- watch.elapsed
+                    yield (result, spent)
+                }
+                requests <- sent.get
+            yield
+                assert(timed ==
+                    (Result.fail(SlackShareTimeoutException(SlackId.FileId("F1"), SlackId.ChannelId("C1"), 3.seconds)), 3.seconds))
+                assert(requests.count(_.path == "files.info") == 4, requests.toString)
+            end for
+        }
+    }
+
+    "upload does not poll files.info after a delayed wakeup passes shareTimeout" in {
+        val completed = """{"ok":true,"files":[{"id":"F1","title":"a.txt"}]}"""
+        withUploadSlack(uploadedOk, completed, Chunk(unshared("F1"))) { (base, requests) =>
+            val upload = withSlackAt(base, sharing(base, 1.second, 3.seconds)) { slack =>
+                call(slack.upload(SlackId.ChannelId("C1"), Chunk(SlackUpload("a.txt", Utf8.encode("hello"))), Absent, Absent).unit)
+            }
+            for
+                result <- Clock.withTimeControl { control =>
+                    for
+                        fiber <- Fiber.init(upload)
+                        _     <- control.awaitPendingSleeper(1.second)
+                        _     <- control.advance(4.seconds)
+                        value <- fiber.get
+                    yield value
+                }
+                received <- requests.get
+            yield
+                assert(result == Result.fail(SlackShareTimeoutException(SlackId.FileId("F1"), SlackId.ChannelId("C1"), 3.seconds)))
+                assert(received.count(_.path == "files.info") == 1, received.toString)
+            end for
+        }
+    }
+
+    "an upload_url outside fileHosts, or one that is not an absolute url, is refused with no byte sent and nothing completed" in {
+        val file = Chunk(SlackUpload("a.txt", Utf8.encode("hello")))
+        for
+            outside <- withUploadSlack(uploadedOk, """{"ok":true,"files":[]}""", Chunk(unshared("F1"))) { (base, sent) =>
+                withSlackAt(base)(slack => call(slack.upload(SlackId.ChannelId("C1"), file, Absent, Absent).unit))
+                    .map(result => sent.get.map(requests => (result, requests.map(_.path))))
+            }
+            malformed <- withScriptedSlack { (reply, slack) =>
+                Kyo.foreach(Chunk("not a url", "/upload/F1", "")) { url =>
+                    reply.set(Reply(HttpStatus.OK, s"""{"ok":true,"upload_url":"$url","file_id":"F1"}"""))
+                        .andThen(call(slack.upload(SlackId.ChannelId("C1"), file, Absent, Absent).unit))
+                }
+            }
+        yield
+            assert(outside == (Result.fail(SlackRefusedUrlException("file-upload")), Chunk("files.getUploadURLExternal")))
+            assert(malformed == Chunk.fill(3)(Result.fail(SlackRefusedUrlException("file-upload"))))
+        end for
+    }
+
+    "a bytes POST answered 429 is a rate limit and any other non-2xx an unexpected status, and nothing is completed" in {
+        val replies =
+            Chunk(
+                Reply(HttpStatus.TooManyRequests, "", Present("4")),
+                Reply(HttpStatus.Forbidden, ""),
+                Reply(HttpStatus.InternalServerError, "")
+            )
+        Kyo.foreach(replies) { reply =>
+            withUploadSlack(reply, """{"ok":true,"files":[]}""", Chunk(unshared("F1"))) { (base, sent) =>
+                withSlackAt(base, sharing(base, 1.millis, 30.seconds)) { slack =>
+                    call(slack.upload(SlackId.ChannelId("C1"), Chunk(SlackUpload("a.txt", Utf8.encode("hello"))), Absent, Absent).unit)
+                }.map(result => sent.get.map(requests => (result, requests.map(_.path))))
+            }
+        }.map { results =>
+            val paths = Chunk("files.getUploadURLExternal", "upload/F1")
+            assert(results == Chunk(
+                (Result.fail(SlackRateLimitException("file-upload", Present(4.seconds))), paths),
+                (Result.fail(SlackUnexpectedStatusException("file-upload", HttpStatus.Forbidden)), paths),
+                (Result.fail(SlackUnexpectedStatusException("file-upload", HttpStatus.InternalServerError)), paths)
+            ))
+        }
+    }
+
+    "an ok files.completeUploadExternal answer that completed no file is a payload decode failure at files, and files.info is not read" in {
+        withUploadSlack(uploadedOk, """{"ok":true,"files":[]}""", Chunk(unshared("F1"))) { (base, sent) =>
+            for
+                result <- withSlackAt(base, sharing(base, 1.millis, 30.seconds)) { slack =>
+                    call(slack.upload(SlackId.ChannelId("C1"), Chunk(SlackUpload("a.txt", Utf8.encode("hello"))), Absent, Absent).unit)
+                }
+                requests <- sent.get
+            yield
+                assert(result == Result.fail(decode(
+                    "files.completeUploadExternal",
+                    SlackDecodeException.Part.Payload,
+                    SlackDecodeException.Failure.ConstructorRejected,
+                    Chunk("files")
+                )))
+                assert(requests.map(_.path) == Chunk("files.getUploadURLExternal", "upload/F1", "files.completeUploadExternal"))
+            end for
+        }
+    }
+
     "views, ephemeral and update bodies encode the real Slack keys" in {
         val v = SlackView(
             SlackView.Type.Modal,
@@ -1034,6 +1372,21 @@ class WebApiTest extends kyo.test.Test[Any]:
             withSlackAt(s"http://127.0.0.1:${server.port}", config)(slack => call(slack.identity.unit)).map { result =>
                 assert(result == Result.fail(
                     transportLeaf("auth.test", SlackTransportException.Kind.PayloadTooLarge(4096.bytes, 1024.bytes), server.port)
+                ))
+            }
+        }
+    }
+
+    "a download larger than maxResponseLength is the transport leaf of kind PayloadTooLarge, naming both sizes" in {
+        val route = HttpRoute.getRaw("files/F1").response(_.bodyBinary).handler { _ =>
+            HttpResponse(HttpStatus.OK).addField("body", Span.from(Array.fill[Byte](4096)(7)))
+        }
+        HttpServer.init(0, "127.0.0.1")(route).map { server =>
+            val base   = s"http://127.0.0.1:${server.port}"
+            val config = valid(slackConfig.fileHosts(Chunk(urlOf(base)))).maxResponseLength(1024.bytes)
+            withSlackAt(base, config)(slack => call(slack.download(urlOf(s"$base/files/F1")).unit)).map { result =>
+                assert(result == Result.fail(
+                    transportLeaf("file-download", SlackTransportException.Kind.PayloadTooLarge(4096.bytes, 1024.bytes), server.port)
                 ))
             }
         }

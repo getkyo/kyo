@@ -61,15 +61,32 @@ final case class HttpUrl(
                             case Absent     =>
                         sb.toString
                     case Absent =>
-                        val defaultPort = HttpUrl.schemeDefaultPort(s)
-                        val sb          = new StringBuilder(s.length + 3 + host.length + 8 + path.length + rawQuery.fold(0)(_.length + 1))
-                        discard(sb.append(s).append("://").append(host))
-                        if port != defaultPort then discard(sb.append(':').append(port))
+                        val sb = new StringBuilder(s.length + 3 + host.length + 10 + path.length + rawQuery.fold(0)(_.length + 1))
+                        discard(sb.append(s).append("://"))
+                        appendAuthority(sb)
                         discard(sb.append(path))
                         rawQuery match
                             case Present(q) => discard(sb.append('?').append(q))
                             case Absent     =>
                         sb.toString
+
+    /** The host, and the port when it is not the scheme's default: what `full` writes after the scheme and what a request's Host header
+      * holds (RFC 9110 section 7.2), an IPv6 literal in brackets. Empty for a path-only URL.
+      */
+    private[kyo] def authority: String =
+        if host.isEmpty then host
+        else if host.indexOf(':') < 0 && port == (if ssl then HttpUrl.DefaultHttpsPort else HttpUrl.DefaultHttpPort) then host
+        else
+            val sb = new StringBuilder(host.length + 8)
+            appendAuthority(sb)
+            sb.toString
+
+    private def appendAuthority(sb: StringBuilder): Unit =
+        if host.nonEmpty then
+            if host.indexOf(':') >= 0 then discard(sb.append('[').append(host).append(']'))
+            else discard(sb.append(host))
+            if port != (if ssl then HttpUrl.DefaultHttpsPort else HttpUrl.DefaultHttpPort) then
+                discard(sb.append(':').append(port))
 
     /** Path plus query string, suitable as an HTTP/1.1 request target. */
     def pathWithQuery: String =
@@ -113,10 +130,9 @@ final case class HttpUrl(
                         discard(sb.append(path))
                         sb.toString
                     case Absent =>
-                        val defaultPort = HttpUrl.schemeDefaultPort(s)
-                        val sb          = new StringBuilder(s.length + 3 + host.length + 8 + path.length)
-                        discard(sb.append(s).append("://").append(host))
-                        if port != defaultPort then discard(sb.append(':').append(port))
+                        val sb = new StringBuilder(s.length + 3 + host.length + 10 + path.length)
+                        discard(sb.append(s).append("://"))
+                        appendAuthority(sb)
                         discard(sb.append(path))
                         sb.toString
 
@@ -143,6 +159,9 @@ object HttpUrl:
     /** The default port for a scheme: 443 for the TLS schemes (`https`, `wss`), 80 otherwise (`http`, `ws`). */
     private def schemeDefaultPort(scheme: String): Int =
         if isTlsScheme(scheme) then DefaultHttpsPort else DefaultHttpPort
+
+    /** `host` as a URL writes it: an IPv6 literal, the one host holding a `:`, in brackets (RFC 3986 section 3.2.2). */
+    private[kyo] def uriHost(host: String): String = if host.contains(':') then s"[$host]" else host
 
     /** Parses an absolute `http`, `https`, `ws`, `wss`, `http+unix` or `https+unix` URL, or a path from the root (`/path?query`), which a
       * client resolves against its `baseUrl`.

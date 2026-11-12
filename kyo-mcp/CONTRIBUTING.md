@@ -59,7 +59,7 @@ ones below it.
 |-------|-------|------|
 | Public handles | `McpServer`, `McpClient` | The two opaque connection handles; each `opaque type T = T.Unsafe`. |
 | Handler DSL | `McpHandler`, `McpClientHandler` | The author's vocabulary: the server-side and reverse-direction endpoint carriers and their factories. |
-| Handler accessors | `Mcp` | The per-request context (`Mcp.server`, `Mcp.progress`, `Mcp.requestId`, `Mcp.cancelled`, `Mcp.extras`) bound into a `Local` for one dispatch. |
+| Handler accessors | `Mcp` | The per-request context (`Mcp.server`, `Mcp.progress`, `Mcp.requestId`, `Mcp.cancelled`, `Mcp.meta`, `Mcp.extras`) bound into a `Local` for one dispatch. |
 | Value types | `McpContent`, `McpConfig`, `McpCapabilities`, `McpResourceUri`, `McpMimeType`, `McpInfo`, `McpCursor`, `McpNotification` | The wire vocabulary the author and the peer exchange. |
 | Errors | `McpException` and its fifteen per-operation failure traits | The typed error channel; each public operation's row is a sealed operation-trait, and every leaf is a `JsonRpcApplicationError`. |
 | Engine | `internal.mcp.McpEngine`, `internal.mcp.McpClientEngine` | Compose the gates, routes, and handshake into a live `T.Unsafe`. |
@@ -68,6 +68,12 @@ ones below it.
 | Gates | `internal.mcp.McpHandshakeGate`, `internal.mcp.McpCapabilityGate` | The two `JsonRpcMessageGate`s composed before dispatch. |
 | Codecs | `internal.McpContentSchema`, `internal.McpCompletionRefSchema`, `internal.McpSamplingContentSchema`, `internal.mcp.McpEnumSchema` | The hand-rolled discriminator and closed-enum schemas. |
 | Policies | `internal.mcp.McpProgressPolicy`, `internal.mcp.McpCancellationPolicy`, `internal.mcp.McpUnknownMethodPolicy` | The MCP-specific adapters wired into the JSON-RPC config. |
+
+The built-in `tools/call`, `resources/read`, `prompts/get` and `completion/complete` params decode
+`_meta` and bind it in `Mcp.RequestContext` for that invocation. `Mcp.meta` / `metaAs[M]` read this
+slot; `Mcp.extras` still reads the JSON-RPC envelope's extra fields. The generic handler lift binds
+no request metadata: a custom handler can declare `_meta` in its whole-params input. Keep these
+two locations distinct, including when requests run concurrently.
 
 The whole stack sits on `kyo-jsonrpc`: an MCP server/client is a `JsonRpcHandler` over a
 `JsonRpcTransport`, every handler is a `JsonRpcRoute`, every MCP error is a
@@ -325,7 +331,7 @@ Three typed-read leaves carry a deliberate distinction the client's typed lanes 
   decode** to the requested type. Keep these two distinct; collapsing them loses the
   actionable hint.
 - `McpDecodeException` is the open-payload reader failure for the `*As[M]` projections
-  (`ToolOutcome.structuredContentAs` / `metaAs`, `Page.metaAs`) and `Mcp.extras[T]`: a value
+  (`ToolOutcome.structuredContentAs` / `metaAs`, `Page.metaAs`, `Mcp.metaAs`) and `Mcp.extras[T]`: a value
   present but non-conforming. (Note: `requestElicitationAs[A]` raises
   `McpToolStructuredDecodeException` for its non-conforming `Accept` payload, not
   `McpDecodeException`, even though the `McpDecodeException` scaladoc lists it; the code path

@@ -26,7 +26,7 @@ object WebApiDemo extends KyoApp:
                     env match
                         case e: SlackEnvelope.EventsApi =>
                             e.payload.event match
-                                case SlackEvent.Message(channel, user, text, ts, _) =>
+                                case SlackEvent.Message(channel, user, text, ts, _, _) =>
                                     text.trim match
                                         case "ping" =>
                                             Slack.send(SlackMessage(

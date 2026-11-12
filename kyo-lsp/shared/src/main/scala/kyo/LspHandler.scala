@@ -1,6 +1,8 @@
 package kyo
 
+import java.nio.charset.StandardCharsets
 import scala.annotation.nowarn
+import scala.annotation.tailrec
 
 /** Unified route and handler for an LSP endpoint.
   *
@@ -210,7 +212,7 @@ object LspHandler:
     // schema derived beside it needs. Outside LspDocument's companion: nested there, scaladoc reading LspHandler's TASTy
     // fails with a CyclicReference on the holder object, so `doc` and the publish of kyo-lsp fail.
     object LspDocumentUris:
-        /** Opaque URI for a text document. Use `parse` to construct; the engine uses `fromWire`.
+        /** Opaque URI for a text document. Use `parse` or `file` to construct; the engine uses `fromWire`.
           *
           * Validation: non-empty, not all-whitespace. Mirrors `McpResourceUri` shape.
           */
@@ -221,10 +223,129 @@ object LspHandler:
             def parse(s: String): Maybe[Uri] =
                 if s.nonEmpty && !s.forall(_.isWhitespace) then Present(s) else Absent
 
+            /** The `file` URI of a path, each segment percent-encoded as RFC 3986 requires.
+              *
+              * A relative path names a file under the working directory, so it is resolved against it, as
+              * `java.nio.file.Path.toUri` does.
+              */
+            def file(path: Path)(using Frame): Uri < Sync =
+                if path.isAbsolute then encoded(path)
+                else Path.cwd.map(cwd => encoded(cwd / path))
+
             private[kyo] def fromWire(s: String): Uri = s
 
             extension (u: Uri)
                 def asString: String = u
+
+                /** The path a `file` URI names on this host.
+                  *
+                  * `Absent` for another scheme, another host, a path that is not absolute, an escape that is not two hex
+                  * digits or not UTF-8, or a path containing invalid characters or an encoded separator. Network-share
+                  * paths are not local file paths, including their empty-authority URI form.
+                  */
+                def file: Maybe[Path] =
+                    local(u).flatMap { path =>
+                        Chunk.from(path.split("/", -1))
+                            .foldLeft[Maybe[Chunk[String]]](Present(Chunk.empty)) { (segments, segment) =>
+                                segments.flatMap(done => unescaped(segment).map(done.append))
+                            }
+                            .flatMap { segments =>
+                                // Node normalizes paths without checking Windows filename syntax; keep the conversion consistent
+                                // with the NIO constructor on that host, including the drive designator's one permitted colon.
+                                val valid = !internal.Platform.isWindows || segments.indices.forall { i =>
+                                    val segment = segments(i)
+                                    val drive   = i == 0 && segment.length == 2 && segment(1) == ':' &&
+                                        ((segment(0) >= 'A' && segment(0) <= 'Z') || (segment(0) >= 'a' && segment(0) <= 'z'))
+                                    segment.forall(c => c >= ' ' && "<>\"|?*".indexOf(c) < 0 && (c != ':' || drive))
+                                }
+                                if !valid then Absent
+                                else
+                                    // The platform constructor can impose additional filename restrictions.
+                                    try Present(Path(("" +: segments)*))
+                                    catch case _: IllegalArgumentException => Absent
+                                end if
+                            }
+                    }
+            end extension
+
+            private def encoded(path: Path): Uri =
+                val text = path.toString
+                val out  = new StringBuilder("file://")
+                if text.startsWith("//") then
+                    val slash = text.indexOf('/', 2)
+                    val end   = if slash < 0 then text.length else slash
+                    escaped(text.substring(2, end), "-._~", out)
+                    escaped(if slash < 0 then "/" else text.substring(slash), "/-._~!$&'()*+,;=:@", out)
+                else
+                    if !text.startsWith("/") then discard(out.append('/'))
+                    escaped(text, "/-._~!$&'()*+,;=:@", out)
+                end if
+                out.toString
+            end encoded
+
+            private def escaped(text: String, literals: String, out: StringBuilder): Unit =
+                text.getBytes(StandardCharsets.UTF_8).foreach { byte =>
+                    val c = (byte & 0xff).toChar
+                    if (c >= 'a' && c <= 'z') ||
+                        (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9') || literals.indexOf(c) >= 0
+                    then
+                        discard(out.append(c))
+                    else
+                        discard(out.append('%').append("0123456789ABCDEF" (c >> 4)).append("0123456789ABCDEF" (c & 15)))
+                    end if
+                }
+
+            // The path after its leading slash, up to the query or fragment; RFC 8089 allows `file:/p`, `file:///p` and
+            // `file://localhost/p` for a file on this host.
+            private def local(u: Uri): Maybe[String] =
+                val end = u.indexWhere(c => c == '?' || c == '#')
+                val uri = if end < 0 then u else u.substring(0, end)
+                if uri.length < 5 || !uri.substring(0, 5).equalsIgnoreCase("file:") then Absent
+                else
+                    val rest = uri.substring(5)
+                    val path =
+                        if !rest.startsWith("//") then Present(rest)
+                        else
+                            val slash = rest.indexOf('/', 2)
+                            val host  = if slash < 0 then rest.substring(2) else rest.substring(2, slash)
+                            Maybe.when(host.isEmpty || host.equalsIgnoreCase("localhost"))(rest.substring(2 + host.length))
+                    path.flatMap(p => Maybe.when(p.startsWith("/") && !p.startsWith("//"))(p.substring(1)))
+                end if
+            end local
+
+            private def unescaped(segment: String): Maybe[String] =
+                val input = segment.getBytes(StandardCharsets.UTF_8)
+                // UTF-8 encoding replaces malformed UTF-16; reject it before percent decoding can lose that evidence.
+                if new String(input, StandardCharsets.UTF_8) != segment then Absent
+                else
+                    val output                                          = new Array[Byte](input.length)
+                    @tailrec def loop(i: Int, size: Int): Maybe[String] =
+                        if i == input.length then
+                            val text    = new String(output, 0, size, StandardCharsets.UTF_8)
+                            val encoded = text.getBytes(StandardCharsets.UTF_8)
+                            // A malformed UTF-8 sequence re-encodes differently; a literal U+FFFD is valid.
+                            Maybe.when(
+                                encoded.length == size && encoded.indices.forall(j => encoded(j) == output(j)) &&
+                                    text.indexOf(0.toChar) < 0 && text.indexOf('/') < 0 && text.indexOf('\\') < 0
+                            )(text)
+                        else if input(i) != '%'.toByte then
+                            output(size) = input(i)
+                            loop(i + 1, size + 1)
+                        else if i + 2 < input.length && hex(input(i + 1).toChar) >= 0 && hex(input(i + 2).toChar) >= 0 then
+                            output(size) = (hex(input(i + 1).toChar) * 16 + hex(input(i + 2).toChar)).toByte
+                            loop(i + 3, size + 1)
+                        else Absent
+                    loop(0, 0)
+                end if
+            end unescaped
+
+            // An RFC 3986 HEXDIG's value, or -1: `Character.digit` also reads non-ASCII digits.
+            private def hex(c: Char): Int =
+                if c >= '0' && c <= '9' then c - '0'
+                else if c >= 'a' && c <= 'f' then c - 'a' + 10
+                else if c >= 'A' && c <= 'F' then c - 'A' + 10
+                else -1
 
             given Schema[Uri]        = Schema.stringSchema.transform[Uri](fromWire)(_.asString)
             given CanEqual[Uri, Uri] = CanEqual.derived
@@ -2374,7 +2495,7 @@ object LspHandler:
 
     // MARK: -- TextDocument namespace factory object
 
-    /** Namespaced factories for `textDocument/X` server-handled LSP endpoints. */
+    /** Namespaced factories for `textDocument/X` LSP endpoints: server-handled, but `publishDiagnostics`, which a client handles. */
     object TextDocument:
 
         def completion[E](
@@ -2615,6 +2736,11 @@ object LspHandler:
             handler: WillSaveTextDocumentParams => Unit < (Async & Abort[JsonRpcResponse.Halt | E])
         )(using Frame): LspHandler[WillSaveTextDocumentParams, Unit, E] =
             initNotification("textDocument/willSave", Kind.TextDocumentWillSave, handler)
+
+        def publishDiagnostics[E](
+            handler: PublishDiagnosticsParams => Unit < (Async & Abort[JsonRpcResponse.Halt | E])
+        )(using Frame): LspHandler[PublishDiagnosticsParams, Unit, E] =
+            initNotification("textDocument/publishDiagnostics", Kind.PublishDiagnostics, handler)
 
     end TextDocument
 

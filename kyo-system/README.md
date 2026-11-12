@@ -386,8 +386,9 @@ val result: Result[FileSystemException, String] < Sync =
 ```
 
 `CommandException` is the sealed hierarchy for pre-launch failures:
-- `ProgramNotFoundException(command)`: raised when the executable is not found on `$PATH`
-- `PermissionDeniedException(command)`: raised when the caller lacks execute permission
+
+- `ProgramNotFoundException(command)`: raised when the executable path does not exist or the program is not found on `$PATH`
+- `PermissionDeniedException(command)`: raised when the executable path names a directory or the caller lacks execute permission
 - `WorkingDirectoryNotFoundException(path)`: raised when the configured `cwd` does not exist
 
 ## Standard directories
@@ -489,6 +490,8 @@ val count: String < (Async & Abort[CommandException]) =
 val piped: String < (Async & Abort[CommandException]) =
     Command("sh", "-c", "grep ERROR var/log/app.log | wc -l").text
 ```
+
+On Unix, an executable path such as `./tool` is resolved from the configured `cwd`. An absolute executable path is independent of `cwd`.
 
 Builder methods compose in any order, each returning a new `Command`:
 

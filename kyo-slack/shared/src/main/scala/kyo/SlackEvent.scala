@@ -20,12 +20,17 @@ object SlackEvent:
         "SlackEvent has no Schema: kyo-slack decodes Slack's frames itself; build outbound values with the module's own types"
     )
 
+    /** A person's post: a `message` event with no subtype, or one of `thread_broadcast`, `file_share` and `me_message`. Any other
+      * subtype, Slack's notice of a join, a topic or a pin, or a change such as `message_changed`, is `Unknown("message", ...)`.
+      * `files` are the files a `file_share` post shares.
+      */
     final case class Message(
         channel: SlackId.ChannelId,
         user: SlackId.UserId,
         text: String,
         ts: SlackTs,
-        @rename("thread_ts") threadTs: Maybe[SlackTs] = Absent
+        @rename("thread_ts") threadTs: Maybe[SlackTs] = Absent,
+        files: Chunk[SlackFile] = Chunk.empty
     ) extends SlackEvent derives CanEqual, Schema
 
     final case class AppMention(

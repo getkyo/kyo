@@ -35,7 +35,7 @@ pull  kyo-whatsapp docker.io/dgadelha/whaloc@sha256:793780655dbe3be764de559625be
 pull  kyo-email    docker.io/mailserver/docker-mailserver@sha256:d0fe7668defe157aad57ea31b1707ad1e2fb57d7a91bdf17cbdf876549946c86
 build kyo-teams    localhost/kyo-teams-playground:0.2.28   kyo-teams/shared/src/test/playground
 build kyo-discord  localhost/kyo-discord-spacebar:0eb6f04f6d-4 kyo-discord/shared/src/test/spacebar
-build kyo-slack    localhost/kyo-slack-simulator:87373b8855-1  kyo-slack/shared/src/test/slack-simulator
+build kyo-slack    localhost/kyo-slack-simulator:87373b8855-2  kyo-slack/shared/src/test/slack-simulator
 pull  kyo-sql-tests docker.io/dolthub/dolt-sql-server:2.3.4
 pull  kyo-pod      docker.io/library/alpine:latest
 pull  kyo-pod      docker.io/library/alpine:3.19

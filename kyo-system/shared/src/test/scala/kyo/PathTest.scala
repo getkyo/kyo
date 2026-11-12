@@ -14,6 +14,14 @@ class PathTest extends kyo.test.Test[Any]:
         assert(p.parts == Chunk("a", "b"))
     }
 
+    "a colon in a POSIX root segment does not introduce a Windows drive" in {
+        assume(!Platform.isWindows, "POSIX path syntax")
+        val path = Path("/C:/source.scala")
+        assert(path.isAbsolute)
+        assert(path.toString == "/C:/source.scala")
+        assert(Path(path.parts*) == path)
+    }
+
     // Unix-style absolute paths (/usr/...) have no Windows equivalent, which requires a drive letter
     "absolute path with dot and dotdot normalizes" in {
         assume(!Platform.isWindows, "Unix absolute path syntax")

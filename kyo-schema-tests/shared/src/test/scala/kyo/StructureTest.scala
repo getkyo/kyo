@@ -41,12 +41,13 @@ enum MixedArityEnum derives Schema, CanEqual:
     case Gamma
 end MixedArityEnum
 
-// Generic sealed trait for typeParams regression: derived Sum must populate typeParams.
-// Variants are concrete so the sealed-trait macro can emit each variant schema without
-// needing to substitute the parent's type argument into a generic child type.
-sealed trait GenericSealed[A] derives Schema, CanEqual
+// Both variants fix A to Int. Derive that specialization, not a schema claiming to decode this family for every A.
+sealed trait GenericSealed[A] derives CanEqual
 case class GenericSealedA(a: Int) extends GenericSealed[Int] derives CanEqual
 case class GenericSealedB(b: Int) extends GenericSealed[Int] derives CanEqual
+
+object GenericSealed:
+    given Schema[GenericSealed[Int]] = Schema.derived
 
 // Scala 2 style sealed trait with mixed case class / case object cases.
 sealed trait SealedNoArgVariants derives Schema, CanEqual
@@ -319,12 +320,16 @@ class StructureTest extends kyo.test.Test[Any]:
         "derived generic sealed trait populates typeParams" in {
             // Regression guard: buildSumSchema must thread typeParamStructures
             // so that Structure.Type.Sum.typeParams is non-empty for generic sealed traits.
-            val s = Schema[GenericSealed[Int]].structure
+            val schema = summon[Schema[GenericSealed[Int]]]
+            val s      = schema.structure
             s match
                 case sum: Structure.Type.Sum =>
-                    assert(sum.typeParams.size == 1, s"Expected 1 typeParam for GenericSealed[Int], got ${sum.typeParams.size}")
+                    assert(sum.typeParams == Chunk(Schema[Int].structure))
                 case other => fail(s"Expected Sum, got $other")
             end match
+            assert(schema.decodeString[Json]("""{"GenericSealedA":{"a":1}}""") == Result.succeed(GenericSealedA(1)))
+            assert(schema.decodeString[Json]("""{"GenericSealedB":{"b":2}}""") == Result.succeed(GenericSealedB(2)))
+            typeCheckFailure("kyo.Schema.derived[kyo.GenericSealed[String]]")("not a subtype of")
         }
 
         "Structure.of[Unit] produces Primitive(PrimitiveKind.Unit, _)" in {

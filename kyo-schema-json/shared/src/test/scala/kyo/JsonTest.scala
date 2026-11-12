@@ -632,6 +632,29 @@ class JsonTest extends kyo.test.Test[Any]:
             ()
         }
 
+        "a generic enum's cases take the sum's type argument" in {
+            val ints: List[EdgeEntry[Int]] =
+                List(EdgeEntry.Plain("a"), EdgeEntry.Imaged("b", List(1, 2)), EdgeEntry.Fixed("c"), EdgeEntry.Bare)
+            val json = Json.encode(ints)
+            assert(Json.decode[List[EdgeEntry[Int]]](json).getOrThrow == ints)
+            val strings: List[EdgeEntry[String]] = List(EdgeEntry.Imaged("c", List("x")), EdgeEntry.Bare)
+            assert(Json.decode[List[EdgeEntry[String]]](Json.encode(strings)).getOrThrow == strings)
+            assert(Json.decode[List[EdgeEntry[String]]](json).isFailure)
+        }
+
+        "a generic sealed trait's cases take the sum's type argument under a discriminator" in {
+            val ints: List[EdgeTurn[Int]] =
+                List(EdgeTurn.User("a", Present(Chunk(1, 2))), EdgeTurn.System("b"), EdgeTurn.User("c", Absent), EdgeTurn.Empty)
+            val json = Json.encode(ints)
+            assert(
+                json == """[{"role":"user","content":"a","images":[1,2]},{"role":"system","content":"b"},{"role":"user","content":"c"},{"role":"Empty"}]"""
+            )
+            assert(Json.decode[List[EdgeTurn[Int]]](json).getOrThrow == ints)
+            val strings: List[EdgeTurn[String]] = List(EdgeTurn.User("d", Present(Chunk("x"))), EdgeTurn.Empty)
+            assert(Json.decode[List[EdgeTurn[String]]](Json.encode(strings)).getOrThrow == strings)
+            assert(Json.decode[List[EdgeTurn[String]]](json).isFailure)
+        }
+
         // 12. RECURSIVE TYPES
 
         "recursive case class round-trips" in {
@@ -882,6 +905,82 @@ class JsonTest extends kyo.test.Test[Any]:
                     assert(oneOf.variants(1)._1 == "JSRect")
                 case other =>
                     fail(s"Expected OneOf, got $other")
+            end match
+        }
+
+        "a sealed trait's case is written as an object holding the case, and reads back as written" in {
+            val schema  = JsonSchema.from[JSShape]
+            val encoded = Json.encode(schema)
+            assert(encoded ==
+                """{"oneOf":[""" +
+                """{"type":"object","properties":{"JSCircle":{"type":"object","properties":{"radius":{"type":"number"}},"required":["radius"]}},"required":["JSCircle"]},""" +
+                """{"type":"object","properties":{"JSRect":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"}},"required":["width","height"]}},"required":["JSRect"]}""" +
+                """]}""")
+            assert(Json.decode[JsonSchema](encoded) == Result.succeed(schema))
+        }
+
+        "the earlier bare case wrappers still decode with their names" in {
+            val legacy   = """{"oneOf":[{"Circle":{"type":"number"}},{"Square":{"type":"string"}}]}"""
+            val expected = JsonSchema.OneOf(List("Circle" -> JsonSchema.Num(), "Square" -> JsonSchema.Str()))
+            assert(Json.decode[JsonSchema](legacy) == Result.succeed(expected))
+        }
+
+        "a oneOf object with its own metadata keeps that metadata" in {
+            val input =
+                """{"oneOf":[{"type":"object","properties":{"Circle":{"type":"number"}},"required":["Circle"],"description":"wrapper"}]}"""
+            val expected = JsonSchema.OneOf(List("variant0" -> JsonSchema.Obj(
+                List("Circle" -> JsonSchema.Num()),
+                List("Circle"),
+                description = Present("wrapper")
+            )))
+            assert(Json.decode[JsonSchema](input) == Result.succeed(expected))
+        }
+
+        "a generic product nested in itself with other type arguments is described in full" in {
+            case class JSPair[A, B](first: A, second: B)
+            JsonSchema.from[JSPair[Int, JSPair[String, Boolean]]] match
+                case outer: JsonSchema.Obj =>
+                    assert(outer.properties.find(_._1 == "second").map(_._2) == Some(JsonSchema.Obj(
+                        List("first" -> JsonSchema.Str(), "second" -> JsonSchema.Bool()),
+                        List("first", "second")
+                    )))
+                case other => fail(s"Expected Obj, got $other")
+            end match
+        }
+
+        "a generic product nested in itself is described in full when its schema is derived where its tag is not known" in {
+            import JsonTestGuardTypes.*
+            JsonSchema.from[JSOuterCell] match
+                case outer: JsonSchema.Obj =>
+                    val inner = JsonSchema.Obj(
+                        List(
+                            "name" -> JsonSchema.Str(),
+                            "cell" -> JsonSchema.Obj(
+                                List(
+                                    "declared" -> JsonSchema.Nullable(JsonSchema.Str()),
+                                    "written"  -> JsonSchema.Nullable(JsonSchema.Integer())
+                                ),
+                                List.empty
+                            )
+                        ),
+                        List("name", "cell")
+                    )
+                    assert(outer.properties == List("cell" -> JsonSchema.Obj(
+                        List("declared" -> JsonSchema.Nullable(JsonSchema.Str()), "written" -> JsonSchema.Nullable(inner)),
+                        List.empty
+                    )))
+                case other => fail(s"Expected Obj, got $other")
+            end match
+        }
+
+        "a product nested in itself stops at the first repetition" in {
+            JsonSchema.from[TreeNode] match
+                case node: JsonSchema.Obj =>
+                    assert(node.properties.find(_._1 == "children").map(_._2) == Some(JsonSchema.Arr(JsonSchema.Obj(
+                        List.empty,
+                        List.empty
+                    ))))
+                case other => fail(s"Expected Obj, got $other")
             end match
         }
 
@@ -1958,6 +2057,26 @@ class JsonTest extends kyo.test.Test[Any]:
 
     case class EdgeTreeNode(value: Int, children: List[EdgeTreeNode]) derives CanEqual, Schema
 
+    // A generic enum: a case's own type parameter is the sum's argument, in a case that mentions it, in one that does not, and in
+    // one that fixes the sum at Nothing.
+    enum EdgeEntry[+R] derives CanEqual, Schema:
+        case Plain(content: String)
+        case Imaged(content: String, images: List[R])
+        case Fixed(content: String) extends EdgeEntry[Nothing]
+        case Bare                   extends EdgeEntry[Nothing]
+    end EdgeEntry
+
+    // The same sum as a sealed trait under a discriminator, with renamed cases.
+    @kyo.schema.discriminator("role")
+    sealed trait EdgeTurn[+R] derives CanEqual, Schema
+    object EdgeTurn:
+        @kyo.schema.rename("user")
+        case class User[+R](content: String, images: Maybe[Chunk[R]]) extends EdgeTurn[R]
+        @kyo.schema.rename("system")
+        case class System(content: String) extends EdgeTurn[Nothing]
+        case object Empty                  extends EdgeTurn[Nothing]
+    end EdgeTurn
+
     // From BigNumberCodecTest
     case class BigDecimalBox(value: BigDecimal) derives CanEqual
     case class BigIntBox(value: BigInt) derives CanEqual
@@ -2292,3 +2411,12 @@ class JsonTest extends kyo.test.Test[Any]:
     }
 
 end JsonTest
+
+object JsonTestGuardTypes:
+    // Derived in a given generic in `A` with no Tag for it, so every cell's structure carries the same erased tag.
+    final case class JSCell[I, A](declared: Maybe[I], written: Maybe[A])
+    object JSCell:
+        given [A](using Schema[A]): Schema[JSCell[String, A]] = Schema.derived[JSCell[String, A]]
+    final case class JSInnerCell(name: String, cell: JSCell[String, Int]) derives Schema
+    final case class JSOuterCell(cell: JSCell[String, JSInnerCell]) derives Schema
+end JsonTestGuardTypes

@@ -2209,12 +2209,12 @@ object Schema:
 
     /** Typeclass derivation entry point for Schema[A].
       *
-      * Automatically generates a full Schema[A] for case classes and sealed traits/enums, including serialization, structural type, source
+      * Automatically generates a full Schema[A] for case classes, records and sealed traits/enums, including serialization, structural type, source
       * field descriptors, and default values. Summoned implicitly wherever `using Schema[A]` appears, or explicitly via `Schema.derived[A]`
       * to define a given in a companion object.
       *
       * @tparam A
-      *   the type to derive a Schema for; must be a case class, sealed trait, enum, or primitive
+      *   the type to derive a Schema for; must be a case class, record, sealed trait, enum, or type union
       */
     inline given derived[A]: Schema[A] = ${ internal.SchemaDerivedMacro.derivedImpl[A] }
 
@@ -2930,14 +2930,15 @@ object Schema:
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Frame].asInstanceOf[Tag[Any]])
     )
 
-    /** Tag schema: serializes as the string representation. Tags are opaque types backed by String at runtime for static tags.
+    /** Tag schema: serializes as the tag's encoding, a dynamic tag's runtime parts merged in, and reads back only a whole encoding, so a
+      * text that is not one is a typed failure where it is read rather than a failure at the tag's first use.
       */
     given tagSchema[A](using tag: Tag[Tag[A]]): Schema[Tag[A]] = Schema.init[Tag[A]](
-        writeFn = (v, w) =>
-            v match
-                case s: String => w.string(s)
-                case _         => w.string(v.show),
-        readFn = reader => reader.string().asInstanceOf[Tag[A]],
+        writeFn = (v, w) => w.string(Tag.internal.encode(v.erased)),
+        readFn = reader =>
+            val value = reader.string()
+            Tag.internal.parse[A](value).getOrElse(throw TypeMismatchException(Seq.empty, "Tag", value)(using reader.frame))
+        ,
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, tag.erased)
     )
 

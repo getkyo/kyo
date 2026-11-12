@@ -31,6 +31,60 @@ class HtmlRendererReactiveRangesJsTest extends kyo.test.Test[Any]:
     private def evalString(source: String): String =
         scalajs.Dynamic.global.eval(source).asInstanceOf[String]
 
+    "embedded unchanged content retains its nodes and nested anchors" in {
+        Sync.defer {
+            install(
+                "<!--kyo-rs:r--><section id='same'><span><!--kyo-rs:r000000010031-->text<!--kyo-re:r000000010031--></span></section><!--kyo-re:r-->"
+            )
+            val result = evalString("""(() => {
+                const before = document.getElementById('same');
+                kyoRangeReplace('r', before.outerHTML);
+                const same = before === document.getElementById('same');
+                kyoRangeReplace('r000000010031', 'updated');
+                return [same, __kyoRanges.size, document.getElementById('same').textContent].join('|');
+            })()""")
+            assert(result == "true|2|updated")
+        }
+    }
+
+    "embedded unchanged synthetic table content retains rows but applies changed host attributes" in {
+        Sync.defer {
+            val id = "r000000010031"
+            install(s"<table><tbody data-kyo-range-host='$id' class='rows'><!--kyo-rs:$id-->" +
+                s"<tr id='same-row'><td>row</td></tr><!--kyo-re:$id--></tbody></table>")
+            val result = evalString(s"""(() => {
+                const before = document.getElementById('same-row');
+                const markup = '<tbody data-kyo-range-host="$id" class="rows"><tr id="same-row"><td>row</td></tr></tbody>';
+                kyoRangeReplace('$id', markup);
+                const same = before === document.getElementById('same-row');
+                kyoRangeReplace('$id', markup.replace('class="rows"', 'class="changed"'));
+                return [same, document.querySelector('tbody').className, document.querySelectorAll('table > tbody').length].join('|');
+            })()""")
+            assert(result == "true|changed|1")
+        }
+    }
+
+    "embedded same markup still repairs edited form properties" in {
+        Sync.defer {
+            install("<!--kyo-rs:r--><section><input id='text' value='server'><textarea id='area'>server</textarea>" +
+                "<input id='check' type='checkbox' checked><select id='choice'><option value='a' selected>A</option>" +
+                "<option value='b'>B</option></select></section><!--kyo-re:r-->")
+            val result = evalString("""(() => {
+                const markup = document.querySelector('section').outerHTML;
+                document.getElementById('text').value = 'typed';
+                document.getElementById('area').value = 'typed';
+                document.getElementById('check').checked = false;
+                document.getElementById('check').indeterminate = true;
+                document.getElementById('choice').selectedIndex = 1;
+                kyoRangeReplace('r', markup);
+                return [document.getElementById('text').value, document.getElementById('area').value,
+                    document.getElementById('check').checked, document.getElementById('check').indeterminate,
+                    document.getElementById('choice').value].join('|');
+            })()""")
+            assert(result == "server|server|true|false|a")
+        }
+    }
+
     "embedded registry replaces table rows with contextual parsing and retains anchors" in {
         install("<table><tbody><!--kyo-rs:r--><tr id='old'><td>old</td></tr><!--kyo-re:r--></tbody></table>")
         discard(scalajs.Dynamic.global.eval("kyoRangeReplace('r',\"<tr id='new'><td>new</td></tr>\")"))

@@ -523,12 +523,9 @@ class MarkdownTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "untrusted: a linked image with an unsafe link keeps the image without the anchor" in {
+    "untrusted: a linked image with an unsafe link draws the image as its link alone" in {
         for html <- renderUntrusted("[![logo](kyo.png)](javascript:alert`1`)\n")
-        yield
-            assert(!html.contains("<a"), s"no anchor may be emitted: $html")
-            assert(html.contains("<img") && html.contains("kyo.png"), s"the safe image stays: $html")
-        end for
+        yield assert(html == """<p data-kyo-path="0"><a data-kyo-path="0.0" href="kyo.png" target="_blank">logo</a></p>""")
     }
 
     "untrusted: http, https, fragment and relative links keep their href" in {
@@ -536,7 +533,7 @@ class MarkdownTest extends kyo.test.Test[Any]:
         yield
             assert(html.contains("getkyo.io"), s"https link: $html")
             assert(html.contains("x.io/p"), s"http link: $html")
-            assert(html.contains("#top"), s"fragment link: $html")
+            assert(html.contains("#user-content-top"), s"fragment link: $html")
             assert(html.contains("../docs/a.md"), s"relative link: $html")
             assert(html.contains("docs/a:b"), s"a colon after a slash is a path, not a scheme: $html")
             assert(html.split("<a ").length - 1 == 5, s"five anchors: $html")
@@ -553,12 +550,216 @@ class MarkdownTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "untrusted: markdown constructs render the same as trusted" in {
+    "untrusted: markdown constructs render the same as trusted, but for the heading's id" in {
         val source = "# Title\n\n**bold** and `code`\n\n- one\n- two\n"
         for
             trusted   <- renderMd(source)
             untrusted <- renderUntrusted(source)
-        yield assert(trusted == untrusted)
+        yield assert(untrusted == trusted.replace("""id="title"""", """id="user-content-title""""))
+        end for
+    }
+
+    "untrusted: every link but a fragment opens in a new tab, whatever its spelling" in {
+        val source = "[a](https://host) [b](HTTPS://host) [c](//host) [d](/\\host) [e](https:host) [f](/notifications) [g](x.md)\n"
+        for html <- renderUntrusted(source)
+        yield assert(
+            html ==
+                """<p data-kyo-path="0"><a data-kyo-path="0.0" href="https://host" target="_blank">a</a> """ +
+                """<a data-kyo-path="0.2" href="HTTPS://host" target="_blank">b</a> """ +
+                """<a data-kyo-path="0.4" href="//host" target="_blank">c</a> """ +
+                """<a data-kyo-path="0.6" href="/\host" target="_blank">d</a> """ +
+                """<a data-kyo-path="0.8" href="https:host" target="_blank">e</a> """ +
+                """<a data-kyo-path="0.10" href="/notifications" target="_blank">f</a> """ +
+                """<a data-kyo-path="0.12" href="x.md" target="_blank">g</a></p>"""
+        )
+    }
+
+    "untrusted: a fragment link opens in place, at the prefixed id" in {
+        for html <- renderUntrusted("[top](#top)\n")
+        yield assert(html == """<p data-kyo-path="0"><a data-kyo-path="0.0" href="#user-content-top">top</a></p>""")
+    }
+
+    "untrusted: no image is fetched, each is a link to its URL named by its alt text" in {
+        val source = "![a](https://host/x.png) ![b](//host/x.png) ![c](/\\host/x.png) ![d](/notifications) ![e](x.png)\n"
+        for html <- renderUntrusted(source)
+        yield assert(
+            html ==
+                """<p data-kyo-path="0"><a data-kyo-path="0.0" href="https://host/x.png" target="_blank">a</a> """ +
+                """<a data-kyo-path="0.2" href="//host/x.png" target="_blank">b</a> """ +
+                """<a data-kyo-path="0.4" href="/\host/x.png" target="_blank">c</a> """ +
+                """<a data-kyo-path="0.6" href="/notifications" target="_blank">d</a> """ +
+                """<a data-kyo-path="0.8" href="x.png" target="_blank">e</a></p>"""
+        )
+    }
+
+    "untrusted: an image with an empty alt text is named by its URL" in {
+        for html <- renderUntrusted("![](https://host/x.png)\n")
+        yield assert(
+            html == """<p data-kyo-path="0"><a data-kyo-path="0.0" href="https://host/x.png" target="_blank">https://host/x.png</a></p>"""
+        )
+    }
+
+    "untrusted: a linked image is one link to the link's URL, named by the image's alt text" in {
+        for html <- renderUntrusted("[![logo](https://host/x.png)](https://getkyo.io)\n")
+        yield assert(html == """<p data-kyo-path="0"><a data-kyo-path="0.0" href="https://getkyo.io" target="_blank">logo</a></p>""")
+    }
+
+    "untrusted: a heading's id is user-content- before its slug, in the article and in the outline" in {
+        val rendered = Markdown.render("# Agent app\n## Agent app\n", untrusted)
+        for html <- renderHtml(rendered.article)
+        yield
+            assert(rendered.headings.map(_.id) == Chunk("user-content-agent-app", "user-content-agent-app-2"))
+            assert(
+                html ==
+                    """<h1 data-kyo-path="0" id="user-content-agent-app">Agent app</h1>""" +
+                    """<h2 data-kyo-path="1" id="user-content-agent-app-2">Agent app</h2>"""
+            )
+        end for
+    }
+
+    "untrusted: a fragment link reaches the heading it names" in {
+        val rendered = Markdown.render("# Intro\n\n[see](#intro)\n", untrusted)
+        for html <- renderHtml(rendered.article)
+        yield
+            assert(rendered.headings.map(_.id) == Chunk("user-content-intro"))
+            assert(
+                html ==
+                    """<h1 data-kyo-path="0" id="user-content-intro">Intro</h1>""" +
+                    """<p data-kyo-path="1"><a data-kyo-path="1.0" href="#user-content-intro">see</a></p>"""
+            )
+        end for
+    }
+
+    "trusted: an image is fetched, no link opens in a new tab, and ids are the source's" in {
+        val rendered = Markdown.render("# Intro\n\n![a](x.png) [b](https://host) [c](#intro) [![d](y.png)](https://getkyo.io)\n")
+        for html <- renderHtml(rendered.article)
+        yield
+            assert(rendered.headings.map(_.id) == Chunk("intro"))
+            assert(
+                html ==
+                    """<h1 data-kyo-path="0" id="intro">Intro</h1><p data-kyo-path="1">""" +
+                    """<img data-kyo-path="1.0" src="x.png" alt="a" /> <a data-kyo-path="1.2" href="https://host">b</a> """ +
+                    """<a data-kyo-path="1.4" href="#intro">c</a> """ +
+                    """<a data-kyo-path="1.6" href="https://getkyo.io"><img data-kyo-path="1.6.0" src="y.png" alt="d" /></a></p>"""
+            )
+        end for
+    }
+
+    // ---- Pathological sources, after cmark's pathological_tests.py ----
+    // Large unclosed constructs must remain literal text. These inputs expose repeated scans of the remaining source.
+
+    "literal fallbacks preserve later emphasis and links" in {
+        val source = "alpha !oops **bold** <unfinished [link](target)"
+        for
+            trusted   <- renderMd(source)
+            untrusted <- renderUntrusted(source)
+        yield
+            assert(
+                trusted ==
+                    """<p data-kyo-path="0">alpha !oops <span data-kyo-path="0.1" class="md-strong">bold</span> &lt;unfinished <a data-kyo-path="0.3" href="target">link</a></p>"""
+            )
+            assert(
+                untrusted ==
+                    """<p data-kyo-path="0">alpha !oops <span data-kyo-path="0.1" class="md-strong">bold</span> &lt;unfinished <a data-kyo-path="0.3" href="target" target="_blank">link</a></p>"""
+            )
+        end for
+    }
+
+    "unusable openers stay literal even with unrelated closers" in {
+        val cases = Chunk(
+            ("!" * 500000 + ")", "!" * 500000 + ")"),
+            ("[" * 500000 + ")", "[" * 500000 + ")"),
+            ("<>" * 500000, "&lt;&gt;" * 500000),
+            ("*" * 500000, "*" * 500000)
+        )
+        Kyo.foreachDiscard(cases) { (source, expected) =>
+            for
+                trusted   <- renderMd(source)
+                untrusted <- renderUntrusted(source)
+            yield
+                assert(trusted == s"""<p data-kyo-path="0">$expected</p>""")
+                assert(untrusted == trusted)
+        }
+    }
+
+    "pathological: 200,000 unclosed [ render as text" in {
+        val source = "[" * 200000
+        for
+            trusted   <- renderMd(source)
+            untrusted <- renderUntrusted(source)
+        yield
+            assert(trusted == s"""<p data-kyo-path="0">$source</p>""")
+            assert(untrusted == trusted)
+        end for
+    }
+
+    "pathological: 100,000 unclosed ![ before a ] with no ( render as text" in {
+        val source = "![" * 100000 + "]x"
+        for
+            trusted   <- renderMd(source)
+            untrusted <- renderUntrusted(source)
+        yield
+            assert(trusted == s"""<p data-kyo-path="0">$source</p>""")
+            assert(untrusted == trusted)
+        end for
+    }
+
+    "pathological: 70,000 unclosed [![ before a ] with no ( render as text" in {
+        val source = "[![" * 70000 + "]x"
+        for
+            trusted   <- renderMd(source)
+            untrusted <- renderUntrusted(source)
+        yield
+            assert(trusted == s"""<p data-kyo-path="0">$source</p>""")
+            assert(untrusted == trusted)
+        end for
+    }
+
+    "pathological: 500,000 unclosed < render as text" in {
+        val source = "< " * 500000
+        for
+            trusted   <- renderMd(source)
+            untrusted <- renderUntrusted(source)
+        yield
+            assert(trusted == s"""<p data-kyo-path="0">${("&lt; " * 500000).trim}</p>""")
+            assert(untrusted == trusted)
+        end for
+    }
+
+    "pathological: 400,000 links with no ) render as text" in {
+        val source = "[a](" * 400000
+        for
+            trusted   <- renderMd(source)
+            untrusted <- renderUntrusted(source)
+        yield
+            assert(trusted == s"""<p data-kyo-path="0">$source</p>""")
+            assert(untrusted == trusted)
+        end for
+    }
+
+    "pathological: a heading of 200,000 unclosed [ renders as text, and its outline label too" in {
+        val brackets  = "[" * 200000
+        val trusted   = Markdown.render(s"# $brackets\n")
+        val untrusted = Markdown.render(s"# $brackets\n", Markdown.Options(html = false))
+        for
+            trustedHtml   <- renderHtml(trusted.article)
+            untrustedHtml <- renderHtml(untrusted.article)
+        yield
+            assert(trusted.headings == Chunk(Markdown.Heading(1, brackets, "")))
+            assert(untrusted.headings == Chunk(Markdown.Heading(1, brackets, "user-content-")))
+            assert(trustedHtml == s"""<h1 data-kyo-path="0" id="">$brackets</h1>""")
+            assert(untrustedHtml == s"""<h1 data-kyo-path="0" id="user-content-">$brackets</h1>""")
+        end for
+    }
+
+    "pathological: backtick runs of every length from 2,000 down to 1, each after an e, render as text" in {
+        val source = (2000 to 1 by -1).map(length => "e" + "`" * length).mkString
+        for
+            trusted   <- renderMd(source)
+            untrusted <- renderUntrusted(source)
+        yield
+            assert(trusted == s"""<p data-kyo-path="0">$source</p>""")
+            assert(untrusted == trusted)
         end for
     }
 

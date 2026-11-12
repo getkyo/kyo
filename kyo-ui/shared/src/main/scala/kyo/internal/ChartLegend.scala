@@ -374,51 +374,30 @@ private[kyo] object ChartLegend:
         lerpColor(lo, hi, t)
     end sequentialColor
 
-    /** Linear per-component RGB interpolation between two colors at parameter `t` in `[0, 1]`.
-      *
-      * RGB components are extracted from the color ADT directly (hex strings of 3/4/6/8 digits, rgb, rgba), so
-      * named constants and `Style.Color.hex(...)` inputs all interpolate correctly. The result is an rgb color.
+    /** Interpolates opaque RGB values locally. Colors that need page state or alpha blending retain their CSS representation and are
+      * interpolated by the browser in sRGB.
       */
     private def lerpColor(lo: Style.Color, hi: Style.Color, t: Double) =
-        val (r0, g0, b0) = colorComponents(lo)
-        val (r1, g1, b1) = colorComponents(hi)
-        val r            = math.round(r0 + (r1 - r0) * t).toInt
-        val g            = math.round(g0 + (g1 - g0) * t).toInt
-        val b            = math.round(b0 + (b1 - b0) * t).toInt
-        Style.Color.rgb(r, g, b)
+        (colorComponents(lo), colorComponents(hi)) match
+            case (Present((r0, g0, b0)), Present((r1, g1, b1))) =>
+                val r = math.round(r0 + (r1 - r0) * t).toInt
+                val g = math.round(g0 + (g1 - g0) * t).toInt
+                val b = math.round(b0 + (b1 - b0) * t).toInt
+                Style.Color.rgb(r, g, b)
+            case _ if t <= 0 => lo
+            case _ if t >= 1 => hi
+            case _           => Style.Color.mix(lo, hi, (1 - t) * 100)
     end lerpColor
 
-    /** Extract the 8-bit R/G/B components of a color, normalizing hex (3/4/6/8 digit) and rgb/rgba forms.
-      *
-      * Falls back to mid-gray for `transparent` or an unparseable hex; in practice every named constant and
-      * `Style.Color.hex`/`rgb` input parses, so the fallback is a safety net, not a normal path.
-      */
-    private def colorComponents(c: Style.Color) =
-        def parseHex(value: String): (Int, Int, Int) =
-            val body = if value.startsWith("#") then value.substring(1) else value
-            // Expand 3/4-digit shorthand (#rgb / #rgba) to 6 digits by doubling each nibble.
-            val rgb =
-                if body.length == 3 || body.length == 4 then
-                    val r = body.charAt(0); val g = body.charAt(1); val b = body.charAt(2)
-                    s"$r$r$g$g$b$b"
-                else body.substring(0, math.min(6, body.length))
-            if rgb.length == 6 then
-                (
-                    Integer.parseInt(rgb.substring(0, 2), 16),
-                    Integer.parseInt(rgb.substring(2, 4), 16),
-                    Integer.parseInt(rgb.substring(4, 6), 16)
-                )
-            else (128, 128, 128)
-            end if
-        end parseHex
+    /** Only opaque colors can be interpolated without the browser's alpha and custom-property resolution. */
+    private def colorComponents(c: Style.Color): Maybe[(Int, Int, Int)] =
         c match
-            case Style.Color.Hex(value)       => parseHex(value)
-            case Style.Color.Rgb(r, g, b)     => (r, g, b)
-            case Style.Color.Rgba(r, g, b, _) => (r, g, b)
-            // Transparent and an unresolved CSS variable have no concrete RGB at this layer: fall back to neutral grey.
-            case Style.Color.Transparent => (128, 128, 128)
-            case Style.Color.Var(_)      => (128, 128, 128)
-        end match
+            case Style.Color.Rgb(r, g, b)                 => Present((r, g, b))
+            case Style.Color.Rgba(r, g, b, a) if a == 1.0 => Present((r, g, b))
+            case Style.Color.Hex(value)                   =>
+                val digits = value.length - (if value.startsWith("#") then 1 else 0)
+                if digits == 3 || digits == 6 then ChartContrast.rgbOf(c) else Absent
+            case _ => Absent
     end colorComponents
 
     /** True when the legend-driving mark (the one that carries the `color` encoding) is a line or area mark.
