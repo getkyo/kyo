@@ -124,7 +124,7 @@ message-timestamp id.
 | Public surface | `Slack`, `SlackConfig`, `SlackTs`, `SlackMethod`, `SlackAck`, `SlackEnvelope`, `SlackEvent`, `SlackInteraction`, `SlackCommand`, `SlackMessage`, `SlackReply`, `SlackView`, `SlackBlock`, `SlackId`, `SlackToken`, `SlackResponseUrl`, `SlackRawJson`, `SlackException` | The bot author's whole vocabulary. |
 | Reconnect | `internal.slack.Reconnect` | The single owner of engine lifecycle: constructs, swaps, and closes engines per `SlackConfig.Reconnect`. |
 | Engine | `internal.slack.SocketEngine` | The receive loop, the single ack-emission site, the sender/relay fibers, the close coordination. |
-| Web API | `internal.slack.WebApi` | The one canonical `request` path over the client's own `HttpClient`, and the `response_url` POST. |
+| Web API | `internal.slack.WebApi` | JSON and form requests share `send` over the client's own `HttpClient`; response URLs and file bytes use the same client boundary. |
 | Codec | `internal.slack.Wire` | The wire DTOs and the typed-or-raw decode over the frame's `Structure.Value`, read by kyo-schema-json. |
 | Transport seam | `internal.slack.Transport` | A text-frame duplex: `live` over the client's kyo-http client; tests supply in-memory conduits. |
 | Connection carrier | `internal.slack.Reconnect.Controller` | Held by a client from `init` for its whole life: its active ref names the engine current after every rotation, so each `receive` reads it and `close` closes it. |
@@ -137,6 +137,11 @@ request runs under `WebApi.onClient`, which is `HttpClient.let(client.http)` aro
 field stated (no redirects, no filter, no base url, default TLS), so nothing of the caller's
 kyo-http client or configuration reaches a request that carries a token. kyo-http reuses a pooled
 connection by address, which is why the module's client is its own rather than the ambient one.
+
+`files.info` and `files.getUploadURLExternal` use `requestForm` with `HttpFormCodec`; Slack does not accept JSON arguments on
+those methods. `files.completeUploadExternal` uses the JSON path. Both encodings share bearer-token handling, transport failures
+and response decoding in `send`. Downloads attach the bot token only to `fileHosts`; upload byte POSTs attach no token. Neither
+follows redirects or inherits the caller's HTTP configuration.
 
 Entry points. A method that satisfies `Env[Slack]` is named `run`, and nothing else provides a
 client: `receive` and every verb require `Env[Slack]` from their caller and use that client.
@@ -614,12 +619,11 @@ they run only with `SLACK_INTERACTIVE` set; on the container the suite does what
 through the emulator's control API, on a fiber whose failure fails the leaf at once.
 
 On the container the Socket Mode connection runs over `TransportTest.plainLocal`, without TLS:
-the image answers `apps.connections.open` with a `wss` url (the one line its build changes, since
-the module refuses any other scheme), and the workspace target covers the TLS. A leaf whose
-behaviour the emulator does not reproduce keeps Slack's assertion and passes `realOnly` with the
-difference, which cancels it on the container. The emulator's hello carries no `connection_info`,
-so the module delivers it as an unknown frame, which the interactive leaves take as the connection
-being up.
+the image answers `apps.connections.open` with a `wss` url, since the module refuses any other
+scheme, and its hello names the app in `connection_info`, as Slack's does; those are the two lines
+its build changes, and the workspace target covers the TLS. A leaf whose behaviour the emulator
+does not reproduce keeps Slack's assertion and passes `realOnly` with the difference, which cancels
+it on the container.
 
 Run it against a workspace with the variables exported, one platform at a time:
 
@@ -654,7 +658,7 @@ against a local server standing in for Slack, so the suite's own logic is tested
 - [ ] Reconnect/teardown touched: is the controller still the only closer of engines, is
       `closeInbound` still the single idempotent residue capture, and is the sender still off
       the race so the flush completes?
-- [ ] Web API method: delegates to the one canonical `WebApi.request` typed by its own failure
+- [ ] Web API method: delegates to `WebApi.request` or `WebApi.requestForm` typed by its own failure
       trait, explicit return type, no `SlackException` and no `HttpException` on its row, and a
       row in `SlackExceptionMembershipTest`'s table?
 - [ ] Failure asserted in a test: compared as the whole leaf (`Result.fail(leaf)`), never by

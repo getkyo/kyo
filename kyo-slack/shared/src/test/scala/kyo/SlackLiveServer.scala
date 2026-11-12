@@ -9,9 +9,10 @@ import kyo.internal.slack.TransportTest
   * `shared/src/test/slack-simulator/Containerfile`, out of the source at a pinned commit fetched as GitHub's tarball and checked against
   * its SHA-256, on a base pinned by digest, and nothing of it is distributed or linked. A CI run that selects this module builds it
   * before the tests (`scripts/fixture-images.sh`), so a leaf never reaches the internet; where it was not built,
-  * [[SlackLiveServer.init]] fails with the command that builds it. The build changes one line: `apps.connections.open` answers a `wss` Socket Mode url instead of `ws`, since
-  * the module refuses any other scheme before it connects. The suite then connects over `TransportTest.plainLocal`, which speaks `ws`
-  * whatever the url says, so the container target exercises the Socket Mode protocol and not its TLS, which the real target covers.
+  * [[SlackLiveServer.init]] fails with the command that builds it. The build changes two lines: `apps.connections.open` answers a `wss`
+  * Socket Mode url instead of `ws`, since the module refuses any other scheme before it connects, and the hello names the app in
+  * `connection_info`, as Slack's does. The suite then connects over `TransportTest.plainLocal`, which speaks `ws` whatever the url says,
+  * so the container target exercises the Socket Mode protocol and not its TLS, which the real target covers.
   *
   * One app (`AppId`) with the bot user `BotUserId` and the suite's slash command, in a workspace whose channel `Channel` holds the
   * person `PersonId`. The emulator builds every url it hands out (`auth.test`'s, the Socket Mode url, each `response_url`) from
@@ -58,7 +59,7 @@ object SlackLiveServer:
     /** The tag `scripts/fixture-images.sh` builds: the slack-simulator commit's prefix, then the build's revision, which a change to
       * the Containerfile increments here and there together.
       */
-    val Image: ContainerImage = ContainerImage("localhost/kyo-slack-simulator", "87373b8855-1")
+    val Image: ContainerImage = ContainerImage("localhost/kyo-slack-simulator", "87373b8855-2")
 
     private val Context = "kyo-slack/shared/src/test/slack-simulator"
 

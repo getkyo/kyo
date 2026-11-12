@@ -7,6 +7,8 @@ RUN node -e "fetch('https://codeload.github.com/ClydeDz/slack-simulator/tar.gz/8
  && tar xzf /tmp/src.tgz --strip-components=1 -C /app \
  && rm /tmp/src.tgz
 RUN sed -i 's#url: `ws://#url: `wss://#' src/server/routes/slackApi.ts && grep -q 'url: `wss://' src/server/routes/slackApi.ts
+RUN sed -i 's#^\(\s*\)num_connections: 1,#&\n\1connection_info: { app_id: appId },#' src/server/socketModeServer.ts \
+ && grep -q 'connection_info: { app_id: appId },' src/server/socketModeServer.ts
 RUN yarn install --frozen-lockfile && yarn build:server
 EXPOSE 4500
 CMD ["node", "dist/server/server/index.js"]

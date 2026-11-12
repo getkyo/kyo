@@ -21,6 +21,7 @@ object SlackId:
     opaque type BotId      = String
     opaque type ActionId   = String
     opaque type BlockId    = String
+    opaque type FileId     = String
 
     object ChannelId:
         def apply(s: String): ChannelId             = s
@@ -101,6 +102,14 @@ object SlackId:
         given Schema[BlockId]                     = Schema.stringSchema.transform[BlockId](apply)(_.value)
         given CanEqual[BlockId, BlockId]          = CanEqual.derived
     end BlockId
+
+    object FileId:
+        def apply(s: String): FileId             = s
+        extension (id: FileId) def value: String = id
+        given Schema[FileId]                     = Schema.stringSchema.transform[FileId](apply)(_.value)
+        given HttpCodec[FileId]                  = HttpCodec(_.value, apply)
+        given CanEqual[FileId, FileId]           = CanEqual.derived
+    end FileId
 
 end SlackId
 

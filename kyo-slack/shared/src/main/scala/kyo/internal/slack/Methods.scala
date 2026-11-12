@@ -3,7 +3,7 @@ package kyo.internal.slack
 import kyo.*
 
 /** The request and answer objects of the Web API methods the module calls, each named for its method. A method's
-  * object is its own JSON, not a second model of a public type: its fields are the method's arguments and results, typed
+  * object holds its wire fields, not a second model of a public type: its fields are the method's arguments and results, typed
   * with the public types.
   *
   * A field is named by its wire key rather than renamed: kyo-schema names a missing renamed field by its Scala name, and a
@@ -43,5 +43,42 @@ private[kyo] object Methods:
     final case class ViewsUpdateAnswer(view: ViewRef) derives Schema
 
     final case class ViewsPublishAnswer(view: ViewRef) derives Schema
+
+    /** `files.info` takes the file's id as a form parameter. */
+    final case class FilesInfo(file: SlackId.FileId) derives HttpFormCodec
+
+    /** `files.info`'s answer: the file object whole, as a message event would carry it. */
+    final case class FilesInfoAnswer(file: SlackFile) derives Schema
+
+    /** `files.getUploadURLExternal` takes the file's name and its size in bytes as form parameters. */
+    final case class FilesGetUploadUrl(filename: String, length: Long) derives HttpFormCodec
+
+    /** `files.getUploadURLExternal`'s answer: where the file's bytes go, and the id the file will have. */
+    final case class FilesGetUploadUrlAnswer(upload_url: String, file_id: SlackId.FileId) derives Schema
+
+    /** `files.completeUploadExternal` takes the uploaded files and where to share them, with the message's text and thread. */
+    final case class FilesCompleteUpload(
+        files: Chunk[FilesCompleteUpload.Entry],
+        channel_id: SlackId.ChannelId,
+        initial_comment: Maybe[String],
+        thread_ts: Maybe[SlackTs]
+    ) derives Schema
+
+    object FilesCompleteUpload:
+        final case class Entry(id: SlackId.FileId, title: String) derives Schema
+
+    /** `files.completeUploadExternal`'s answer: the files it completed, without the message that shares them. */
+    final case class FilesCompleteUploadAnswer(files: Chunk[FilesCompleteUpload.Entry]) derives Schema
+
+    /** `files.info`'s answer read for the file's shares alone: the messages that share it, by channel, in public and private
+      * conversations.
+      */
+    final case class FilesInfoShares(file: FilesInfoShares.File) derives Schema
+
+    object FilesInfoShares:
+        final case class File(shares: Maybe[Shares]) derives Schema
+        final case class Shares(public: Maybe[Dict[String, Chunk[Share]]], `private`: Maybe[Dict[String, Chunk[Share]]]) derives Schema
+        final case class Share(ts: SlackTs) derives Schema
+    end FilesInfoShares
 
 end Methods

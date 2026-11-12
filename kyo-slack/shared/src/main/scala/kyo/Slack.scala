@@ -188,7 +188,8 @@ object Slack:
             client,
             ConnectionsOpen,
             client.config.appLevel.value,
-            Json.encode(Methods.AppsConnectionsOpen())
+            Json.encode(Methods.AppsConnectionsOpen()),
+            "application/json"
         ).map { resp =>
             socketUrl(resp.url) match
                 case Present(target) => SocketEngine.initUnscoped(client.transport, target, client.config)
@@ -235,6 +236,101 @@ object Slack:
                     end if
             }
         }
+
+    /** The file `id` names, whole, as Slack's `files.info` answers it: what completes a Slack Connect file a message event
+      * carries as its id alone.
+      */
+    def file(id: SlackId.FileId)(using Frame): SlackFile < (Async & Abort[SlackFileFailure] & Env[Slack]) =
+        Env.get[Slack].map(client =>
+            WebApi.requestForm[Methods.FilesInfo, Methods.FilesInfoAnswer, SlackFileFailure](client, "files.info", Methods.FilesInfo(id))
+                .map(_.file)
+        )
+
+    /** The bytes at a file's `url`, its `SlackFile.url`, read with the bot token. The url's origin must be one
+      * `SlackConfig.fileHosts` lists, else the call fails with [[kyo.SlackRefusedUrlException]] and nothing is sent. A 2xx answer
+      * is the bytes, bounded by `SlackConfig.maxResponseLength`.
+      */
+    def download(url: HttpUrl)(using Frame): Span[Byte] < (Async & Abort[SlackDownloadFailure] & Env[Slack]) =
+        Env.get[Slack].map(WebApi.download(_, url))
+
+    /** Shares `files` in `channel` in one message with `text`, in the thread `threadTs` when it is present, and answers the
+      * message's timestamp. Slack's three steps, in order: `files.getUploadURLExternal` for each file, a POST of its bytes to the
+      * `upload_url` it answers, with no token and only to an origin `SlackConfig.fileHosts` lists, then
+      * `files.completeUploadExternal`. Slack answers the last without the message's timestamp, so `files.info` on the first file
+      * it completed is read every `SlackConfig.shareInterval` until the file's shares hold `channel`, and the upload fails with
+      * [[kyo.SlackShareTimeoutException]] once another read would start past `SlackConfig.shareTimeout`. An answer that completed
+      * no file is a [[kyo.SlackDecodeException]] at `files`.
+      */
+    def upload(channel: SlackId.ChannelId, files: Chunk[SlackUpload], text: Maybe[String], threadTs: Maybe[SlackTs])(using
+        Frame
+    ): SlackTs < (Async & Abort[SlackUploadFailure] & Env[Slack]) =
+        Env.get[Slack].map { client =>
+            Kyo.foreach(files) { file =>
+                WebApi.requestForm[Methods.FilesGetUploadUrl, Methods.FilesGetUploadUrlAnswer, SlackUploadFailure](
+                    client,
+                    "files.getUploadURLExternal",
+                    Methods.FilesGetUploadUrl(file.name, file.bytes.size.toLong)
+                ).map { answer =>
+                    WebApi.upload(
+                        client,
+                        answer.upload_url,
+                        file.bytes
+                    ).andThen(Methods.FilesCompleteUpload.Entry(answer.file_id, file.name))
+                }
+            }.map { entries =>
+                WebApi.request[Methods.FilesCompleteUpload, Methods.FilesCompleteUploadAnswer, SlackUploadFailure](
+                    client,
+                    CompleteUpload,
+                    Methods.FilesCompleteUpload(entries, channel, text, threadTs)
+                )
+            }.map { completed =>
+                completed.files.headMaybe match
+                    case Present(first) => sharedAt(client, first.id, channel)
+                    case Absent         =>
+                        Abort.fail(SlackDecodeException(
+                            CompleteUpload,
+                            SlackDecodeException.Part.Payload,
+                            SlackDecodeException.Failure.ConstructorRejected,
+                            Chunk("files"),
+                            Absent
+                        ))
+            }
+        }
+
+    private inline val CompleteUpload = "files.completeUploadExternal"
+
+    /** The timestamp of the message that shares `file` in `channel`, read from `files.info` every `shareInterval` until its shares
+      * hold the channel, public or private, or another read would start past `shareTimeout`.
+      */
+    private def sharedAt(client: Slack, file: SlackId.FileId, channel: SlackId.ChannelId)(using
+        Frame
+    ): SlackTs < (Async & Abort[SlackUploadFailure]) =
+        val interval = client.config.shareInterval
+        val timeout  = client.config.shareTimeout
+        Clock.stopwatch.map { watch =>
+            Loop.foreach {
+                watch.elapsed.map { elapsed =>
+                    if elapsed > timeout then Abort.fail(SlackShareTimeoutException(file, channel, timeout))
+                    else
+                        WebApi.requestForm[Methods.FilesInfo, Methods.FilesInfoShares, SlackUploadFailure](
+                            client,
+                            "files.info",
+                            Methods.FilesInfo(file)
+                        ).map { answer =>
+                            answer.file.shares
+                                .flatMap(s => s.public.flatMap(_.get(channel.value)).orElse(s.`private`.flatMap(_.get(channel.value))))
+                                .flatMap(_.headMaybe)
+                                .fold {
+                                    watch.elapsed.map { elapsed =>
+                                        if elapsed + interval > timeout then Abort.fail(SlackShareTimeoutException(file, channel, timeout))
+                                        else Async.sleep(interval).andThen(Loop.continue)
+                                    }
+                                }(share => Loop.done(share.ts))
+                        }
+                }
+            }
+        }
+    end sharedAt
 
     /** Posts `message` and answers its timestamp. Slack's `chat.postMessage`. */
     def send(message: SlackMessage)(using Frame): SlackTs < (Async & Abort[SlackSendFailure] & Env[Slack]) =
