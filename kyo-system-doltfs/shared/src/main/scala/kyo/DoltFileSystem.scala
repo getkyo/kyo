@@ -419,6 +419,103 @@ final class DoltFileSystem private (
             }
         }
 
+    /** Confirms `path` is a directory. There is nothing left to flush: an entry change is a statement, committed when it
+      * returns, so it is already as durable as the engine's own commit.
+      */
+    def syncDirectory(path: Path)(using Frame): Unit < (Async & Abort[FileWriteException]) =
+        if path.parts.isEmpty then ()
+        else
+            Abort.recover[FileReadException] {
+                // Every read failure is also a write failure, so each passes through unchanged.
+                case e: FileWriteException => Abort.fail(e)
+            } {
+                resolved(path).map { target =>
+                    store.node(target).map {
+                        case Present(node) if node.isDirectory => ()
+                        case Present(_)                        => Abort.fail(FileNotADirectoryException(path))
+                        case Absent                            =>
+                            underFile(target).map { blocked =>
+                                if blocked then Abort.fail(FileNotADirectoryException(path)) else Abort.fail(FileNotFoundException(path))
+                            }
+                    }
+                }
+            }
+
+    /** Whether the nearest existing ancestor of an absent `path` is something other than a directory. */
+    private def underFile(path: Path)(using Frame): Boolean < (Async & Abort[FileIOException]) =
+        path.parent match
+            case Absent          => false
+            case Present(parent) =>
+                store.node(parent).map {
+                    case Present(node) => !node.isDirectory
+                    case Absent        => underFile(parent)
+                }
+
+    /** Replaces `target` with `bytes` in one transaction, creating missing parent directories in it too. A reader, a failure,
+      * or a crash observes the previous entry or the new one, never a partial file: the transaction provides what the host's
+      * synchronized temporary and atomic rename provide, so no temporary entry is ever created. A link at `target` fails
+      * the replacement, as it does on the host, rather than being followed or replaced.
+      *
+      * Every check runs before the first write and reports its failure as a value, so the transaction never ends on a failure
+      * of its own: the pool discards a session that one crossed, and over an in-memory database that discards the database.
+      */
+    def durableReplace(target: Path, bytes: Span[Byte])(using
+        Frame
+    ): Unit < (Async & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        drained {
+            val placed = target.parent match
+                case Present(parent) => resolved(parent).map(directory => target.name.fold(directory)(directory / _))
+                case Absent          => Kyo.lift(target)
+            placed.map { entry =>
+                store.atomically(target, FileSystemOperation.Write) {
+                    missingParents(entry).map {
+                        case Result.Success(missing) =>
+                            store.node(entry).map {
+                                case Present(node) if node.isDirectory => Result.fail(FileIsADirectoryException(target))
+                                case Present(node) if node.isSymlink   =>
+                                    Result.fail(FileIOException(
+                                        target,
+                                        FileSystemOperation.Channel,
+                                        new java.io.IOException(s"Durable replacement needs an absent target or a regular file: $target")
+                                    ))
+                                case _ =>
+                                    now.map { at =>
+                                        createDirectories(missing, at)
+                                            .andThen(store.putNode(DoltVfsNode(entry, Kind.File, Absent, bytes.size.toLong, at)))
+                                            .andThen(store.writeAll(entry, bytes, at))
+                                            .andThen(Result.unit)
+                                    }
+                            }
+                        case Result.Failure(blocked) => Result.fail(blocked)
+                    }
+                }.map(Abort.get(_))
+            }
+        }
+
+    /** The missing parents of `path`, outermost first, or the failure naming an existing parent that is not a directory. Only
+      * reads, so a caller can decide before it writes anything.
+      */
+    private def missingParents(path: Path)(using
+        Frame
+    ): Result[FileNotADirectoryException, Chunk[Path]] < (Async & Abort[FileIOException]) =
+        path.parent match
+            case Absent          => Result.succeed(Chunk.empty)
+            case Present(parent) =>
+                store.node(parent).map {
+                    case Present(node) if node.isDirectory => Result.succeed(Chunk.empty)
+                    case Present(_)                        => Result.fail(FileNotADirectoryException(parent))
+                    case Absent                            => missingParents(parent).map(_.map(_.append(parent)))
+                }
+
+    private def createDirectories(paths: Chunk[Path], at: Long)(using Frame): Unit < (Async & Abort[FileIOException]) =
+        Kyo.foreachDiscard(paths)(path => store.putNode(DoltVfsNode(path, Kind.Directory, Absent, 0L, at)))
+
+    /** Creates the missing parents of `path`, failing rather than creating an entry beneath one that is not a directory. */
+    private def directoryParents(path: Path)(using Frame): Unit < (Async & Abort[FileNotADirectoryException | FileIOException]) =
+        missingParents(path).map { planned =>
+            Abort.get(planned).map(missing => now.map(at => createDirectories(missing, at)))
+        }
+
     // --- Temporaries ---
 
     def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (Async & Abort[FileStructureException]) =
@@ -432,6 +529,14 @@ final class DoltFileSystem private (
             Abort.recover[FileWriteException](e => Abort.fail(FileIOException(path, FileSystemOperation.Create, e)))(mkFile(path))
                 .andThen(Sync.Unsafe.defer(new DoltTempFileHandle(path, pendingRemovals)))
         }
+
+    private[kyo] def tempFileHandle(temporary: Path)(using Frame): Path.TempFileHandle =
+        new DoltTempFileHandle(temporary, pendingRemovals)
+
+    private[kyo] def siblingTemporary(target: Path, onAcquire: Path.TempFileHandle => Unit)(using
+        Frame
+    ): Path.TempFileHandle < (Async & Abort[FileWriteException | FileStructureException]) =
+        FileSystem.siblingTemporary[Async](this, target, onAcquire)
 
     /** A fresh temporary name under a fixed root. The counter is what keeps two calls with the same prefix distinct;
       * without it the first handle's removal destroys the second caller's directory.
@@ -466,6 +571,45 @@ final class DoltFileSystem private (
             openReadWriteChannel(path, open)
         }
 
+    /** Acquires a write channel and hands its close handle to `onAcquire`. Creating the entry is a statement, so creation
+      * and hand-off run uninterruptibly: an entry that exists always reaches its owner, which cleans it at once when the
+      * operation that asked for it has already ended. Missing parents are created, but never beneath a regular file.
+      * `preservePermissionsFrom` is ignored, since an entry here carries no access controls to preserve.
+      */
+    private[kyo] def openWriteChannelUnscoped(
+        path: Path,
+        open: FileSystem.WriteOpen,
+        onAcquire: Path.ChannelCloseHandle => Unit,
+        preservePermissionsFrom: Maybe[Path] = Absent
+    )(using
+        Frame
+    ): (Path.WriteChannel[Async], () => Unit < (Sync & Async), Path.ChannelCloseHandle) <
+        (Async & Abort[FileWriteException | FileStructureException]) =
+        Async.uninterruptible[
+            FileWriteException | FileStructureException,
+            (
+                Path.WriteChannel[Async],
+                () => Unit < (Sync & Async),
+                Path.ChannelCloseHandle
+            ),
+            Any
+        ] {
+            Abort.recover[FileReadException] {
+                // Every read failure is also a write failure, so each passes through unchanged.
+                case e: FileWriteException => Abort.fail(e)
+            } {
+                // Unlike an ordinary channel, a replacement protocol's temporary never lands beneath a regular file.
+                openChannel(path, open, directoryParents)
+            }.map { channel =>
+                Sync.Unsafe.defer {
+                    val close = new Path.ChannelCloseHandle:
+                        def close()(using AllowUnsafe): Unit = channel.closeNow()
+                    onAcquire(close)
+                    (channel, () => channel.close, close)
+                }
+            }
+        }
+
     def openReadWriteChannel(path: Path, open: FileSystem.WriteOpen)(using
         Frame
     ): Path.ReadWriteChannel[Async] < (Async & Scope & Abort[FileReadException | FileWriteException | FileStructureException]) =
@@ -478,6 +622,14 @@ final class DoltFileSystem private (
     ): (Path.ReadWriteChannel[Async], () => Unit < (Sync & Async)) < (
         Async & Abort[FileReadException | FileWriteException | FileStructureException]
     ) =
+        openChannel(path, open, parents(_, create = true)).map(channel => (channel, () => channel.close))
+
+    /** Opens a channel on `path`, creating it per `open` with `createParents` making its missing parents. */
+    private def openChannel(
+        path: Path,
+        open: FileSystem.WriteOpen,
+        createParents: Path => Unit < (Async & Abort[FileWriteException | FileStructureException])
+    )(using Frame): DoltChannel < (Async & Abort[FileReadException | FileWriteException | FileStructureException]) =
         drained {
             store.node(path).map { existing =>
                 val prepared =
@@ -487,17 +639,13 @@ final class DoltFileSystem private (
                         case (_, Present(node)) if node.isDirectory       => Abort.fail(FileIsADirectoryException(path))
                         case (_, Present(_))                              => Kyo.lift(())
                         case _                                            =>
-                            parents(path, create = true).andThen {
+                            createParents(path).andThen {
                                 now.map(at =>
                                     store.putNode(DoltVfsNode(path, Kind.File, Absent, 0L, at))
                                         .andThen(store.writeAll(path, Span.empty[Byte], at))
                                 )
                             }
-                prepared.andThen {
-                    Sync.Unsafe.defer(new DoltChannel(path, store, AtomicBoolean.Unsafe.init(true))).map { channel =>
-                        (channel, () => channel.close)
-                    }
-                }
+                prepared.andThen(Sync.Unsafe.defer(new DoltChannel(path, store, AtomicBoolean.Unsafe.init(true))))
             }
         }
 

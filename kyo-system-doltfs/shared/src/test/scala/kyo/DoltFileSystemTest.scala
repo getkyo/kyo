@@ -177,6 +177,31 @@ class DoltFileSystemTest extends Test:
         }
     }
 
+    "a durable replacement of a link fails and leaves the link and its target alone" in {
+        withFiles { (_, files) =>
+            val target = Path("etc", "live.conf")
+            val link   = Path("etc", "current.conf")
+            for
+                _       <- files.write(target, "mode = live", options)
+                _       <- files.symlink(link, target)
+                result  <- Abort.run[FileSystemException](files.durableReplace(link, Span(1.toByte, 2.toByte)))
+                isLink  <- files.isSymbolicLink(link)
+                through <- files.read(link)
+                entries <- files.list(Path("etc"))
+            yield
+                result match
+                    case Result.Failure(FileIOException(path, FileSystemOperation.Channel, cause)) =>
+                        assert(path == link)
+                        assert(cause.getMessage == s"Durable replacement needs an absent target or a regular file: $link")
+                    case other => fail(s"Expected a regular-file failure, got $other")
+                end match
+                assert(isLink, "the link did not survive a refused replacement")
+                assert(through == "mode = live", s"the link's target changed: $through")
+                assert(entries.toSet == Set(target, link), s"an entry was left behind: $entries")
+            end for
+        }
+    }
+
     "the tree is queryable as ordinary SQL" in {
         withFiles { (dolt, files) =>
             for

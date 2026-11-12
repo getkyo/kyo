@@ -2,7 +2,8 @@ package kyo
 
 /** The conformance suite for the write tier of a [[FileSystem]] backend, every backend implementing [[FileSystem.Write]].
   *
-  * One class carries every suite of the tier: writes ([[FileSystemWriteTest]]) and positioned channels ([[FileSystemChannelTest]]). A
+  * One class carries every suite of the tier: writes ([[FileSystemWriteTest]]), positioned channels ([[FileSystemChannelTest]]), and
+  * durable replacement ([[FileSystemDurabilityTest]]). A
   * backend extends it once and supplies [[withFileSystem]], a fresh backend and a root to work under for each assertion; a suite added to
   * the tier later reaches it with no new declaration. A backend at this tier also reads, so its tests declare a subclass of
   * [[FileSystemReadConformanceTest]] as well, which is where locking is checked.
@@ -13,3 +14,4 @@ abstract class FileSystemWriteConformanceTest[S >: Async]
     extends kyo.test.Test[Any]
     with FileSystemWriteTest[S]
     with FileSystemChannelTest[S]
+    with FileSystemDurabilityTest[S]

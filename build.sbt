@@ -1095,17 +1095,87 @@ lazy val `kyo-schema` =
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
 
+// The test fixture keeps ACL setup code out of published filesystem artifacts.
+lazy val `kyo-system-test-fixtures` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-system/test-fixtures"))
+        .enablePlugins(KyoFfiPlugin)
+        .dependsOn(`kyo-ffi`)
+        .settings(
+            `kyo-settings`,
+            publish / skip      := true,
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            ffiLibraries        := Seq(FfiLibrary(
+                id = "kyo_system_permissions_test",
+                cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get,
+                linkLibsByOs = Map("windows" -> Seq("advapi32"))
+            ))
+        )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(
+            `native-settings`,
+            nativeConfig := nativeConfig.value.withLinkingOptions(
+                nativeConfig.value.linkingOptions ++ ffiNativeLinkingOptions.value
+            )
+        )
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+def systemNodeTestSettings(wasm: Boolean): Seq[Def.Setting[?]] = Seq(
+    Test / jsEnv := {
+        val axis          = if (wasm) "wasm" else "js"
+        val fixtureTarget = baseDirectory.value / ".." / "test-fixtures" / axis / "target"
+        val args          = List("--max_old_space_size=5120") ++ (if (wasm) List("--experimental-wasm-exnref") else Nil)
+        new NodeJSEnv(NodeJSEnv.Config().withArgs(args).withEnv(Map(
+            "NODE_PATH"                       -> (target.value / "node_modules").getAbsolutePath,
+            "KYO_FFI_KYO_SYSTEM_DURABLE_PATH" ->
+                (target.value / "ffi" / ffiArtifactName("kyo_system_durable", ffiHostOsArch)).getAbsolutePath,
+            "KYO_FFI_KYO_SYSTEM_PERMISSIONS_TEST_PATH" ->
+                (fixtureTarget / "ffi" / ffiArtifactName("kyo_system_permissions_test", ffiHostOsArch)).getAbsolutePath
+        )))
+    }
+) ++ ffiKoffiJsBootstrap(if (wasm) "kyo-system-wasm-test" else "kyo-system-js-test")
+
+// Node settings for a module whose tests run the host's durable replacement without building its library: the library
+// kyo-system's plugin compiled into ITS target, with koffi installed in this module's own.
+def systemDurableNodeTestSettings(wasm: Boolean, systemTarget: Def.Initialize[File], packageName: String): Seq[Def.Setting[?]] =
+    Seq(
+        Test / jsEnv := {
+            val args = List("--max_old_space_size=5120") ++ (if (wasm) List("--experimental-wasm-exnref") else Nil)
+            new NodeJSEnv(NodeJSEnv.Config().withArgs(args).withEnv(Map(
+                "NODE_PATH"                       -> (target.value / "node_modules").getAbsolutePath,
+                "KYO_FFI_KYO_SYSTEM_DURABLE_PATH" ->
+                    (systemTarget.value / "ffi" / ffiArtifactName("kyo_system_durable", ffiHostOsArch)).getAbsolutePath
+            )))
+        }
+    ) ++ ffiKoffiJsBootstrap(packageName)
+
 lazy val `kyo-system` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-system"))
-        .dependsOn(`kyo-core`)
+        .enablePlugins(KyoFfiPlugin)
+        .dependsOn(`kyo-core`, `kyo-ffi`, `kyo-system-test-fixtures` % Test)
         .withKyoTest
-        .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
+        .settings(
+            `kyo-settings`,
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            ffiLibraries        := Seq(FfiLibrary(
+                id = "kyo_system_durable",
+                cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get,
+                linkLibsByOs = Map("windows" -> Seq("advapi32", "ntdll"))
+            ))
+        )
+        .jvmSettings(mimaCheck(false), Test / javaOptions += "--enable-native-access=ALL-UNNAMED")
+        .nativeSettings(
+            `native-settings`,
+            nativeConfig := nativeConfig.value.withLinkingOptions(
+                nativeConfig.value.linkingOptions ++ ffiNativeLinkingOptions.value
+            )
+        )
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)), systemNodeTestSettings(false))
+        .wasmSettings(`wasm-settings`, systemNodeTestSettings(true))
 
 // FileSystem's conformance suites, one class per tier (read, write, watch), published so a backend written outside kyo runs
 // the leaves the host passes. The host's runs live in this module's tests because kyo-system cannot depend on a module that
@@ -1118,11 +1188,19 @@ lazy val `kyo-system-conformance` =
         .dependsOn(`kyo-test-api`)
         .withKyoTest
         .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
+        // The host's runs of the durability suite load kyo-system's native helper.
+        .jvmSettings(mimaCheck(false), Test / javaOptions += "--enable-native-access=ALL-UNNAMED")
         .jvmConfigure(_.settings(doctestSources := Seq.empty))
         .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)),
+            systemDurableNodeTestSettings(false, `kyo-system`.js / target, "kyo-system-conformance-js-test")
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            systemDurableNodeTestSettings(true, `kyo-system`.wasm / target, "kyo-system-conformance-wasm-test")
+        )
 
 lazy val `kyo-schema-json` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
@@ -1823,7 +1901,6 @@ lazy val `kyo-ffi` =
         .crossType(CrossType.Full)
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(
