@@ -22,6 +22,35 @@ class BrowserCaptureTest extends BrowserTest:
                 .map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
         }
 
+    "fast PNG encoder preserves screenshot pixels and dimensions" in {
+        withBrowser {
+            onPage("""<!doctype html><html><body style="margin:0;background:#123456"></body></html>""") {
+                Browser.withViewport(64, 48) {
+                    Browser.use { tab =>
+                        val params = ScreenshotParams(clip = Present(ScreenshotClip(0, 0, 64, 48)))
+                        val original: ScreenshotResult < (Async & Abort[BrowserReadException]) =
+                            tab.session.send("Page.captureScreenshot", params)
+                        for
+                            reference <- original
+                            candidate <- CdpBackend.captureScreenshot(tab.session, params)
+                            pixels    <- BrowserEval.evalJsAwaiting(
+                                s"""(async function(){
+                                |async function load(data){var image=new Image();image.src='data:image/png;base64,'+data;await image.decode();return image;}
+                                |var a=await load(${Json.encode(reference.data)}),b=await load(${Json.encode(candidate.data)});
+                                |function rgba(image){var canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;
+                                |var context=canvas.getContext('2d');context.drawImage(image,0,0);return context.getImageData(0,0,canvas.width,canvas.height).data;}
+                                |var x=rgba(a),y=rgba(b),expected=[18,52,86,255],different=0,wrong=0;
+                                |for(var i=0;i<y.length;i++){if(x[i]!==y[i])different++;if(y[i]!==expected[i%4])wrong++;}
+                                |return [a.naturalWidth,a.naturalHeight,b.naturalWidth,b.naturalHeight,different,wrong].join('|');})()""".stripMargin
+                            )
+                        yield assert(pixels == "64|48|64|48|0|0", pixels)
+                        end for
+                    }
+                }
+            }
+        }
+    }
+
     // ---- frameHash equates byte-identical images and distinguishes different ones (pure, no Chrome).
     //
     // This test does NOT use ImageDiff: it asserts on hash values of decoded bytes directly.

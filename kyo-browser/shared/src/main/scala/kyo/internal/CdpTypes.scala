@@ -331,7 +331,8 @@ final private[kyo] case class ScreenshotParams(
     quality: Maybe[Int] = Absent,
     clip: Maybe[ScreenshotClip] = Absent,
     captureBeyondViewport: Maybe[Boolean] = Absent,
-    fromSurface: Maybe[Boolean] = Absent
+    fromSurface: Maybe[Boolean] = Absent,
+    optimizeForSpeed: Maybe[Boolean] = Absent
 ) derives Schema
 final private[kyo] case class ScreenshotResult(data: String) derives Schema
 

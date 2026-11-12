@@ -32,6 +32,17 @@ class CdpBackendTest extends kyo.BaseBrowserTest:
       */
     private case class BadResult() derives Schema
 
+    private case class CaptureClipWire(x: Double, y: Double, width: Double, height: Double, scale: Double) derives CanEqual, Schema
+
+    private case class CaptureWire(
+        format: String,
+        quality: Maybe[Int],
+        clip: Maybe[CaptureClipWire],
+        captureBeyondViewport: Maybe[Boolean],
+        fromSurface: Maybe[Boolean],
+        optimizeForSpeed: Maybe[Boolean] = Absent
+    ) derives CanEqual, Schema
+
     /** Wrong-type shape for [[CdpBackend.getTargets]] decode-failure test: `targetInfos` is an `Int` instead of a sequence, so
       * kyo-schema must reject it with a type error rather than defaulting to `Seq.empty`.
       */
@@ -121,6 +132,42 @@ class CdpBackendTest extends kyo.BaseBrowserTest:
     // -------------------------------------------------------------------------
     // Page.captureScreenshot
     // -------------------------------------------------------------------------
+
+    "CdpBackend.captureScreenshot requests fast PNG encoding and preserves other capture parameters" in {
+        Scope.run {
+            for
+                requests <- AtomicRef.init(Chunk.empty[CaptureWire])
+                method = JsonRpcRoute.request[CaptureWire, ScreenshotResult]("Page.captureScreenshot") { (params, _) =>
+                    requests.updateAndGet(_.append(params)).andThen(ScreenshotResult("capture"))
+                }
+                pair <- mkBackendWithServer(Seq(method))
+                (backend, _) = pair
+                _ <- Kyo.foreachDiscard(Chunk(Browser.ScreenshotFormat.Png, Browser.ScreenshotFormat.Jpeg, Browser.ScreenshotFormat.Webp)) {
+                    format =>
+                        CdpBackend.captureScreenshot(
+                            backend,
+                            ScreenshotParams(
+                                format = format,
+                                quality = Present(75),
+                                clip = Present(ScreenshotClip(1.5, 720.5, 1280, 720, 1.25)),
+                                captureBeyondViewport = Present(false),
+                                fromSurface = Present(true)
+                            )
+                        ).map(reply => assert(reply.data == "capture"))
+                }
+                actual <- requests.get
+            yield
+                val clip = Present(CaptureClipWire(1.5, 720.5, 1280, 720, 1.25))
+                assert(
+                    actual == Chunk(
+                        CaptureWire("png", Present(75), clip, Present(false), Present(true), Present(true)),
+                        CaptureWire("jpeg", Present(75), clip, Present(false), Present(true), Absent),
+                        CaptureWire("webp", Present(75), clip, Present(false), Present(true), Absent)
+                    ),
+                    s"$actual"
+                )
+        }
+    }
 
     "CdpBackend.captureScreenshot decodes a valid response into ScreenshotResult" in {
         Scope.run {
