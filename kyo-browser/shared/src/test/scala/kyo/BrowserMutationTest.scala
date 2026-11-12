@@ -1217,6 +1217,165 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
+    private val optionPage =
+        """<select id='size'><option value='s'>Small</option><option value='m' selected>Medium</option><option value=''>Empty</option></select>
+          |<script>
+          |window.__changes = 0; window.__inputs = 0;
+          |const size = document.getElementById('size');
+          |size.addEventListener('change', () => window.__changes++);
+          |size.addEventListener('input', () => window.__inputs++);
+          |</script>""".stripMargin
+
+    private val optionSelector = Browser.Selector.id("size")
+
+    private def optionState(using Frame): String < (Browser & Abort[BrowserReadException]) =
+        Browser.eval(
+            "(() => { const el = document.getElementById('size'); return [el.value, el.selectedIndex, window.__changes, window.__inputs].join('|'); })()"
+        )
+
+    for useFill <- Chunk(false, true) do
+        val operation = if useFill then "fill" else "select"
+
+        s"$operation option matching its value dispatches exactly one change" in {
+            withBrowser {
+                onPage(optionPage) {
+                    val action = if useFill then Browser.fill(optionSelector, "s") else Browser.select(optionSelector, "s")
+                    action.andThen(optionState).map(state => assert(state == "s|0|1|0"))
+                }
+            }
+        }
+
+        s"$operation option with an empty value selects it and dispatches one change" in {
+            withBrowser {
+                onPage(optionPage) {
+                    val action = if useFill then Browser.fill(optionSelector, "") else Browser.select(optionSelector, "")
+                    action.andThen(optionState).map(state => assert(state == "|2|1|0"))
+                }
+            }
+        }
+
+        for missing <- Chunk("l", "Small") do
+            s"$operation option missing value '$missing' preserves selection and dispatches no events" in {
+                withBrowser {
+                    onPage(optionPage) {
+                        val action = if useFill then Browser.fill(optionSelector, missing) else Browser.select(optionSelector, missing)
+                        for
+                            result <- Browser.withConfig(_.retrySchedule(Schedule.done))(Abort.run[BrowserElementException](action))
+                            state  <- optionState
+                        yield
+                            assert(state == "m|1|0|0", s"state=$state")
+                            assert(result == Result.Failure(BrowserOptionNotFoundException(
+                                Browser.selectorNodeDescription(Selector.toNode(optionSelector)),
+                                missing
+                            )))
+                        end for
+                    }
+                }
+            }
+        end for
+
+        s"$operation option retries after one lookup per attempt without dispatching on the rejected attempt" in {
+            val adding = optionPage + """<script>
+                window.__reads = 0; window.__prior = '';
+                const optionsGetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'options').get;
+                Object.defineProperty(size, 'options', { get() {
+                    window.__reads++;
+                    if (window.__reads === 2) {
+                        window.__prior = [this.value, window.__changes, window.__inputs].join('|');
+                        this.add(new Option('Large', 'l'));
+                    }
+                    return optionsGetter.call(this);
+                }});
+                </script>"""
+            withBrowser {
+                onPage(adding) {
+                    val action = if useFill then Browser.fill(optionSelector, "l") else Browser.select(optionSelector, "l")
+                    for
+                        result <- Browser.withConfig(_.retrySchedule(Schedule.done))(Abort.run[BrowserElementException](action))
+                        first  <- Browser.eval("[window.__reads, size.value, window.__changes, window.__inputs].join('|')")
+                        _ =
+                            assert(result == Result.Failure(BrowserOptionNotFoundException(
+                                Browser.selectorNodeDescription(Selector.toNode(optionSelector)),
+                                "l"
+                            )))
+                            assert(first == "1|m|0|0")
+                        _     <- Browser.evalDiscard("window.__reads = 0")
+                        _     <- Browser.withConfig(_.retrySchedule(Schedule.repeat(1)))(action)
+                        state <- optionState
+                        trace <- Browser.eval("[window.__reads, window.__prior].join('|')")
+                    yield
+                        assert(state == "l|3|1|0")
+                        assert(trace == "2|m|0|0")
+                    end for
+                }
+            }
+        }
+
+        s"$operation option missing from a multiple select preserves every selection" in {
+            val multiple = optionPage.replace("<select id='size'>", "<select id='size' multiple>")
+                .replace("value='s'", "value='s' selected")
+            withBrowser {
+                onPage(multiple) {
+                    val action = if useFill then Browser.fill(optionSelector, "l") else Browser.select(optionSelector, "l")
+                    for
+                        result <- Browser.withConfig(_.retrySchedule(Schedule.done))(Abort.run[BrowserElementException](action))
+                        state  <- optionState
+                        values <- Browser.eval("Array.from(size.selectedOptions, o => o.value).join(',')")
+                    yield
+                        assert(result == Result.Failure(BrowserOptionNotFoundException(
+                            Browser.selectorNodeDescription(Selector.toNode(optionSelector)),
+                            "l"
+                        )))
+                        assert(state == "s|0|0|0")
+                        assert(values == "s,m")
+                    end for
+                }
+            }
+        }
+
+        s"$operation option distinguishes an empty list from an option with an empty value" in {
+            withBrowser {
+                onPage(optionPage) {
+                    val action = if useFill then Browser.fill(optionSelector, "") else Browser.select(optionSelector, "")
+                    for
+                        _      <- Browser.evalDiscard("size.replaceChildren()")
+                        result <- Browser.withConfig(_.retrySchedule(Schedule.done))(Abort.run[BrowserElementException](action))
+                        state  <- optionState
+                    yield
+                        assert(result == Result.Failure(BrowserOptionNotFoundException(
+                            Browser.selectorNodeDescription(Selector.toNode(optionSelector)),
+                            ""
+                        )))
+                        assert(state == "|-1|0|0")
+                    end for
+                }
+            }
+        }
+
+        s"$operation option retains native duplicate, implicit-value and disabled-option selection" in {
+            val choices = optionPage.replace(
+                "<option value='s'>Small</option>",
+                "<option value='s' disabled>Small</option><option value='s'>Duplicate</option><option>Implicit</option>"
+            )
+            withBrowser {
+                onPage(choices) {
+                    val disabled      = if useFill then Browser.fill(optionSelector, "s") else Browser.select(optionSelector, "s")
+                    val implicitValue =
+                        if useFill then Browser.fill(optionSelector, "Implicit") else Browser.select(optionSelector, "Implicit")
+                    for
+                        _      <- disabled
+                        first  <- optionState
+                        _      <- implicitValue
+                        second <- optionState
+                    yield
+                        assert(first == "s|0|1|0")
+                        assert(second == "Implicit|2|2|0")
+                    end for
+                }
+            }
+        }
+    end for
+
     // ---- typeText ----
 
     "typeText characters appear in focused input" in {
