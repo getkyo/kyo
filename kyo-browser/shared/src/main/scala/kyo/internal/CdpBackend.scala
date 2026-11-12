@@ -332,7 +332,11 @@ private[kyo] object CdpBackend:
     private[kyo] def captureScreenshot(backend: CdpBackend, params: ScreenshotParams)(using
         Frame
     ): ScreenshotResult < (Async & Abort[BrowserReadException]) =
-        backend.send[ScreenshotParams, ScreenshotResult]("Page.captureScreenshot", params)
+        val captureParams =
+            if params.format == Browser.ScreenshotFormat.Png then params.copy(optimizeForSpeed = Present(true))
+            else params
+        backend.send[ScreenshotParams, ScreenshotResult]("Page.captureScreenshot", captureParams)
+    end captureScreenshot
 
     private[kyo] def printToPDF(backend: CdpBackend)(using Frame): PrintToPdfResult < (Async & Abort[BrowserReadException]) =
         backend.send[CdpNoParams, PrintToPdfResult]("Page.printToPDF", CdpNoParams())
