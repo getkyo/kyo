@@ -76,6 +76,26 @@ class StylesheetTest extends kyo.test.Test[Any]:
         assert(q.condition == "(min-width: 768px) and (prefers-color-scheme: dark)")
     }
 
+    "media width queries preserve fractional pixel boundaries" in {
+        assert(MediaQuery.minWidth(399.25.px).condition == "(min-width: 399.25px)")
+        assert(MediaQuery.maxWidth(399.75.px).condition == "(max-width: 399.75px)")
+    }
+
+    "container query wraps inner rule in @container block" in {
+        val css = Stylesheet.container(ContainerQuery.maxWidth(839.px))(Stylesheet.rule("detail", Style.position(_.absolute))).render
+        assert(css == "@container (max-width: 839px) {\n.detail { position: absolute; }\n}\n")
+    }
+
+    "ContainerQuery.and combines conditions" in {
+        val q = ContainerQuery.minWidth(480.px).and(ContainerQuery.maxWidth(839.px))
+        assert(q.condition == "(min-width: 480px) and (max-width: 839px)")
+    }
+
+    "container width queries preserve fractional pixel boundaries" in {
+        assert(ContainerQuery.minWidth(399.25.px).condition == "(min-width: 399.25px)")
+        assert(ContainerQuery.maxWidth(399.75.px).condition == "(max-width: 399.75px)")
+    }
+
     "reduced-motion media queries target reduce and no-preference" in {
         assert(MediaQuery.prefersReducedMotion.condition == "(prefers-reduced-motion: reduce)")
         assert(MediaQuery.prefersReducedMotionNoPreference.condition == "(prefers-reduced-motion: no-preference)")
@@ -228,6 +248,28 @@ class StylesheetTest extends kyo.test.Test[Any]:
         val ng1 = Style.bg(Style.Color.blue)
         val ng2 = Style.bg(Style.Color.blue)
         assert(ng1 == ng2)
+    }
+
+    "UI.stylesheet renders a style element holding the sheet, in place among its siblings" in {
+        val sheet = Stylesheet.rule(Selector.cls("card"), Style.bg(Style.Color.lightDark(Style.Color.white, Style.Color.black)))
+        kyo.internal.HtmlRenderer.render(UI.div.cssClass("card")(UI.stylesheet(sheet), UI.span("hi")), Seq.empty).map { html =>
+            assert(html.contains(s"<style>${sheet.render}</style>"))
+            assert(html.contains(".card { background-color: light-dark(#ffffff, #000000); }"))
+            assert(html.indexOf("<style>") < html.indexOf("hi"))
+        }
+    }
+
+    "UI.stylesheet escapes every </ so nothing in the sheet closes the element" in {
+        val sheet = Stylesheet.vars("label" -> "</style><script>alert(1)</script>")
+        kyo.internal.HtmlRenderer.render(UI.div(UI.stylesheet(sheet)), Seq.empty).map { html =>
+            assert(html.contains("--label: <\\/style><script>alert(1)<\\/script>;"))
+            assert(html.indexOf("</style>") == html.lastIndexOf("</style>"))
+        }
+    }
+
+    "UI.stylesheet keeps the typed sheet in the tree" in {
+        val sheet = Stylesheet.rule("btn", Style.bold)
+        assert(UI.stylesheet(sheet).sheet == sheet)
     }
 
     "cssClass renders class attribute and coexists with style attribute" in {

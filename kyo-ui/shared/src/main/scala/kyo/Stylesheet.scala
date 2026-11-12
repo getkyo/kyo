@@ -3,13 +3,13 @@ package kyo
 import kyo.internal.CssStyleRenderer
 import kyo.internal.NumberFormat
 
-/** A document-level stylesheet: an ordered, immutable collection of CSS rules, media queries,
+/** A document-level stylesheet: an ordered, immutable collection of CSS rules, media and container queries,
   * top-level custom properties (CSS variables), font-face declarations, and `@keyframes` animation
   * definitions, rendered to one CSS string. This is the document counterpart to [[kyo.Style]] (which
   * styles a single element): `Style` carries the declarations, `Stylesheet` carries the SELECTORS,
   * breakpoints, variables, fonts, and keyframes that a per-element `Style` cannot express.
   *
-  * A `Stylesheet` is a pure value built by appending entries (`rule`, `media`, `vars`,
+  * A `Stylesheet` is a pure value built by appending entries (`rule`, `media`, `container`, `vars`,
   * `fontFace`, `keyframes`); every builder returns a new `Stylesheet`, so it is safe to share and
   * compose with `++`. Render it with [[kyo.Stylesheet.render]] to a CSS string for a document
   * `<head>` (pass it as [[kyo.UI.PageHead.css]] to [[kyo.UI.runRenderPage]]) or inject it
@@ -21,7 +21,7 @@ import kyo.internal.NumberFormat
   * base rules before overrides and place `@media` blocks after the rules they refine.
   *
   * @see
-  *   [[kyo.Stylesheet.rule]], [[kyo.Stylesheet.media]], [[kyo.Stylesheet.vars]],
+  *   [[kyo.Stylesheet.rule]], [[kyo.Stylesheet.media]], [[kyo.Stylesheet.container]], [[kyo.Stylesheet.vars]],
   *   [[kyo.Stylesheet.fontFace]], [[kyo.Stylesheet.keyframes]] for the builders
   * @see
   *   [[kyo.Style]] for the per-element declaration value the rules reuse
@@ -48,6 +48,14 @@ final case class Stylesheet private[kyo] (entries: Chunk[Stylesheet.Entry]) deri
       */
     def media(query: Stylesheet.MediaQuery)(nested: Stylesheet): Stylesheet =
         Stylesheet(entries :+ Stylesheet.Entry.Media(query, nested))
+
+    /** Appends an `@container` block: the `query` (a [[kyo.Stylesheet.ContainerQuery]]) wrapping the rules of the nested
+      * `Stylesheet`. Each element a nested rule selects reads the query against its nearest ancestor that
+      * [[kyo.Style.containerType]] makes a container, so a component lays itself out by the width it is given rather than
+      * the window's.
+      */
+    def container(query: Stylesheet.ContainerQuery)(nested: Stylesheet): Stylesheet =
+        Stylesheet(entries :+ Stylesheet.Entry.Container(query, nested))
 
     /** Appends a `:root` block of CSS custom properties (variables). Each pair is `(name, value)`
       * emitted as `--name: value;`. Reference a variable in a declaration with
@@ -88,7 +96,7 @@ final case class Stylesheet private[kyo] (entries: Chunk[Stylesheet.Entry]) deri
 
     /** Renders the whole stylesheet to a single CSS string: each rule as `selector { declarations }`
       * (declarations from [[kyo.internal.CssStyleRenderer]], including nested pseudo-state rules),
-      * each media block as `@media query { ... }`, each `vars` block as `:root { --k: v; }`, and each
+      * each media block as `@media query { ... }`, each container block as `@container query { ... }`, each `vars` block as `:root { --k: v; }`, and each
       * font-face as `@font-face { ... }`. Entry order is preserved.
       */
     def render(using Frame): String = Stylesheet.renderSheet(this)
@@ -109,6 +117,9 @@ object Stylesheet:
     /** Starts a stylesheet with a single `@media` block. */
     def media(query: MediaQuery)(nested: Stylesheet): Stylesheet = empty.media(query)(nested)
 
+    /** Starts a stylesheet with a single `@container` block. */
+    def container(query: ContainerQuery)(nested: Stylesheet): Stylesheet = empty.container(query)(nested)
+
     /** Starts a stylesheet with a `:root` variables block. */
     def vars(pairs: (String, String)*): Stylesheet = empty.vars(pairs*)
 
@@ -121,13 +132,13 @@ object Stylesheet:
     /** Starts a stylesheet with a single `@keyframes` block. */
     def keyframes(name: String, frames: (Keyframe, Style)*): Stylesheet = empty.keyframes(name, frames*)
 
-    /** One entry in a [[kyo.Stylesheet]]: a plain rule, an `@media` block, a `:root` variables block,
-      * an `@font-face`, or a `@keyframes` animation definition. Pattern-matchable for inspection and
-      * testing.
+    /** One entry in a [[kyo.Stylesheet]]: a plain rule, an `@media` block, an `@container` block, a `:root` variables
+      * block, an `@font-face`, or a `@keyframes` animation definition. Pattern-matchable for inspection and testing.
       */
     enum Entry derives CanEqual:
         case Rule(selector: Selector, style: Style)
         case Media(query: MediaQuery, nested: Stylesheet)
+        case Container(query: ContainerQuery, nested: Stylesheet)
         case Vars(pairs: List[(String, String)])
         case ScopedVars(selector: Selector, pairs: List[(String, String)])
         case Font(face: FontFace)
@@ -163,10 +174,10 @@ object Stylesheet:
 
     object MediaQuery:
         /** A `(min-width: Npx)` media query. */
-        def minWidth(px: Length.Px): MediaQuery = MediaQuery(s"(min-width: ${px.value.toInt}px)")
+        def minWidth(px: Length.Px): MediaQuery = MediaQuery(s"(min-width: ${NumberFormat.double(px.value)}px)")
 
         /** A `(max-width: Npx)` media query. */
-        def maxWidth(px: Length.Px): MediaQuery = MediaQuery(s"(max-width: ${px.value.toInt}px)")
+        def maxWidth(px: Length.Px): MediaQuery = MediaQuery(s"(max-width: ${NumberFormat.double(px.value)}px)")
 
         /** Targets `prefers-color-scheme: dark`. */
         val prefersDark: MediaQuery = MediaQuery("(prefers-color-scheme: dark)")
@@ -183,6 +194,23 @@ object Stylesheet:
         /** An arbitrary media condition string, for cases the typed factories do not cover. */
         def raw(condition: String): MediaQuery = MediaQuery(condition)
     end MediaQuery
+
+    /** A container query for an `@container` block: a width condition read against the element's nearest container, as a
+      * [[kyo.Stylesheet.MediaQuery]] is read against the window. Built from `minWidth` and `maxWidth` and combined with
+      * `and`.
+      */
+    final case class ContainerQuery private[kyo] (condition: String) derives CanEqual:
+        /** Combines two container queries with `and`, e.g. `minWidth(480.px).and(maxWidth(839.px))`. */
+        def and(other: ContainerQuery): ContainerQuery = ContainerQuery(condition + " and " + other.condition)
+    end ContainerQuery
+
+    object ContainerQuery:
+        /** A `(min-width: Npx)` container query. */
+        def minWidth(px: Length.Px): ContainerQuery = ContainerQuery(s"(min-width: ${NumberFormat.double(px.value)}px)")
+
+        /** A `(max-width: Npx)` container query. */
+        def maxWidth(px: Length.Px): ContainerQuery = ContainerQuery(s"(max-width: ${NumberFormat.double(px.value)}px)")
+    end ContainerQuery
 
     /** An `@font-face` declaration: the font `family` name, the `src` entries (each a `(url, format)`
       * pair, e.g. `("/fonts/inter.woff2", "woff2")`), the `weight` (a [[kyo.Style.FontWeight]]), the
@@ -231,6 +259,10 @@ object Stylesheet:
                 )
             case Entry.Media(q, nested) =>
                 sb.append(s"@media ${q.condition} {\n")
+                sb.append(renderSheet(nested))
+                sb.append("}\n")
+            case Entry.Container(q, nested) =>
+                sb.append(s"@container ${q.condition} {\n")
                 sb.append(renderSheet(nested))
                 sb.append("}\n")
             case Entry.Vars(pairs) =>

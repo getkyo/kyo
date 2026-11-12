@@ -1494,8 +1494,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 Integer.parseInt(body.substring(2, 4), 16),
                 Integer.parseInt(body.substring(4, 6), 16)
             )
-        case Style.Color.Transparent => (128, 128, 128)
-        case Style.Color.Var(_)      => (128, 128, 128)
+        case Style.Color.Transparent     => (128, 128, 128)
+        case Style.Color.Var(_)          => (128, 128, 128)
+        case Style.Color.Mix(_, _, _)    => (128, 128, 128)
+        case Style.Color.LightDark(_, _) => (128, 128, 128)
 
     private val blueHi = Style.Color.hex("#0000ff").getOrElse(Style.Color.blue)
     private val redHi  = Style.Color.hex("#ff0000").getOrElse(Style.Color.red)
@@ -1618,6 +1620,28 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     }
 
     // ---- degenerate domain (all-equal) yields a single color, no crash ----
+
+    "sequential colors preserve browser-resolved endpoints and interpolation" in {
+        val low  = Style.Color.lightDark(Style.Color.black, Style.Color.white)
+        val high = Style.Color.mix(Style.Color.variable("accent"), Style.Color.transparent, 80)
+        val spec = Chart(Chunk(VRow(0.0), VRow(0.5), VRow(1.0)))(point(x = _ => 0.0, y = _.v, color = _.v))
+            .legend(_.colorScaleSequential(low, high))
+        spec.lower.map { root =>
+            val colors = circlesIn(root).map(c => fillColorOf(c.svgAttrs.fill))
+            assert(colors == Chunk(low, Style.Color.mix(low, high, 50), high))
+        }
+    }
+
+    "sequential colors preserve transparent and alpha-bearing endpoints" in {
+        val low  = Style.Color.transparent
+        val high = Style.Color.rgba(255, 0, 0, 0.5)
+        val spec = Chart(Chunk(VRow(0.0), VRow(0.5), VRow(1.0)))(point(x = _ => 0.0, y = _.v, color = _.v))
+            .legend(_.colorScaleSequential(low, high))
+        spec.lower.map { root =>
+            val colors = circlesIn(root).map(c => fillColorOf(c.svgAttrs.fill))
+            assert(colors == Chunk(low, Style.Color.mix(low, high, 50), high))
+        }
+    }
 
     "colorScaleSequential with all-equal values produces a single color and does not crash" in {
         val rows = Chunk(VRow(5.0), VRow(5.0))

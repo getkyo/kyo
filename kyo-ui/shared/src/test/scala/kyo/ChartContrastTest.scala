@@ -76,6 +76,17 @@ class ChartContrastTest extends kyo.test.Test[Any]:
             val v = Style.Color.variable("accent")
             assert(ChartContrast.reconcile(v, DarkPanel) == v)
         }
+
+        "leaves browser-resolved colors unchanged without claiming a contrast ratio" in {
+            val colors = Chunk(
+                Style.Color.mix(Style.Color.variable("accent"), Style.Color.transparent, 50),
+                Style.Color.lightDark(Style.Color.black, Style.Color.white)
+            )
+            colors.foreach { color =>
+                assert(ChartContrast.contrastRatio(color, DarkPanel) == Absent)
+                assert(ChartContrast.reconcile(color, DarkPanel) == color)
+            }
+        }
     }
 
     "a named palette is reconciled against a panel it was not published against" - {

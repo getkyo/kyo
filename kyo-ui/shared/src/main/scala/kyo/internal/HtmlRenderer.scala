@@ -307,6 +307,9 @@ private[kyo] object HtmlRenderer:
             case UI.Ast.RawHtml(value) =>
                 w(sb, value)
 
+            case node: UI.Ast.StyleElement =>
+                w(sb, s"<style>${node.sheet.render(using node.frame).replace("</", "<\\/")}</style>")
+
             case UI.Ast.Text(value) =>
                 w(sb, esc(value))
 
