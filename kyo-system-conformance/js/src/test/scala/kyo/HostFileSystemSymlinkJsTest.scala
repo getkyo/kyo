@@ -30,3 +30,29 @@ class HostFileSystemSymlinkJsTest extends FileSystemReadConformanceTest[Sync]:
         FileSystemConformanceFixtures.hostLockTarget.map(use.tupled)
 
 end HostFileSystemSymlinkJsTest
+
+/** The same contract with a staged-write overlay installed over the host, on Js. This is the configuration
+  * that carried the original symlink-escape defect: an overlay whose own link answers shadowed the lower's.
+  */
+class OverlayFileSystemSymlinkJsTest extends FileSystemReadConformanceTest[Sync]:
+
+    override protected def realPathRequiresExistence: Boolean = true
+    override protected def supportsSymbolicLinks: Boolean     = true
+
+    override protected def createSymbolicLink(fileSystem: FileSystem.Read[Sync], link: Path, target: Path)(using
+        Frame
+    ): Unit < (Sync & Abort[FileSystemException]) =
+        // Unsafe: the link is created in the lower, beneath the overlay under test
+        Sync.Unsafe.defer(NodeFs.symlinkSync(target.unsafe.show, link.unsafe.show))
+
+    protected def withFileSystem[A](
+        use: (FileSystem.Read[Sync], Path, String) => A < (Sync & Async & Scope & Abort[FileSystemException])
+    )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
+        OverlayFileSystemFixtures.overHostWithLowerFile("kyo-overlay-symlink-read-js")(use)
+
+    protected def withLockTarget(
+        use: (FileSystem.Read[Sync], Path) => Unit < (Sync & Async & Scope & Abort[FileSystemException])
+    )(using Frame): Unit < (Async & Scope & Abort[FileSystemException]) =
+        OverlayFileSystemFixtures.overHost("kyo-overlay-symlink-lock-js")((overlay, root) => use(overlay, root / "target.bin"))
+
+end OverlayFileSystemSymlinkJsTest
