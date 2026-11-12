@@ -406,12 +406,11 @@ private[kyo] object ProbesJs:
         }
     end focusElementIfNotFocused
 
-    /** Unified JS-fallback `fill` shim used by [[Browser.fill]] for INPUT / TEXTAREA / contentEditable / SELECT targets. Resolves the
-      * element, sets the value via the prototype-native `value` setter (bypassing framework-monkey-patched setters), dispatches the
-      * appropriate events, and leaves the element focused with caret at the end of its value.
+    /** Prepares [[Browser.fill]] for INPUT / TEXTAREA / contentEditable / SELECT targets. Fields use the prototype-native setter and
+      * dispatch input/change. Contenteditable targets delegate to [[EditableInput]], which owns focus, selection and native insertion.
       *
       * SELECT branch: when `tag === 'SELECT'` the body assigns `el.value` and dispatches `change` only (no `input`, no `setSelectionRange`,
-      * no prototype-setter trick), mirroring `Browser.select`'s semantics. Returns the boolean discriminator `wasSelect` so the caller can
+      * no prototype-setter trick), mirroring `Browser.select`'s semantics. Returns [[FillTarget.Select]] so the caller can
       * skip the `verifyFilledValue` round-trip on SELECT (a missing option silently no-ops in `Browser.select`; running readback would
       * surface that as a FillDesync, which is a behaviour change relative to the `select`-delegation path).
       *
@@ -429,16 +428,21 @@ private[kyo] object ProbesJs:
       * when `setSelectionRange` is called; they have no selection model. Caret-at-end on those types is a no-op.
       */
     /** JSON wire shape returned by [[fillViaJs]]'s in-page IIFE. `tag` discriminates the outcome:
-      *   - `"ok"`: fill succeeded on INPUT / TEXTAREA / contentEditable
+      *   - `"ok"`: fill succeeded on INPUT / TEXTAREA
       *   - `"ok-select"`: fill succeeded on a SELECT element via the value-assignment short-circuit
+      *   - `"editing_host"`: a contenteditable target needs native insertion
       *   - `"not_attached"`: selector matched nothing
       *   - `"not_fillable"`: matched a non-form-control element; `tagName` carries the offending element's tag name
       */
     private[internal] case class FillReply(tag: String, tagName: Maybe[String] = Absent) derives Schema
 
+    /** A completed field/option write, or an editable target needing native insertion. */
+    private[kyo] enum FillTarget derives CanEqual:
+        case Field, Select, EditingHost
+
     private[kyo] def fillViaJs(selector: Selector, text: String)(using
         Frame
-    ): Boolean < (Browser & Abort[BrowserReadException]) =
+    ): FillTarget < (Browser & Abort[BrowserReadException]) =
         val escaped = JsStringUtil.escapeJsString(text)
         val jsExpr  = SelectorJs.resolveElementJs(Selector.toNode(selector))
         BrowserEval.evalJs(s"""(() => {
@@ -453,6 +457,9 @@ private[kyo] object ProbesJs:
             }
             if (!(tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable)) {
                 return JSON.stringify({tag: 'not_fillable', tagName: (el.tagName || 'unknown').toLowerCase()});
+            }
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+                return JSON.stringify({tag: 'editing_host'});
             }
             const proto =
                 tag === 'TEXTAREA' ? HTMLTextAreaElement.prototype :
@@ -477,12 +484,16 @@ private[kyo] object ProbesJs:
                             BrowserElementNotActionableException.Reason.NotFillable(tn.getOrElse("unknown"))
                         )
                     )
-                case Result.Success(FillReply("ok-select", _)) => true
-                case _                                         => false
+                case Result.Success(FillReply("ok-select", _))    => FillTarget.Select
+                case Result.Success(FillReply("editing_host", _)) => FillTarget.EditingHost
+                case Result.Success(FillReply("ok", _))           => FillTarget.Field
+                case Result.Success(FillReply("not_attached", _)) =>
+                    Abort.fail(BrowserElementNotFoundException(Browser.selectorNodeDescription(Selector.toNode(selector))))
+                case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure("fill", s"unexpected fill reply '$raw'"))
         }
     end fillViaJs
 
-    /** Reads the element's `value` (or `textContent` for contentEditable) back from the page and compares against `expected`. If the
+    /** Reads the element's value (logical paragraph/line text for contentEditable) and compares against `expected`. If the
       * framework rejected or normalized the value away, raises [[BrowserElementNotActionableException]] with reason `FillDesync`. Inside
       * the enclosing `Retry` loop this triggers a retry; when the schedule exhausts the exception escapes as the final failure.
       *
@@ -505,7 +516,39 @@ private[kyo] object ProbesJs:
             const el = $jsExpr;
             if (!el) return JSON.stringify({tag: '__missing__'});
             if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') return JSON.stringify({tag: el.tagName, value: String(el.value)});
-            if (el.isContentEditable) return JSON.stringify({tag: 'CE', value: String(el.textContent)});
+            if (el.isContentEditable) {
+                // Native editing stores line breaks as blocks/BRs. Preserve those boundaries instead of joining every text node.
+                function textOf(node) {
+                    let text = '', seen = false, previousBlock = false;
+                    for (const child of node.childNodes) {
+                        if (child.nodeType === Node.TEXT_NODE) {
+                            if (child.nodeValue.length) {
+                                if (previousBlock) text += '\\n';
+                                text += child.nodeValue;
+                                seen = true; previousBlock = false;
+                            }
+                        } else if (child.nodeType === Node.ELEMENT_NODE) {
+                            if (child.tagName === 'BR') {
+                                // Native editors append a caret BR after an empty line or an existing trailing line break.
+                                const previous = child.previousSibling;
+                                const placeholder = !child.nextSibling && (!previous || previous.nodeName === 'BR' ||
+                                    (previous.nodeType === Node.TEXT_NODE && previous.nodeValue.endsWith('\\n')));
+                                if (!placeholder) { text += '\\n'; seen = true; }
+                                previousBlock = false;
+                            } else {
+                                const block = /^(block|flow-root|flex|grid|list-item|table)/.test(getComputedStyle(child).display);
+                                const value = textOf(child);
+                                if (seen && (block || previousBlock) && (previousBlock || !text.endsWith('\\n'))) text += '\\n';
+                                text += value;
+                                seen = seen || block || value.length > 0;
+                                previousBlock = block;
+                            }
+                        }
+                    }
+                    return text;
+                }
+                return JSON.stringify({tag: 'CE', value: textOf(el)});
+            }
             return JSON.stringify({tag: 'OTHER', value: String(el.value != null ? el.value : (el.textContent || ''))});
         })()""").map { raw =>
             val baseDesc = Browser.selectorNodeDescription(Selector.toNode(selector))
@@ -520,13 +563,16 @@ private[kyo] object ProbesJs:
                 case Result.Success(FillReadback(tag, actual)) =>
                     // Normalize expected to match HTML's value-setter behaviour.
                     //   * `<textarea>` and contentEditable: `\r\n` and lone `\r` become `\n`; embedded `\n` is preserved.
+                    //   * contentEditable also stores native whitespace as no-break spaces; compare their space equivalents.
                     //   * `<input>` (any type) and other elements: same `\r` normalization, then `\n` is stripped entirely
                     //     by the value-sanitization algorithm.
                     val crNormalized       = expected.replace("\r\n", "\n").replace("\r", "\n")
                     val normalizedExpected =
                         if tag == "INPUT" then crNormalized.replace("\n", "")
+                        else if tag == "CE" then crNormalized.replace('\u00a0', ' ')
                         else crNormalized
-                    if actual == normalizedExpected then ()
+                    val normalizedActual = if tag == "CE" then actual.replace('\u00a0', ' ') else actual
+                    if normalizedActual == normalizedExpected then ()
                     else
                         Abort.fail(
                             BrowserElementNotActionableException(

@@ -267,6 +267,10 @@ object BrowserElementNotActionableException:
         case object FillDesync extends Reason:
             val description = "the target's value did not reflect the intended text after typing -- framework likely rejected it"
 
+        /** The requested editor did not retain focus for native input. */
+        case object NotFocused extends Reason:
+            val description = "the requested control did not retain focus for text input"
+
         /** The browser accepted the click dispatch but the page never saw a click event.
           *
           * Unlike every other reason here, this one is decided AFTER the dispatch: the pre-dispatch gate can only prove the element was

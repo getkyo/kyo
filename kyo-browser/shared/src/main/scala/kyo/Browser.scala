@@ -510,9 +510,9 @@ object Browser:
             }
         }
 
-    /** Fills the input element matched by the selector with the given text.
+    /** Fills the input, textarea or editable element matched by the selector with the given text.
       *
-      * A single `Runtime.evaluate` JS dispatch sets the element's value via the prototype-resolved native setter
+      * For inputs and textareas, a single `Runtime.evaluate` JS dispatch sets the value via the prototype-resolved native setter
       * (`HTMLInputElement.prototype` / `HTMLTextAreaElement.prototype` / `HTMLSelectElement.prototype`), then dispatches exactly one
       * `input` event and exactly one `change` event (both `bubbles: true`). The native setter bypasses framework-overridden prototype
       * setters (e.g. React's controlled-input monkey-patch) so frameworks still observe a genuine `input` event from a real value mutation.
@@ -520,17 +520,23 @@ object Browser:
       * end of the value.
       *
       * Behavior contract:
-      *   - Exactly one `input` and exactly one `change` event per `fill` call, regardless of prior content.
-      *   - `fill("")` fires exactly one `input` event with empty value.
+      *   - Inputs and textareas receive exactly one `input` and one `change` event per call, regardless of prior content.
+      *   - `fill("")` on an input or textarea fires exactly one `input` event with empty value.
       *   - The input is left focused with caret at end of value.
       *   - All HTML5 input types route through the same shim: date, time, datetime-local, month, week, number, range, color, textarea, and
       *     any other type whose `value` is a `string`.
       *   - SELECT elements take a JS-internal short-circuit that mirrors [[Browser.select]]'s semantics (assign `el.value`, dispatch
       *     `change` only, no readback).
+      *   - Contenteditable elements use native text insertion over their selected contents, including empty replacements. The editor
+      *     receives trusted native input events, without synthetic `change` or keyboard events. Native multiline editing may produce
+      *     several `input` events. Focus loss during `beforeinput` or `textInput` cancels the pending edit and fails with
+      *     [[BrowserElementNotActionableException.Reason.NotFocused]]. The temporary guards belong to the original document and drain
+      *     on success, failure or interruption.
       *
       * After dispatch the value is read back via `Runtime.evaluate`: if the framework or the element type rejected / normalized the value
       * away from `text` (e.g. `<input type="number">` storing `""` for non-numeric input), the enclosing Retry loop catches
       * [[BrowserElementNotActionableException.Reason.FillDesync]] and retries until the schedule exhausts.
+      * Editable readback preserves logical paragraph/line boundaries and treats browser-generated no-break spaces as spaces.
       *
       * Does not fire `compositionstart` / `compositionend` events; IME-aware listeners must subscribe to `input` events instead.
       */
@@ -542,9 +548,12 @@ object Browser:
             Actionability.withActionable(selector, requireFillable = false, requireEnabled = true) { _ =>
                 val fillJs
                     : Unit < (Browser & Abort[BrowserReadException]) =
-                    ProbesJs.fillViaJs(selector, text).map { wasSelect =>
-                        if wasSelect then ()
-                        else ProbesJs.verifyFilledValue(selector, text)
+                    ProbesJs.fillViaJs(selector, text).map {
+                        case ProbesJs.FillTarget.Select      => ()
+                        case ProbesJs.FillTarget.Field       => ProbesJs.verifyFilledValue(selector, text)
+                        case ProbesJs.FillTarget.EditingHost =>
+                            EditableInput.fill(selector, text)
+                                .andThen(ProbesJs.verifyFilledValue(selector, text))
                     }
                 MutationSettlement.afterAction(fillJs)(scopeSelector = Present(selector))
             }
