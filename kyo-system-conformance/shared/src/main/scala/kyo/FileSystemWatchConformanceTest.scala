@@ -20,6 +20,15 @@ abstract class FileSystemWatchConformanceTest[S >: Async] extends kyo.test.Test[
       */
     private val maxTicks = 1000
 
+    /** Waits until changes already made are queued on the watcher.
+      *
+      * The default suits a polling watcher: one tick, then the wait for the poll to re-arm, which is when its scan has published. A
+      * backend that pushes each change to its watchers as the mutation completes overrides this with a unit value, since there is no
+      * timer to wait for and the default would wait forever.
+      */
+    protected def awaitQueued(clock: Clock.TimeControl)(using Frame): Unit < Async =
+        clock.advance(10.millis).andThen(clock.awaitPendingSleepers(1))
+
     /** Runs one assertion against a fresh backend and a root to watch under, shaped as a continuation for the reason given on
       * [[FileSystemReadConformanceTest.withFileSystem]].
       */
@@ -56,9 +65,7 @@ abstract class FileSystemWatchConformanceTest[S >: Async] extends kyo.test.Test[
     private def takeQueued(clock: Clock.TimeControl, watcher: Path.Watcher, count: Int)(using
         Frame
     ): Chunk[PathChange] < (Async & Abort[FileWatchException]) =
-        clock.advance(10.millis).andThen {
-            clock.awaitPendingSleepers(1).andThen(Scope.run(watcher.events.take(count).run))
-        }
+        awaitQueued(clock).andThen(Scope.run(watcher.events.take(count).run))
 
     private def glob(value: String): Glob =
         Glob.parse(value) match

@@ -1,0 +1,585 @@
+package kyo
+
+import java.nio.charset.StandardCharsets
+
+class InMemoryFileSystemTest extends kyo.test.Test[Any]:
+
+    // Helper: run a path program through a fresh in-memory service.
+    private def withInMem[A, S](program: FileSystem.Write[Sync] => A < (Sync & Abort[FileSystemException] & S))
+        : A < (Sync & Abort[FileSystemException] & S) =
+        FileSystem.inMemory.map(svc => program(svc))
+
+    "read after write returns the written string" in {
+        withInMem { svc =>
+            val p = Path("hello.txt")
+            Path.runWith(svc)(p.write("hello world").andThen(p.read)).map { result =>
+                assert(result == "hello world")
+            }
+        }
+    }
+
+    "list after three writes returns exactly those three names sorted" in {
+        withInMem { svc =>
+            val dir  = Path("dir")
+            val prog =
+                dir.mkDir.andThen {
+                    (dir / "c.txt").write("c").andThen {
+                        (dir / "a.txt").write("a").andThen {
+                            (dir / "b.txt").write("b").andThen {
+                                dir.list
+                            }
+                        }
+                    }
+                }
+            Path.runWith(svc)(prog).map { paths =>
+                assert(paths.map(_.name.getOrElse("")) == Chunk("a.txt", "b.txt", "c.txt"))
+            }
+        }
+    }
+
+    "Glob selection is root-relative and case-configurable" in {
+        withInMem { svc =>
+            val dir  = Path("dir")
+            val prog = (dir / "top.JSON").write("top").andThen {
+                (dir / "nested" / "deep.json").write("deep").andThen {
+                    dir.list(glob"*.json").map { defaultMatches =>
+                        dir.list(glob"*.json", Glob.CaseSensitivity.Insensitive).map { insensitiveMatches =>
+                            Scope.run(dir.walk(glob"**/*.json").run).map { walked =>
+                                (defaultMatches, insensitiveMatches, walked)
+                            }
+                        }
+                    }
+                }
+            }
+            Path.runWith(svc)(prog).map { (defaultMatches, insensitiveMatches, walked) =>
+                assert(defaultMatches.isEmpty)
+                assert(insensitiveMatches.map(_.parts.last) == Chunk("top.JSON"))
+                assert(walked.map(_.parts.last) == Chunk("deep.json"))
+            }
+        }
+    }
+
+    "append then read returns the concatenation" in {
+        withInMem { svc =>
+            val p    = Path("app.txt")
+            val prog = p.write("foo").andThen(p.append("bar")).andThen(p.read)
+            Path.runWith(svc)(prog).map { result =>
+                assert(result == "foobar")
+            }
+        }
+    }
+
+    "truncate reduces the byte count and read returns only the kept prefix" in {
+        withInMem { svc =>
+            val p    = Path("trunc.txt")
+            val data = "abcdefgh"
+            val prog = p.write(data).andThen(p.truncate(4)).andThen(p.readBytes.map(b =>
+                (b.size.toLong, new String(b.toArrayUnsafe, StandardCharsets.UTF_8))
+            ))
+            Path.runWith(svc)(prog).map { case (sz, content) =>
+                assert(sz == 4L)
+                assert(content == "abcd")
+            }
+        }
+    }
+
+    "move leaves source absent and target holding the bytes" in {
+        withInMem { svc =>
+            val a    = Path("mv-a.txt")
+            val b    = Path("mv-b.txt")
+            val prog =
+                a.write("moved").andThen(a.move(b)).andThen {
+                    Abort.run[FileSystemException](a.exists).map(aRes => b.readBytes.map(bBytes => (aRes, bBytes)))
+                }
+            Path.runWith(svc)(prog).map { case (aRes, bBytes) =>
+                assert(aRes == Result.succeed(false))
+                assert(new String(bBytes.toArray, StandardCharsets.UTF_8) == "moved")
+            }
+        }
+    }
+
+    "copy leaves both source and target holding the bytes" in {
+        withInMem { svc =>
+            val a    = Path("cp-a.txt")
+            val b    = Path("cp-b.txt")
+            val prog = a.write("shared").andThen(a.copy(b)).andThen(a.read.map(ar => b.read.map(br => (ar, br))))
+            Path.runWith(svc)(prog).map { case (ar, br) =>
+                assert(ar == "shared")
+                assert(br == "shared")
+            }
+        }
+    }
+
+    "copyAttributes controls whether a copy preserves source metadata" in {
+        withInMem { svc =>
+            val source      = Path("copy-stat-source.txt")
+            val fresh       = Path("copy-stat-fresh.txt")
+            val preserved   = Path("copy-stat-preserved.txt")
+            val sourceMtime = 1234567L
+            Path.runWith(svc) {
+                source.write("content")
+                    .andThen(source.setLastModified(sourceMtime))
+                    .andThen(source.copy(fresh, Path.CopyOptions(copyAttributes = false)))
+                    .andThen(source.copy(preserved, Path.CopyOptions(copyAttributes = true)))
+                    .andThen(source.stat.map(sourceStat => fresh.stat.map(freshStat => preserved.stat.map((sourceStat, freshStat, _)))))
+            }.map { (sourceStat, freshStat, preservedStat) =>
+                assert(sourceStat.lastModifiedMs == sourceMtime)
+                assert(freshStat.lastModifiedMs != sourceMtime)
+                assert(preservedStat == sourceStat)
+            }
+        }
+    }
+
+    "move onto an existing target without replaceExisting aborts FileAlreadyExistsException" in {
+        withInMem { svc =>
+            val a = Path("me-a.txt")
+            val b = Path("me-b.txt")
+            // Abort.run must be OUTSIDE Path.runWith: exceptions raised by the service during
+            // PathWrite dispatch propagate out of Path.runWith, not into the inner Abort.run scope.
+            val prog = a.write("a").andThen(b.write("b")).andThen(a.move(b, Path.MoveOptions(replace = Path.Replace.Never)))
+            Abort.run[FileSystemException](Path.runWith(svc)(prog)).map { result =>
+                assert(result.isFailure)
+                assert(result.failure.exists(_.isInstanceOf[FileAlreadyExistsException]))
+            }
+        }
+    }
+
+    "copy onto an existing target without replaceExisting aborts FileAlreadyExistsException" in {
+        withInMem { svc =>
+            val a    = Path("ce-a.txt")
+            val b    = Path("ce-b.txt")
+            val prog = a.write("a").andThen(b.write("b")).andThen(a.copy(b, Path.CopyOptions(replace = Path.Replace.Never)))
+            Abort.run[FileSystemException](Path.runWith(svc)(prog)).map { result =>
+                assert(result.isFailure)
+                assert(result.failure.exists(_.isInstanceOf[FileAlreadyExistsException]))
+            }
+        }
+    }
+
+    "a replacing move onto a non-empty directory fails and keeps the directory" in {
+        withInMem { svc =>
+            val file  = Path("mn-file.txt")
+            val dir   = Path("mn-dir")
+            val child = dir / "child.txt"
+            val prog  =
+                file.write("file").andThen(child.write("child")).andThen(file.move(dir, Path.MoveOptions(replace = Path.Replace.Existing)))
+            Abort.run[FileSystemException](Path.runWith(svc)(prog)).map { result =>
+                Path.runWith(svc)(child.read.map(value => file.exists.map(exists => (value, exists)))).map { (value, sourceExists) =>
+                    assert(result == Result.fail(FileDirectoryNotEmptyException(dir)), s"move result: $result")
+                    assert(value == "child")
+                    assert(sourceExists)
+                }
+            }
+        }
+    }
+
+    "a replacing copy onto a non-empty directory fails and keeps the directory" in {
+        withInMem { svc =>
+            val file  = Path("cn-file.txt")
+            val dir   = Path("cn-dir")
+            val child = dir / "child.txt"
+            val prog  =
+                file.write("file").andThen(child.write("child")).andThen(file.copy(dir, Path.CopyOptions(replace = Path.Replace.Existing)))
+            Abort.run[FileSystemException](Path.runWith(svc)(prog)).map { result =>
+                Path.runWith(svc)(child.read).map { value =>
+                    assert(result == Result.fail(FileDirectoryNotEmptyException(dir)), s"copy result: $result")
+                    assert(value == "child")
+                }
+            }
+        }
+    }
+
+    "stat after write reflects the written byte count" in {
+        withInMem { svc =>
+            val p    = Path("stat.txt")
+            val data = "12345"
+            val prog = p.write(data).andThen(p.stat)
+            Path.runWith(svc)(prog).map { st =>
+                assert(st.sizeBytes == data.getBytes(StandardCharsets.UTF_8).length.toLong)
+            }
+        }
+    }
+
+    "isSymbolicLink returns false for both files and directories" in {
+        withInMem { svc =>
+            val f    = Path("sym-f.txt")
+            val d    = Path("sym-d")
+            val prog =
+                f.write("x").andThen(d.mkDir).andThen {
+                    f.isSymbolicLink.map(fi => d.isSymbolicLink.map(di => (fi, di)))
+                }
+            Path.runWith(svc)(prog).map { case (fi, di) =>
+                assert(!fi)
+                assert(!di)
+            }
+        }
+    }
+
+    "two concurrent writes to sibling paths both land without lost updates" in {
+        FileSystem.inMemory.map { svc =>
+            val aPath = Path("race-a.txt")
+            val bPath = Path("race-b.txt")
+            val aData = Span.from("alpha".getBytes(StandardCharsets.UTF_8))
+            val bData = Span.from("beta".getBytes(StandardCharsets.UTF_8))
+            for
+                gate   <- Latch.init(1)
+                fiberA <- Fiber.initUnscoped(gate.await.andThen(Path.runWith(svc)(aPath.writeBytes(aData))))
+                fiberB <- Fiber.initUnscoped(gate.await.andThen(Path.runWith(svc)(bPath.writeBytes(bData))))
+                _      <- gate.release
+                _      <- fiberA.get
+                _      <- fiberB.get
+                aBytes <- Path.runWith(svc)(aPath.readBytes)
+                bBytes <- Path.runWith(svc)(bPath.readBytes)
+            yield
+                assert(new String(aBytes.toArray, StandardCharsets.UTF_8) == "alpha")
+                assert(new String(bBytes.toArray, StandardCharsets.UTF_8) == "beta")
+            end for
+        }
+    }
+
+    "two concurrent appends to the same path both land without lost content" in {
+        FileSystem.inMemory.map { svc =>
+            val p = Path("concurrent-append.txt")
+            Path.runWith(svc)(p.write("")).andThen {
+                for
+                    gate   <- Latch.init(1)
+                    fiberA <- Fiber.initUnscoped(gate.await.andThen(Path.runWith(svc)(p.append("AAA"))))
+                    fiberB <- Fiber.initUnscoped(gate.await.andThen(Path.runWith(svc)(p.append("BBB"))))
+                    _      <- gate.release
+                    _      <- fiberA.get
+                    _      <- fiberB.get
+                    result <- Path.runWith(svc)(p.read)
+                yield
+                    // Both appends must land; order is non-deterministic under concurrent scheduling.
+                    assert(result == "AAABBB" || result == "BBBAAA", s"expected both appends to land, got: '$result'")
+                end for
+            }
+        }
+    }
+
+    "writeBytes with createFolders=false fails when parent directory does not exist" in {
+        FileSystem.inMemory.map { svc =>
+            val nested = Path("missing-parent", "file.txt")
+            Abort.run[FileSystemException](
+                Path.runWith(svc)(nested.writeBytes(Span.from(Array[Byte](1, 2, 3)), Path.WriteOptions(createFolders = false)))
+            ).map { result =>
+                assert(result.isFailure, "expected FileNotFoundException but got success")
+                assert(
+                    result.failure.exists(_.isInstanceOf[FileNotFoundException]),
+                    s"expected FileNotFoundException, got: ${result.failure}"
+                )
+            }
+        }
+    }
+
+    "writeTo abort before finish leaves target absent" in {
+        FileSystem.inMemory.map { svc =>
+            val target = Path("sink-abort.bin")
+            // A stream that fails mid-way; the write handle's finish() is never called so no bytes land.
+            val failingStream: Stream[Byte, Abort[FileSystemException]] =
+                Stream.init(Chunk[Byte](1, 2, 3)).concat(
+                    Stream.init(Abort.fail[FileSystemException](FileNotFoundException(target)).map(_ => Chunk.empty[Byte]))
+                )
+            val prog =
+                Abort.run[FileSystemException](
+                    Scope.run(
+                        Path.runWith(svc)(failingStream.writeTo(target))
+                    )
+                ).andThen(
+                    Abort.run[FileSystemException](Path.runWith(svc)(target.exists))
+                )
+            prog.map { existsResult =>
+                assert(existsResult == Result.succeed(false))
+            }
+        }
+    }
+
+    "writeTo with a complete stream writes the exact bytes to the target" in {
+        FileSystem.inMemory.map { svc =>
+            val target  = Path("sink-ok.bin")
+            val payload = Chunk[Byte](10, 20, 30, 40)
+            val prog    =
+                Scope.run(
+                    Path.runWith(svc)(Stream.init(payload).writeTo(target))
+                ).andThen(
+                    Path.runWith(svc)(target.readBytes)
+                )
+            prog.map { bytes =>
+                assert(bytes.toArrayUnsafe sameElements payload.toArray)
+            }
+        }
+    }
+
+    "tempDir scope cleanup removes only the in-memory entry and does not touch a coincident host directory" in {
+        FileSystem.inMemory.map { svc =>
+            AtomicRef.init[Maybe[Path]](Absent).map { pathRef =>
+                // Open a scope that creates an in-memory temp dir; simultaneously create a
+                // real host directory at the same path string.
+                Scope.run(
+                    Path.runWith(svc) {
+                        Path.tempDir("conf-tmp").map { tmpPath =>
+                            pathRef.set(Present(tmpPath)).andThen {
+                                // Unsafe: creates a host-FS directory to verify that in-memory remove does not touch it.
+                                Sync.Unsafe.defer(Abort.get(tmpPath.unsafe.mkDir()))
+                            }
+                        }
+                    }
+                ).andThen {
+                    // Scope exit has called TempDirHandle.remove() on the in-memory service.
+                    pathRef.use {
+                        case Absent     => fail("tempDir path was never captured")
+                        case Present(p) =>
+                            Path.runWith(svc)(p.exists).map { inMemExists =>
+                                assert(!inMemExists, s"in-memory entry should be gone after scope exit: $p")
+                            }.andThen {
+                                // Unsafe: checks host-FS existence to verify the real dir is untouched.
+                                Sync.Unsafe.defer(Abort.get(p.unsafe.exists())).map { hostExists =>
+                                    assert(hostExists, s"coincident host dir should still exist: $p")
+                                }
+                            }.andThen {
+                                // Unsafe: cleans up the host-FS temp directory created by this test.
+                                Sync.Unsafe.defer(discard(p.unsafe.removeAll()))
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+    "temp writes into the in-memory tree and scope cleanup leaves a coincident host file alone" in {
+        FileSystem.inMemory.map { svc =>
+            AtomicRef.init[Maybe[Path]](Absent).map { pathRef =>
+                Scope.run(
+                    Path.runWith(svc) {
+                        Path.temp("conf-tmp-", ".txt").map { tmpPath =>
+                            pathRef.set(Present(tmpPath))
+                                .andThen(tmpPath.write("in memory"))
+                                .andThen(tmpPath.read)
+                                .map(contents => assert(contents == "in memory"))
+                                .andThen {
+                                    // Unsafe: creates a host-FS file to verify that in-memory remove does not touch it.
+                                    Sync.Unsafe.defer(Abort.get(tmpPath.unsafe.mkFile()))
+                                }
+                        }
+                    }
+                ).andThen {
+                    // Scope exit has called TempFileHandle.remove() on the in-memory service.
+                    pathRef.use {
+                        case Absent     => fail("temp path was never captured")
+                        case Present(p) =>
+                            Path.runWith(svc)(p.exists).map { inMemExists =>
+                                assert(!inMemExists, s"in-memory entry should be gone after scope exit: $p")
+                            }.andThen {
+                                // Unsafe: checks host-FS existence to verify the real file is untouched.
+                                Sync.Unsafe.defer(Abort.get(p.unsafe.exists())).map { hostExists =>
+                                    assert(hostExists, s"coincident host file should still exist: $p")
+                                }
+                            }.andThen {
+                                // Unsafe: cleans up the host-FS temp file created by this test.
+                                Sync.Unsafe.defer(discard(p.unsafe.remove()))
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+    // mkdir -p semantics, matching Files.createDirectories: mkDir on an existing directory must
+    // never discard its children.
+
+    "mkDir on an existing directory keeps its children" in {
+        withInMem { svc =>
+            val d = Path("keep-dir")
+            Path.runWith(svc) {
+                (d / "child.txt").write("payload").andThen(d.mkDir).andThen(d.list)
+            }.map { listed =>
+                assert(listed.map(_.name.getOrElse("")) == Chunk("child.txt"))
+            }
+        }
+    }
+
+    "mkDir on an existing directory keeps its children's contents" in {
+        withInMem { svc =>
+            val d = Path("keep-content")
+            Path.runWith(svc) {
+                (d / "child.txt").write("payload").andThen(d.mkDir).andThen((d / "child.txt").read)
+            }.map { text =>
+                assert(text == "payload")
+            }
+        }
+    }
+
+    "mkDir on an existing regular file is rejected" in {
+        withInMem { svc =>
+            val p = Path("occupied.txt")
+            Abort.run[FileSystemException](Path.runWith(svc)(p.write("payload").andThen(p.mkDir))).map {
+                case Result.Failure(_: FileAlreadyExistsException) => succeed("rejected")
+                case other                                         => fail(s"expected FileAlreadyExistsException, got $other")
+            }
+        }
+    }
+
+    "every way to create an entry beneath a regular file fails and keeps the file" in {
+        withInMem { svc =>
+            val file    = Path("parent.txt")
+            val source  = Path("beneath-source.txt")
+            val beneath = file / "child.txt"
+            // Each attempt with the entry its failure names; a temporary's name is generated, so only its failure is checked.
+            val attempts: Chunk[(String, Unit < (Sync & Abort[FileSystemException]), Maybe[Path])] = Chunk(
+                ("write", svc.write(beneath, "child", Path.WriteOptions()), Present(beneath)),
+                ("append", svc.append(beneath, "child", Path.WriteOptions()), Present(beneath)),
+                ("mkFile", svc.mkFile(beneath), Present(beneath)),
+                ("mkDir", svc.mkDir(beneath / "nested"), Present(beneath / "nested")),
+                ("openWrite", svc.openWrite(beneath, append = false, Path.WriteOptions()).unit, Present(beneath)),
+                ("move", svc.move(source, beneath, Path.MoveOptions()), Present(beneath)),
+                ("copy", svc.copy(source, beneath, Path.CopyOptions()), Present(beneath)),
+                ("temp", svc.temp((file / "tmp").unsafe.show, ".bin").unit, Absent),
+                ("tempDir", svc.tempDir((file / "tmp").unsafe.show).unit, Absent)
+            )
+            svc.write(file, "value", Path.WriteOptions()).andThen(svc.write(source, "source", Path.WriteOptions())).andThen {
+                Kyo.foreach(attempts) { (name, attempt, named) =>
+                    Abort.run[FileSystemException](attempt).map(result => (name, result, named))
+                }.map { results =>
+                    svc.read(file).map { value =>
+                        svc.read(source).map { sourceValue =>
+                            results.foreach { (name, result, named) =>
+                                named match
+                                    case Present(path) =>
+                                        assert(result == Result.fail(FileNotADirectoryException(path)), s"$name reported $result")
+                                    case Absent =>
+                                        assert(result.failure.exists(_.isInstanceOf[FileNotADirectoryException]), s"$name reported $result")
+                            }
+                            assert(value == "value")
+                            assert(sourceValue == "source")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "writing a file over a directory fails, and mkFile on it changes nothing, so its entries stay" in {
+        withInMem { svc =>
+            val dir                                                                   = Path("occupied-dir")
+            val child                                                                 = dir / "child.txt"
+            val attempts: Chunk[(String, Unit < (Sync & Abort[FileSystemException]))] = Chunk(
+                "write"     -> svc.write(dir, "file", Path.WriteOptions()),
+                "append"    -> svc.append(dir, "file", Path.WriteOptions()),
+                "openWrite" -> svc.openWrite(dir, append = false, Path.WriteOptions()).unit
+            )
+            svc.write(child, "child", Path.WriteOptions()).andThen {
+                Kyo.foreach(attempts) { (name, attempt) =>
+                    Abort.run[FileSystemException](attempt).map(result => (name, result))
+                }.map { results =>
+                    svc.mkFile(dir).andThen(svc.read(child)).map { value =>
+                        results.foreach { (name, result) =>
+                            assert(result == Result.fail(FileIsADirectoryException(dir)), s"$name over a directory reported $result")
+                        }
+                        assert(value == "child")
+                    }
+                }
+            }
+        }
+    }
+
+    "mkFile on an existing file keeps its content" in {
+        withInMem { svc =>
+            val file = Path("kept.txt")
+            svc.write(file, "value", Path.WriteOptions()).andThen(svc.mkFile(file)).andThen(svc.read(file)).map { value =>
+                assert(value == "value")
+            }
+        }
+    }
+
+    "moving or copying an entry onto itself keeps it" in {
+        withInMem { svc =>
+            val file  = Path("self.txt")
+            val dir   = Path("self-dir")
+            val child = dir / "child.txt"
+            for
+                _          <- svc.write(file, "value", Path.WriteOptions())
+                _          <- svc.write(child, "child", Path.WriteOptions())
+                _          <- svc.move(file, file, Path.MoveOptions(replace = Path.Replace.Existing))
+                _          <- svc.copy(file, file, Path.CopyOptions(replace = Path.Replace.Existing))
+                _          <- svc.move(dir, dir, Path.MoveOptions(replace = Path.Replace.Existing))
+                _          <- svc.copy(dir, dir, Path.CopyOptions(replace = Path.Replace.Existing))
+                fileValue  <- svc.read(file)
+                childValue <- svc.read(child)
+            yield
+                assert(fileValue == "value")
+                assert(childValue == "child")
+            end for
+        }
+    }
+
+    "moving or copying a directory inside itself fails and keeps it" in {
+        withInMem { svc =>
+            val dir    = Path("outer")
+            val child  = dir / "child.txt"
+            val inside = dir / "inner"
+            svc.write(child, "child", Path.WriteOptions()).andThen {
+                Abort.run[FileSystemException](svc.move(dir, inside, Path.MoveOptions())).map { moved =>
+                    Abort.run[FileSystemException](svc.copy(dir, inside, Path.CopyOptions())).map { copied =>
+                        svc.read(child).map { value =>
+                            svc.exists(inside).map { insideExists =>
+                                assert(moved.isFailure, s"move into itself reported $moved")
+                                assert(copied.isFailure, s"copy into itself reported $copied")
+                                assert(value == "child")
+                                assert(!insideExists)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "remove and removeExisting refuse a directory with entries and keep it" in {
+        withInMem { svc =>
+            val dir   = Path("full-dir")
+            val child = dir / "child.txt"
+            val empty = Path("empty-dir")
+            for
+                _        <- svc.write(child, "child", Path.WriteOptions())
+                _        <- svc.mkDir(empty)
+                removed  <- Abort.run[FileSystemException](svc.remove(dir))
+                existing <- Abort.run[FileSystemException](svc.removeExisting(dir))
+                value    <- svc.read(child)
+                emptied  <- svc.remove(empty)
+                gone     <- svc.exists(empty)
+            yield
+                assert(removed == Result.fail(FileDirectoryNotEmptyException(dir)), s"remove reported $removed")
+                assert(existing == Result.fail(FileDirectoryNotEmptyException(dir)), s"removeExisting reported $existing")
+                assert(value == "child")
+                assert(emptied)
+                assert(!gone)
+            end for
+        }
+    }
+
+    "reading, truncating, or opening a write channel on a directory fails and keeps its entries" in {
+        withInMem { svc =>
+            val dir                                                                          = Path("channel-dir")
+            val child                                                                        = dir / "child.txt"
+            val attempts: Chunk[(String, Any < (Sync & Scope & Abort[FileSystemException]))] = Chunk(
+                ("readBytes", svc.readBytes(dir)),
+                ("truncate", svc.truncate(dir, 0)),
+                ("openWriteChannel", svc.openWriteChannel(dir, FileSystem.WriteOpen.Create)),
+                ("openReadWriteChannel", svc.openReadWriteChannel(dir, FileSystem.WriteOpen.Create))
+            )
+            svc.write(child, "child", Path.WriteOptions()).andThen {
+                Kyo.foreach(attempts) { (name, attempt) =>
+                    Scope.run(Abort.run[FileSystemException](attempt.unit)).map(result => (name, result))
+                }.map { results =>
+                    svc.read(child).map { value =>
+                        results.foreach { (name, result) =>
+                            assert(result == Result.fail(FileIsADirectoryException(dir)), s"$name reported $result")
+                        }
+                        assert(value == "child")
+                    }
+                }
+            }
+        }
+    }
+
+end InMemoryFileSystemTest
