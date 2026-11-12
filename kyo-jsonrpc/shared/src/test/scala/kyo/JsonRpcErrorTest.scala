@@ -7,6 +7,17 @@ class JsonRpcErrorTest extends JsonRpcTest:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
+    "reserved peer errors retain their code message and data through relays" in {
+        val data = Present(Structure.Value.Record(Chunk("model" -> Structure.Value.Str("unknown"))))
+        Chunk(-32700, -32600, -32601, -32602, -32603).foreach { code =>
+            val message = s"peer detail for $code"
+            val first   = JsonRpcError.fromWire(code, message, data)
+            val second  = JsonRpcError.fromWire(first.code, first.message, first.data)
+            val third   = Structure.decode[JsonRpcError](Structure.encode[JsonRpcError](second)).getOrThrow
+            assert(Chunk(first, second, third).map(e => (e.code, e.message, e.data)) == Chunk.fill(3)((code, message, data)))
+        }
+    }
+
     "leaf codes match the JSON-RPC 2.0 spec" in {
         assert(JsonRpcParseError("[input]", 0, JsonRpcParseError.Reason.TrailingContent).code == -32700)
         assert(JsonRpcInvalidRequestError(Structure.Value.Null, Chunk.empty).code == -32600)
@@ -58,18 +69,19 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(ok.code == -32050)
     }
 
-    "JsonRpcError.fromWire maps standard codes to typed leaves" in {
-        val p = JsonRpcError.fromWire(-32700, "Parse error", Absent)
-        assert(p.isInstanceOf[JsonRpcParseError])
-        assert(p.code == -32700)
-        val ir = JsonRpcError.fromWire(-32600, "Invalid Request", Absent)
-        assert(ir.isInstanceOf[JsonRpcInvalidRequestError])
-        val mn = JsonRpcError.fromWire(-32601, "Method not found", Absent)
-        assert(mn.isInstanceOf[JsonRpcMethodNotFoundError])
-        val ip = JsonRpcError.fromWire(-32602, "Invalid params", Absent)
-        assert(ip.isInstanceOf[JsonRpcInvalidParamsError])
-        val ie = JsonRpcError.fromWire(-32603, "Internal error", Absent)
-        assert(ie.isInstanceOf[JsonRpcInternalError])
+    "JsonRpcError.fromWire keeps the code, message and data a peer sent with a reserved code" in {
+        val data = Present(Structure.Value.Str("details"))
+        Chunk(-32700, -32600, -32601, -32602, -32603).foreach { code =>
+            JsonRpcError.fromWire(code, s"the peer's message for $code", data) match
+                case e: JsonRpcPeerError =>
+                    assert(e.code == code)
+                    assert(e.message == s"the peer's message for $code")
+                    assert(e.data == data)
+                case other => fail(s"expected a JsonRpcPeerError for $code, got $other")
+        }
+    }
+
+    "JsonRpcError.fromWire maps implementation-defined and application codes to their leaves" in {
         val impl = JsonRpcError.fromWire(-32050, "Server error", Absent)
         assert(impl.isInstanceOf[JsonRpcImplementationError])
         val custom = JsonRpcError.fromWire(409, "Conflict", Absent)
@@ -90,6 +102,7 @@ class JsonRpcErrorTest extends JsonRpcTest:
             JsonRpcInternalError.Operation.DecodeResult,
             new RuntimeException("c")
         ).isInstanceOf[JsonRpcExecutionFailure])
+        assert(JsonRpcPeerError(-32602, "Invalid params", Absent).isInstanceOf[JsonRpcExecutionFailure])
         assert(JsonRpcCustomError(409, "Conflict").isInstanceOf[JsonRpcApplicationFailure])
     }
 
@@ -98,7 +111,8 @@ class JsonRpcErrorTest extends JsonRpcTest:
         val encoded = Structure.encode[JsonRpcError](err)
         val decoded = Structure.decode[JsonRpcError](encoded).getOrElse(fail("decode failed"))
         assert(decoded.code == -32601)
-        assert(decoded.isInstanceOf[JsonRpcMethodNotFoundError])
+        assert(decoded.isInstanceOf[JsonRpcPeerError])
+        assert(decoded.message == err.message)
     }
 
     "an error object decodes straight from JSON text, data included" in {
@@ -113,7 +127,8 @@ class JsonRpcErrorTest extends JsonRpcTest:
         Json.decode[JsonRpcError]("""{"message":"Method not found","code":-32601,"extra":[1]}""") match
             case Result.Success(decoded) =>
                 assert(decoded.code == -32601)
-                assert(decoded.isInstanceOf[JsonRpcMethodNotFoundError])
+                assert(decoded.isInstanceOf[JsonRpcPeerError])
+                assert(decoded.message == "Method not found")
                 assert(decoded.data == Absent)
             case other => fail(s"expected a decoded error, got $other")
         end match
@@ -176,6 +191,15 @@ class JsonRpcErrorTest extends JsonRpcTest:
             val twice    = JsonRpcError.fromWire(once.code, once.message, once.data)
             assert(once.message == "backend unavailable", s"after one hop: ${once.message}")
             assert(twice.message == "backend unavailable", s"after two hops: ${twice.message}")
+        }
+
+        "a wire round trip is idempotent for a peer error" in {
+            val original = JsonRpcPeerError(-32602, "unknown model 'x'", Absent)
+            val once     = JsonRpcError.fromWire(original.code, original.message, original.data)
+            val twice    = JsonRpcError.fromWire(once.code, once.message, once.data)
+            assert(once.message == "unknown model 'x'", s"after one hop: ${once.message}")
+            assert(twice.message == "unknown model 'x'", s"after two hops: ${twice.message}")
+            assert(twice.code == -32602)
         }
     }
 
