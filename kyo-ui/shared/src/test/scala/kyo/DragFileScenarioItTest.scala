@@ -367,4 +367,154 @@ class DragFileScenarioItTest extends UITest:
         yield assert(value == Present("external drop payload"))
         end for
     }
+    private def externalFileEvent(event: String, zone: String, items: String): String =
+        s"""(function(){var dt=new DataTransfer();
+           |$items
+           |var event=new DragEvent("$event",{bubbles:true,cancelable:true,dataTransfer:dt});
+           |document.getElementById("$zone").dispatchEvent(event);return event.defaultPrevented;})()""".stripMargin
+
+    private def externalTextFile(name: String): String =
+        s"""dt.items.add(new File(["external"],"$name",{type:"text/plain"}));"""
+
+    private val observeFileDecisions =
+        """(function(){window.__kyoFileResolutions=0;window.__kyoFileErrors=[];
+          |var sock=window.__kyoWs,original=sock.onmessage,report=console.error;
+          |console.error=function(error){if(error&&error.name)window.__kyoFileErrors.push(error.name);return report.apply(this,arguments);};
+          |sock.onmessage=function(event){var op=JSON.parse(event.data);try{return original.call(this,event);}
+          |finally{if(op.ResolveDrag)window.__kyoFileResolutions++;}};})()""".stripMargin
+
+    "external file hover honors accepted media types and item counts" in {
+        for
+            ready <- Signal.initRef(0)
+            app =
+                def zone(id: String, accept: Drag.Accept) =
+                    UI.div(id).id(id).dropTarget(Drag.Target(id, accept)).onDrop(_ => Drag.Decision.Accept)
+                UI.div(
+                    zone("any", Drag.Accept()),
+                    zone("images", Drag.Accept(mediaTypes = Set(Drag.MediaTypePattern.parse("image/png").get))),
+                    zone("single", Drag.Accept(maxItems = Present(1))),
+                    zone("small", Drag.Accept(maxFileSize = Present(1.bytes))),
+                    zone("move", Drag.Accept(operations = Drag.AllowedOperations.move)),
+                    UI.div(zone("nested", Drag.Accept(mediaTypes = Set(Drag.MediaTypePattern.parse("image/png").get))))
+                        .id("parent").dropTarget(Drag.Target("parent", Drag.Accept())).onDrop(_ => Drag.Decision.Accept),
+                    UI.button("ready").id("ready").onClick(ready.updateAndGet(_ + 1).unit),
+                    ready.map(n => UI.span(n.toString).id("ready-count"))
+                )
+            states <- withUI(app) {
+                for
+                    _        <- Browser.click(Browser.Selector.id("ready"))
+                    _        <- Browser.assertText(Browser.Selector.id("ready-count"), "1")
+                    entered  <- Browser.evalBoolean(externalFileEvent("dragenter", "any", externalTextFile("note.txt")))
+                    over     <- Browser.evalBoolean(externalFileEvent("dragover", "any", externalTextFile("note.txt")))
+                    excluded <- Browser.evalBoolean(externalFileEvent("dragover", "images", externalTextFile("note.txt")))
+                    overflow <- Browser.evalBoolean(externalFileEvent(
+                        "dragover",
+                        "single",
+                        externalTextFile("one.txt") + externalTextFile("two.txt")
+                    ))
+                    within <- Browser.evalBoolean(externalFileEvent("dragover", "single", externalTextFile("one.txt")))
+                    text   <- Browser.evalBoolean(externalFileEvent("dragover", "any", """dt.setData("text/plain","text");"""))
+                    // Protected-mode hover exposes types/counts, not sizes; the size limit belongs to the drop.
+                    sizeUnknown <- Browser.evalBoolean(externalFileEvent("dragover", "small", externalTextFile("note.txt")))
+                    moveOnly    <- Browser.evalBoolean(externalFileEvent("dragover", "move", externalTextFile("note.txt")))
+                    inherited   <- Browser.evalBoolean(externalFileEvent("dragover", "nested", externalTextFile("note.txt")))
+                yield (entered, over, excluded, overflow, within, text, sizeUnknown, moveOnly, inherited)
+            }
+        yield assert(states == (true, true, false, false, true, false, true, false, true), s"$states")
+    }
+
+    "external file size limits are applied when the drop exposes sizes" in {
+        for
+            ready <- Signal.initRef(0)
+            app = UI.div(
+                UI.div("drop").id("zone").dropTarget(Drag.Target("zone", Drag.Accept(maxFileSize = Present(1.bytes))))
+                    .onDrop(_ => Drag.Decision.Accept),
+                UI.button("ready").id("ready").onClick(ready.updateAndGet(_ + 1).unit),
+                ready.map(n => UI.span(n.toString).id("ready-count"))
+            )
+            result <- withUI(app) {
+                for
+                    _     <- Browser.click(Browser.Selector.id("ready"))
+                    _     <- Browser.assertText(Browser.Selector.id("ready-count"), "1")
+                    state <- Browser.eval(
+                        """(function(){var sock=window.__kyoWs,send=sock.send,drops=0;
+                          |sock.send=function(value){var msg=JSON.parse(value);if(msg.Event&&msg.Event.value.Drop)drops++;return send.call(this,value);};
+                          |function drop(text){var dt=new DataTransfer();dt.items.add(new File([text],"note.txt",{type:"text/plain"}));
+                          |var event=new DragEvent("drop",{bubbles:true,cancelable:true,dataTransfer:dt});document.getElementById("zone").dispatchEvent(event);
+                          |return [event.defaultPrevented,drops].join('|');}
+                          |try{return drop('too large')+'|'+drop('x');}finally{sock.send=send;}})()""".stripMargin
+                    )
+                yield state
+            }
+        yield assert(result == "false|0|true|1", result)
+    }
+
+    "external file drop dispatches to the accepting ancestor instead of the refusing child" in {
+        for
+            ready    <- Signal.initRef(0)
+            received <- Signal.initRef(Chunk.empty[String])
+            app = UI.div(
+                UI.div(
+                    UI.div("child").id("nested")
+                        .dropTarget(Drag.Target("nested", Drag.Accept(mediaTypes = Set(Drag.MediaTypePattern.parse("image/png").get))))
+                        .onDrop { (event: Drag.Event) =>
+                            received.updateAndGet(_.append(s"child:${event.targetKey.getOrElse("")}")).andThen(Drag.Decision.Accept)
+                        }
+                ).id("parent").dropTarget(Drag.Target("parent", Drag.Accept()))
+                    .onDrop { (event: Drag.Event) =>
+                        received.updateAndGet(_.append(s"parent:${event.targetKey.getOrElse("")}")).andThen(Drag.Decision.Accept)
+                    },
+                UI.button("ready").id("ready").onClick(ready.updateAndGet(_ + 1).unit),
+                ready.map(n => UI.span(n.toString).id("ready-count"))
+            )
+            _ <- withUI(app) {
+                for
+                    _        <- Browser.click(Browser.Selector.id("ready"))
+                    _        <- Browser.assertText(Browser.Selector.id("ready-count"), "1")
+                    _        <- Browser.evalDiscard(observeFileDecisions)
+                    accepted <- Browser.evalBoolean(externalFileEvent("drop", "nested", externalTextFile("note.txt")))
+                    _        <- Sync.defer { assert(accepted) }
+                    _        <- assertEventually(Browser.evalInt("window.__kyoFileResolutions").map(_ == 1))
+                yield ()
+            }
+            actual <- received.get
+        yield assert(actual == Chunk("parent:parent"))
+    }
+
+    "external file decisions finish before the next drop and pointer drag" in {
+        val pointerAfterDrop =
+            """(function(){var el=document.getElementById("source"),r=el.getBoundingClientRect();
+              |function fire(type,y,buttons){el.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,clientX:r.left+4,clientY:y,pointerId:1,button:0,buttons:buttons,pointerType:"mouse"}));}
+              |fire("pointerdown",r.top+4,1);fire("pointermove",r.top+24,1);
+              |var dragging=el.getAttribute("data-kyo-dragging")==="true";fire("pointercancel",r.top+24,0);return dragging;})()""".stripMargin
+        for
+            ready <- Signal.initRef(0)
+            names <- Signal.initRef(Chunk.empty[String])
+            app = UI.div(
+                UI.div("drop").id("zone").dropTarget(Drag.Target("zone", Drag.Accept())).onDrop { (event: Drag.Event) =>
+                    names.updateAndGet(_ ++ event.items.collect { case Drag.Item.File(meta) => meta.name }).andThen(Drag.Decision.Accept)
+                },
+                UI.span("source").id("source").dragSource(Drag.Source("source", Chunk.empty, activation = Drag.Activation.Sensors)),
+                UI.button("ready").id("ready").onClick(ready.updateAndGet(_ + 1).unit),
+                ready.map(n => UI.span(n.toString).id("ready-count"))
+            )
+            _ <- withUI(app) {
+                for
+                    _     <- Browser.click(Browser.Selector.id("ready"))
+                    _     <- Browser.assertText(Browser.Selector.id("ready-count"), "1")
+                    _     <- Browser.evalDiscard(observeFileDecisions)
+                    first <- Browser.evalBoolean(externalFileEvent("drop", "zone", externalTextFile("one.txt")))
+                    // Observe the actual decision frame after its handler runs, regardless of whether resolve succeeds.
+                    _      <- assertEventually(Browser.evalInt("window.__kyoFileResolutions").map(_ == 1))
+                    errors <- Browser.eval("window.__kyoFileErrors.join(',')")
+                    _      <- Sync.defer { assert(first); assert(errors == "", errors) }
+                    second <- Browser.evalBoolean(externalFileEvent("drop", "zone", externalTextFile("two.txt")))
+                    _      <- assertEventually(Browser.evalInt("window.__kyoFileResolutions").map(_ == 2))
+                    active <- Browser.evalBoolean(pointerAfterDrop)
+                yield assert(second && active)
+            }
+            actual <- names.get
+        yield assert(actual == Chunk("one.txt", "two.txt"))
+        end for
+    }
 end DragFileScenarioItTest

@@ -1230,6 +1230,8 @@ val bin: UI = ul.dropTarget(Drag.Target("bin", textOnly, Present("Bin")))(card)
 
 Drop and sort handlers return a `Drag.Decision`: `Accept` commits, `Reject` carries a typed `Drag.Rejection` explaining why (`IncompatibleType`, `TooManyItems`, `FileTooLarge`, or an application reason). Constraint failures reject before dispatch, so a handler only sees payloads its target declared acceptable.
 
+External file hovers select the nearest ancestor accepting their media types, item count and `Copy` operation. File sizes become available at drop, when `maxFileSize` is enforced.
+
 **Sortable collections** build on the same wiring, without the payload ceremony: `Drag.Source.sortable(key)` and `Drag.Target.sortable(collection)` carry a reserved internal media type, so pure reordering never invents an application payload. The target's `collection` name is the contract: it is exactly the value sort moves carry in `Drag.Location.collection` for that container.
 
 A reorder arrives as one semantic `Drag.Move`: the moving keys, the source and destination collection names, an optional anchor key, and a `Before`/`After` position. The pure `Sortable` engine applies and validates it (missing keys, duplicate keys, anchors inside the selection, unsupported operations), so state management stays a total function you can also call programmatically. `Sortable.moveBy` works on your typed values directly, `locked` keys can neither move nor anchor a move, and `Drag.Decision.fromResult` turns the reducer result into the handler's decision, committing only on success:

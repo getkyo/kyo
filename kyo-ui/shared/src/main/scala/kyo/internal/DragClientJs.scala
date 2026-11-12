@@ -168,7 +168,19 @@ private[kyo] object DragClientJs:
            |  for(var i=0;i<dt.files.length;i++){var f=dt.files[i];var t=newToken("file");tokens[t]=f;
            |    out.push({File:{meta:{token:t,name:f.name||"file",mediaType:f.type||"application/octet-stream",size:f.size,lastModified:new Date(f.lastModified||0).toISOString()}}});}
            |  return out;}
-           |function onDropExternal(e){if(phase!=="Idle")return false;var t=tgtAt(e.target);if(!t)return false;
+           |// DataTransferItem hover probes expose type only; File drop probes also expose size. Neither acquires tokens.
+           |function fileProbes(list){var out=[];if(!list)return out;for(var i=0;i<list.length;i++){var f=list[i];
+           |  if(f.kind===undefined||f.kind==="file")out.push({File:{meta:{mediaType:f.type||"application/octet-stream",size:f.size}}});}return out;}
+           |function externalTarget(el,items){var t=tgtAt(el);while(t){var a=t.cfg.accepts,ops=a.operations&&a.operations.values;
+           |  var copy=!ops;for(var i=0;ops&&i<ops.length;i++){if(ops[i].Copy)copy=true;}
+           |  if(copy&&accepts(t,items)){var fits=true;if(a.maxFileSize!==undefined&&a.maxFileSize!==null){
+           |    for(var j=0;j<items.length;j++){var size=items[j].File.meta.size;if(size!==undefined&&size>a.maxFileSize)fits=false;}}
+           |    if(fits)return t;}t=tgtAt(t.el.parentElement);}return null;}
+           |function onDragOverExternal(e){var its=fileProbes(e.dataTransfer&&e.dataTransfer.items);if(!its.length)return;
+           |  var t=externalTarget(e.target,its);if(!t)return;
+           |  e.preventDefault();e.dataTransfer.dropEffect="copy";}
+           |function onDropExternal(e){if(phase!=="Idle")return false;var probe=fileProbes(e.dataTransfer&&e.dataTransfer.files);if(!probe.length)return false;
+           |  var t=externalTarget(e.target,probe);if(!t)return false;
            |  var its=fileItems(e.dataTransfer);if(!its.length)return false;e.preventDefault();
            |  ctx={id:sid("drag"),src:null,op:{Copy:{}},keyboard:false,pointerId:null,last:pt(e),target:t,anchor:null,after:false,slot:0,
            |       collection:null,keys:[],region:null,preview:null};
@@ -204,6 +216,7 @@ private[kyo] object DragClientJs:
            |    next();
            |  },function(){failRead(id,"PermissionDenied");});}
            |  page();}
+           |function onDragOverAny(e){if(phase==="Idle")onDragOverExternal(e);else onDragOverNative(e);}
            |function onDropAny(e){if(phase==="Idle"){onDropExternal(e);}else{onDropNative(e);}}
            |function serveDropRead(op){
            |  if(op.ReadDropFile)serveFileRead(op.ReadDropFile);
@@ -211,9 +224,9 @@ private[kyo] object DragClientJs:
            |  else if(op.CancelDropRead)cancelledReads[op.CancelDropRead.requestId]=true;}
            |function resolve(sessionId,decision){if(closed||!ctx||ctx.id!==sessionId)return;
            |  if(decision.Reject){var r=decision.Reject.rejection||{};var reason=r.Application?r.Application.reason:"rejected";say("Move rejected: "+reason);finish(true);return;}
-           |  if(phase==="AwaitingDecision"||phase==="AwaitingDecisionAfterEnd"){say(label(ctx.src)+" dropped.");finish(false);}}
-           |var caps=[["dragstart",onDragStart],["dragover",onDragOverNative],["drop",onDropAny],["dragend",onDragEndNative],
-           |  ["pointerdown",onPointerDown],["pointermove",onPointerMove],["pointerup",onPointerUp],["pointercancel",onPointerCancel],
+           |  if(phase==="AwaitingDecision"||phase==="AwaitingDecisionAfterEnd"){if(ctx.src)say(label(ctx.src)+" dropped.");finish(false);}}
+           |var caps=[["dragstart",onDragStart],["dragenter",onDragOverAny],["dragover",onDragOverAny],["drop",onDropAny],
+           |  ["dragend",onDragEndNative],["pointerdown",onPointerDown],["pointermove",onPointerMove],["pointerup",onPointerUp],["pointercancel",onPointerCancel],
            |  ["touchstart",onTouchStart],["touchmove",onTouchMove],["touchend",onTouchEnd],["touchcancel",onTouchEnd],
            |  ["keydown",onKeyDown]];
            |for(var ci=0;ci<caps.length;ci++)document.addEventListener(caps[ci][0],caps[ci][1],true);
