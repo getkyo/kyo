@@ -95,12 +95,6 @@ jobs:
       # batch instead of the whole phase. Native target only.
       NATIVE_LINK_BATCH: "${{ matrix.target == 'Native' && '8' || '' }}"
       NATIVE_TEST_BATCH: "${{ matrix.target == 'Native' && '8' || '' }}"
-      # Modules per sbt process in the JS and Wasm run phases. sbt-scalajs keeps every module's linker
-      # state in the driver for the session, so one 6G driver linking every Wasm test bundle reached
-      # kyo-ui with 0.09GB free on main, and one more module ran it out of heap. A batch of 8 holds at
-      # most 8 modules' link state. JS and Wasm targets only.
-      JS_TEST_BATCH: "${{ matrix.target == 'JS' && '8' || '' }}"
-      WASM_TEST_BATCH: "${{ matrix.target == 'Wasm' && '8' || '' }}"
       # Below 512MB free the runner is minutes from dying WITHOUT uploading its log (observed twice
       # on Native rows). ci-monitor.sh then prints the disk attribution and TERM-kills the build,
       # converting an unattributable runner loss into a normal red job with the evidence in the log.
