@@ -182,23 +182,26 @@ RAF callbacks stall on Chromium right after a JS dialog is dismissed, hanging th
 
 **2. Mutation settlement (state-changing actions: `click` / `fill` / `check` /
 `select` / `press` / `uncheck`, plus `setViewport` / `resetViewport` / `scrollTo` /
-`scrollToElement` / `withViewport` / `withEmulation` apply).** After a
+`scrollToElement` / `withViewport` / `withEmulation` apply).** Before a
 state-changing action fires, `MutationSettlement.afterAction` installs a
-window-level `MutationObserver`, records the timestamp of the last mutation, and
+document-bound `MutationObserver`, records the timestamp of the last mutation, and
 polls until `now - lastMutation >= quiescenceWindow`, so the caller sees the settled
 DOM, not the mid-render snapshot React/Vue are in (`MutationSettlement.scala:6-12`).
-The observer is ALWAYS rooted at `document.body` regardless of `scopeSelector`; the
-`scopeSelector` arg is retained for future opt-in scoping but is currently unused,
+The observer is rooted at `document` regardless of `scopeSelector`; the
+`scopeSelector` arg is retained for call-site compatibility and does not restrict observation,
 because onclick handlers commonly mutate sibling DOM a target-scoped observer would
-never see (`MutationSettlement.scala:23-33`). Quiescence has two regimes keyed off a
-`startCount` snapshot taken at action-complete: if no mutation has landed it keeps
+never see. This also covers documents whose body has not arrived yet. Quiescence
+has two regimes: if no mutation has landed since installation it keeps
 polling only until `mutationFirstMutationGrace` elapses (the fast path for no-op
 clicks), otherwise it waits for `quiescenceWindow` of quiet bounded by
-`mutationSettlementTimeout`, raising a timeout if the DOM never stops churning
-(`MutationSettlement.scala:49-63`). A single window-level observer is shared across
-concurrent `afterAction` calls via a reference count (`window.__kyoMutObsRef`):
-install bumps, release decrements, and the observer disconnects when the count
-hits 0 (`MutationSettlement.scala:16-19`).
+`mutationSettlementTimeout`, raising a timeout if the DOM never stops churning.
+Each call owns its observer and polling timers through a CDP object handle.
+`CdpBackend.acquire` owns late replies after cancellation; disposal disconnects the
+observer and clears its timers. `Runtime.callFunctionOn` addresses the original
+document, so cleanup cannot disconnect a concurrent wait in a replacement page.
+Navigation during settlement waits for the replacement document through the
+existing navigation readiness checks. A framework POST queue still pending at the
+deadline raises a timeout instead of reporting a settled DOM.
 
 The observer callback filters out `data-kyo-internal` mutations so injected
 overlays and the freeze stylesheet are settlement-transparent: see

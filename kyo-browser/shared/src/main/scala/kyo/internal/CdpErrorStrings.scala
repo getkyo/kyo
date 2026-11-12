@@ -24,4 +24,10 @@ private[kyo] object CdpErrorStrings:
       */
     val UnreturnableValueErrorMessage: String = "Object couldn't be returned by value"
 
+    /** An evaluation's document was replaced while its promise was pending. */
+    val TargetNavigatedErrorMessage: String = "Inspected target navigated or closed"
+
+    /** A remote object belonged to an execution context that no longer exists. */
+    val ObjectNotFoundErrorMessage: String = "Could not find object with given id"
+
 end CdpErrorStrings

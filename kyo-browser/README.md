@@ -198,7 +198,9 @@ Browser automation usually fails because the action fires before the page is rea
 
 **Assertion settlement** is the gate for `assertText`, `assertVisible`, `assertCount`, `waitForText`, and friends. Each of those re-evaluates its predicate against the active retry schedule (default `100 ms × maxDuration(8 s)`) until either the predicate accepts or the schedule exhausts. An exhausted schedule raises a typed `BrowserAssertion*` exception rather than returning `false`. For a point-in-time read use `Browser.text` / `attribute` / `count`; for arbitrary JS predicates use `Browser.waitFor(jsCondition)`. Every retrying method also accepts a `schedule: Maybe[Schedule]` argument for a one-off override of the active schedule.
 
-Some flows need a separate dance: an interaction whose follow-on navigation is driven by JS (a button whose click handler calls `location.assign`, a link that opens via `window.open` and then redirects, …) does not surface a navigation event to CDP at the moment of the click. `Browser.expectNavigation(settle) { trigger }` arms the navigation watcher around the trigger so the click and its follow-on load settle together.
+If an action navigates while mutation settlement is running, settlement follows the replacement document and waits for its navigation readiness checks. Each wait owns its observer and timers in the document where it began, so overlapping actions and cancellation cannot dispose another document's observer. A framework POST queue still pending at the settlement deadline raises a timeout.
+
+Use `Browser.expectNavigation(settle) { trigger }` to declare a navigation explicitly, including navigation scheduled after an action's mutation settlement has already finished, or to choose its settle mode.
 
 ## Interactions and assertions
 

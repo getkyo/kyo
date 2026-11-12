@@ -174,8 +174,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
       */
     private val elementClipReplyJson: String = """{"found":true,"ok":true,"x":0,"y":0,"width":10,"height":10}"""
 
-    /** Canned `Runtime.evaluate` reply for every eval [[serveEval]] does not gate or tag: a discarded string that also
-      * decodes as `MutationSettlement`'s `{"tag": ...}` quiescence-poll shape.
+    /** Canned value reply for [[serveEval]]'s evaluations and settlement calls.
       */
     private val evalDoneJson: String = """{"tag":"done"}"""
 
@@ -194,10 +193,17 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                 case Present(Structure.Value.Record(fields)) =>
                     fields.iterator.collectFirst { case ("expression", Structure.Value.Str(s)) => s }.getOrElse("")
                 case _ => ""
-        def replyValue(method: String): Structure.Value = method match
+        def replyValue(req: JsonRpcRequest): Structure.Value = req.method match
             case "Browser.getVersion" =>
                 summon[Schema[BrowserVersionResult]].toStructureValue(BrowserVersionResult("1.3", "Chrome/1", "1", "ua", "v8"))
-            case "Runtime.evaluate" =>
+            case "Runtime.evaluate" if req.params.exists {
+                    case Structure.Value.Record(fields) => fields.contains(("returnByValue", Structure.Value.Bool(false)))
+                    case _                              => false
+                } =>
+                summon[Schema[EvaluateObjectResult]].toStructureValue(
+                    EvaluateObjectResult(RemoteObjectRef("object", Present("settlement-observer")), Absent)
+                )
+            case "Runtime.evaluate" | "Runtime.callFunctionOn" =>
                 summon[Schema[EvalResult]].toStructureValue(EvalResult(RemoteObject.`string`(evalDoneJson), Absent))
             case _ =>
                 summon[Schema[CdpNoParams]].toStructureValue(CdpNoParams())
@@ -213,11 +219,11 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                             else Chunk(req.method)
                         wire.seen.updateAndGet(_.concat(marker)).andThen {
                             (if gated then gate.await else Kyo.unit)
-                                .andThen(browserEnd.send(JsonRpcResponse.success(req.id, replyValue(req.method))))
+                                .andThen(browserEnd.send(JsonRpcResponse.success(req.id, replyValue(req))))
                         }
                     case req: JsonRpcRequest =>
                         wire.seen.updateAndGet(_.append(req.method))
-                            .andThen(browserEnd.send(JsonRpcResponse.success(req.id, replyValue(req.method))))
+                            .andThen(browserEnd.send(JsonRpcResponse.success(req.id, replyValue(req))))
                     case _: JsonRpcResponse => wire.replies.incrementAndGet.unit
                     case _                  => Kyo.unit
                 }

@@ -210,6 +210,15 @@ final private[kyo] case class EvalParams(
     contextId: Maybe[Int] = Absent
 ) derives Schema
 final private[kyo] case class EvalResult(result: RemoteObject, exceptionDetails: Maybe[ExceptionDetails] = Absent) derives Schema
+
+/** Calls a function on an acquired object in its original execution context, even if the tab has since navigated. */
+final private[kyo] case class CallFunctionOnParams(
+    objectId: String,
+    functionDeclaration: String,
+    returnByValue: Boolean = true,
+    awaitPromise: Boolean = false
+) derives Schema
+
 final private[kyo] case class CdpCallFrame(
     functionName: String = "",
     url: String = "",

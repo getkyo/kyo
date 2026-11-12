@@ -597,7 +597,7 @@ object Browser:
 
     /** Presses the given key without targeting a specific element; dispatches `Input.dispatchKeyEvent` against whatever currently has focus
       * (typically `document.body` when no element is focused). Useful for global shortcuts (e.g. `Key.Escape` to dismiss a modal, `Key.Tab`
-      * to move focus). Settlement is rooted at `document.body` since there is no scoped target.
+      * to move focus). Settlement observes the whole document.
       */
     def press(key: Key)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
         press(key, KeyModifiers.none)
