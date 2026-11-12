@@ -58,7 +58,7 @@ sealed abstract class HttpConnectionException(message: String, cause: String | T
 /** Connection refused or unreachable host. */
 case class HttpConnectException(host: String, port: Int, cause: Throwable)(using Frame)
     extends HttpConnectionException(
-        s"""Connection to $host:$port failed.
+        s"""Connection to ${HttpUrl.uriHost(host)}:$port failed.
            |
            |  Verify the server is running and reachable.""".stripMargin,
         cause
@@ -85,13 +85,13 @@ case class HttpUnixConnectException(path: String, cause: Throwable)(using Frame)
 /** TCP connect exceeded the configured timeout. */
 case class HttpConnectTimeoutException(host: String, port: Int, timeout: Duration)(using Frame)
     extends HttpConnectionException(
-        s"""Connection to $host:$port timed out after $timeout."""
+        s"""Connection to ${HttpUrl.uriHost(host)}:$port timed out after $timeout."""
     )
 
 /** All connections to a host are in use. Includes the Frame where the client was created for debugging. */
 case class HttpPoolExhaustedException(host: String, port: Int, maxConnections: Int, clientFrame: Frame)(using Frame)
     extends HttpConnectionException(
-        s"""All $maxConnections connections to $host:$port are in use.
+        s"""All $maxConnections connections to ${HttpUrl.uriHost(host)}:$port are in use.
            |
            |  Each HttpClient instance maintains its own connection pool.
            |  This client was created at: ${clientFrame.position.show}
@@ -103,6 +103,9 @@ case class HttpPoolExhaustedException(host: String, port: Int, maxConnections: I
 /** The connection closed before or during a message with bytes still owed: before its head arrived, before the body its framing declared
   * was complete, or, over TLS, without a `close_notify` on a close-framed body (RFC 9112 section 9.8): a bare TCP FIN, a reset or a
   * fatal record. `phase` says which. The bytes of a streamed body that did arrive are delivered before the failure.
+  *
+  * A server may close an idle keep-alive connection at any time, so a close in `BeforeHead` is a candidate for retry on a fresh connection
+  * when the request is idempotent.
   *
   * `TlsTruncated` is reported where the transport observes the close reason: the posix and NIO transports on JVM and Native. The Node
   * transport on JS and Wasm cannot observe it, so a close-framed TLS body is accepted as complete there.
@@ -245,17 +248,25 @@ case class HttpCookieException private[kyo] (part: String)(using Frame)
            |  and no ';'. Encode arbitrary content, base64 being the usual choice.""".stripMargin
     )
 
-/** Non-success status code when the response body can't be decoded. */
-case class HttpStatusException private (status: HttpStatus, method: String, url: String, body: Maybe[String])(using Frame)
-    extends HttpRequestException(
+/** A non-2xx response a call treats as a failure: its status, the request it answered, the body when one arrived, and the response's
+  * headers, which say what a refusal asks of the caller, such as a 429's `Retry-After`. The headers are data for the caller; the message
+  * does not render them.
+  */
+case class HttpStatusException private (status: HttpStatus, method: String, url: String, body: Maybe[String], headers: HttpHeaders)(using
+    Frame
+) extends HttpRequestException(
         s"${HttpException.showRequest(method, url)} returned ${status.code} (${status.name})." +
             body.map(b => s" Body: ${if b.length > 500 then b.take(500) + "..." else b}").getOrElse("")
     )
 object HttpStatusException:
     def apply(status: HttpStatus, method: String, url: String)(using Frame): HttpStatusException =
-        new HttpStatusException(status, method, HttpException.stripQuery(url), Absent)
+        apply(status, method, url, HttpHeaders.empty)
     def apply(status: HttpStatus, method: String, url: String, body: String)(using Frame): HttpStatusException =
-        new HttpStatusException(status, method, HttpException.stripQuery(url), Present(body))
+        apply(status, method, url, body, HttpHeaders.empty)
+    def apply(status: HttpStatus, method: String, url: String, headers: HttpHeaders)(using Frame): HttpStatusException =
+        new HttpStatusException(status, method, HttpException.stripQuery(url), Absent, headers)
+    def apply(status: HttpStatus, method: String, url: String, body: String, headers: HttpHeaders)(using Frame): HttpStatusException =
+        new HttpStatusException(status, method, HttpException.stripQuery(url), Present(body), headers)
 end HttpStatusException
 
 // --- Server (server-side operational failures) ---
@@ -275,7 +286,7 @@ sealed abstract class HttpServerException(message: String, cause: String | Throw
 /** Server failed to bind to a port. */
 case class HttpBindException(host: String, port: Int, cause: Throwable)(using Frame)
     extends HttpServerException(
-        s"""Server failed to bind to $host:$port.
+        s"""Server failed to bind to ${HttpUrl.uriHost(host)}:$port.
            |
            |  Is another process already using port $port?""".stripMargin,
         cause

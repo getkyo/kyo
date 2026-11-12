@@ -481,6 +481,19 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     }
 
+    "an IPv6 host is sent in brackets in the Host header" in {
+        val route = HttpRoute.getRaw("host").response(_.bodyText)
+        val ep    = route.handler(req => HttpResponse.ok(req.headers.get("Host").getOrElse("")))
+        Scope.run {
+            HttpServer.init(0, "::1")(ep).map { server =>
+                val url = HttpUrl.parse(s"http://[::1]:${server.port}").getOrThrow
+                directSend(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/host"))).map { resp =>
+                    assert(resp.fields.body == s"[::1]:${server.port}")
+                }
+            }
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // 18. readLoopUnsafe accumulates bytes until contentLength
     // ---------------------------------------------------------------------------
@@ -829,19 +842,78 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         test: Int => A < (Async & Abort[Any] & Scope)
     )(using Frame): A < (Async & Abort[Any] & Scope) =
         val bytes = response.getBytes(StandardCharsets.UTF_8)
-        Sync.Unsafe.defer {
-            kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16) { conn =>
-                // The response is queued on accept rather than after reading the request: HTTP/1.1 lets a server answer as
-                // soon as it likes, and the client buffers the bytes until its parser runs. This keeps the peer free of
-                // any read/write ordering that could stall the test.
-                discard(conn.outbound.offer(Span.fromUnsafe(bytes)))
-            }
-        }.map { fiber =>
-            fiber.safe.use { listener =>
-                Scope.ensure(Sync.Unsafe.defer(listener.close())).andThen(test(listener.port))
+        withPeer { conn =>
+            // The response is queued on accept rather than after reading the request: HTTP/1.1 lets a server answer as
+            // soon as it likes, and the client buffers the bytes until its parser runs. This keeps the peer free of
+            // any read/write ordering that could stall the test.
+            discard(conn.outbound.offer(Span.fromUnsafe(bytes)))
+        }(test)
+    end withRawPeer
+
+    // A peer that reads the first bytes of the request and closes without answering: the close reaches the client while it
+    // waits for the response headers.
+    private def withClosingPeer[A](test: Int => A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        withPeer(conn => conn.inbound.takeFiber().onComplete(_ => conn.close()))(test)
+    end withClosingPeer
+
+    private def withPeer[A](onConnect: kyo.net.Connection => Unit)(
+        test: Int => A < (Async & Abort[Any] & Scope)
+    )(using Frame): A < (Async & Abort[Any] & Scope) =
+        Sync.defer(new ConnectionRegistry[kyo.net.Connection]).map { connections =>
+            // Own the producer before awaiting it: cancellation must still close an eventual listener.
+            Scope.acquireRelease(Sync.Unsafe.defer {
+                kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16) { conn =>
+                    connections.pruneClosed(_.isOpen)
+                    if connections.register(conn)(_.close()) then onConnect(conn)
+                }.uninterruptible().safe
+            }) { pending =>
+                pending.getResult.map {
+                    case Result.Success(listener) =>
+                        Sync.Unsafe.defer {
+                            listener.close()
+                            connections.closeAll(_.close())
+                            listener.released.safe.get
+                        }
+                    case _ => Sync.Unsafe.defer(connections.closeAll(_.close()))
+                }
+            }.map(_.use(listener => test(listener.port)))
+        }
+    end withPeer
+
+    private val closedBufferedRoute  = HttpRoute.getRaw("closed").response(_.bodyText)
+    private val closedStreamingRoute = HttpRoute.getRaw("closed").response(_.bodyStream)
+
+    "a peer that closes before the response headers fails a buffered request with HttpConnectionClosedException" in {
+        Scope.run {
+            withClosingPeer { port =>
+                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                    HttpClient.use { hc =>
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/closed", Absent))
+                        Abort.run[HttpException](hc.sendWith(closedBufferedRoute, request)(identity)).map {
+                            case Result.Failure(_: HttpConnectionClosedException) => succeed
+                            case other => fail(s"Expected a typed HttpConnectionClosedException, got $other")
+                        }
+                    }
+                }
             }
         }
-    end withRawPeer
+    }
+
+    "a peer that closes before the response headers fails a streaming request with HttpConnectionClosedException" in {
+        Scope.run {
+            withClosingPeer { port =>
+                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                    HttpClient.use { hc =>
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/closed", Absent))
+                        Abort.run[HttpException](hc.sendWith(closedStreamingRoute, request)(identity)).map {
+                            case Result.Failure(_: HttpConnectionClosedException) => succeed
+                            case other => fail(s"Expected a typed HttpConnectionClosedException, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     private val nonAsciiRoute = HttpRoute.getRaw("start").response(_.bodyText)
 
