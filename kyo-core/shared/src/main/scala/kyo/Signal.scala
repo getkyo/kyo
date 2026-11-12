@@ -99,13 +99,16 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       * closed before the next `f` runs, at most one value's children are alive at a time and no waiter or fiber accumulates across changes.
       *
       * It is designed never to permanently miss the latest value, even under a write that races the observation, and never to tear a
-      * still-current value's `Scope` down on an idle timer. Every signal uses the same repairing loop: it reads `current`, runs `f`, then
-      * re-arms a `nextWith`/`Async.sleep(repairInterval)` race that holds the value's `Scope` open until the next change. A write that lands
-      * in the narrow window between reading `current` and registering `nextWith` is missed by the immediate wakeup and reconciled when the
-      * repair timer next fires and re-reads `current` (the hold re-waits on a still-current value, so a repair timer never closes its `Scope`).
-      * So the final value is always delivered: immediately in the common case, and within `repairInterval` in the worst case when a write
-      * races that window. Correctness never depends on `repairInterval` ; only the worst-case reconciliation latency does. This variant uses
-      * [[Signal.defaultRepairInterval]].
+      * still-current value's `Scope` down on an idle timer. Delivery comes in two tiers. A [[SignalRef]] (and a `map` chain rooted in one)
+      * observes exactly: a version-validated register/validate/await protocol makes every change wake the observer immediately, with no
+      * repair timer armed at all (see the `SignalRef.observe` override). Combinator-derived signals (`zip`, `combineLatest`, `switchMap`,
+      * `zipAll`, `combineLatestAll`, custom `initRaw`) use the repairing loop: it reads `current`, runs `f`, then re-arms a
+      * `nextWith`/`Async.sleep(repairInterval)` race that holds the value's `Scope` open until the next change. A write that lands in the
+      * window between reading `current` and registering `nextWith` is missed by the immediate wakeup and reconciled when the repair timer
+      * next fires and re-reads `current` (the hold re-waits on a still-current value, so a repair timer never closes its `Scope`). So the
+      * final value is always delivered: immediately in the common case, and within `repairInterval` in the worst case when a write races
+      * that window on a derived signal. Correctness never depends on `repairInterval` ; only the worst-case reconciliation latency does.
+      * This variant uses [[Signal.defaultRepairInterval]].
       *
       * @param f
       *   The per-value setup, run inside a fresh `Scope`; it may fork scoped children (`Fiber.init`) and should return once setup is done,
@@ -124,7 +127,8 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       * keeps the per-value `Scope` open.
       *
       * @param repairInterval
-      *   How often a parked observation re-reads `current` to reconcile a missed wakeup on the repair path
+      *   How often a parked observation re-reads `current` to reconcile a missed wakeup on the repair path; ignored by exact observers
+      *   (`SignalRef` and `map` chains rooted in one), which never miss a wakeup
       * @param f
       *   The per-value setup, run inside a fresh `Scope`
       */
@@ -270,7 +274,8 @@ object Signal:
       *
       * It bounds how soon a missed wakeup is reconciled by re-reading `current`: a write that races the observation's
       * read/register window is delivered within this interval. Real changes are otherwise immediate, so this can be
-      * generous; it exists to bound that rare race, not to drive normal updates.
+      * generous; it exists to bound that rare race, not to drive normal updates. Exact observers ([[SignalRef]] and
+      * `map` chains rooted in one) never miss a wakeup and ignore it entirely, arming no timer at all.
       */
     val defaultRepairInterval: Duration = 1.second
 
@@ -547,16 +552,45 @@ object Signal:
 
         def nextWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe.defer(unsafe.next().safe.use(f))
 
-        // `observe` is intentionally NOT overridden here: `SignalRef` uses the trait's repairing `observe`.
-        //
-        // An earlier exact, register-before-read override captured the next-change promise before reading `current` and
-        // held it live across the per-value `Scope.run`/`Async` suspension. That pattern miscompiles on Scala Native
-        // 0.5.10: although it runs correctly in isolation (kyo-core's own native suite passes), its mere presence in a
-        // downstream native binary perturbs whole-program codegen and corrupts the heap, surfacing as an unrecoverable
-        // SIGSEGV/SIGABRT under concurrent load (reproduced in the kyo-browser native suite). The repairing loop never
-        // holds a promise across the suspension, emits no such pattern, and is lossless: a write that races the
-        // read/register window is reconciled within `repairInterval`, never dropped. Do not reintroduce an exact
-        // override without re-validating the full kyo-browser native suite.
+        /** Observes exactly, without a repair timer, through a version-validated register/validate/await protocol.
+          *
+          * A write stores the value, increments the version, then swaps and completes the next-change promise (see `Unsafe.onUpdate`). The
+          * observer reads the version before the value, runs `f`, and re-arms by capturing the next-change promise and checking the version
+          * again, parking only while it is unchanged. A write that lands before the check is seen by the check; one that lands after it
+          * completes exactly the captured promise. Either way no change is stranded, and an idle observer holds exactly one waiter.
+          *
+          * Reading the version before the value is what makes this sound: the other order could pair a fresh value with a stale version and
+          * then wait on a promise that write has already completed and replaced. Observation stays level-based, so a change and its revert
+          * during `f` wake the observer, which re-reads an unchanged value and waits again.
+          *
+          * `repairInterval` is not used: only signals that can miss a wakeup need it.
+          */
+        override def observe[S](repairInterval: Duration)(f: A => Unit < (S & Async & Scope))(using Frame): Unit < (S & Async) =
+            def nextSince(v0: Long): Unit < Async =
+                Sync.Unsafe.defer {
+                    if _unsafe.version() != v0 then ()
+                    else
+                        // Parks directly on the masked next-change promise: an interrupted fiber releases the wakeup it
+                        // registered there (see `IOTask`), so the observer stays interruptible without a wrapper.
+                        val waiter = _unsafe.next().safe
+                        if _unsafe.version() != v0 then (): Unit < Async
+                        else waiter.use(_ => ())
+                    end if
+                }
+            def hold(v0: Long, cur: A): Unit < Async =
+                nextSince(v0).andThen(Sync.Unsafe.defer {
+                    val v1 = _unsafe.version()
+                    if _unsafe.get() == cur then hold(v1, cur) else (): Unit < Async
+                })
+            def loop(last: Maybe[A]): Unit < (S & Async) =
+                Sync.Unsafe.defer {
+                    val v0  = _unsafe.version()
+                    val cur = _unsafe.get()
+                    if last.exists(_ == cur) then nextSince(v0).andThen(loop(last))
+                    else Scope.run(f(cur).andThen(hold(v0, cur))).andThen(loop(Present(cur)))
+                }
+            loop(Absent)
+        end observe
 
         /** Retrieves the current value of the reference.
           *
@@ -655,10 +689,16 @@ object Signal:
           */
         final class Unsafe[A] private (
             currentRef: AtomicRef.Unsafe[A],
-            nextPromise: AtomicRef.Unsafe[Promise.Unsafe[A, Any]]
+            nextPromise: AtomicRef.Unsafe[Promise.Unsafe[A, Any]],
+            versionRef: AtomicLong.Unsafe
         )(using CanEqual[A, A]):
 
             def get()(using AllowUnsafe): A = currentRef.get()
+
+            /** Monotonic change counter, incremented once per distinct-value update. `SignalRef.observe` uses it
+              * to validate that no write landed between reading `current` and capturing the next-change promise.
+              */
+            def version()(using AllowUnsafe): Long = versionRef.get()
 
             def set(value: A)(using AllowUnsafe): Unit =
                 discard(getAndSet(value))
@@ -713,8 +753,13 @@ object Signal:
                 nextPromise.get()
 
             private def onUpdate(value: A)(using AllowUnsafe): Unit =
+                // The version MUST be bumped before the promise swap. Writer order is: value write (in the
+                // caller), version increment, promise swap+complete. `SignalRef.observe`'s register/validate
+                // protocol relies on exactly this order for losslessness (see the override).
+                discard(versionRef.incrementAndGet())
                 nextPromise.getAndSet(Promise.Unsafe.initUninterruptible())
                     .completeDiscard(Result.succeed(value))
+            end onUpdate
 
             def waiters()(using AllowUnsafe): Int = nextPromise.get().waiters()
 
@@ -729,7 +774,8 @@ object Signal:
             def init[A](initial: A)(using AllowUnsafe, CanEqual[A, A]): Unsafe[A] =
                 Unsafe(
                     AtomicRef.Unsafe.init(initial),
-                    AtomicRef.Unsafe.init(Promise.Unsafe.initUninterruptible())
+                    AtomicRef.Unsafe.init(Promise.Unsafe.initUninterruptible()),
+                    AtomicLong.Unsafe.init(0L)
                 )
         end Unsafe
 
