@@ -96,8 +96,15 @@ private[kyo] object ChromeDownloader:
       */
     private[kyo] val installedMarker = ".kyo-browser-installed"
 
-    private def isInstalled(versionDir: Path)(using Frame): Boolean < Sync =
-        Abort.recover[FileSystemException](_ => false)(Path.runReadOnly((versionDir / installedMarker).exists))
+    /** Whether `versionDir` holds a completed install. A failure to inspect it fails setup rather than reading as absent, which
+      * would start a download into a location the filesystem just refused.
+      */
+    private def isInstalled(versionDir: Path)(using Frame): Boolean < (Sync & Abort[BrowserSetupException]) =
+        val marker = versionDir / installedMarker
+        Abort.recover[FileSystemException] { ex =>
+            Abort.fail[BrowserSetupException](BrowserSetupFailedException(s"failed to inspect cached Chrome install $marker", ex))
+        }(Path.runReadOnly(marker.exists))
+    end isInstalled
 
     /** Downloads into a staging directory next to `versionDir`, so the final move stays on one volume and is atomic, then puts the
       * marked result in place. Concurrent setups, in this process or another, each stage privately; the first move wins and the

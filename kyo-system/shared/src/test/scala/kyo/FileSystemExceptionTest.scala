@@ -15,6 +15,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             FileIsADirectoryException(p),
             FileDirectoryNotEmptyException(p),
             FileInvalidPathException("nul", FileSystemOperation.Read),
+            FileOutsideRootException(p, target, FileSystemOperation.Read),
             FileIOException(p, FileSystemOperation.Read, cause),
             FileWriteStalledException(p, 7.bytes),
             FileAtomicMoveUnsupportedException(p, target),
@@ -23,13 +24,15 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             FileLockOwnershipLostException(p),
             FileWatchInvalidatedException(p)
         )
-        assert(values.size == 13)
+        assert(values.size == 14)
         assert(values(5).asInstanceOf[FileInvalidPathException].input == "nul")
-        assert(values(6).asInstanceOf[FileIOException].operation == FileSystemOperation.Read)
-        assert(values(6).getCause eq cause)
-        assert(values(7).asInstanceOf[FileWriteStalledException].remaining == 7.bytes)
-        assert(values(8).asInstanceOf[FileAtomicMoveUnsupportedException].source == p)
-        assert(values(8).asInstanceOf[FileAtomicMoveUnsupportedException].target == target)
+        assert(values(6).asInstanceOf[FileOutsideRootException].root == p)
+        assert(values(6).asInstanceOf[FileOutsideRootException].path == target)
+        assert(values(7).asInstanceOf[FileIOException].operation == FileSystemOperation.Read)
+        assert(values(7).getCause eq cause)
+        assert(values(8).asInstanceOf[FileWriteStalledException].remaining == 7.bytes)
+        assert(values(9).asInstanceOf[FileAtomicMoveUnsupportedException].source == p)
+        assert(values(9).asInstanceOf[FileAtomicMoveUnsupportedException].target == target)
     }
 
     "leaves belong only to applicable operation categories" in {
@@ -68,6 +71,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             case _: FileAccessDeniedException => "FileAccessDeniedException"
             case _: FileIsADirectoryException => "FileIsADirectoryException"
             case _: FileInvalidPathException  => "FileInvalidPathException"
+            case _: FileOutsideRootException  => "FileOutsideRootException"
             case _: FileIOException           => "FileIOException"
         assert(result == "FileNotFoundException")
     }
@@ -117,6 +121,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             case _: FileAlreadyExistsException         => "FileAlreadyExistsException"
             case _: FileDirectoryNotEmptyException     => "FileDirectoryNotEmptyException"
             case _: FileInvalidPathException           => "FileInvalidPathException"
+            case _: FileOutsideRootException           => "FileOutsideRootException"
             case _: FileIOException                    => "FileIOException"
             case _: FileAtomicMoveUnsupportedException => "FileAtomicMoveUnsupportedException"
         assert(result == "FileNotFoundException")
@@ -124,7 +129,8 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
 
     // Exhaustive match on FileWriteException covers all concrete subtypes, with no wildcard.
     // FileNotFoundException, FileAccessDeniedException, FileIsADirectoryException,
-    // FileNotADirectoryException, FileIOException, and FileWriteStalledException all implement FileWriteException.
+    // FileNotADirectoryException, FileIOException, FileWriteStalledException, and FileOutsideRootException all implement
+    // FileWriteException.
     "exhaustive match on FileWriteException" in {
         val ex: FileWriteException = FileNotFoundException(p)
         val result                 = ex match
@@ -135,6 +141,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             case _: FileInvalidPathException   => "FileInvalidPathException"
             case _: FileIOException            => "FileIOException"
             case _: FileWriteStalledException  => "FileWriteStalledException"
+            case _: FileOutsideRootException   => "FileOutsideRootException"
         assert(result == "FileNotFoundException")
     }
 

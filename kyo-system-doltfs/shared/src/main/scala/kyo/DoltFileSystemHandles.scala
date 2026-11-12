@@ -55,12 +55,13 @@ final private[kyo] class MaterializedWalkHandle(paths: Chunk[Path]) extends Path
 
     private var cursor: Int = 0
 
-    def next()(using AllowUnsafe): Maybe[Path] =
-        if cursor >= paths.size then Absent
+    /** Never fails: the paths were gathered when the walk opened. */
+    def next()(using AllowUnsafe, Frame): Result[FileReadException | FileStructureException, Maybe[Path]] =
+        if cursor >= paths.size then Result.succeed(Absent)
         else
             val path = paths(cursor)
             cursor += 1
-            Present(path)
+            Result.succeed(Present(path))
 
     def close()(using AllowUnsafe): Unit = ()
 
