@@ -260,3 +260,38 @@ jobs:
             target/classnames-index.tsv
             target/classnames-index.sha
           key: classnames-index-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+
+      # Zinc's task streams record the compiler version, arguments and ordered classpath that the
+      # console omits. Retain them with library fingerprints when a check fails so a missing symbol
+      # can be investigated against the actual runner inputs after the runner is gone.
+      - name: Fingerprint compiler libraries
+        if: failure()
+        shell: bash
+        run: |
+          compiler_caches=()
+          for cache in "$HOME/.cache/coursier" "$HOME/.sbt/boot"; do
+            if [ -d "$cache" ]; then
+              compiler_caches+=("$cache")
+            fi
+          done
+          if [ "${#compiler_caches[@]}" -gt 0 ]; then
+            mkdir -p target
+            find "${compiler_caches[@]}" -type f \( \
+              -name 'scala-library*.jar' -o \
+              -name 'scala3-library_3-*.jar' -o \
+              -name 'scala-compiler*.jar' -o \
+              -name 'scala3-compiler_3-*.jar' \
+            \) -exec sha256sum {} + | LC_ALL=C sort > target/compiler-library-sha256.txt
+          fi
+
+      - name: Preserve compiler diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: checks-compiler-diagnostics-${{ github.run_attempt }}
+          path: |
+            **/target/streams/*/compile/_global/streams/out
+            **/target/streams/*/compileIncremental/_global/streams/out
+            target/compiler-library-sha256.txt
+          if-no-files-found: warn
+          retention-days: 7
