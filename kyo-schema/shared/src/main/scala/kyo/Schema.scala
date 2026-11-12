@@ -2209,12 +2209,12 @@ object Schema:
 
     /** Typeclass derivation entry point for Schema[A].
       *
-      * Automatically generates a full Schema[A] for case classes and sealed traits/enums, including serialization, structural type, source
+      * Automatically generates a full Schema[A] for case classes, records and sealed traits/enums, including serialization, structural type, source
       * field descriptors, and default values. Summoned implicitly wherever `using Schema[A]` appears, or explicitly via `Schema.derived[A]`
       * to define a given in a companion object.
       *
       * @tparam A
-      *   the type to derive a Schema for; must be a case class, sealed trait, enum, or primitive
+      *   the type to derive a Schema for; must be a case class, record, sealed trait, enum, or type union
       */
     inline given derived[A]: Schema[A] = ${ internal.SchemaDerivedMacro.derivedImpl[A] }
 
