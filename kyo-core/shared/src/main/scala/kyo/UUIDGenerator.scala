@@ -23,7 +23,7 @@ abstract class UUIDGenerator:
     def v4(using Frame): UUID < Sync
 
     /** Generates a monotonic RFC version 7 UUID. */
-    def v7(using Frame): UUID < Sync
+    def v7(using Frame): UUID.V7 < Sync
 end UUIDGenerator
 
 object UUIDGenerator:
@@ -39,7 +39,7 @@ object UUIDGenerator:
         Sync.withLocal(local)(_.v4)
 
     /** Generates a version 7 UUID with the dynamically scoped generator. */
-    def v7(using Frame): UUID < Sync =
+    def v7(using Frame): UUID.V7 < Sync =
         Sync.withLocal(local)(_.v7)
 
     /** Runs `value` with `generator` installed as the dynamically scoped UUID generator. */
@@ -47,7 +47,7 @@ object UUIDGenerator:
         local.let(generator)(value)
 
     abstract private[kyo] class TestControl extends UUIDGenerator:
-        def v7WithStateReadHook(hook: UUID => Unit < Async)(using Frame): UUID < Async
+        def v7WithStateReadHook(hook: UUID => Unit < Async)(using Frame): UUID.V7 < Async
     end TestControl
 
     private[kyo] def init(clockMillis: () => Long, next16: Frame ?=> Span[Byte] < Sync): UUIDGenerator =
@@ -73,12 +73,12 @@ object UUIDGenerator:
         def v4(using Frame): UUID < Sync =
             next16.map(stampV4)
 
-        def v7(using Frame): UUID < Sync =
+        def v7(using Frame): UUID.V7 < Sync =
             observeMillis.map: observedMillis =>
                 validateMillis(observedMillis)
                 v7Loop(observedMillis, _ => ())
 
-        def v7WithStateReadHook(hook: UUID => Unit < Async)(using Frame): UUID < Async =
+        def v7WithStateReadHook(hook: UUID => Unit < Async)(using Frame): UUID.V7 < Async =
             observeMillis.map: observedMillis =>
                 validateMillis(observedMillis)
                 v7Loop(observedMillis, hook)
@@ -86,15 +86,15 @@ object UUIDGenerator:
         private def observeMillis(using Frame): Long < Sync =
             clockMillis
 
-        private def v7Loop[S](observedMillis: Long, hook: UUID => Unit < S)(using Frame): UUID < (S & Sync) =
+        private def v7Loop[S](observedMillis: Long, hook: UUID => Unit < S)(using Frame): UUID.V7 < (S & Sync) =
             state.get.map: previous =>
                 hook(toUUID(previous)).andThen:
                     nextState(previous, observedMillis).map: next =>
                         state.compareAndSet(previous, next).map: updated =>
-                            if updated then toUUID(next)
+                            if updated then toV7(next)
                             else v7Loop(observedMillis, hook)
 
-        private def nextState(previous: V7State, observedMillis: Long)(using Frame): V7State < Sync =
+        private def nextState(previous: V7State, observedMillis: Long)(using Frame): V7State.Value < Sync =
             previous match
                 case V7State.Empty =>
                     samplePayload.map: payload =>
@@ -187,13 +187,13 @@ object UUIDGenerator:
 
     private def toUUID(state: V7State): UUID =
         state match
-            case V7State.Empty                                           => UUID.nil
-            case V7State.Value(effectiveMillis, payloadHigh, payloadLow) =>
-                val mostSignificantBits  = (effectiveMillis << 16) | 0x7000L | payloadHigh
-                val leastSignificantBits = 0x8000000000000000L | payloadLow
-                UUID.fromLongs(mostSignificantBits, leastSignificantBits)
+            case V7State.Empty        => UUID.nil
+            case value: V7State.Value => toV7(value)
         end match
     end toUUID
+
+    private def toV7(state: V7State.Value): UUID.V7 =
+        UUID.V7.init(state.effectiveMillis, state.payloadHigh, state.payloadLow)
 
     private def readLong(source: Span[Byte], offset: Int): Long =
         var result = 0L

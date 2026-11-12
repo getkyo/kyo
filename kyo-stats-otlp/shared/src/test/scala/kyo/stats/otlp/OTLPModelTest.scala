@@ -67,6 +67,28 @@ class OTLPModelTest extends kyo.test.Test[Any]:
     }
 
     "KeyValue" - {
+        "list attributes retain element boundaries and types on the wire" in {
+            val attributes = kyo.stats.Attributes
+                .add("strings", List("a,b", "c"))
+                .add("booleans", List(true, false))
+                .add("longs", List(1L, -2L))
+                .add("doubles", List(1.5, -2.5))
+                .add("empty", List.empty[String])
+            val encoded = KeyValue.of(attributes).map(kv => kv.key -> Json.encode(kv.value)).toMap
+            assert(encoded("strings") == """{"arrayValue":{"values":[{"stringValue":"a,b"},{"stringValue":"c"}]}}""")
+            assert(encoded("booleans") == """{"arrayValue":{"values":[{"boolValue":true},{"boolValue":false}]}}""")
+            assert(encoded("longs") == """{"arrayValue":{"values":[{"intValue":"1"},{"intValue":"-2"}]}}""")
+            assert(encoded("doubles") == """{"arrayValue":{"values":[{"doubleValue":1.5},{"doubleValue":-2.5}]}}""")
+            assert(encoded("empty") == """{"arrayValue":{"values":[]}}""")
+        }
+
+        "exported attributes contain only the latest value for each key" in {
+            val attributes = kyo.stats.Attributes.add("status", "old").add("status", 200L)
+            val values     = KeyValue.of(attributes)
+            assert(values.map(_.key) == Seq("status"))
+            assert(values.head.value.intValue == Present("200"))
+        }
+
         "construction" in {
             val kv = KeyValue("key", AnyValue.string("value"))
             assert(kv.key == "key")

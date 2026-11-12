@@ -470,6 +470,10 @@ This applies uniformly to every decode-time throw site:
 
 The write side mirrors it: `Codec.Writer.frame` carries the encode call's Frame, and a failure raised while writing uses it.
 
+### Contextual constructor parameters
+
+`MacroUtils.applyContextualArgs` completes each contextual clause of a constructor or companion call with `summonInline`, using the applied method's parameter types so generic arguments are substituted before resolution. Product decoding and catch-all construction put the reader's `Frame` in scope around the call. Builders, converters and focus setters resolve givens at their expansion sites. Contextual parameters, including retained members, are outside the case fields and stay off the wire. Keep the generated constructor tree owned by its result symbol, including any local given in that tree.
+
 ### Configuration failures are data, raised at first codec use
 
 A builder never throws. When `variantNames`, `variantNumbers`, `renameAllVariants`, `variantAlias`, `renameAllFields`, `alias`, `representations`, `orElseRepresentation` or `fieldId` finds a misconfiguration, it records an `internal.BuilderProblem` (the builder call and the failure as data) in the schema's `builderProblem` slot. The schema's constructor adds the problems it finds itself: a variant alias collision (`Schema.variantAliasProblem`), a catch-all under a positional representation, a `WireLayout` that cannot round-trip (a field key or field alias collision, a builder naming a flattened field's own field). `configurationProblem` is the first of them. Two checks read the variant schemas, which a recursive sum cannot do while it is built, so they are lazy and raised by the same codec calls after `configurationProblem`: a variant field under a discriminator's tag key (`tagKeyProblem`) and a flattened sum key the parent also writes (`WireLayout.flatSumProblem`).

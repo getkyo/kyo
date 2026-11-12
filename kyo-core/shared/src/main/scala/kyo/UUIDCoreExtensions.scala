@@ -14,7 +14,7 @@ object UUIDCoreExtensions:
             UUIDGenerator.v4.map(_.show)
 
         /** Generates a monotonic RFC version 7 UUID with the dynamically scoped generator. */
-        def v7(using Frame): UUID < Sync =
+        def v7(using Frame): UUID.V7 < Sync =
             UUIDGenerator.v7
 
         /** Runs `value` with `generator` installed as the dynamically scoped UUID generator. */

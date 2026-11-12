@@ -424,11 +424,19 @@ val timestamp: Maybe[Long] = id.unixTimestampMillis
 val empty: UUID = UUID.nil
 val full: UUID  = UUID.max
 val order: Int  = empty.compare(full)
+
+val fromHalves: UUID = UUID.fromLongs(0L, 1L)
+
+val version7: UUID.V7       = UUID.V7.init(1000L, 0, 1L)
+val millis: Long            = version7.unixTimestampMillis
+val refined: Maybe[UUID.V7] = UUID.V7.from(id)
 ```
 
 `UUID.parse` is strict about canonical `8-4-4-4-12` text: braces, URNs, missing separators, and other layout deviations fail. Use `UUID.parseUrn` for `urn:uuid:<canonical>` input. `UUID.InvalidUUID` is a `KyoException` returned by `UUID.parse`, `UUID.parseUrn`, and `UUID.fromBytes` through `Result`, carrying structured `UUID.InvalidProblem` in its `problem` field.
 
 `UUID.bytes` and `UUID.fromBytes` use exactly 16 bytes in big-endian network order. `uuid.compare(that)` compares the 128-bit value with unsigned bytewise ordering, and `Ordering[UUID]` delegates to that comparison so sorted collections match RFC 9562 ordering. `unixTimestampMillis` only inspects version 7 UUIDs, returning `Absent` for other versions, and `kyo-data` does not generate random or time-based UUIDs. The name-based constructors, `UUID.v5` (RFC version 5 over SHA-1) and `UUID.v8Sha256` (Kyo's SHA-256 version 8 profile), are extension methods in [kyo-crypto](../kyo-crypto/README.md), which holds the digests they need.
+
+`UUID.fromLongs` preserves all 128 bits supplied by the caller, without imposing a version or variant. `UUID.V7` refines a UUID whose version is 7, so its timestamp is a `Long` rather than a `Maybe[Long]`. `UUID.V7.init` sets the version and RFC variant and keeps the low 48, 12 and 62 bits of its timestamp, counter and random arguments. Use `UUID.V7.from` to refine a parsed UUID; other versions return `Absent`. Effectful version 7 generation is available through `UUID.v7` in `kyo-core`.
 
 ## Time and scheduling
 
@@ -634,6 +642,27 @@ val id: Int       = rec.id
 val email: String = rec.email
 ```
 
+### Records from objects
+
+`Record.fromObject` turns the methods of a value, typically an object, into fields. Each public method or `val` becomes a field named after it, a function from a record of the method's parameters to what the method answers. A parameter with a default is left out of the record and takes its default; a `using` clause is resolved where `fromObject` is called. An overloaded name and a method with type parameters are left out, since no single function type describes them, and so are a `var`, a nested object and a member whose `using` clause does not resolve.
+
+```scala
+import kyo.*
+
+object Pets:
+    def find(name: String, limit: Int): Chunk[String]        = Chunk.fill(limit)(name)
+    def greet(name: String, greeting: String = "hi"): String = s"$greeting $name"
+    val version: Int                                         = 3
+end Pets
+
+val pets = Record.fromObject(Pets)
+
+val find: Record["name" ~ String & "limit" ~ Int] => Chunk[String] = pets.find
+val found: Chunk[String]                                           = find("name" ~ "Rex" & "limit" ~ 2)
+val greeting: String                                               = pets.greet.apply("name" ~ "Rex")
+val version: Int                                                   = pets.version.apply(Record.empty)
+```
+
 ### Updating, mapping, and zipping
 
 To modify or transform a record, four operations cover the common cases. `update(name, value)` returns a new record with one field replaced. `map` applies a polymorphic function to every value type, lifting it through `G[_]`. `mapFields` is `map` plus access to the `Field` descriptor (name and `Tag`). `zip` pairs values between two records with the same field names.
@@ -659,7 +688,7 @@ val paired    = rec.zip(sameShape) // each field becomes (a, b)
 
 ### Reified field descriptors
 
-For code that operates on a record's schema as data (serializers, validators, debuggers), the per-field descriptor is `Field[Name, Value]`. It carries the field's singleton name, value `Tag`, optional nested fields (populated for nested records), and an optional default. Obtain them through `Fields.fields[F]` (a list) or `Field.apply[Name, Value]` (summons from implicit scope).
+For code that operates on a record's schema as data (serializers, validators, debuggers), the per-field descriptor is `Field[Name, Value]`. It carries the field's singleton name, value `Tag`, optional nested fields (populated for nested records), and an optional default. Obtain them through `Fields.fields[F]` (a list), `Field.apply[Name, Value]` (summons from implicit scope), or by selecting the field's name on a `Fields[F]`, which fails to compile for a name `F` does not have.
 
 ```scala
 import kyo.*
@@ -669,7 +698,8 @@ case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 val all: List[Field[?, ?]] = Fields.fields[User]
 val names: Set[String]     = Fields.names[User]
 
-val nameField = Field["name", String]
+val nameField                          = Field["name", String]
+val emailField: Field["email", String] = summon[Fields[User]].email
 ```
 
 ### Compile-time staging per field
@@ -722,6 +752,19 @@ val show: String      = a.show
 ```
 
 > **Note:** Inside the `kyo` package, `Tag.derive` fails rather than falling back to dynamic-tag construction. This is a performance constraint on internal Kyo code; user code outside the package falls back to dynamic derivation when needed.
+
+Wildcard arguments retain both bounds, including for invariant parameters. A lookup by `Tag[Box[? <: AnyRef]]` can match `Box[String]` without treating the wildcard as the concrete type `AnyRef`.
+
+```scala
+import kyo.*
+
+class Box[A]
+
+val matches = Tag[Box[String]] <:< Tag[Box[? <: AnyRef]] // true
+val differs = Tag[Box[?]] =!= Tag[Box[Any]]              // true
+```
+
+Tags assembled from runtime type arguments compare unions and intersections by their types, independent of member order. Nested unions and intersections are flattened, redundant members are removed, and intersections distribute over unions. Tuple tags retain their ancestors without making the tuple its own parent.
 
 ### Union- and intersection-aware tags
 
@@ -956,6 +999,6 @@ val message: String = parsed match
 
 `UUID.InvalidUUID` is returned by `UUID.parse`, `UUID.parseUrn`, and `UUID.fromBytes` through `Result`. It carries structured `UUID.InvalidProblem` in its `problem` field so callers can inspect the invalid input shape directly.
 
-> **Note:** `KyoException` strips ANSI colors and frame context in production (controlled by `kyo.internal.Environment`). Development mode produces detailed, syntax-highlighted error output for human readers.
+Use `KyoException.show` for stored or transmitted error text. It returns the message and cause detail without adding a development source frame, including for a nested `KyoException`. `getMessage` retains its detailed rendering in development and delegates to `show` in production. An empty String cause adds no trailing space.
 
-`KyoException.maxMessageLength` (default 1000) caps the formatted message size to prevent log explosion.
+`KyoException.maxMessageLength` (1000) caps the cause detail; it does not truncate the primary message.

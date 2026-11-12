@@ -94,7 +94,7 @@ object TeamsLocal:
 
     val signedAt: Instant = Instant.Epoch + 1767225600.seconds
 
-    /** The service URL [[signed]]'s `serviceUrl` claim names. */
+    /** The service URL [[signed]]'s `serviceurl` claim names. */
     val signedServiceUrl = "https://smba.trafficmanager.net/amer/"
 
     private def label(method: String, path: String, body: String): String =
@@ -114,6 +114,7 @@ object TeamsLocal:
             case ("DELETE", Chunk("v3", "conversations", _, "activities", _))                           => "delete"
             case ("GET", Chunk("v3", "conversations", _, "pagedmembers"))                               => "members"
             case ("GET", Chunk("v3", "conversations", _, "members", _))                                 => "member"
+            case ("GET", Chunk("v3", "attachments", _, "views", _))                                     => "download"
             case _                                                                                      => "custom"
         end match
     end label
@@ -165,7 +166,7 @@ object TeamsLocal:
             nbf: String = "0",
             serviceUrl: String = s"\"${base.copy(path = "/amer/").full}\""
         ): String =
-            Chunk("iss" -> iss, "aud" -> aud, "exp" -> exp, "nbf" -> nbf, "serviceUrl" -> serviceUrl)
+            Chunk("iss" -> iss, "aud" -> aud, "exp" -> exp, "nbf" -> nbf, "serviceurl" -> serviceUrl)
                 .filter(_._2.nonEmpty).map((k, v) => s""""$k":$v""").mkString("{", ",", "}")
 
         /** The body of a delivery from Teams at this peer's service URL. */
@@ -277,7 +278,12 @@ object TeamsLocal:
     def withCountingPeer[A](response: String)(test: (Int, AtomicInt) => A < (Async & Abort[Any] & Scope))(using
         Frame
     ): A < (Async & Abort[Any] & Scope) =
-        val bytes = Utf8.encode(response)
+        withCountingPeer(Utf8.encode(response))(test)
+
+    /** The counting peer with an exact binary response. */
+    def withCountingPeer[A](bytes: Span[Byte])(test: (Int, AtomicInt) => A < (Async & Abort[Any] & Scope))(using
+        Frame
+    ): A < (Async & Abort[Any] & Scope) =
         Clock.withTimeControl { _ =>
             AtomicInt.init.map { accepted =>
                 Sync.Unsafe.defer {

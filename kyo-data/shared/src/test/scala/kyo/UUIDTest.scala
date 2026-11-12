@@ -11,6 +11,12 @@ package uuidclient {
 
         val trustedConstructorCompiles: Boolean =
             typeChecks("kyo.UUID.fromLongs(0L, 0L)")
+
+        val plainAsV7Compiles: Boolean =
+            typeChecks("val value: kyo.UUID.V7 = kyo.UUID.nil")
+
+        val totalV7TimestampCompiles: Boolean =
+            typeChecks("val millis: Long = kyo.UUID.V7.init(1000L, 0, 0L).unixTimestampMillis")
     end UUIDOpacityEvidence
 }
 
@@ -38,10 +44,10 @@ package kyo {
                 assert(id.bytes.is(bytes(0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff)))
             }
 
-            "remains opaque to code outside its defining package" in {
+            "remains opaque to code outside its defining package, which builds one from its halves through fromLongs" in {
                 assert(!uuidclient.UUIDOpacityEvidence.tupleAssignmentCompiles)
                 assert(!uuidclient.UUIDOpacityEvidence.tupleMemberAccessCompiles)
-                assert(!uuidclient.UUIDOpacityEvidence.trustedConstructorCompiles)
+                assert(uuidclient.UUIDOpacityEvidence.trustedConstructorCompiles)
             }
 
             "constructs exact network order from trusted raw halves" in {
@@ -109,6 +115,39 @@ package kyo {
 
             "extracts the 48-bit logical timestamp from version-7 values" in {
                 assert(parse("01890f5e-a410-7000-8000-000000000000").unixTimestampMillis == Maybe(0x01890f5ea410L))
+            }
+        }
+
+        "V7" - {
+            "init lays out the published RFC 9562 version 7 example" in {
+                val id = UUID.V7.init(0x017f22e279b0L, 0xcc3, 0x18c4dc0c0c07398fL)
+                assert(id.show == "017f22e2-79b0-7cc3-98c4-dc0c0c07398f")
+                assert(id.version == 7)
+                assert(id.variant == UUID.Variant.RFC)
+                assert(id.unixTimestampMillis == 0x017f22e279b0L)
+            }
+
+            "init drops the bits of an argument past its field's width" in {
+                assert(UUID.V7.init(-1L, -1, -1L).show == "ffffffff-ffff-7fff-bfff-ffffffffffff")
+                assert(UUID.V7.init(0L, 0, 0L).show == "00000000-0000-7000-8000-000000000000")
+            }
+
+            "from refines a version 7 UUID and refuses any other version" in {
+                assert(UUID.V7.from(parse("01890f5e-a410-7000-8000-000000000000")).map(_.unixTimestampMillis) == Maybe(0x01890f5ea410L))
+                assert(UUID.V7.from(parse("01890f5e-a410-4000-8000-000000000000")).isEmpty)
+                assert(UUID.V7.from(UUID.nil).isEmpty)
+            }
+
+            "is a UUID whose total timestamp is the one the UUID holds" in {
+                val id         = UUID.V7.init(1000L, 1, 2L)
+                val uuid: UUID = id
+                assert(uuid.unixTimestampMillis == Maybe(id.unixTimestampMillis))
+                assert(UUID.V7.from(uuid).map(_.show) == Maybe(id.show))
+            }
+
+            "is refined only through V7, and its timestamp is total outside its defining package" in {
+                assert(!uuidclient.UUIDOpacityEvidence.plainAsV7Compiles)
+                assert(uuidclient.UUIDOpacityEvidence.totalV7TimestampCompiles)
             }
         }
 

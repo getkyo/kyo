@@ -227,19 +227,133 @@ class TeamsTest extends kyo.test.Test[Any]:
             val otherPort =
                 local.reference.copy(serviceUrl = Teams.ServiceUrl.init(local.base.copy(port = 1, path = "/amer/").full).getOrThrow)
             local.api(
-                Abort.run[TeamsSendFailure](Teams.send(elsewhere, hello)).map(a =>
-                    Abort.run[TeamsCustomFailure](Teams.custom[Unit, Unit](
+                for
+                    send   <- Abort.run[TeamsSendFailure](Teams.send(elsewhere, hello))
+                    custom <- Abort.run[TeamsCustomFailure](Teams.custom[Unit, Unit](
                         otherPort.serviceUrl,
                         Teams.Method.Get,
                         Teams.Path.init("v3").getOrThrow
-                    )).map(a -> _)
-                )
-            ).map { (send, custom) =>
+                    ))
+                    download <-
+                        Abort.run[TeamsDownloadFailure](Teams.download(local.base.copy(
+                            port = 1,
+                            path = "/amer/v3/attachments/a/views/original"
+                        )))
+                yield (send, custom, download)
+            ).map { (send, custom, download) =>
                 local.seen.map { seen =>
                     assert(send == Result.fail(TeamsRefusedUrlException(Teams.Routes.Send)))
                     assert(custom == Result.fail(TeamsRefusedUrlException("GET custom")))
+                    assert(download.failure == Present(TeamsRefusedUrlException(Teams.Routes.Download)))
                     assert(seen == Chunk.empty)
                 }
+            }
+        }
+    }
+
+    "download reads the bytes at a URL under a service host, with the bearer token" in {
+        withLocal { local =>
+            local.reply("download", json("image bytes")).andThen {
+                local.api(Teams.download(local.base.copy(path = "/amer/v3/attachments/0-a1/views/original"))).map { bytes =>
+                    local.seen("download").map { seen =>
+                        assert(kyo.charset.Charset.Utf8.decode(bytes) == "image bytes")
+                        assert(seen.map(s => (s.method, s.path, s.authorization)) == Chunk(
+                            ("GET", "/amer/v3/attachments/0-a1/views/original", Present(s"Bearer $tokenText"))
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+    "a download's error answer is read from its bytes: an ErrorResponse is its leaf, any other body an unexpected status" in {
+        withLocal { local =>
+            val url = local.base.copy(path = "/amer/v3/attachments/0-a1/views/original")
+            local.reply("download", error(401, "BotNotRegistered", "d"), Reply(HttpStatus(404), "<html>Not Found</html>")).andThen {
+                local.api(
+                    Abort.run[TeamsDownloadFailure](Teams.download(url)).map(first =>
+                        Abort.run[TeamsDownloadFailure](Teams.download(url)).map(first -> _)
+                    )
+                ).map { (registered, missing) =>
+                    assert(registered.failure == Present(TeamsBotNotRegisteredException(Teams.Routes.Download, "d", Absent)))
+                    assert(missing.failure == Present(TeamsUnexpectedStatusException(Teams.Routes.Download, HttpStatus(404))))
+                }
+            }
+        }
+    }
+
+    "download refuses socket overrides and unsendable paths before fetching a token" in {
+        withLocal { local =>
+            val url  = local.base.copy(path = "/amer/v3/attachments/a/views/original")
+            val urls = Chunk(
+                url.copy(unixSocket = Present("/not-a-teams-service.sock")),
+                url.copy(path = "/image\r\nInjected: value"),
+                url.copy(rawQuery = Present("name=é"))
+            )
+            local.api(Kyo.foreach(urls)(u => Abort.run[TeamsDownloadFailure](Teams.download(u)))).map { results =>
+                local.seen.map { seen =>
+                    assert(
+                        results.map(_.failure) == Chunk.fill(3)(Present(TeamsRefusedUrlException(Teams.Routes.Download))),
+                        s"got $results"
+                    )
+                    assert(seen == Chunk.empty, s"requested ${seen.map(_.label)}")
+                }
+            }
+        }
+    }
+
+    "download preserves non-UTF8 bytes and an empty body" in {
+        withLocal { local =>
+            val body     = Span.from(Array[Byte](0, -1, -128, 65))
+            val response = kyo.internal.charset.Utf8.encode("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n") ++ body
+            withCountingPeer(response) { (port, _) =>
+                val (config, reference) = peerAt(local, port)
+                Teams.run(config)(Teams.download(reference.serviceUrl.url)).map(bytes => assert(bytes.is(body)))
+            }.andThen {
+                local.reply("download", json("")).andThen {
+                    local.api(Teams.download(local.base.copy(path = "/amer/v3/attachments/a/views/original")))
+                        .map(bytes => assert(bytes.is(Span.empty[Byte])))
+                }
+            }
+        }
+    }
+
+    "download enforces its response limit and does not follow redirects" in {
+        withLocal { local =>
+            val url = local.base.copy(path = "/amer/v3/attachments/a/views/original")
+            local.reply("download", json("x" * 256), Reply(HttpStatus(302), "", Chunk("Location" -> "http://127.0.0.1:1/elsewhere")))
+                .andThen {
+                    Teams.run(local.config.copy(maxResponseLength = 128.bytes)) {
+                        for
+                            large    <- Abort.run[TeamsDownloadFailure](Teams.download(url))
+                            redirect <- Abort.run[TeamsDownloadFailure](Teams.download(url))
+                            requests <- local.seen
+                        yield
+                            assert(large.failure == Present(TeamsTransportException(
+                                Teams.Routes.Download,
+                                TeamsTransportException.Kind.PayloadTooLarge(256.bytes, 128.bytes),
+                                "127.0.0.1",
+                                local.base.port,
+                                Absent
+                            )()))
+                            assert(redirect.failure == Present(TeamsUnexpectedStatusException(Teams.Routes.Download, HttpStatus(302))))
+                            assert(requests.map(_.label) == Chunk("token", "download", "download"))
+                    }
+                }
+        }
+    }
+
+    "download retries a retryable response using the configured schedule" in {
+        withLocal { local =>
+            val url = local.base.copy(path = "/amer/v3/attachments/a/views/original")
+            local.reply("download", error(503, "ServiceUnavailable", "d"), json("image")).andThen {
+                Teams.run(local.config.copy(retry = Present(Schedule.fixed(Duration.Zero).take(1))))(Teams.download(url))
+                    .map { bytes =>
+                        local.seen("download").map { requests =>
+                            assert(bytes.is(kyo.internal.charset.Utf8.encode("image")))
+                            assert(requests.map(_.authorization) == Chunk.fill(2)(Present(s"Bearer $tokenText")))
+                        }
+                    }
             }
         }
     }

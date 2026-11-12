@@ -112,7 +112,7 @@ private[kyo] object TagMacro:
                     case (map, (id, (_, tag))) =>
                         '{ $map.updated(${ Expr(id) }, $tag) }
                 }
-            '{ Tag.internal.Dynamic($encoded, $reifiedDB) }
+            '{ Tag.internal.composed($encoded, $reifiedDB) }
         end if
     end deriveImpl
 
@@ -356,8 +356,8 @@ private[kyo] object TagMacro:
                         check(b)
                     case AppliedType(_, args) =>
                         args.foreach(arg => check(arg.dealiasKeepOpaques.simplified))
-                    // A wildcard argument reaches the macro as bare bounds, and the encoder keeps
-                    // its upper bound, so a substitution hiding in there reaches the encoding.
+                    // A wildcard argument reaches the macro as bare bounds. Both bounds enter the
+                    // encoding, so check each for a substitution hiding an opaque type.
                     case TypeBounds(low, high) =>
                         check(low)
                         check(high)
@@ -427,6 +427,15 @@ private[kyo] object TagMacro:
                                 visit(body)
                             )
 
+                        // A wildcard type argument, Scala's `? >: L <: U` or Java's `<? extends T>`, surfaces
+                        // through `typeArgs` as a bare `TypeBounds`. It is not a proper type, so it must not
+                        // reach `asType`/`summon`/`<:<` (those crash the compiler), and its symbol is its
+                        // bound's, so it is matched before the class and opaque cases. The entry keeps both
+                        // bounds, so that an invariant parameter filled by a wildcard admits every argument
+                        // within them.
+                        case TypeBounds(low, high) =>
+                            BoundsEntry(visit(low), visit(high))
+
                         case tpe if tpe.typeSymbol.isClassDef =>
                             val symbol    = tpe.typeSymbol
                             val name      = symbol.fullName
@@ -443,11 +452,17 @@ private[kyo] object TagMacro:
                                 params.size == variances.size,
                                 s"Found ${params.size} type parameters but ${variances.size} variances. TypeRepr: ${tpe.show}"
                             )
+                            // A TupleN's base type `A *: B *: EmptyTuple` is the TupleN itself once `canonicalTuple`
+                            // rewrites it, so as a parent it would make the tuple its own ancestor and a subtype
+                            // check would walk it without end; its own parents stand in its place.
+                            val parents = immediateParents(tpe).flatMap { parent =>
+                                if canonicalTuple(parent) =:= tpe then immediateParents(parent) else List(parent)
+                            }
                             ClassEntry(
                                 name,
                                 Span.from(variances),
                                 Span.from(params),
-                                Span.from(immediateParents(tpe).map(visit))
+                                Span.from(parents.map(visit))
                             )
 
                         case applied if applied.typeSymbol.flags.is(Flags.Opaque) && applied.typeSymbol.isTypeDef =>
@@ -494,15 +509,6 @@ private[kyo] object TagMacro:
                                         Span.from(args.map(visit))
                                     )
                             end match
-
-                        // A Java wildcard type argument (e.g. `Comparable<? extends T>`) surfaces
-                        // through `typeArgs` as a bare `TypeBounds`. It is not a proper type, so
-                        // it must not reach `asType`/`summon`/`<:<` (those crash the compiler).
-                        // Encode it as its upper bound: a deterministic, sound representative for
-                        // subtyping purposes, consistent with how the macro already collapses
-                        // type-lambda bounds (see the `TypeLambda` case above).
-                        case TypeBounds(_, high) =>
-                            loop(high.dealiasKeepOpaques.simplified.dealiasKeepOpaques)
 
                         case tpe =>
                             tpe.asType match
