@@ -589,6 +589,27 @@ class FocusableTest extends UITest:
         }
     }
 
+    "seeding a focus-auto element does not scroll its container to reveal it" in {
+        // The panel appears below the visible area of a scroll container. Focusing it with the browser's default
+        // would scroll the container down to it. The spacer uses `minHeight`: a flex child with only a `height` shrinks
+        // to fit the container, leaving nothing to scroll.
+        val app: UI < Async =
+            for showPanel <- Signal.initRef(false)
+            yield UI.div(
+                UI.button("Open").id("open").onClick(showPanel.set(true)),
+                UI.div("spacer").style(Style.minHeight(Length.Px(2000))),
+                UI.when(showPanel)(UI.div("panel").id("panel").tabIndex(-1).focusAuto(true))
+            ).id("scroller").style(Style.height(Length.Px(200)).overflowY(_.auto))
+        withUI(app) {
+            for
+                // Synthetic click, so the click itself does not scroll anything.
+                _        <- Browser.evalDiscard("document.getElementById('open').click()")
+                _        <- Browser.assertFocused(Selector.id("panel"))
+                scrolled <- Browser.evalInt("document.getElementById('scroller').scrollTop")
+            yield assert(scrolled == 0)
+        }
+    }
+
     "closing a focus-restore panel returns focus to the previously focused element" in {
         val app: UI < Async =
             for showPanel <- Signal.initRef(false)
@@ -688,6 +709,35 @@ class FocusableTest extends UITest:
                 // The sweep did not throw: the client still applies patches.
                 _ <- Browser.evalDiscard("document.getElementById('bump').click()")
                 _ <- Browser.assertText(Selector.id("bumps"), "bumps=1")
+            yield ()
+        }
+    }
+
+    "a panel that closes after the reader moved focus themselves leaves it where they put it" in {
+        // The everyday case is a Tab out of a combobox: the browser moves focus to the next control, THEN the
+        // panel closes, and a restore would pull the reader back to the trigger they just left. A restore is
+        // for the focus the removal took away, which is the one the browser drops on `body`.
+        val app: UI < Async =
+            for showPanel <- Signal.initRef(false)
+            yield UI.div(
+                UI.button("Open").id("trigger").onClick(showPanel.set(true)),
+                UI.button("Next").id("next"),
+                UI.when(showPanel)(
+                    UI.div(
+                        UI.button("Close").id("close").onClick(showPanel.set(false))
+                    ).id("panel").tabIndex(-1).focusAuto(true).focusRestore(true)
+                )
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("trigger"))
+                _ <- Browser.assertFocused(Selector.id("panel"))
+                // The reader moves focus out of the panel, and only then does the panel close.
+                _ <- Browser.evalDiscard("document.getElementById('next').focus()")
+                _ <- Browser.evalDiscard("document.getElementById('close').click()")
+                _ <- Browser.assertNotExists(Selector.id("panel"))
+                _ <- Browser.assertFocused(Selector.id("next"))
+                _ <- Browser.assertNotFocused(Selector.id("trigger"))
             yield ()
         }
     }
