@@ -6,6 +6,89 @@ class BrowserLauncherTest extends BaseChromeTest:
 
     override def timeout = 2.minutes
 
+    private def shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+
+    // Report only a count and a known test marker. A broken replacement must not write inherited values to a file or failure message.
+    // GNU awk adds its own entries to ENVIRON. Read native records instead, mapping embedded newlines away from the record separator.
+    // LF and SOH need not be distinguished: only entry counts, ASCII names and the known ASCII marker are inspected.
+    private val environmentProbe = """/usr/bin/env -0 |
+        LC_ALL=C /usr/bin/tr '\000\012' '\012\001' |
+        LC_ALL=C /usr/bin/awk '
+    {
+        name = substr($0, 1, index($0, "=") - 1);
+        if (name != "PWD" && name != "SHLVL" && name != "_") count++;
+        if ($0 == "KYO_BROWSER_DECLARED=declared") marker = 1;
+    }
+    END {
+        printf "%d|%d\n", count, marker;
+    }'"""
+
+    private val environmentCases: Chunk[(String, Maybe[Dict[String, String]])] = Chunk(
+        "inherited"             -> Absent,
+        "empty"                 -> Present(Dict.empty),
+        "replacement"           -> Present(Dict("KYO_BROWSER_DECLARED" -> "declared")),
+        "multiline replacement" -> Present(Dict(
+            "KYO_BROWSER_DECLARED"  -> "declared",
+            "KYO_BROWSER_MULTILINE" -> "first\nforged=value",
+            "AWKPATH"               -> "declared",
+            "AWKLIBPATH"            -> "declared"
+        ))
+    )
+
+    for (label, environment) <- environmentCases do
+        s"the normal browser launch uses the $label environment" in {
+            assume(!Platform.isWindows, "the probe executable is a POSIX shell script")
+            Scope.run {
+                for
+                    cfg       <- SharedChrome.chromeConfig()
+                    inherited <- Command("/bin/sh", "-c", environmentProbe).text
+                    folder    <- Path.run(Path.tempDir("kyo-browser-environment"))
+                    executable = folder / "chrome ' environment"
+                    result     = folder / "status ' only"
+                    script     = s"""#!/bin/sh
+                        $environmentProbe > ${shellQuote(result.toString)}
+                        exec ${shellQuote(cfg.executable)} "$$@"
+                        """
+                    _ <- Path.run(executable.write(script))
+                    _ <- Command("chmod", "+x", executable.toString).waitForSuccess
+                    config = environment match
+                        case Absent          => cfg.executable(executable.toString)
+                        case Present(values) => cfg.executable(executable.toString).environment(values)
+                    url    <- BrowserLauncher.launch(config)
+                    status <- Path.run(result.read)
+                    expected = environment match
+                        case Absent                            => inherited.trim
+                        case Present(values) if values.isEmpty => "0|0"
+                        case Present(values)                   => s"${values.size}|1"
+                yield
+                    assert(url.startsWith("ws://"))
+                    assert(status.trim == expected, s"status=${status.trim}, expected=$expected")
+            }
+        }
+    end for
+
+    "launch presets inherit by default and an explicit environment can be cleared" in {
+        val presets = Chunk(Browser.LaunchConfig.default, Browser.LaunchConfig.chromium(), Browser.LaunchConfig.chrome())
+        assert(presets.map(_.environment) == Chunk(Absent, Absent, Absent))
+        val declared = Browser.LaunchConfig.default.environment(Dict("KYO_BROWSER_DECLARED" -> "declared"))
+        assert(declared.environment.map(_.toMap) == Maybe(Map("KYO_BROWSER_DECLARED" -> "declared")))
+        assert(declared.copy(environment = Absent).environment == Absent)
+    }
+
+    "an empty environment preserves typed executable failures" in {
+        Abort.run[BrowserSetupException] {
+            Scope.run {
+                BrowserLauncher.launch(
+                    Browser.LaunchConfig.chromium("/nonexistent/browser/executable").environment(Dict.empty)
+                )
+            }
+        }.map {
+            case Result.Success(_)                               => fail("Expected failure for invalid executable")
+            case Result.Failure(ex: BrowserSetupFailedException) => assert(ex.getMessage.contains("/nonexistent/browser/executable"))
+            case Result.Panic(ex)                                => fail(s"Expected Failure, got Panic: ${ex.getMessage}")
+        }
+    }
+
     "launch returns wsUrl starting with ws://" in {
         Scope.run {
             SharedChrome.chromeConfig().map { cfg =>
