@@ -4258,8 +4258,9 @@ lazy val `website-bundle-minify` = Seq(
 // staging directory; deleting the linking report is the plugin's own trigger for a relink.
 lazy val websiteBundleRelinkIfStaged: Def.Initialize[Task[Unit]] = Def.task {
     val linkDir = (Compile / fullLinkJS / scalaJSLinkerOutputDirectory).value
+    val report  = (Compile / fullLinkJS / streams).value.cacheDirectory / "linking-report.bin"
     if (!(linkDir / "main.js").exists())
-        IO.delete((Compile / fullLinkJS / streams).value.cacheDirectory / "linking-report.bin")
+        IO.delete(report)
 }
 
 lazy val `kyo-examples` =
