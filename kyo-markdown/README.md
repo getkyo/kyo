@@ -243,10 +243,13 @@ val titles = commented.headings.map(_.text) // Chunk("Title")
 
 ### Text from untrusted authors
 
-Chat messages, comments and anything else a page shows from people it does not trust go through `Markdown.render(source, Markdown.Options(html = false))`. The Markdown constructs render exactly as in the default mode; what changes is everything that reaches past the grammar:
+Chat messages, comments and anything else a page shows from people it does not trust go through `Markdown.render(source, Markdown.Options(html = false))`. The Markdown constructs render as in the default mode; what changes is everything that reaches past the grammar or past the page:
 
 - Raw HTML and HTML comments render as escaped text where they were written, so `<img src=x onerror=...>` shows as those characters and runs nothing.
 - A link or image URL is kept only when it is `http`, `https`, a `#fragment` or a path with no scheme. Any other scheme (`javascript:`, `data:`, `vbscript:`, ...) is refused, read the way a browser reads it: case ignored, tabs and newlines inside removed, spaces and control characters in front removed. A refused link renders as its text, a refused image as its alt text, and a linked image whose link is refused as the image alone.
+- No image is fetched, not even from the page's own origin, where a path can name a page whose drawing changes state. An image renders as a link to its URL, named by its alt text or, when that is empty, by the URL, and a linked image as one link to the link's URL.
+- Every link but a fragment opens in a new tab, a path among them, since a path in a stranger's text is never a page of theirs.
+- Heading ids and fragments use a `user-content-` prefix that the embedding page can reserve for untrusted content. Links within the document still reach its headings.
 
 ```scala
 import kyo.*
@@ -256,6 +259,9 @@ val post = Markdown.render(
     Markdown.Options(html = false)
 )
 // Renders: Look &lt;img src=x onerror=alert(1)&gt; and here.
+
+val picture = Markdown.render("![the logo](/logo.png)\n", Markdown.Options(html = false))
+// Renders: <a href="/logo.png" target="_blank">the logo</a>, and nothing is fetched
 ```
 
 ## Total by construction
@@ -286,6 +292,8 @@ val unknown = Markdown.render("term\n:   definition\n")
 ```
 
 > **Note:** An unknown inline construct degrades to plain text and an unrecognized block degrades to a paragraph, both through kyo-parse `recoverWith`. There is no configuration that makes `render` throw or return an error channel; totality is the contract.
+
+The inline parser indexes closing delimiters before scanning a construct and consumes guaranteed literal text in runs. Unusable openers therefore avoid repeated scans and per-character parser work, even when unrelated closing characters appear later, in either mode.
 
 ## Deliberate non-goals
 

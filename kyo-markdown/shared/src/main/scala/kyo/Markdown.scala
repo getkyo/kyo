@@ -46,7 +46,8 @@ object Markdown:
       * with inline markup stripped, suitable for a table of contents. `id` is the URL-safe anchor
       * derived from `text`: lowercased, non-alphanumeric characters replaced with `-`, runs of `-`
       * collapsed, leading and trailing `-` removed, and duplicate ids disambiguated with a `-2`
-      * (then `-3`, etc.) suffix.
+      * (then `-3`, etc.) suffix. Under `Options(html = false)` the id is `user-content-` before that
+      * anchor.
       */
     final case class Heading(level: Int, text: String, id: String) derives CanEqual
 
@@ -78,9 +79,14 @@ object Markdown:
       * escaped text where they were written, and a link or image URL renders only when it is `http`, `https`, a `#fragment` or a path
       * with no scheme. Any other scheme (`javascript:`, `data:`, ...) is refused after removing what a browser ignores in a URL (tabs,
       * newlines, leading spaces and control characters) and ignoring case; a refused link renders as its text, a refused image as its alt
-      * text, and a linked image with a refused link as the image alone. The Markdown constructs render the same in both modes.
+      * text, and a linked image with a refused link as the image alone. No image is fetched: an image renders as a link to its URL,
+      * named by its alt text or, when that is empty, by the URL, and a linked image as one link to the link's URL. Every link but a
+      * fragment opens in a new tab. Heading ids and fragments use a `user-content-` prefix that the embedding page can reserve for
+      * untrusted content; links within the document still reach its headings. The other Markdown constructs render the same in both modes.
       */
     final case class Options(html: Boolean = true) derives CanEqual
+
+    private val idPrefix = "user-content-"
 
     private def html(cs: Seq[UI]): Seq[UI.Ast.HtmlChildVal] =
         cs.map(n => UI.Ast.HtmlChildVal.lift(n))
@@ -292,7 +298,7 @@ object Markdown:
         blocks.foreach {
             case Block.Heading(line) =>
                 val (level, text)  = parseHeading(line)
-                val slug           = makeSlug(text)
+                val slug           = if options.html then makeSlug(text) else idPrefix + makeSlug(text)
                 val inlineNodes    = parseInline(text, options)
                 val inlineChildren = html(inlineNodes)
                 val heading: UI    = level match
@@ -344,10 +350,11 @@ object Markdown:
       * only the outline label is flattened. Idempotent and total.
       */
     private def stripInlineMarkdown(raw: String): String =
-        val sb  = new mutable.StringBuilder()
-        val s   = raw
-        var i   = 0
-        val len = s.length
+        val sb      = new mutable.StringBuilder()
+        val s       = raw
+        val closers = Closers(s)
+        var i       = 0
+        val len     = s.length
         while i < len do
             val c = s.charAt(i)
             if c == '`' then
@@ -360,20 +367,17 @@ object Markdown:
             else if c == '[' then
                 // `[text](url)` -> keep `text`, drop the bracket and the `(url)` target. If the
                 // construct is not a well-formed link, keep the `[` literally.
-                val closeBracket = s.indexOf(']', i + 1)
-                if closeBracket >= 0 && closeBracket + 1 < len && s.charAt(closeBracket + 1) == '(' then
-                    val closeParen = s.indexOf(')', closeBracket + 2)
-                    if closeParen >= 0 then
+                val target = closers.next("]", i + 1)
+                    .filter(closeBracket => closers.next("](", closeBracket).contains(closeBracket))
+                    .flatMap(closeBracket => closers.next(")", closeBracket + 2).map(closeParen => (closeBracket, closeParen)))
+                target match
+                    case Present((closeBracket, closeParen)) =>
                         sb.append(stripInlineMarkdown(s.substring(i + 1, closeBracket)))
                         i = closeParen + 1
-                    else
+                    case Absent =>
                         sb.append(c)
                         i += 1
-                    end if
-                else
-                    sb.append(c)
-                    i += 1
-                end if
+                end match
             else
                 sb.append(c)
                 i += 1
@@ -533,10 +537,11 @@ object Markdown:
     // ---- inline kyo-parse grammar ----
 
     /** Convert a raw URL string to a `Href`. Treats `#id` as Fragment, `http(s)://...` as
-      * External, and everything else as Path.
+      * External, and everything else as Path. Without `options.html` a fragment's id is
+      * `user-content-` before the id it names, as a heading's is.
       */
-    private def toHref(url: String): Href =
-        if url.startsWith("#") then Href.Fragment(url.drop(1))
+    private def toHref(url: String, options: Options): Href =
+        if url.startsWith("#") then Href.Fragment(if options.html then url.drop(1) else idPrefix + url.drop(1))
         else if url.startsWith("https://") then Href.External("https", url.drop(6))
         else if url.startsWith("http://") then Href.External("http", url.drop(5))
         else Href.Path(url)
@@ -566,46 +571,144 @@ object Markdown:
       */
     private def parseInline(text: String, options: Options)(using Frame): Chunk[UI] =
         if text.isEmpty then Chunk(Ast.Text(""))
-        else runParser(text)(inlineNodes(options)).getOrElse(Chunk(Ast.Text(text)))
+        else runParser(text)(inlineNodes(options, Closers(text))).getOrElse(Chunk(Ast.Text(text)))
 
-    /** One result of the inline grammar: either a single literal character (a degrade unit,
-      * coalesced into `Ast.Text` runs) or a fully parsed inline `UI` node.
+    /** Where each closer next starts in one text, so that an opener learns whether what completes
+      * its construct is ahead before it scans for it. A scan per opener takes time quadratic in a
+      * text of openers left unclosed. Each closer's positions are found once, in one pass of the
+      * text, and an opener's question is a binary search over them; a run of backticks is answered
+      * from the text's runs of backticks, through a tree holding the longest run under each node, so
+      * locating the next matching run takes O(log n).
+      */
+    final private class Closers(val text: String):
+
+        private val positions = mutable.HashMap.empty[String, Array[Int]]
+
+        // each maximal run of backticks, by where it starts, and its length
+        private lazy val runStarts: Array[Int] =
+            text.indices.filter(offset => text.charAt(offset) == '`' && (offset == 0 || text.charAt(offset - 1) != '`')).toArray
+        private lazy val runLengths: Array[Int] =
+            runStarts.map(offset =>
+                text.indexWhere(_ != '`', offset) match
+                    case -1       => text.length - offset
+                    case boundary => boundary - offset
+            )
+
+        // the runs' lengths as the leaves of a binary tree from `leaves` on, each node holding the longest run under it
+        private lazy val leaves: Int         = Integer.highestOneBit(math.max(runStarts.length, 1) * 2 - 1)
+        private lazy val longest: Array[Int] =
+            val tree = new Array[Int](2 * leaves)
+            runLengths.indices.foreach(index => tree(leaves + index) = runLengths(index))
+            (leaves - 1 to 1 by -1).foreach(node => tree(node) = math.max(tree(2 * node), tree(2 * node + 1)))
+            tree
+        end longest
+
+        /** The first position at or after `from` where `closer` starts, absent when none does. */
+        def next(closer: String, from: Int): Maybe[Int] =
+            if closer.nonEmpty && closer.forall(_ == '`') then
+                val nextRun = runStarts.search(from).insertionPoint
+                // a run that starts before `from` holds the closer at `from` when it reaches far enough past it
+                if nextRun > 0 && runStarts(nextRun - 1) + runLengths(nextRun - 1) - from >= closer.length then Present(from)
+                else
+                    val longRun = firstRun(nextRun, closer.length, 1, 0, leaves)
+                    if longRun < runStarts.length then Present(runStarts(longRun)) else Absent
+                end if
+            else
+                val offsets = positions.getOrElseUpdate(closer, occurrences(closer))
+                val index   = offsets.search(from).insertionPoint
+                if index < offsets.length then Present(offsets(index)) else Absent
+
+        private def occurrences(closer: String): Array[Int] =
+            Iterator.iterate(text.indexOf(closer))(offset => text.indexOf(closer, offset + 1)).takeWhile(_ >= 0).toArray
+
+        def hasLinkTail(from: Int): Boolean =
+            next("](", from).flatMap(bracket => next(")", bracket + 2)).nonEmpty
+
+        def hasImageTail(from: Int): Boolean =
+            next("]", from)
+                .filter(bracket => next("](", bracket).contains(bracket))
+                .flatMap(bracket => next(")", bracket + 2))
+                .nonEmpty
+
+        def hasNonEmptySpan(closer: String, from: Int): Boolean =
+            next(closer, from).exists(_ > from)
+
+        /** The end of a literal run, using the grammar's closure checks to skip unusable openers. Backticks stay with the grammar:
+          * even an unmatched run produces its own text node rather than coalescing with adjacent literal text.
+          */
+        def literalEnd(from: Int): Int =
+            @scala.annotation.tailrec
+            def loop(offset: Int): Int =
+                if offset == text.length then offset
+                else
+                    text.charAt(offset) match
+                        case '[' if hasLinkTail(offset + 1)                                   => offset
+                        case '!' if text.startsWith("![", offset) && hasImageTail(offset + 2) => offset
+                        case '<' if hasNonEmptySpan(">", offset + 1)                          => offset
+                        case '*'
+                            if (text.startsWith("**", offset) && hasNonEmptySpan("**", offset + 2)) ||
+                                hasNonEmptySpan("*", offset + 1) => offset
+                        case '`' => offset
+                        case _   => loop(offset + 1)
+            loop(from)
+        end literalEnd
+
+        // the index of the first run at index `from` or after that is at least `length` long, among the runs from `low` until
+        // `high` under `node`; the number of runs when none is
+        private def firstRun(from: Int, length: Int, node: Int, low: Int, high: Int): Int =
+            if high <= from || longest(node) < length then runStarts.length
+            else if node >= leaves then low
+            else
+                val middle  = (low + high) >>> 1
+                val leftRun = firstRun(from, length, 2 * node, low, middle)
+                if leftRun < runStarts.length then leftRun else firstRun(from, length, 2 * node + 1, middle, high)
+    end Closers
+
+    /** One result of the inline grammar: either literal text (coalesced into `Ast.Text` runs) or a fully parsed inline `UI` node.
       */
     private enum Token:
-        case Lit(char: Char)
+        case Lit(text: String)
         case Node(ui: UI)
 
     /** The inline grammar: repeat a single inline token until end of input, then coalesce adjacent
       * literal characters into `Ast.Text` runs.
       */
-    private def inlineNodes(options: Options)(using Frame): Chunk[UI] < Parse[Char] =
-        Parse.repeat(inlineToken(options)).map(tokens => coalesceText(Chunk.from(tokens)))
+    private def inlineNodes(options: Options, closers: Closers)(using Frame): Chunk[UI] < Parse[Char] =
+        val token = inlineToken(options, closers)
+        Parse.repeat(token).map(tokens => coalesceText(tokens))
 
-    /** A single inline token, as a `Token`: `Lit(char)` is one literal character (a degrade unit);
-      * `Node(ui)` is a parsed inline node. Unknown markup degrades to one literal character via the
+    /** A single inline token: a literal run or a parsed inline node. Unknown markup degrades to one literal character via the
       * `firstOf` last branch, and any fatal failure is recovered to one literal character via
       * `recoverWith` + `RecoverStrategy`, so the inline row never aborts.
       */
-    private def inlineToken(options: Options)(using Frame): Token < Parse[Char] =
+    private def inlineToken(options: Options, closers: Closers)(using Frame): Token < Parse[Char] =
         def node(p: UI < Parse[Char]): Token < Parse[Char] = p.map(Token.Node(_))
-        val literalChar: Token < Parse[Char]               = Parse.any[Char].map(Token.Lit(_))
+        val literalChar: Token < Parse[Char]               = Parse.any[Char].map(char => Token.Lit(char.toString))
+        val literalText: Token < Parse[Char]               = Parse.read { (input: ParseInput[Char]) =>
+            val end = closers.literalEnd(input.position)
+            if end == input.position then Result.fail(Chunk(ParseFailure("inline markup", input.position)))
+            else Result.succeed((input.advance(end - input.position), Token.Lit(closers.text.substring(input.position, end))))
+        }
         Parse.recoverWith(
             Parse.firstOf(
-                node(linkedImage(options)),
-                node(image(options)),
-                node(link(options)),
-                node(bold),
-                node(italic),
-                node(inlineCode),
-                node(inlineHtml(options)),
-                literalChar
+                literalText,
+                Parse.firstOf(
+                    node(linkedImage(options, closers)),
+                    node(image(options, closers)),
+                    node(link(options, closers)),
+                    node(bold(closers)),
+                    node(italic(closers)),
+                    node(inlineCode(closers)),
+                    node(inlineHtml(options, closers)),
+                    literalChar
+                )
             ),
-            RecoverStrategy.viaParser[Char, Token](Parse.any[Char].map(Token.Lit(_)))
+            RecoverStrategy.viaParser[Char, Token](literalChar)
         )
     end inlineToken
 
-    /** Coalesce a token stream of literal-char runs and parsed nodes into a UI sequence, merging
-      * adjacent literal characters into single `Ast.Text` leaves.
+    /** Coalesce a token stream of literal runs and parsed nodes into a UI sequence, merging
+      * adjacent literal text into single `Ast.Text` leaves.
       */
     private def coalesceText(tokens: Chunk[Token])(using Frame): Chunk[UI] =
         val out           = new mutable.ArrayBuffer[UI]()
@@ -615,8 +718,8 @@ object Markdown:
                 out += Ast.Text(buf.toString)
                 buf.clear()
         tokens.foreach {
-            case Token.Lit(c)   => buf.append(c)
-            case Token.Node(ui) => flush(); out += ui
+            case Token.Lit(text) => buf.append(text)
+            case Token.Node(ui)  => flush(); out += ui
         }
         flush()
         Chunk.from(out)
@@ -637,11 +740,22 @@ object Markdown:
         ).map(_.mkString)
 
     /** `[![alt](img)](link)` -> `UI.a.href(link)(UI.img(img, alt))`; a link `options` refuses
-      * leaves the image alone.
+      * leaves the image alone. Without `options.html` an image is a link to its URL, so a linked
+      * image is that link to the link's URL, never an anchor inside an anchor.
       */
-    private def linkedImage(options: Options)(using Frame): UI < Parse[Char] =
+    private def linkedImage(options: Options, closers: Closers)(using Frame): UI < Parse[Char] =
         for
-            _   <- Parse.literal("[![")
+            _ <- Parse.literal("[![")
+            _ <- Parse.position[Char].map { offset =>
+                if closers.next("]", offset)
+                        .filter(bracket => closers.next("](", bracket).contains(bracket))
+                        .flatMap(bracket => closers.next(")", bracket + 2))
+                        .filter(paren => closers.next(")](", paren).contains(paren))
+                        .flatMap(paren => closers.next(")", paren + 3))
+                        .isEmpty
+                then Parse.fail[Char]("unclosed linked image")
+                else ()
+            }
             alt <- readUntilChar(']')
             _   <- Parse.literal("](")
             img <- readUntilChar(')')
@@ -649,49 +763,77 @@ object Markdown:
             lnk <- readUntilChar(')')
             _   <- Parse.literal(')')
         yield
-            val picture = imageOf(img, alt, options)
-            allowed(lnk, options).fold(picture)(url => UI.a.href(toHref(url))(html(Seq(picture))*))
+            if !options.html then imageOf(if allowed(lnk, options).isEmpty then img else lnk, alt, options)
+            else
+                val picture = imageOf(img, alt, options)
+                allowed(lnk, options).fold(picture)(url => UI.a.href(toHref(url, options))(html(Seq(picture))*))
 
     /** `![alt](url)` -> `UI.img(url, alt)`. */
-    private def image(options: Options)(using Frame): UI < Parse[Char] =
+    private def image(options: Options, closers: Closers)(using Frame): UI < Parse[Char] =
         for
-            _   <- Parse.literal("![")
+            _ <- Parse.literal("![")
+            _ <- Parse.position[Char].map { offset =>
+                if !closers.hasImageTail(offset) then Parse.fail[Char]("unclosed image")
+                else ()
+            }
             alt <- readUntilChar(']')
             _   <- Parse.literal("](")
             url <- readUntilChar(')')
             _   <- Parse.literal(')')
         yield imageOf(url, alt, options)
 
-    /** The image, or its alt text when `options` refuses the URL. */
+    /** The image, or its alt text when `options` refuses the URL. Without `options.html` nothing is
+      * fetched: the image is a link to its URL, named by the alt text or, when that is empty, by the
+      * URL, opening in a new tab unless it is a fragment.
+      */
     private def imageOf(url: String, alt: String, options: Options)(using Frame): UI =
-        allowed(url, options).fold(Ast.Text(alt): UI)(src => UI.img(ImgSrc.Path(src), alt))
+        allowed(url, options).fold(Ast.Text(alt): UI) { src =>
+            if options.html then UI.img(ImgSrc.Path(src), alt)
+            else
+                val name = Ast.Text(if alt.isEmpty then src else alt)
+                if src.startsWith("#") then UI.a.href(toHref(src, options))(name)
+                else UI.a.href(toHref(src, options), Target.Blank)(name)
+        }
 
     /** `[text](url)` -> `UI.a.href(url)(parseInline(text)*)`; the text alone when `options`
-      * refuses the URL.
+      * refuses the URL. Without `options.html` every link but a fragment opens in a new tab.
       */
-    private def link(options: Options)(using Frame): UI < Parse[Char] =
+    private def link(options: Options, closers: Closers)(using Frame): UI < Parse[Char] =
         for
-            _    <- Parse.literal('[')
+            _ <- Parse.literal('[')
+            _ <- Parse.position[Char].map { offset =>
+                if !closers.hasLinkTail(offset) then Parse.fail[Char]("unclosed link")
+                else ()
+            }
             body <- readUntilString("](")
             _    <- Parse.literal("](")
             url  <- readUntilChar(')')
             _    <- Parse.literal(')')
         yield
             val text = parseInline(body, options)
-            allowed(url, options).fold(UI.fragment(text.toSeq*): UI)(href => UI.a.href(toHref(href))(html(text)*))
+            allowed(url, options).fold(UI.fragment(text.toSeq*): UI) { href =>
+                if options.html || href.startsWith("#") then UI.a.href(toHref(href, options))(html(text)*)
+                else UI.a.href(toHref(href, options), Target.Blank)(html(text)*)
+            }
 
     /** `**text**` -> a bold `md-strong` span. */
-    private def bold(using Frame): UI < Parse[Char] =
+    private def bold(closers: Closers)(using Frame): UI < Parse[Char] =
         for
-            _     <- Parse.literal("**")
+            _ <- Parse.literal("**")
+            _ <- Parse.position[Char].map { offset =>
+                if !closers.hasNonEmptySpan("**", offset) then Parse.fail[Char]("unclosed bold") else ()
+            }
             inner <- nonEmptyUntilString("**")
             _     <- Parse.literal("**")
         yield UI.span.cssClass("md-strong")(Ast.Text(inner))
 
     /** `*text*` -> an italic span. */
-    private def italic(using Frame): UI < Parse[Char] =
+    private def italic(closers: Closers)(using Frame): UI < Parse[Char] =
         for
-            _     <- Parse.literal('*')
+            _ <- Parse.literal('*')
+            _ <- Parse.position[Char].map { offset =>
+                if !closers.hasNonEmptySpan("*", offset) then Parse.fail[Char]("unclosed italic") else ()
+            }
             inner <- nonEmptyUntilChar('*')
             _     <- Parse.literal('*')
         yield UI.span.style(Style.italic)(Ast.Text(inner))
@@ -705,19 +847,25 @@ object Markdown:
     // prose would leave the failed branch to backtrack one char and re-enter on the next backtick,
     // and the leftover single backtick would open a span that swallows the prose up to the next real
     // inline-code backtick.
-    private def inlineCode(using Frame): UI < Parse[Char] =
+    //
+    // The content is read to the closing run in one step: a scan that tries the closing run at each
+    // character costs the run's length at each, quadratic for a long run over content of shorter runs.
+    private def inlineCode(closers: Closers)(using Frame): UI < Parse[Char] =
         for
             ticks <- Parse.readWhile[Char](_ == '`').map(_.mkString).map { run =>
                 if run.isEmpty then Parse.fail[Char]("no opening backtick run") else run
             }
-            node <- Parse.firstOf(
-                for
-                    inner <- readUntilString(ticks)
-                    _     <- Parse.literal(ticks)
-                yield UI.code(Ast.Text(stripInlineCodeSpan(inner))),
+            offset <- Parse.position[Char]
+            node   <- closers.next(ticks, offset) match
                 // No matching close: the opening run is literal backticks (already consumed above).
-                (Ast.Text(ticks): UI)
-            )
+                case Absent           => Kyo.lift(Ast.Text(ticks): UI)
+                case Present(closing) =>
+                    for
+                        inner <- Parse.read((input: ParseInput[Char]) =>
+                            Result.succeed((input.advance(closing - offset), input.remaining.take(closing - offset).mkString))
+                        )
+                        _ <- Parse.literal(ticks)
+                    yield UI.code(Ast.Text(stripInlineCodeSpan(inner)))
         yield node
 
     // CommonMark: when a code span's content has a non-space character and begins AND ends with a
@@ -730,9 +878,12 @@ object Markdown:
     /** `<...>` -> a verbatim `UI.rawHtml` leaf for inline HTML snippets, or escaped text when
       * `options` does not allow HTML.
       */
-    private def inlineHtml(options: Options)(using Frame): UI < Parse[Char] =
+    private def inlineHtml(options: Options, closers: Closers)(using Frame): UI < Parse[Char] =
         for
-            _     <- Parse.literal('<')
+            _ <- Parse.literal('<')
+            _ <- Parse.position[Char].map { offset =>
+                if !closers.hasNonEmptySpan(">", offset) then Parse.fail[Char]("unclosed inline HTML") else ()
+            }
             inner <- nonEmptyUntilChar('>')
             _     <- Parse.literal('>')
         yield
