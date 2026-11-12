@@ -230,6 +230,37 @@ object Browser:
                 .loadSchedule(cfg.loadSchedule.maxDuration(timeout))
         }(v)
 
+    /** Runs one computation on the current tab with the timeout semantics of [[Async.timeout]].
+      * The caller waits for this computation; its page mutations remain visible afterward. Other effects use the caller's isolation
+      * strategy. Browser isolation stays private to this joined operation, so its body cannot use it to fork concurrent tab work.
+      */
+    def timeout[E, A, S](using
+        isolate: Isolate[S, Abort[E] & Async, S]
+    )(after: Duration)(
+        v: => A < (Browser & Abort[E] & S)
+    )(using Frame): A < (Browser & Abort[E | Timeout] & S) =
+        timeoutIsolate.andThen(isolate).use {
+            Async.timeout(after)(v)
+        }
+
+    /** Like [[timeout]], returning `error` on expiry instead of [[Timeout]]. */
+    def timeoutWithError[E, A, S](using
+        isolate: Isolate[S, Abort[E] & Async, S]
+    )(after: Duration, error: => Result.Error[E])(
+        v: => A < (Browser & Abort[E] & S)
+    )(using Frame): A < (Browser & Abort[E] & S) =
+        timeoutIsolate.andThen(isolate).use {
+            Async.timeoutWithError(after, error)(v)
+        }
+
+    private val timeoutIsolate: Isolate[Browser, Async, Any] =
+        new Isolate[Browser, Async, Any]:
+            type State        = BrowserTab
+            type Transform[A] = A
+            def capture[A, S](f: BrowserTab => A < S)(using Frame)                  = Env.use[BrowserTab](f)
+            def isolate[A, S](state: BrowserTab, v: A < (S & Browser))(using Frame) = Env.run(state)(v)
+            def restore[A, S](v: A < S)(using Frame)                                = v
+
     /** Launches Chrome-for-Testing (downloading on the first call, cached afterwards) and runs the computation. Convenience for the common
       * "give me a browser, do stuff, clean up" case.
       *
