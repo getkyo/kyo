@@ -24,6 +24,9 @@ final private[kyo] class DomReactiveRegions private (
       * The comparison is against the inserted markup, not the live nodes, because the live nodes are rewritten once
       * inserted. It covers markup only (structure, attributes, text): live property state such as an input's typed value
       * is deliberately left alone.
+      *
+      * Later values also retain nodes when the live content already matches, including form properties. An edited field
+      * therefore still gets repaired even when its attributes match the replacement markup.
       */
     private[kyo] def replaceWith[A](regionId: String, html: String, keepCurrent: Boolean)(
         tryMorph: (Seq[dom.Element], Seq[dom.Element], Boolean) => Boolean
@@ -32,7 +35,7 @@ final private[kyo] class DomReactiveRegions private (
     )(
         after: (A, Seq[dom.Element]) => Unit
     )(using Frame): Unit < Sync =
-        Sync.defer {
+        Sync.Unsafe.defer {
             ensureOpen()
             if !ReactiveRegion.isValidHtmlId(regionId) then fail(s"Malformed reactive range id: $regionId")
             val endpoints = ranges.getOrElse(regionId, fail(s"Unknown reactive range: $regionId"))
@@ -100,7 +103,7 @@ final private[kyo] class DomReactiveRegions private (
         before: (Seq[dom.Element], Seq[dom.Element]) => A
     )(
         after: (A, Seq[dom.Element]) => Unit
-    )(using Frame): Unit =
+    )(using Frame, AllowUnsafe): Unit =
         val incoming = DomReactiveRegions.scan(document, fragment)
         val removed  = ranges.iterator.collect {
             case (id, nested) if id != regionId && intersects(range, nested.start) => id
@@ -113,7 +116,13 @@ final private[kyo] class DomReactiveRegions private (
 
         val oldElements = elementsBetween(endpoints)
         val newElements = incomingContent.semanticRoots
-        if !tryMorph(oldElements, newElements, incoming.isEmpty) then
+        val unchanged   = (liveHost, incomingContent) match
+            case (DomReactiveRegions.LiveHost.Synthetic(host, _), DomReactiveRegions.IncomingContent.Synthetic(fresh, _)) =>
+                host.cloneNode(false).isEqualNode(fresh.cloneNode(false)) && sameElementState(host, fresh) && sameContent(endpoints, fresh)
+            case (DomReactiveRegions.LiveHost.Siblings(_), DomReactiveRegions.IncomingContent.Semantic(_)) =>
+                sameContent(endpoints, fragment)
+            case _ => false
+        if !unchanged && !tryMorph(oldElements, newElements, incoming.isEmpty) then
             val incomingMarkup = incoming.iterator.map((id, nested) => id -> serializeBetween(nested)).toSeq
             val state          = before(oldElements, newElements)
             range.deleteContents()
@@ -164,6 +173,58 @@ final private[kyo] class DomReactiveRegions private (
             after(state, insertedRoots)
         end if
     end replaceContent
+
+    private def sameContent(endpoints: DomReactiveRegions.Endpoints, content: dom.Node)(using AllowUnsafe): Boolean =
+        @scala.annotation.tailrec
+        def loop(left: Maybe[dom.Node], right: Maybe[dom.Node]): Boolean =
+            (left, right) match
+                case (Present(node), Absent)                                            => node eq endpoints.end
+                case (Present(a), Present(b)) if (a ne endpoints.end) && sameNode(a, b) =>
+                    loop(DomReactiveRegions.next(a), DomReactiveRegions.next(b))
+                case _ => false
+        loop(DomReactiveRegions.next(endpoints.start), DomReactiveRegions.firstChild(content))
+    end sameContent
+
+    private def sameNode(left: dom.Node, right: dom.Node)(using AllowUnsafe): Boolean =
+        if !left.isEqualNode(right) then false
+        else
+            (left, right) match
+                case (a: dom.Element, b: dom.Element) =>
+                    var same          = sameElementState(a, b)
+                    val leftChildren  = a.querySelectorAll("*")
+                    val rightChildren = b.querySelectorAll("*")
+                    var index         = 0
+                    while same && index < leftChildren.length do
+                        same = sameElementState(leftChildren(index), rightChildren(index))
+                        index += 1
+                    end while
+                    same
+                case _ => true
+    end sameNode
+
+    private def sameElementState(left: dom.Element, right: dom.Element)(using AllowUnsafe): Boolean =
+        var index = 0
+        while index < left.attributes.length do
+            if left.attributes(index).name.startsWith("data-kyo-prop-") then return false
+            index += 1
+        end while
+        if left.namespaceURI != "http://www.w3.org/1999/xhtml" then true
+        else
+            // Unsafe: isEqualNode established equal namespaces and tag names, which determine both HTML DOM interfaces.
+            left.tagName match
+                case "INPUT" =>
+                    val a = left.asInstanceOf[dom.html.Input]
+                    val b = right.asInstanceOf[dom.html.Input]
+                    a.value == b.value && a.checked == b.checked && a.indeterminate == b.indeterminate
+                case "TEXTAREA" =>
+                    left.asInstanceOf[dom.html.TextArea].value == right.asInstanceOf[dom.html.TextArea].value
+                case "SELECT" =>
+                    left.asInstanceOf[dom.html.Select].selectedIndex == right.asInstanceOf[dom.html.Select].selectedIndex
+                case "OPTION" =>
+                    left.asInstanceOf[dom.html.Option].selected == right.asInstanceOf[dom.html.Option].selected
+                case _ => true
+        end if
+    end sameElementState
 
     private[kyo] def size(using Frame): Int < Sync =
         Sync.defer(ranges.size)

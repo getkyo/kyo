@@ -39,6 +39,73 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
         }
     }
 
+    "unchanged content retains its nodes and registered nested anchors" in {
+        val html = s"<section id='same'><span><!--kyo-rs:$Two-->text<!--kyo-re:$Two--></span></section>"
+        val root = host(s"<!--kyo-rs:$One-->$html<!--kyo-re:$One-->")
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                before  <- Sync.defer(root.querySelector("#same"))
+                _       <- regions.replace(One, html)
+                same    <- Sync.defer(root.querySelector("#same") eq before)
+                _       <- regions.replace(Two, "updated")
+                size    <- regions.size
+                text    <- Sync.defer(root.querySelector("#same").textContent)
+            yield
+                assert(same)
+                assert(size == 2)
+                assert(text == "updated")
+        }
+    }
+
+    "unchanged synthetic table content retains rows but applies changed host attributes" in {
+        val html = s"<tbody data-kyo-range-host='$One' class='rows'><tr id='same-row'><td>row</td></tr></tbody>"
+        val root = host(s"<table><tbody data-kyo-range-host='$One' class='rows'><!--kyo-rs:$One-->" +
+            s"<tr id='same-row'><td>row</td></tr><!--kyo-re:$One--></tbody></table>")
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                before  <- Sync.defer(root.querySelector("#same-row"))
+                _       <- regions.replace(One, html)
+                same    <- Sync.defer(root.querySelector("#same-row") eq before)
+                _       <- regions.replace(One, html.replace("class='rows'", "class='changed'"))
+                state   <- Sync.defer((root.querySelector("tbody").getAttribute("class"), root.querySelectorAll("table > tbody").length))
+            yield
+                assert(same)
+                assert(state == ("changed", 1))
+        }
+    }
+
+    "same markup still repairs edited form properties" in {
+        val html = "<section><input id='text' value='server'><textarea id='area'>server</textarea>" +
+            "<input id='check' type='checkbox' checked><select id='choice'><option value='a' selected>A</option>" +
+            "<option value='b'>B</option></select></section>"
+        val root = host(s"<!--kyo-rs:$One-->$html<!--kyo-re:$One-->")
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                _       <- Sync.defer {
+                    // Unsafe: the fixture declares each element with its corresponding HTML tag.
+                    root.querySelector("#text").asInstanceOf[dom.html.Input].value = "typed"
+                    root.querySelector("#area").asInstanceOf[dom.html.TextArea].value = "typed"
+                    root.querySelector("#check").asInstanceOf[dom.html.Input].checked = false
+                    root.querySelector("#check").asInstanceOf[dom.html.Input].indeterminate = true
+                    root.querySelector("#choice").asInstanceOf[dom.html.Select].selectedIndex = 1
+                }
+                _      <- regions.replace(One, html)
+                values <- Sync.defer {
+                    (
+                        root.querySelector("#text").asInstanceOf[dom.html.Input].value,
+                        root.querySelector("#area").asInstanceOf[dom.html.TextArea].value,
+                        root.querySelector("#check").asInstanceOf[dom.html.Input].checked,
+                        root.querySelector("#check").asInstanceOf[dom.html.Input].indeterminate,
+                        root.querySelector("#choice").asInstanceOf[dom.html.Select].value
+                    )
+                }
+            yield assert(values == ("server", "server", true, false, "a"))
+        }
+    }
+
     "initial scan rejects duplicate ids" in {
         initResult(s"<!--kyo-rs:$One--><!--kyo-re:$One--><!--kyo-rs:$One--><!--kyo-re:$One-->")
             .map(result => assertPanicContains(result, s"Duplicate reactive range id: $One"))
@@ -262,7 +329,7 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
     private def keepCurrent(regions: DomReactiveRegions, regionId: String, html: String)(using Frame): Unit < Sync =
         regions.replaceWith(regionId, html, keepCurrent = true)((_, _, _) => false)((_, _) => ())((_, _) => ())
 
-    "a first value with the inserted markup keeps the range once, and a later or different value replaces it" in {
+    "a first value keeps inserted markup and a later value repairs edits or applies changed content" in {
         val root = host(s"<div><!--kyo-rs:$One--><input id='field' value='one'><!--kyo-re:$One--></div>")
         Scope.run {
             for
@@ -270,6 +337,8 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
                 mounted = root.querySelector("#field")
                 _ <- keepCurrent(regions, One, "<input id='field' value='one'>")
                 kept = root.querySelector("#field")
+                // Unsafe: this fixture declares #field as an HTML input. The later value must repair its live property.
+                _ <- Sync.defer(kept.asInstanceOf[dom.html.Input].value = "typed")
                 _ <- keepCurrent(regions, One, "<input id='field' value='one'>")
                 repeated = root.querySelector("#field")
                 _ <- keepCurrent(regions, One, "<input id='field' value='two'>")
@@ -279,6 +348,7 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
                 assert(kept eq mounted)
                 assert(repeated ne mounted)
                 assert(repeated.getAttribute("value") == "one")
+                assert(repeated.asInstanceOf[dom.html.Input].value == "one")
                 assert(changed ne repeated)
                 assert(changed.getAttribute("value") == "two")
                 assert(size == 1)
@@ -321,7 +391,7 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
         }
     }
 
-    "a synthetic table host range is replaced even when its first value repeats the inserted markup" in {
+    "a synthetic table host applies changed attributes from its first value" in {
         val root = host(
             s"<table><tbody data-kyo-range-host='$One' class='rows'><!--kyo-rs:$One--><tr id='row'><td>row</td></tr><!--kyo-re:$One--></tbody></table>"
         )
@@ -332,7 +402,7 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
                 _ <- keepCurrent(
                     regions,
                     One,
-                    s"<tbody data-kyo-range-host='$One' class='rows'><tr id='row'><td>row</td></tr></tbody>"
+                    s"<tbody data-kyo-range-host='$One' class='changed'><tr id='row'><td>row</td></tr></tbody>"
                 )
                 size <- regions.size
             yield
@@ -342,22 +412,25 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
                 assert(current.textContent == "row")
                 val tbody = root.querySelector("table > tbody")
                 assert(tbody.getAttribute("data-kyo-range-host") == One)
-                assert(tbody.getAttribute("class") == "rows")
+                assert(tbody.getAttribute("class") == "changed")
                 assert(root.querySelectorAll("table > tbody").length == 1)
                 assert(size == 1)
         }
     }
 
-    "a replacement not asked to keep current content replaces an identical range" in {
+    "an ordinary replacement repairs edited properties with identical markup" in {
         val root = host(s"<div><!--kyo-rs:$One--><input id='field' value='one'><!--kyo-re:$One--></div>")
         Scope.run {
             for
                 regions <- DomReactiveRegions.init(root)
                 mounted = root.querySelector("#field")
+                // Unsafe: this fixture declares #field as an HTML input.
+                _ <- Sync.defer(mounted.asInstanceOf[dom.html.Input].value = "typed")
                 _ <- regions.replace(One, "<input id='field' value='one'>")
             yield
                 assert(root.querySelector("#field") ne mounted)
                 assert(root.querySelector("#field").getAttribute("value") == "one")
+                assert(root.querySelector("#field").asInstanceOf[dom.html.Input].value == "one")
         }
     }
 

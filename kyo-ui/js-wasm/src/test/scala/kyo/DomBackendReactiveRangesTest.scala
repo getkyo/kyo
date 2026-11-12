@@ -21,6 +21,30 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             discard(dom.document.getElementById(id).asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
         }
 
+    "local unchanged range retains its live button on an ordinary update" in {
+        for
+            version <- Signal.initRef(0)
+            clicks  <- Signal.initRef(0)
+            ui = UI.div(version.map(v =>
+                UI.button(if v == 0 then "Before" else "Submit").id("unchanged-submit")
+                    .onClick(clicks.getAndUpdate(_ + 1).unit)
+            ))
+            ready = new DomTestEnv.MountReady
+            fiber <- Scope.acquireRelease(Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready))))(fiber =>
+                fiber.interrupt.andThen(fiber.getResult).unit
+            )
+            _      <- assertEventually(Sync.defer(ready.installed))
+            _      <- version.set(1)
+            _      <- assertEventually(Sync.defer(dom.document.getElementById("unchanged-submit").textContent == "Submit"))
+            before <- Sync.defer((dom.document.getElementById("unchanged-submit"), ready.applied))
+            _      <- version.set(2)
+            _      <- assertEventually(Sync.defer(ready.applied > before._2))
+            same   <- Sync.defer(dom.document.getElementById("unchanged-submit") eq before._1)
+            _      <- click("unchanged-submit")
+            _      <- assertEventually(clicks.get.map(_ == 1))
+        yield assert(same)
+    }
+
     "local mount preserves direct table row topology through events and repeated updates" in {
         for
             rows <- Signal.initRef(Chunk("A"))
