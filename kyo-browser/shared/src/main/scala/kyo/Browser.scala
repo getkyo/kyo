@@ -304,6 +304,70 @@ object Browser:
             case Present(sc) => withConfig(sc)(body)
     end runShared
 
+    /** Runs the computation on a [[Browser.Tab]] held in the caller's scope, preserving its page, cookies and storage across runs.
+      * Runs on one tab take turns; a nested run from the same fiber is reentrant. A run after the tab's scope closes fails with [[Closed]].
+      */
+    def run[A, S](tab: Browser.Tab)(v: A < (Browser & S))(using Frame): A < (Async & Abort[Closed] & S) =
+        tab.mutex.run(runOn(tab.tab)(v))
+
+    /** A Chrome process and CDP connection held in the caller's scope, across tab runs.
+      *
+      * Closing that scope closes its retained tabs before the connection and process.
+      */
+    opaque type Chrome = Browser.Chrome.Held
+
+    object Chrome:
+
+        final private[kyo] class Held(val backend: CdpBackend, val owner: Scope.Finalizer)
+
+        /** Launches a Chrome closed when the caller's scope closes. */
+        def init(launch: Browser.LaunchConfig)(using
+            Frame
+        ): Browser.Chrome < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
+            ContextEffect.suspendWith(Tag[Scope]) { owner =>
+                BrowserLauncher.launch(launch).map(wsUrl => CdpBackend.init(wsUrl, launch)).map(backend => Held(backend, owner))
+            }
+
+    end Chrome
+
+    /** A tab held in the caller's scope, with isolated cookies and storage.
+      *
+      * Closing either that scope or its Chrome closes the tab, its tracking and its browser context.
+      */
+    opaque type Tab = Browser.Tab.Held
+
+    object Tab:
+
+        final private[kyo] class Held(val tab: BrowserTab, val mutex: Meter)
+
+        extension (tab: Browser.Tab) private[kyo] def held: Held = tab
+
+        /** Opens a blank tab in a browser context of its own, closed with the caller's scope or its Chrome.
+          * Opening on a Chrome whose owner has closed fails with [[Closed]].
+          */
+        def init(chrome: Browser.Chrome)(using Frame): Browser.Tab < (Async & Scope & Abort[BrowserReadException | Closed]) =
+            ContextEffect.suspendWith(Tag[Scope]) { caller =>
+                Scope.runUnowned {
+                    Abort.catching[Closed] {
+                        ContextEffect.suspendWith(Tag[Scope]) { resources =>
+                            // Both owners hold this resource scope before any native acquisition starts.
+                            chrome.owner.ensure(error => resources.close(error).andThen(resources.await)).andThen {
+                                val registerCaller =
+                                    if caller eq chrome.owner then Kyo.unit
+                                    else caller.ensure(error => resources.close(error).andThen(resources.await))
+                                registerCaller.andThen {
+                                    BrowserTabSetup.attachAndSetupTab(chrome.backend).map(tab =>
+                                        Meter.initMutex.map(mutex => Held(tab, mutex))
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+    end Tab
+
     // --- Navigation ---
 
     /** Navigates the current tab to the given URL and waits for the page to settle per `settle` (default

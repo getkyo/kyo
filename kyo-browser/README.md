@@ -24,6 +24,7 @@ Every entry point below lives on the `Browser` companion object (so `run` means 
 | Entry point | Purpose |
 |-------------|---------|
 | `run` / `runShared` | Launch (or attach to) a browser and scope a tab to the body |
+| `Chrome.init` / `Tab.init` / `run(tab)` | Retain a browser and isolated tabs in a caller scope across runs |
 | `Selector` | Build locators by role, text, label, placeholder, test-id, CSS, or id |
 | `goto` / `back` / `forward` / `reload` / `expectNavigation` / `history` | Navigation, auto-settled to a configurable readiness mode |
 | `click` / `fill` / `check` / `select` / `press` / `hover` / `dragAndDrop` / `setFiles` | Interactions, gated by the actionability check |
@@ -61,13 +62,13 @@ Browser-side helpers (selectors, settle modes, page lifecycle, configuration typ
 A `Browser.run` body operates inside a four-layer hierarchy. Each layer contains the next, and each layer is cleaned up when its parent ends. Most call sites only think about the tab; the deeper layers exist so the library can attach resources to the right cleanup boundary.
 
 ```
-process    one Chrome process; launched by `Browser.run(launch)` or shared across the JVM via `Browser.runShared`
-  └─ context    a fresh, cookie- and storage-isolated browser context (Chrome's incognito-equivalent), one per `Browser.run` call
+process    one Chrome process; launched by `Browser.run(launch)`, held by `Browser.Chrome.init`, or shared via `Browser.runShared`
+  └─ context    a fresh, cookie- and storage-isolated browser context (Chrome's incognito-equivalent), one per `Browser.run` call or retained `Browser.Tab`
        └─ tab       an attached target with its own session id; this is what the `Browser` effect carries
             └─ iframe    a nested document inside the tab, scoped via `Browser.withIFrame`
 ```
 
-There are three entry points for materialising a browser:
+There are four entry points for materialising a browser:
 
 `Browser.run(launch, session)` is the everyday form. It launches a fresh Chrome, runs the body, and shuts the process down when the body completes (whether by success, failure, or interruption). The no-argument overload downloads `chrome-headless-shell` (the lightweight headless build Google publishes alongside full Chrome for testing) on first use, caches the binary under the platform cache directory (override via `KYO_BROWSER_CACHE`), and launches it.
 
@@ -97,6 +98,27 @@ Several processes on one machine can share Chrome this way at once, for example 
 
 ```scala
 Browser.run("ws://localhost:9222/devtools/browser/<uuid>") { /* ... */ }
+```
+
+For a page that persists across calls, acquire `Browser.Chrome` and `Browser.Tab` in a caller `Scope`. `Browser.run(tab)` preserves the page, cookies and storage for the next call. Each tab has its own isolated browser context. Closing either the tab's caller scope or its Chrome closes the tab's gate, tracking and context; runs on a closed tab and opening on a closed Chrome fail with `Closed`.
+
+```scala
+Scope.run {
+    for
+        launch <- Browser.chromeForTestingLaunchConfig()
+        chrome <- Browser.Chrome.init(launch)
+        tab    <- Browser.Tab.init(chrome)
+        _      <- Browser.run(tab)(Browser.goto("https://example.com"))
+        title  <- Browser.run(tab)(Browser.title)
+    yield title
+}
+```
+
+Runs on one retained tab serialize across fibers and reenter from the same fiber; different tabs on a Chrome can run concurrently. For a timed run, apply the timeout outside the tab handler:
+
+```scala
+def titleWithin(tab: Browser.Tab, timeout: Duration)(using Frame): String < (Async & Abort[BrowserReadException | Closed | Timeout]) =
+    Async.timeout(timeout)(Browser.run(tab)(Browser.title))
 ```
 
 Inside the body, four scopers carve smaller scopes out of the same tab or context:
