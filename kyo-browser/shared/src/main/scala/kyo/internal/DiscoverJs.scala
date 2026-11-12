@@ -30,9 +30,10 @@ private[kyo] object DiscoverJs:
     ) derives Schema
 
     /** Idempotent install of `window.__kyoDiscoverProbe` and `window.__kyoUniqueSelector`. `text` is trimmed and truncated to 200 UTF-16
-      * units without splitting a surrogate pair; lone surrogates become U+FFFD. Empty text maps to null. `interactive` is
-      * tag/role/tabindex/onclick. `topmost` is a single rect-center `elementFromPoint` resolving to `el` or a descendant. `inViewport` is
-      * shared with the VERIFY `inViewport` JS.
+      * units without splitting a surrogate pair; lone surrogates become U+FFFD. Empty text maps to null.
+      * `interactive` combines tag/role/tabindex/onclick, editing-host and pointer-cursor hints, suppressing inherited
+      * decorations and wrappers with no visible text outside their controls. `topmost` is a single rect-center `elementFromPoint`
+      * resolving to `el` or a descendant. `inViewport` is shared with the VERIFY `inViewport` JS.
       */
     private[kyo] val installJs: String =
         """(() => {
@@ -40,6 +41,43 @@ private[kyo] object DiscoverJs:
             window.__kyoDiscoverInstalled = true;
             const INTERACTIVE_TAGS = new Set(['A','BUTTON','INPUT','SELECT','TEXTAREA','OPTION','LABEL']);
             const INTERACTIVE_ROLES = new Set(['button','link','checkbox','radio','tab','menuitem','textbox']);
+            const isEditingHost = (el) => el.isContentEditable && !(el.parentElement && el.parentElement.isContentEditable);
+            const isControl = (n) => INTERACTIVE_TAGS.has(n.localName.toUpperCase()) || n.hasAttribute('onclick') ||
+                INTERACTIVE_ROLES.has(n.getAttribute('role')) || isEditingHost(n);
+            const hasPointerCursor = (n) => getComputedStyle(n).cursor === 'pointer';
+            const wrapsControls = (el) => {
+                let control = false;
+                const range = document.createRange();
+                const texts = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+                    acceptNode: n => {
+                        if (n.nodeType === Node.ELEMENT_NODE) {
+                            if (isControl(n)) { control = true; return NodeFilter.FILTER_REJECT; }
+                            return NodeFilter.FILTER_SKIP;
+                        }
+                        if (!n.textContent.trim()) return NodeFilter.FILTER_SKIP;
+                        const parent = n.parentElement, style = getComputedStyle(parent);
+                        if (style.visibility === 'hidden' || style.visibility === 'collapse') return NodeFilter.FILTER_SKIP;
+                        for (let p = parent; p; p = p.parentElement) {
+                            const css = p === parent ? style : getComputedStyle(p);
+                            if (css.display === 'none' || (css.display !== 'contents' && (css.opacity === '0' || css.contentVisibility === 'hidden')))
+                                return NodeFilter.FILTER_SKIP;
+                        }
+                        range.selectNodeContents(n);
+                        const box = range.getBoundingClientRect();
+                        return box.width > 0 && box.height > 0 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+                    }
+                });
+                // A control's subtree is skipped, so the first accepted text belongs to the wrapper itself.
+                return !texts.nextNode() && control;
+            };
+            const isPointerTarget = (el) => {
+                if (!hasPointerCursor(el)) return false;
+                // Editable contents share their host's target; non-editable islands may contain independent controls.
+                for (let p = el.parentElement; p; p = p.parentElement)
+                    if (isControl(p) && (!isEditingHost(p) || el.isContentEditable)) return false;
+                const named = (el.getAttribute('aria-label') || '').trim() !== '' || (el.getAttribute('title') || '').trim() !== '';
+                return (!el.parentElement || !hasPointerCursor(el.parentElement) || named) && !wrapsControls(el);
+            };
             window.__kyoUniqueSelector = (el) => {
                 const parts = [];
                 for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
@@ -78,8 +116,7 @@ private[kyo] object DiscoverJs:
                 const topmost = !!(hit && (hit === el || el.contains(hit)));
                 const visible = (typeof el.checkVisibility === 'function' ? el.checkVisibility() : true) && r.width > 0 && r.height > 0;
                 const inViewport = r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
-                const interactive = INTERACTIVE_TAGS.has(el.tagName) || el.hasAttribute('onclick')
-                    || (role && INTERACTIVE_ROLES.has(role)) || el.tabIndex >= 0;
+                const interactive = isControl(el) || el.tabIndex >= 0 || isPointerTarget(el);
                 const obj = {
                     selector: window.__kyoUniqueSelector(el),
                     tag: el.tagName.toLowerCase(),
