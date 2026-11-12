@@ -489,10 +489,12 @@ jobs plus controls.
 `screenshot` dropped the legacy `1280x720` crop: it now captures whatever viewport
 `setViewport` / `withViewport` last established (`Browser.scala:1916-1927`).
 `screenshotElement` auto-waits inside `Actionability.withRetry` (channel
-`BrowserElementException`, never widened): it resolves, box-stability-checks (two
-`getBoundingClientRect` samples ~16ms apart agreeing within 1px), scrolls into view,
-re-reads the post-scroll rect for the clip, then captures ONCE outside the retry so a
-capture failure never re-enters the retry channel (`Browser.scala:2039-2081`).
+`BrowserElementException`, never widened): it scrolls into view, box-stability-checks
+(two `getBoundingClientRect` samples ~16ms apart agreeing within 1px), then reads the
+border quad through `DOM.getBoxModel`. That quad includes iframe offsets in the
+top-level viewport; `Page.getLayoutMetrics` supplies the document scroll offset for
+the clip. The capture runs ONCE outside the retry, so a capture failure never
+re-enters the retry channel (`Browser.scala:2066-2154`).
 `transparentBackground = true` sets `Emulation.setDefaultBackgroundColorOverride` to
 fully transparent for the shot, cleared via `Scope.acquireRelease`
 (`Browser.scala:2142-2163`). `screenshotFullPage` reads content/viewport height in one

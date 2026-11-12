@@ -3,12 +3,7 @@ package kyo
 import kyo.internal.*
 import kyo.internal.CdpTypes.*
 
-/** Behavior tests for the HoldStill capture helper.
-  *
-  * Tests 1-3 and the convergence-despite-injection test require Chrome (extend BrowserTest).
-  * Test 4 (frameHash equality/inequality) is a pure computation and does not require Chrome;
-  * it lives in this class for the 1:1 source-to-test match with HoldStill.scala.
-  */
+/** Browser capture behavior: decoded pixels, geometry, transparency and hold-still convergence. */
 class BrowserCaptureTest extends BrowserTest:
 
     override def timeout = 90.seconds
@@ -21,6 +16,107 @@ class BrowserCaptureTest extends BrowserTest:
             CdpBackend.captureScreenshot(tab.session, ScreenshotParams(clip = Absent))
                 .map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
         }
+
+    private def assertRectangleCapture(image: Image, scale: Int)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < (Browser & Abort[BrowserReadException]) =
+        BrowserEval.evalJsAwaiting(s"""(async () => {
+            const image = new Image(); image.src = 'data:image/png;base64,' + ${Json.encode(image.base64)};
+            await image.decode();
+            const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+            const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+            const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+            const expected = [18,52,86,255]; let wrong = 0;
+            for (let i = 0; i < data.length; i++) if (data[i] !== expected[i % 4]) wrong++;
+            return [image.naturalWidth, image.naturalHeight, wrong].join('|');
+        })()""").map(actual => assert(actual == s"${80 * scale}|${40 * scale}|0", actual))
+
+    "screenshotElement captures known pixels in the viewport" in {
+        withBrowser {
+            onPage("""<!doctype html><html><body style="margin:0;background:white">
+                <div id="rectangle" style="position:absolute;left:32px;top:48px;width:50px;height:10px;padding:10px;border:5px solid #123456;background:#123456"></div>
+            </body></html>""") {
+                Kyo.foreachDiscard(Chunk(1, 2)) { scale =>
+                    Browser.withViewport(800, 400, scale.toDouble) {
+                        Browser.screenshotElement(Browser.Selector.id("rectangle")).map(image => assertRectangleCapture(image, scale))
+                    }
+                }
+            }
+        }
+    }
+
+    "screenshotElement captures known pixels beyond both viewport axes" in {
+        withBrowser {
+            Browser.withViewport(800, 400) {
+                Kyo.foreachDiscard(Chunk((32, 3000), (2000, 48), (2000, 3000))) { (x, y) =>
+                    onPage(s"""<!doctype html><html><body style="margin:0;width:4000px;height:5000px;background:white">
+                        <div id="rectangle" style="position:absolute;left:${x}px;top:${y}px;width:80px;height:40px;background:#123456"></div>
+                    </body></html>""") {
+                        Browser.screenshotElement(Browser.Selector.id("rectangle")).map(image => assertRectangleCapture(image, 1))
+                    }
+                }
+            }
+        }
+    }
+
+    "screenshotElement captures known pixels inside an offset scrolled iframe" in {
+        val outer =
+            """<!doctype html><html><body style="margin:0;width:3000px;height:4000px;background:white">
+            <iframe id="frame" src="{iframe-src}" style="position:absolute;left:1200px;top:2400px;width:320px;height:180px;border:0"></iframe>
+        </body></html>"""
+        val inner = """<!doctype html><html><body style="margin:0;height:2000px;background:white">
+            <div id="rectangle" style="position:absolute;left:50px;top:1200px;width:80px;height:40px;background:#123456"></div>
+        </body></html>"""
+        withBrowserOnLocalhostIframe(outer, inner) {
+            Browser.withViewport(800, 400) {
+                for
+                    _     <- Browser.scrollTo(1100, 2300)
+                    _     <- Browser.assertExists(Browser.Selector.id("frame"))
+                    frame <- Browser.iframe(Browser.Selector.id("frame"))
+                    image <- Browser.withIFrame(frame)(Browser.screenshotElement(Browser.Selector.id("rectangle")))
+                    _     <- assertRectangleCapture(image, 1)
+                yield ()
+            }
+        }
+    }
+
+    "screenshotElement reports a zero-sized element as not actionable" in {
+        withBrowser {
+            onPage("<div id='empty' style='width:0;height:0'></div>") {
+                Browser.withConfig(_.retrySchedule(Schedule.fixed(1.milli).take(0))) {
+                    Abort.run[BrowserReadException](Browser.screenshotElement(Browser.Selector.id("empty"))).map {
+                        case Result.Failure(error: BrowserElementNotActionableException) =>
+                            import BrowserElementNotActionableException.Reason
+                            assert(error.reason == Reason.NotVisible(Reason.NotVisibleCause.ZeroComputedSize))
+                        case other => fail(s"Expected not-actionable element, got $other")
+                    }
+                }
+            }
+        }
+    }
+
+    "screenshotElement reports a collapsed iframe target as not actionable" in {
+        withBrowserOnLocalhostIframe(
+            """<iframe id="frame" src="{iframe-src}" style="width:300px;height:200px;transform:scale(0)"></iframe>""",
+            """<div id="rectangle" style="width:80px;height:40px;background:#123456"></div>"""
+        ) {
+            for
+                _     <- Browser.assertExists(Browser.Selector.id("frame"))
+                frame <- Browser.iframe(Browser.Selector.id("frame"))
+                _     <- Browser.withIFrame(frame) {
+                    Browser.withConfig(_.retrySchedule(Schedule.fixed(1.milli).take(0))) {
+                        Abort.run[BrowserReadException](Browser.screenshotElement(Browser.Selector.id("rectangle"))).map {
+                            case Result.Failure(error: BrowserElementNotActionableException) =>
+                                import BrowserElementNotActionableException.Reason
+                                assert(error.reason == Reason.NotVisible(Reason.NotVisibleCause.ZeroComputedSize))
+                            case other => fail(s"Expected not-actionable element, got $other")
+                        }
+                    }
+                }
+            yield ()
+        }
+    }
 
     // ---- frameHash equates byte-identical images and distinguishes different ones (pure, no Chrome).
     //
