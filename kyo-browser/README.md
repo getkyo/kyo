@@ -353,6 +353,8 @@ Each `waitForX` accepts an optional trailing `schedule: Maybe[Schedule]` so a si
 
 ### Navigation history
 
+`Browser.goto` keeps the current document when an absolute URL is already its URL, including equivalent spellings such as `http://host` and `http://host/`. This preserves page state. Use `Browser.reload` for an explicit refresh.
+
 `Browser.history` returns the in-tab `NavigationHistory`: the ordered list of entries and a current pointer. The companion accessors answer the natural questions without manual index arithmetic.
 
 | Method | Returns | Description |
