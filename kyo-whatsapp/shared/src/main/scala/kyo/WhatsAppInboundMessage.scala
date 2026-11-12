@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.whatsapp.Transformers
 import kyo.schema.catchAll
 import kyo.schema.discriminator
+import kyo.schema.omit
 import kyo.schema.rename
 import kyo.schema.transform
 import kyo.schema.untagged
@@ -140,6 +141,9 @@ object WhatsAppInboundMessage:
         contacts: Chunk[WhatsAppContact]
     ) extends WhatsAppInboundMessage, Common derives CanEqual
 
+    /** A reaction set on a message, or taken back: Meta leaves `emoji` out on a removal, read as the empty emoji, which is also what
+      * [[kyo.WhatsAppMessage.Reaction]] sends to remove one.
+      */
     @rename("reaction")
     final case class Reaction(
         from: WhatsAppId.WaId,
@@ -153,7 +157,8 @@ object WhatsAppInboundMessage:
     end Reaction
 
     object Reaction:
-        final case class Body(@rename("message_id") messageId: WhatsAppId.MessageId, emoji: String) derives CanEqual, Schema
+        final case class Body(@rename("message_id") messageId: WhatsAppId.MessageId, @omit(omit.WhenDefault) emoji: String = "")
+            derives CanEqual, Schema
 
     /** A tap on a template's quick-reply button. */
     @rename("button")

@@ -132,6 +132,14 @@ class WhatsAppMessageTest extends BaseWhatsAppTest:
         )
     }
 
+    "removing a reaction sends an explicit empty emoji" in {
+        roundTrips(
+            """{"messaging_product":"whatsapp","recipient_type":"individual","to":"+16505551234","type":"reaction",
+              |"reaction":{"message_id":"wamid.ORIG","emoji":""}}""".stripMargin,
+            WhatsAppMessage.Reaction(WhatsAppId.MessageId("wamid.ORIG"), "")
+        )
+    }
+
     "a contacts message holds the cards under contacts" in {
         roundTrips(
             """{"messaging_product":"whatsapp","recipient_type":"individual","to":"+16505551234","type":"contacts",
