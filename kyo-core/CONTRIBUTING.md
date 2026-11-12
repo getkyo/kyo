@@ -144,6 +144,9 @@ These are the module's load-bearing invariants. The user-facing statement is the
 takes the interrupt without completing its promise; the promise stays pending while
 the task runs the releases the abandoned computation owes, and completes once they
 have run (`scheduler/IOTask.scala`, the `Status` states and `abandon`).
+An interrupt carrying a panic passes its exception to those releases, including
+`Interrupted` for the default interrupt, so an outcome-aware finalizer can distinguish
+it from a handler's discard (`SyncTest`, "finalizer outcome").
 `Fiber.interruptAwait` is the public form of that wait. A scope's release is its
 `finalizer.close`, which starts the drain of the scope's async finalizers on a
 detached fiber and does not wait for it: by decision there is no backpressure on

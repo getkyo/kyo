@@ -307,6 +307,8 @@ val withCleanup: Int < (Async & Scope) =
 def compute: Int < Sync = ???
 ```
 
+The outcome-aware `Sync.ensure` overload also distinguishes interruption from a handler discarding the rest of a computation. A panic supplied to `fiber.interrupt` reaches the finalizer with the same exception; the default interrupt carries `Interrupted`. A handler dropping the remainder supplies a discard `KyoException`.
+
 ### Closing a scope
 
 `Scope.run` discharges `Scope` and closes it when its body ends. Its result is delivered after every release has run, and a failure from the body is raised again after them, so the caller never observes a half-closed scope. Releases run in reverse registration order. A failing release is logged with `Log.error` and the rest still run, so a release can never mask the body's own result or error.
