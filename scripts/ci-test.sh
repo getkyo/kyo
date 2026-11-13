@@ -100,7 +100,18 @@ if [ "${1:-}" = "--self-test" ]; then
     HEAP="$SELFDIR/heap.log"
     OUT="$SELFDIR/out.log"
     PODCALLS="$SELFDIR/podman.log"
-    trap 'rm -rf "$SELFDIR"' EXIT
+    sweep_pid=""
+    sweep_control=""
+    release_sweep_target() {
+        if [ -n "$sweep_pid" ]; then
+            # The control pipe releases a surviving stand-in without signalling a PID that may already have exited.
+            (trap '' PIPE; printf 'release\n' >&"$sweep_control") 2>/dev/null || true
+            wait "$sweep_pid" 2>/dev/null; sweep_exit=$?
+            sweep_pid=""
+            exec {sweep_control}>&-
+        fi
+    }
+    trap 'release_sweep_target; rm -rf "$SELFDIR"' EXIT
 
     # The modules the fake sbt writes when the runner asks it to plan; cases
     # reassign it to shape the pools. FAKE_SKIP is the comma-separated base-name
@@ -141,9 +152,10 @@ if [ "${1:-}" = "--self-test" ]; then
     }
 
     # A fake podman for the container-sweep cases: every invocation is recorded,
-    # `ps -aq` answers from a file, and `rm -af --volumes` runs $1 — which empties
+    # `ps -aq` answers from a file, and `rm -af --volumes` runs $1, which empties
     # that file for a runtime that can remove containers, and does nothing for the
-    # one whose stop/kill leave the process running.
+    # one whose stop/kill leave the process running. inspect returns the owned
+    # stand-in's PID ($2), or 0 when unused.
     make_fake_podman() {
         {
             printf '#!/usr/bin/env bash\n'
@@ -151,7 +163,7 @@ if [ "${1:-}" = "--self-test" ]; then
             printf 'case "$*" in\n'
             printf '    "ps -aq") cat "%s" 2>/dev/null ;;\n' "$SELFDIR/podman-ps"
             printf '    "rm -af --volumes") %s ;;\n' "$1"
-            printf '    inspect*) echo 12345 ;;\n'
+            printf '    inspect*) echo %s ;;\n' "$2"
             printf 'esac\n'
             printf 'exit 0\n'
         } > "$SELFDIR/podman"
@@ -212,6 +224,11 @@ if [ "${1:-}" = "--self-test" ]; then
             echo "  PASS: $2"; PASS=$((PASS+1))
         else
             echo "  FAIL: $2"; FAIL=$((FAIL+1))
+            echo "    runner exit: ${CT_EXIT:-not-run}"
+            echo "    sbt calls:"
+            [ ! -f "$CALLS" ] || sed 's/^/      /' "$CALLS"
+            echo "    runner output:"
+            [ ! -f "$OUT" ] || sed 's/^/      /' "$OUT"
         fi
     }
 
@@ -801,7 +818,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     # 49-51: the batch-boundary container sweep.
     FAKE_PLAN="kyo-dataNative"
     printf 'aaa\nbbb\n' > "$SELFDIR/podman-ps"
-    make_fake_podman ': > "'"$SELFDIR"'/podman-ps"'
+    make_fake_podman ': > "'"$SELFDIR"'/podman-ps"' 0
     run_runner_env "$PASS_BODY" Native test CONTAINER_SWEEP=1
     if pod_has "rm -af --volumes" && pod_count "rm -af --volumes" 1 \
        && ! pod_has "inspect" && exit_is 0
@@ -810,16 +827,23 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
 
     # A runtime that cannot reap a container's process leaves survivors behind `rm -af`;
     # the host-side kill is what the next batch depends on.
-    printf 'aaa\nbbb\n' > "$SELFDIR/podman-ps"
-    make_fake_podman ':'
+    printf 'aaa\n' > "$SELFDIR/podman-ps"
+    coproc SWEEP_TARGET { read -r _sweep_release; }
+    sweep_pid=$SWEEP_TARGET_PID
+    exec {sweep_control}>&"${SWEEP_TARGET[1]}"
+    make_fake_podman ':' "$sweep_pid"
     run_runner_env "$PASS_BODY" Native test CONTAINER_SWEEP=1
+    release_sweep_target
     if pod_has "inspect --format {{.State.Pid}} aaa" \
-       && pod_count "rm -af --volumes" 2 && exit_is 0
+       && pod_count "rm -af --volumes" 2 && exit_is 0 && [ "$sweep_exit" = 137 ]
     then record ok "survivors of rm -af are killed host-side and swept again"
-    else record no "survivors of rm -af are killed host-side and swept again"; fi
+    else
+        echo "  sweep target exit: $sweep_exit"
+        record no "survivors of rm -af are killed host-side and swept again"
+    fi
 
     printf 'aaa\n' > "$SELFDIR/podman-ps"
-    make_fake_podman ': > "'"$SELFDIR"'/podman-ps"'
+    make_fake_podman ': > "'"$SELFDIR"'/podman-ps"' 0
     run_runner_env "$PASS_BODY" Native test
     if pod_empty && exit_is 0
     then record ok "CONTAINER_SWEEP=0 touches no container runtime at all"
@@ -903,6 +927,18 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     then record ok "a JVM that exited after its fatal error is left alone"
     else record no "a JVM that exited after its fatal error is left alone"; fi
 
+    # A failed assertion must retain the run it inspected before the next case overwrites OUT and CALLS.
+    run_runner JVM compile 'echo self-test-diagnostic-marker; exit 7'
+    (record no "deliberate diagnostic failure") > "$SELFDIR/failure-diagnostic.log"
+    if grep -qF 'runner exit: 7' "$SELFDIR/failure-diagnostic.log" \
+       && grep -qF 'testKyo --phase compile-main' "$SELFDIR/failure-diagnostic.log" \
+       && grep -qF 'self-test-diagnostic-marker' "$SELFDIR/failure-diagnostic.log"
+    then record ok "a failed self-test retains its runner exit, calls and output"
+    else
+        cat "$SELFDIR/failure-diagnostic.log"
+        record no "a failed self-test retains its runner exit, calls and output"
+    fi
+
     # Negative control: a deliberately wrong expectation MUST flip FAIL,
     # proving the harness is not vacuous. Not counted in the scenario total.
     run_runner JVM test 'exit 0'
@@ -911,7 +947,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
     # The pinned count catches a case that stops running without failing; a new case raises it.
-    EXPECTED_TOTAL=78
+    EXPECTED_TOTAL=79
     if [ "$TOTAL" -ne "$EXPECTED_TOTAL" ]; then
         echo "ran $TOTAL cases, expected $EXPECTED_TOTAL: a case stopped running, or a new one needs EXPECTED_TOTAL raised"
     fi
