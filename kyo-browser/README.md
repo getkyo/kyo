@@ -223,6 +223,7 @@ The interaction surface:
 | `fill(selector, text)` | `Unit` | Replace the value of an `<input>`, `<textarea>`, or `contentEditable` element |
 | `check(selector)` / `uncheck(selector)` | `Unit` | Set a checkbox to the desired state (no-op if already there) |
 | `select(selector, value)` | `Unit` | Choose an `<option>` by `value` in a `<select>` |
+| `selectLabel(selector, label)` | `Unit` | Choose the first `<option>` with the requested displayed label |
 | `press(selector, key, modifiers)` / `press(key, modifiers)` | `Unit` | Send a keystroke to a focused selector or to the page-level active element. `modifiers: KeyModifiers` carries Shift / Ctrl / Alt / Meta as a typed value; defaults to `KeyModifiers.none` |
 | `keyDown(key)` | `Unit` | Dispatch a raw keyDown CDP event for `key` (low-level; prefer `press` unless split down/up timing is required) |
 | `keyUp(key)` | `Unit` | Dispatch a raw keyUp CDP event for `key` |
@@ -234,6 +235,14 @@ The interaction surface:
 | `focus(selector)` | `Unit` | Move keyboard focus to the target |
 
 `fill` on a contenteditable editor uses native input so the editor's own model sees the edit. It preserves line boundaries and verifies the resulting text. Empty replacements use the same input path; no Delete key or synthetic `change` is sent. Focus loss during `beforeinput` or `textInput` cancels the pending edit and reports `NotFocused`. Temporary guards are released in the original document, including when the call is interrupted or the tab navigates.
+
+`selectLabel` matches labels exactly and distinguishes options that share the same value. A nonempty `label` attribute supplies the label; otherwise native option text supplies it, including its whitespace normalization. It dispatches one bubbling `change` event and no `input` event. A missing label raises `BrowserOptionLabelNotFoundException` without writing the selection or firing `change`; the session retry schedule applies.
+
+```scala
+import kyo.*
+
+Browser.selectLabel(Browser.Selector.id("size"), "Small")
+```
 
 ### Browser.Key
 

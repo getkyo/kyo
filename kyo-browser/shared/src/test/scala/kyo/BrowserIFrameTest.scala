@@ -346,6 +346,32 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
+    "withIFrame routes selectLabel and its change event to the child select" in {
+        withBrowser {
+            onSrcdoc(
+                """<body><select id='size'><option value='parent'>Wanted</option></select>
+                    <iframe id='frame' data-testid='frame' srcdoc="{srcdoc}"></iframe></body>""",
+                """<body><select id='size'><option value='same'>Other</option><option value='same'>Wanted</option></select>
+                    <script>window.childChanges=0; document.body.addEventListener('change', () => childChanges++);</script></body>"""
+            ) {
+                discoverSingleFrame.map { frame =>
+                    for
+                        child <- Browser.withIFrame(frame) {
+                            Browser.selectLabel(Browser.Selector.id("size"), "Wanted").andThen {
+                                Browser.eval(
+                                    "JSON.stringify([document.getElementById('size').selectedIndex, document.getElementById('size').value, childChanges])"
+                                )
+                            }
+                        }
+                        parent <- Browser.value(Browser.Selector.id("size"))
+                    yield
+                        assert(child == """[1,"same",1]""", child)
+                        assert(parent == "parent", parent)
+                }
+            }
+        }
+    }
+
     "withIFrame(f) { Browser.fill(input, \"hi\") } populates the iframe's input, not main's" in {
         withBrowser {
             val inner = """<body><input id="x" type="text" /></body>"""

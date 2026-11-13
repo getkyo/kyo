@@ -180,6 +180,12 @@ final case class BrowserElementNotFoundException(selector: String)(using Frame)
     with BrowserElementException with BrowserAssertionException with BrowserMutationException
     derives CanEqual
 
+/** No option of the matched target has the requested label. Selection and change events are left untouched. */
+final case class BrowserOptionLabelNotFoundException(selector: String, label: String)(using Frame)
+    extends BrowserException(s"Option not found: no option of $selector shows the label '$label'")
+    with BrowserElementException with BrowserMutationException
+    derives CanEqual
+
 /** An element matched the selector but cannot accept the requested interaction.
   *
   * @see
