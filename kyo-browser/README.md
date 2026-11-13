@@ -307,6 +307,8 @@ The read surface:
 | `accessibilityNodes` | `Chunk[Browser.AxNode]` | Flat AX tree of the current frame |
 | `consoleLogs` / `consoleLogs(level)` | `Chunk[Browser.ConsoleMessage]` | Console buffer captured since the tab attached. `ConsoleMessage` carries `level: Browser.ConsoleLevel`, `text: String`, and the source frame; the level-filtered overload returns only matching messages |
 
+`onConsole` and `recordConsole` preserve primitive arguments in their message text, including booleans, `null`, `undefined`, special numbers and bigints. Thrown primitive values are retained in error messages too.
+
 `screenshot` and `screenshotElement` return a `Browser.Image`. The type exposes: `binary: Span[Byte]` (raw bytes), `base64: String` (Base64-encoded), `writeFileBinary(path)` / `writeFileBase64(path)` (write to disk), and `renderToConsole(charsWidth, charsHeight)` (terminal sixel/block rendering for debugging). `pdf` returns raw `Span[Byte]` PDF bytes directly (not a `Browser.Image`); it only works in headless Chrome. The capture methods take a format and quality: `screenshot(width, height, format, quality)` and `screenshotElement(selector, format, quality)`, where `format` is a `Browser.ScreenshotFormat` (`Png`, `Jpeg`, or `Webp`, default `Png`) and `quality` (0 to 100) applies only to the lossy formats (`Jpeg` and `Webp`) and is ignored for `Png`.
 
 ### Boolean predicates

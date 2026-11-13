@@ -11,6 +11,31 @@ import kyo.internal.ConsoleApiCalledWire
   */
 class BrowserConsoleDecodeTest extends BrowserTest:
 
+    "console primitive values decode without losing their types or positions" in {
+        val json = """{"type":"log","timestamp":1000,"args":[
+            {"type":"string","value":"count"},
+            {"type":"number","value":3,"description":"3"},
+            {"type":"boolean","value":true},
+            {"type":"object","subtype":"null","value":null},
+            {"type":"undefined"},
+            {"type":"number","unserializableValue":"NaN"},
+            {"type":"number","unserializableValue":"-0"},
+            {"type":"number","unserializableValue":"Infinity"},
+            {"type":"number","unserializableValue":"-Infinity"},
+            {"type":"bigint","unserializableValue":"9007199254740993n"},
+            {"type":"object","description":"Object"},
+            {"type":"symbol","description":"Symbol(test)"}
+        ]}"""
+        Abort.get(Json.decode[ConsoleApiCalledWire](json)).map(Browser.decodeConsoleApiCalled(_, 1000L)).map { message =>
+            assert(message == Browser.ConsoleMessage(
+                Browser.ConsoleLevel.Log,
+                "count 3 true null undefined NaN -0 Infinity -Infinity 9007199254740993n Object Symbol(test)",
+                Absent,
+                0L
+            ))
+        }
+    }
+
     // ---- decodeConsoleApiCalled: non-structural type map ----
 
     "decodeConsoleApiCalled maps each non-structural type to the right level" in {
