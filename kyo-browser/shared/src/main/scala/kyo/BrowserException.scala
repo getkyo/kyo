@@ -180,6 +180,12 @@ final case class BrowserElementNotFoundException(selector: String)(using Frame)
     with BrowserElementException with BrowserAssertionException with BrowserMutationException
     derives CanEqual
 
+/** No option in the matched select element has the requested value. The selection is unchanged and no change event is dispatched. */
+final case class BrowserOptionNotFoundException(selector: String, value: String)(using Frame)
+    extends BrowserException(s"Option not found: no option of $selector holds the value '$value'")
+    with BrowserElementException with BrowserMutationException
+    derives CanEqual
+
 /** An element matched the selector but cannot accept the requested interaction.
   *
   * @see

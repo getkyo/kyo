@@ -526,7 +526,7 @@ object Browser:
       *   - All HTML5 input types route through the same shim: date, time, datetime-local, month, week, number, range, color, textarea, and
       *     any other type whose `value` is a `string`.
       *   - SELECT elements take a JS-internal short-circuit that mirrors [[Browser.select]]'s semantics (assign `el.value`, dispatch
-      *     `change` only, no readback).
+      *     `change` only, no readback), failing with [[BrowserOptionNotFoundException]] when no option has the requested value.
       *   - Contenteditable elements use native text insertion over their selected contents, including empty replacements. The editor
       *     receives trusted native input events, without synthetic `change` or keyboard events. Native multiline editing may produce
       *     several `input` events. Focus loss during `beforeinput` or `textInput` cancels the pending edit and fails with
@@ -543,7 +543,7 @@ object Browser:
     def fill(selector: Selector, text: String)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
         // `requireFillable = false` so SELECT passes the actionability gate; `ProbesJs.fillViaJs` enforces the fillable check itself
         // (returning `'not_fillable'` for non-form-control targets, which surfaces as [[BrowserElementNotActionableException.Reason.NotFillable]])
-        // and skips `verifyFilledValue` on SELECT to preserve `Browser.select`'s no-readback no-op semantics for missing options.
+        // and skips `verifyFilledValue` on SELECT, whose options are checked before assignment.
         Actionability.withRetry {
             Actionability.withActionable(selector, requireFillable = false, requireEnabled = true) { _ =>
                 val fillJs
@@ -587,7 +587,11 @@ object Browser:
         }
     end setCheckboxState
 
-    /** Selects the option with the given value in a select element. */
+    /** Selects an option by its value, rather than its label.
+      *
+      * If no option has the requested value, fails with [[BrowserOptionNotFoundException]] without changing the selection or dispatching
+      * `change`. The session's retry schedule applies, allowing an option added between attempts to be selected.
+      */
     def select(selector: Selector, value: String)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
         val escaped = JsStringUtil.escapeJsString(value)
         val jsExpr  = SelectorJs.resolveElementJs(Selector.toNode(selector))
@@ -595,10 +599,23 @@ object Browser:
             Actionability.withActionable(selector, requireFillable = false, requireEnabled = true) { _ =>
                 val inner = BrowserEval.evalJs(s"""(() => {
                     const el = $jsExpr;
-                    el.value = '$escaped';
+                    const value = '$escaped';
+                    const options = el.options;
+                    if (options) {
+                        let found = false;
+                        for (let i = 0; i < options.length; i++) {
+                            if (options[i].value === value) { found = true; break; }
+                        }
+                        if (!found) return 'no_option';
+                    }
+                    el.value = value;
                     el.dispatchEvent(new Event('change', {bubbles: true}));
                     return 'ok';
-                })()""").unit
+                })()""").map { reply =>
+                    if reply == "no_option" then
+                        Abort.fail(BrowserOptionNotFoundException(selectorNodeDescription(Selector.toNode(selector)), value))
+                    else ()
+                }
                 MutationSettlement.afterAction(inner)(scopeSelector = Present(selector))
             }
         }

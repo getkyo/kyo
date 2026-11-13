@@ -410,9 +410,8 @@ private[kyo] object ProbesJs:
       * dispatch input/change. Contenteditable targets delegate to [[EditableInput]], which owns focus, selection and native insertion.
       *
       * SELECT branch: when `tag === 'SELECT'` the body assigns `el.value` and dispatches `change` only (no `input`, no `setSelectionRange`,
-      * no prototype-setter trick), mirroring `Browser.select`'s semantics. Returns [[FillTarget.Select]] so the caller can
-      * skip the `verifyFilledValue` round-trip on SELECT (a missing option silently no-ops in `Browser.select`; running readback would
-      * surface that as a FillDesync, which is a behaviour change relative to the `select`-delegation path).
+      * no prototype-setter trick), checking options before assignment and failing with [[BrowserOptionNotFoundException]] when none has
+      * the requested value. Returns [[FillTarget.Select]] so the caller can skip the `verifyFilledValue` round-trip on SELECT.
       *
       * Fillable gate: the JS body itself short-circuits non-fillable, non-SELECT tags with `'not_fillable'` so that the actionability gate
       * at `Browser.fill` does not need to enforce `requireFillable`, preserving the SELECT pass-through while keeping
@@ -431,6 +430,7 @@ private[kyo] object ProbesJs:
       *   - `"ok"`: fill succeeded on INPUT / TEXTAREA
       *   - `"ok-select"`: fill succeeded on a SELECT element via the value-assignment short-circuit
       *   - `"editing_host"`: a contenteditable target needs native insertion
+      *   - `"no_option"`: no option has the requested value; no value or event was written
       *   - `"not_attached"`: selector matched nothing
       *   - `"not_fillable"`: matched a non-form-control element; `tagName` carries the offending element's tag name
       */
@@ -451,6 +451,12 @@ private[kyo] object ProbesJs:
             const value = '$escaped';
             const tag = el.tagName;
             if (tag === 'SELECT') {
+                const options = el.options;
+                let found = false;
+                for (let i = 0; i < options.length; i++) {
+                    if (options[i].value === value) { found = true; break; }
+                }
+                if (!found) return JSON.stringify({tag: 'no_option'});
                 el.value = value;
                 el.dispatchEvent(new Event('change', { bubbles: true }));
                 return JSON.stringify({tag: 'ok-select'});
@@ -484,6 +490,8 @@ private[kyo] object ProbesJs:
                             BrowserElementNotActionableException.Reason.NotFillable(tn.getOrElse("unknown"))
                         )
                     )
+                case Result.Success(FillReply("no_option", _)) =>
+                    Abort.fail(BrowserOptionNotFoundException(Browser.selectorNodeDescription(Selector.toNode(selector)), text))
                 case Result.Success(FillReply("ok-select", _))    => FillTarget.Select
                 case Result.Success(FillReply("editing_host", _)) => FillTarget.EditingHost
                 case Result.Success(FillReply("ok", _))           => FillTarget.Field
