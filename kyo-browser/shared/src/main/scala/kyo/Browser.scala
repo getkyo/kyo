@@ -1756,8 +1756,10 @@ object Browser:
                     val valueExpr = s"JSON.stringify(($jsExpr).map(el => window.__kyoDiscoverProbe(el)))"
                     SettleRead.settle("elements", valueExpr) { raw =>
                         Json.decode[Seq[DiscoverJs.ElementInfoWire]](raw) match
-                            case Result.Success(ws) => Chunk.from(ws).map(toElementInfo)
-                            case _                  => Abort.fail(BrowserProtocolErrorException.decodeFailure("elements", raw))
+                            case Result.Success(ws)      => Chunk.from(ws).map(toElementInfo)
+                            case Result.Failure(problem) =>
+                                Abort.fail(BrowserProtocolErrorException.decodeFailure("elements", problem.problem))
+                            case Result.Panic(error) => Abort.panic(error)
                     }
                 }
         }
@@ -1796,8 +1798,9 @@ object Browser:
             case Result.Success(env)                 =>
                 env.info match
                     case Present(w) => Present(toElementInfo(w))
-                    case Absent     => Abort.fail(BrowserProtocolErrorException.decodeFailure(callee, raw))
-            case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure(callee, raw))
+                    case Absent     => Abort.fail(BrowserProtocolErrorException.decodeFailure(callee, "missing element info"))
+            case Result.Failure(problem) => Abort.fail(BrowserProtocolErrorException.decodeFailure(callee, problem.problem))
+            case Result.Panic(error)     => Abort.panic(error)
 
     /** Returns the flat accessibility node list for the current page. Each entry captures the role, name, and properties for a node Chrome
       * considers exposed to assistive tech. The iframe context honoured is whatever [[withIFrame]] last set; absent that, the top-level
@@ -3967,7 +3970,8 @@ object Browser:
 
     /** DISCOVER artifact: a resolved element snapshot. Optional fields (`id` / `text` / `role`) are `Maybe`, never null; `classes` is a
       * `Chunk`; `selector` is the generated stable unique CSS path. The companion holds the pure `leaves` filter. `area` delegates to
-      * `bounds.area`.
+      * `bounds.area`. Text is trimmed and limited to 200 UTF-16 units without splitting a surrogate pair; lone DOM surrogates are replaced
+      * by U+FFFD, and empty text is `Absent`.
       */
     final case class ElementInfo(
         selector: String,

@@ -29,9 +29,10 @@ private[kyo] object DiscoverJs:
         role: Maybe[String] = Absent
     ) derives Schema
 
-    /** Idempotent install of `window.__kyoDiscoverProbe` and `window.__kyoUniqueSelector`. `text` is truncated to 200 chars; empty-post-trim
-      * maps to null. `interactive` is tag/role/tabindex/onclick. `topmost` is a single rect-center `elementFromPoint` resolving to `el` or a
-      * descendant. `inViewport` is shared with the VERIFY `inViewport` JS.
+    /** Idempotent install of `window.__kyoDiscoverProbe` and `window.__kyoUniqueSelector`. `text` is trimmed and truncated to 200 UTF-16
+      * units without splitting a surrogate pair; lone surrogates become U+FFFD. Empty text maps to null. `interactive` is
+      * tag/role/tabindex/onclick. `topmost` is a single rect-center `elementFromPoint` resolving to `el` or a descendant. `inViewport` is
+      * shared with the VERIFY `inViewport` JS.
       */
     private[kyo] val installJs: String =
         """(() => {
@@ -54,7 +55,23 @@ private[kyo] object DiscoverJs:
             };
             window.__kyoDiscoverProbe = (el) => {
                 const r = el.getBoundingClientRect();
-                const t = (el.textContent || '').trim().slice(0, 200);
+                const whole = (el.textContent || '').trim();
+                const cut = whole.slice(0, whole.length > 200 && whole.codePointAt(199) > 0xFFFF ? 199 : 200);
+                let t;
+                if (typeof cut.toWellFormed === 'function') t = cut.toWellFormed();
+                else {
+                    // Older Chromium versions lack toWellFormed. Copy only when a lone surrogate needs replacement.
+                    let start = 0, text = '';
+                    for (let i = 0; i < cut.length; i++) {
+                        const code = cut.charCodeAt(i), next = cut.charCodeAt(i + 1);
+                        if (code >= 0xD800 && code <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) i++;
+                        else if (code >= 0xD800 && code <= 0xDFFF) {
+                            text += cut.slice(start, i) + '�';
+                            start = i + 1;
+                        }
+                    }
+                    t = start === 0 ? cut : text + cut.slice(start);
+                }
                 const role = el.getAttribute('role');
                 const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
                 const hit = document.elementFromPoint(cx, cy);
