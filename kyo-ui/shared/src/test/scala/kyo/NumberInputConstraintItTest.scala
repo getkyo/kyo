@@ -118,10 +118,10 @@ class NumberInputConstraintItTest extends UITest:
             )
         withUI(app) {
             for
-                _ <- Browser.assertText(Selector.id("v"), "10")
-                _ <- Browser.click(Selector.id("n"))
-                _ <- Browser.press(Selector.id("n"), Key.ArrowUp)
-                _ <- Browser.assertText(Selector.id("v"), "10")
+                _ <- UITest.at("assert initial maximum")(Browser.assertText(Selector.id("v"), "10"))
+                _ <- UITest.at("click number input")(Browser.click(Selector.id("n")))
+                _ <- UITest.at("press ArrowUp")(Browser.press(Selector.id("n"), Key.ArrowUp))
+                _ <- UITest.at("assert clamped maximum")(Browser.assertText(Selector.id("v"), "10"))
             yield ()
         }
     }
@@ -136,10 +136,10 @@ class NumberInputConstraintItTest extends UITest:
             )
         withUI(app) {
             for
-                _ <- Browser.assertText(Selector.id("v"), "0")
-                _ <- Browser.click(Selector.id("n"))
-                _ <- Browser.press(Selector.id("n"), Key.ArrowDown)
-                _ <- Browser.assertText(Selector.id("v"), "0")
+                _ <- UITest.at("assert initial minimum")(Browser.assertText(Selector.id("v"), "0"))
+                _ <- UITest.at("click number input")(Browser.click(Selector.id("n")))
+                _ <- UITest.at("press ArrowDown")(Browser.press(Selector.id("n"), Key.ArrowDown))
+                _ <- UITest.at("assert clamped minimum")(Browser.assertText(Selector.id("v"), "0"))
             yield ()
         }
     }
