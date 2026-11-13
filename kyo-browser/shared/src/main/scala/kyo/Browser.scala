@@ -3981,6 +3981,8 @@ object Browser:
       * `Chunk`; `selector` is the generated stable unique CSS path. The companion holds the pure `leaves` filter. `area` delegates to
       * `bounds.area`. Text is trimmed and limited to 200 UTF-16 units without splitting a surrogate pair; lone DOM surrogates are replaced
       * by U+FFFD, and empty text is `Absent`.
+      * `interactive` combines control, focus, editing-host and pointer-cursor hints. Suppressing inherited decorations and
+      * wrappers containing only their controls' visible text avoids numbering one control repeatedly. Action APIs check actionability.
       */
     final case class ElementInfo(
         selector: String,

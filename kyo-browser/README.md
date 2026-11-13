@@ -323,6 +323,14 @@ The read surface:
 
 `screenshot` and `screenshotElement` return a `Browser.Image`. The type exposes: `binary: Span[Byte]` (raw bytes), `base64: String` (Base64-encoded), `writeFileBinary(path)` / `writeFileBase64(path)` (write to disk), and `renderToConsole(charsWidth, charsHeight)` (terminal sixel/block rendering for debugging). `pdf` returns raw `Span[Byte]` PDF bytes directly (not a `Browser.Image`); it only works in headless Chrome. The capture methods take a format and quality: `screenshot(width, height, format, quality)` and `screenshotElement(selector, format, quality)`, where `format` is a `Browser.ScreenshotFormat` (`Png`, `Jpeg`, or `Webp`, default `Png`) and `quality` (0 to 100) applies only to the lossy formats (`Jpeg` and `Webp`) and is ignored for `Png`.
 
+Discovery's `ElementInfo.interactive` flag suggests interaction targets from semantic controls, focusability, editing hosts and pointer cursors. For pointer-styled elements, a cursor boundary or a nonblank `aria-label` / `title` identifies an independent hint. Inherited decorations and wrappers with no visible text outside their controls are suppressed, while cards with their own text retain a target. The action APIs perform their usual actionability checks.
+
+```scala
+Browser.elements().map { infos =>
+    infos.filter(info => info.visible && info.interactive).map(_.selector)
+}
+```
+
 ### Boolean predicates
 
 Point-in-time `Boolean` reads for branching logic. Unlike the `assertX` family, these do NOT retry: they answer the question "is this true right now?" and let the caller decide what to do with `false`.

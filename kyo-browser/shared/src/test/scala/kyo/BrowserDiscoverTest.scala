@@ -6,6 +6,161 @@ class BrowserDiscoverTest extends BrowserTest:
 
     override def timeout = 90.seconds
 
+    private def interactiveIds(using Frame): Chunk[Maybe[String]] < (Browser & Abort[BrowserReadException]) =
+        Browser.elements().map(_.filter(_.interactive).map(_.id))
+
+    "interactive discovery control preserves semantic controls and focus targets" in {
+        withBrowser {
+            onPage("""<body><button id="button"><span id="buttonLabel" title="Label" style="cursor:pointer">Push</span></button>
+                <a id="link" href="#top">Top</a><div id="role" role="button">Role</div>
+                <div id="focus" tabindex="0">Focus</div><div id="handler" onclick="void 0">Handler</div>
+                <div id="plain">Plain</div></body>""") {
+                interactiveIds.map(ids =>
+                    assert(ids == Chunk(Present("button"), Present("link"), Present("role"), Present("focus"), Present("handler")))
+                )
+            }
+        }
+    }
+
+    "interactive discovery finds a delegated pointer control without duplicating its inherited label" in {
+        withBrowser {
+            onPage("""<body><div id="compose" style="cursor:pointer;width:100px;height:40px"><span id="label">Compose</span></div>
+                <div id="plain">Plain</div><script>
+                    window.clicks = 0;
+                    document.body.addEventListener('click', e => { if (e.target.closest('#compose')) window.clicks++; });
+                </script></body>""") {
+                for
+                    ids    <- interactiveIds
+                    _      <- Browser.click(Browser.Selector.id("compose"))
+                    clicks <- Browser.eval("String(window.clicks)")
+                yield
+                    assert(clicks == "1")
+                    assert(ids == Chunk(Present("compose")))
+            }
+        }
+    }
+
+    "interactive discovery finds named pointer children and excludes semantic-control descendants" in {
+        withBrowser {
+            onPage("""<body><div id="toolbar" style="cursor:pointer;display:flex">
+                <div id="read" aria-label="Mark as read" style="width:20px;height:20px"></div>
+                <div id="snooze" title="Snooze" style="width:20px;height:20px"></div>
+                <div id="gap" style="width:20px;height:20px"></div></div>
+                <a id="link" href="#top" style="cursor:pointer"><span id="label" title="Top">Top</span></a>
+            </body>""") {
+                interactiveIds.map(ids => assert(ids == Chunk(Present("toolbar"), Present("read"), Present("snooze"), Present("link"))))
+            }
+        }
+    }
+
+    "interactive discovery finds editing hosts without listing their editable contents" in {
+        withBrowser {
+            onPage("""<body><div id="editor" contenteditable="true"><p id="line"><span id="word">Notes</span></p>
+                <div contenteditable="false"><div id="nested" contenteditable="true">Nested</div></div></div>
+                <div id="plain" contenteditable="plaintext-only">Plain</div><div id="static">Static</div></body>""") {
+                for
+                    ids  <- interactiveIds
+                    _    <- Browser.focus(Browser.Selector.id("plain"))
+                    _    <- Browser.eval("window.getSelection().selectAllChildren(document.getElementById('plain')); 'selected'")
+                    _    <- Browser.typeText("Updated")
+                    text <- Browser.text(Browser.Selector.id("plain"))
+                yield
+                    assert(text == "Updated")
+                    assert(ids == Chunk(Present("editor"), Present("nested"), Present("plain")))
+            }
+        }
+    }
+
+    "interactive discovery excludes pointer hit areas around links while retaining independent card text" in {
+        withBrowser {
+            onPage("""<body><style>.item { cursor:pointer; padding:7px 10px }</style><ul>
+                <li id="core" class="item"><a id="corelink" href="#core">Core</a></li>
+                <li id="overview" class="item"><a id="overviewlink" href="#overview">Overview</a>
+                    <ul><li id="start" class="item"><a id="startlink" href="#start">Getting started</a></li></ul></li>
+                <li id="card" class="item"><span>Release notes</span> <a id="more" href="#more">More</a></li>
+            </ul></body>""") {
+                interactiveIds.map(ids =>
+                    assert(ids == Chunk(
+                        Present("corelink"),
+                        Present("overviewlink"),
+                        Present("startlink"),
+                        Present("card"),
+                        Present("more")
+                    ))
+                )
+            }
+        }
+    }
+
+    "interactive discovery ignores empty names on inherited pointer children" in {
+        withBrowser {
+            onPage("""<body><div style="cursor:pointer">
+                <span id="empty" aria-label="">Empty</span><span id="blank" aria-label="   ">Blank</span>
+                <span id="title" title="">Empty title</span><span id="space" title="   ">Blank title</span>
+            </div></body>""") {
+                Browser.elements(Browser.Selector.css("span")).map(infos =>
+                    assert(infos.map(_.interactive) == Chunk(false, false, false, false))
+                )
+            }
+        }
+    }
+
+    "interactive discovery excludes pointer descendants of SVG links" in {
+        withBrowser {
+            onPage("""<body><svg width="60" height="30"><a id="svgLink" href="#top" tabindex="0" style="cursor:pointer">
+                <path id="icon" title="Top" d="M0 0h20v20H0z"/>
+            </a></svg></body>""") {
+                interactiveIds.map(ids => assert(ids == Chunk(Present("svgLink"))))
+            }
+        }
+    }
+
+    "interactive discovery treats an editing host as a control for pointer wrappers and descendants" in {
+        withBrowser {
+            onPage("""<body><div id="wrapper" style="cursor:pointer"><div id="editor" contenteditable="true">
+                <span id="hint" title="Notes">Notes</span>
+            </div></div></body>""") {
+                interactiveIds.map(ids => assert(ids == Chunk(Present("editor"))))
+            }
+        }
+    }
+
+    "interactive discovery retains controls in a non-editable island inside an editor" in {
+        withBrowser {
+            onPage("""<body><div id="editor" contenteditable="true">
+                <div contenteditable="false"><span id="tool" title="Tools" style="cursor:pointer">Tools</span></div>
+                <button id="native">Push</button>
+            </div></body>""") {
+                interactiveIds.map(ids => assert(ids == Chunk(Present("editor"), Present("tool"), Present("native"))))
+            }
+        }
+    }
+
+    "interactive discovery deduplicates hidden wrapper text and retains restored or boxless visible text" in {
+        withBrowser {
+            onPage("""<body>
+                <div id="hidden" style="cursor:pointer"><span hidden>Hidden</span><a id="hiddenLink" href="#1">One</a></div>
+                <div id="opaque" style="cursor:pointer"><span style="opacity:0">Hidden</span><a id="opaqueLink" href="#2">Two</a></div>
+                <div id="zero" style="cursor:pointer"><span style="font-size:0">Hidden</span><a id="zeroLink" href="#3">Three</a></div>
+                <div id="contents" style="cursor:pointer"><span style="display:contents;opacity:0">Shown</span><a id="contentsLink" href="#4">Four</a></div>
+                <div id="restored" style="cursor:pointer"><span style="visibility:hidden"><span style="visibility:visible">Shown</span></span>
+                    <a id="restoredLink" href="#5">Five</a></div>
+            </body>""") {
+                interactiveIds.map(ids =>
+                    assert(ids == Chunk(
+                        Present("hiddenLink"),
+                        Present("opaqueLink"),
+                        Present("zeroLink"),
+                        Present("contents"),
+                        Present("contentsLink"),
+                        Present("restored"),
+                        Present("restoredLink")
+                    ))
+                )
+            }
+        }
+    }
+
     private val splitTextPage = s"""<body style="margin:0">
         <span id="sample" style="position:absolute;left:10px;top:10px;width:100px;height:30px">${"a" * 199}😀</span>
     </body>"""
