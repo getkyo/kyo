@@ -2072,8 +2072,9 @@ object Browser:
       * `BrowserElementException`, NEVER widened to `BrowserMutationException`); performs a box-stable check (two bounding-rect samples 16 ms
       * apart must agree within 1 px) and scrolls the element into view before capturing. Gains `transparentBackground`: when true, sets CDP
       * `Emulation.setDefaultBackgroundColorOverride` to fully transparent for the shot and restores it via `Scope.acquireRelease`. Hold-still
-      * capture is the TARGET convention. Returns `Image` and ABORTS `BrowserElementNotFoundException` when the element never appears within
-      * the configured `retrySchedule`; NOT changed to `Maybe`.
+      * capture is the TARGET convention. The border box is captured in the top-level document's coordinates, including for iframe-scoped
+      * selectors. Missing targets fail with `BrowserElementNotFoundException` within the configured `retrySchedule`; zero-sized rendered
+      * boxes fail with `BrowserElementNotActionableException`.
       */
     def screenshotElement(
         selector: Selector,
@@ -2086,23 +2087,58 @@ object Browser:
         // The hold-still capture then runs ONCE outside the retry, threading that stable box through `.map`, so a capture
         // failure never re-enters the retry channel.
         Actionability.withRetry {
-            // Resolve, box-stable check (two samples ~16 ms apart, agree within 1 px), then scroll into view and re-read the post-scroll rect.
+            // Scroll before sampling stability: scrolling can itself move the target's viewport box.
             // found=false means the element does not exist (triggers BrowserElementNotFoundException for retry).
-            // ok=false with found=true means the element exists but its bounding rect is still moving (triggers NotActionable for retry).
+            // ok=false with found=true means the box is empty or still moving (triggers NotActionable for retry).
             BrowserEval.evalJsAwaiting(s"""(async () => {
                 const el = $jsExpr; if (!el) return JSON.stringify({found:false,ok:false});
+                el.scrollIntoViewIfNeeded ? el.scrollIntoViewIfNeeded(true) : el.scrollIntoView({block:'center'});
                 const r1 = el.getBoundingClientRect();
                 await new Promise(res => setTimeout(res, 16));
                 const r2 = el.getBoundingClientRect();
+                if (!el.isConnected) return JSON.stringify({found:false,ok:false});
                 if (Math.abs(r1.x - r2.x) > 1 || Math.abs(r1.y - r2.y) > 1 || Math.abs(r1.width - r2.width) > 1 || Math.abs(r1.height - r2.height) > 1)
                     return JSON.stringify({found:true,ok:false});
-                el.scrollIntoViewIfNeeded ? el.scrollIntoViewIfNeeded(true) : el.scrollIntoView({block:'center'});
-                const r = el.getBoundingClientRect();
-                return JSON.stringify({found:true,ok:true, x:r.x, y:r.y, width:r.width, height:r.height});
+                return JSON.stringify({found:true,ok:r2.width > 0 && r2.height > 0});
             })()""").map { result =>
                 Json.decode[ElementClipWire](result) match
                     case Result.Success(w) if w.ok =>
-                        ScreenshotClip(w.x, w.y, w.width, w.height, scale = 1.0)
+                        Resolver.resolveOne(selector).map {
+                            case Absent => Abort.fail(BrowserElementNotFoundException(selectorNodeDescription(Selector.toNode(selector))))
+                            case Present(ref) =>
+                                Browser.use { tab =>
+                                    CdpBackend.getBoxModel(tab.session, GetBoxModelParams(ref.backendNodeId)).map { box =>
+                                        val border = box.model.border
+                                        if border.size != 8 then
+                                            Abort.fail(BrowserProtocolErrorException.decodeFailure("DOM.getBoxModel", Json.encode(box)))
+                                        else
+                                            val left   = border(0).min(border(2)).min(border(4)).min(border(6))
+                                            val top    = border(1).min(border(3)).min(border(5)).min(border(7))
+                                            val right  = border(0).max(border(2)).max(border(4)).max(border(6))
+                                            val bottom = border(1).max(border(3)).max(border(5)).max(border(7))
+                                            if right <= left || bottom <= top then
+                                                Abort.fail(BrowserElementNotActionableException(
+                                                    selectorNodeDescription(Selector.toNode(selector)),
+                                                    BrowserElementNotActionableException.Reason.NotVisible(
+                                                        BrowserElementNotActionableException.Reason.NotVisibleCause.ZeroComputedSize
+                                                    )
+                                                ))
+                                            else
+                                                // CDP resolves iframe offsets into the top-level viewport. Capture clips start at the document origin.
+                                                CdpBackend.getLayoutMetrics(tab.session).map { metrics =>
+                                                    ScreenshotClip(
+                                                        left + metrics.cssLayoutViewport.pageX,
+                                                        top + metrics.cssLayoutViewport.pageY,
+                                                        right - left,
+                                                        bottom - top,
+                                                        scale = 1.0
+                                                    )
+                                                }
+                                            end if
+                                        end if
+                                    }
+                                }
+                        }
                     case Result.Success(w) if !w.found =>
                         Abort.fail(BrowserElementNotFoundException(selectorNodeDescription(Selector.toNode(selector))))
                     case _ =>

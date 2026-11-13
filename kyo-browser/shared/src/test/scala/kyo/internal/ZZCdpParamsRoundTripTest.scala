@@ -104,10 +104,15 @@ class ZZCdpParamsRoundTripTest extends kyo.BaseBrowserTest:
                     Present(65),
                     Present(0)
                 )),
-                "GetDocumentParams"       -> roundTrip(GetDocumentParams(Present(2))),
-                "GetBoxModelParams"       -> roundTrip(GetBoxModelParams(backendNodeId = 7)),
-                "BoxModel"                -> roundTrip(BoxModel(BoxModelContent(Seq(0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0)))),
-                "BoxModelContent"         -> roundTrip(BoxModelContent(Seq(1.0, 2.0, 3.0, 4.0))),
+                "GetDocumentParams" -> roundTrip(GetDocumentParams(Present(2))),
+                "GetBoxModelParams" -> roundTrip(GetBoxModelParams(backendNodeId = 7)),
+                "LayoutMetrics"     -> roundTrip(LayoutMetrics(LayoutViewport(12.5, 42.25))),
+                "LayoutViewport"    -> roundTrip(LayoutViewport(12.5, 42.25)),
+                "BoxModel"          -> roundTrip(BoxModel(BoxModelContent(
+                    Seq(0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0),
+                    Seq(-1.0, -1.0, 11.0, -1.0, 11.0, 11.0, -1.0, 11.0)
+                ))),
+                "BoxModelContent"         -> roundTrip(BoxModelContent(Seq(1.0, 2.0, 3.0, 4.0), Seq(0.0, 1.0, 4.0, 5.0))),
                 "MouseEventParams"        -> roundTrip(MouseEventParams(MouseEventType.Pressed, 100, 200, Present("left"), Present(1))),
                 "NetworkGetCookiesParams" -> roundTrip(NetworkGetCookiesParams(Present(Seq("https://example.com")))),
                 "NetworkGetCookiesResult" -> roundTrip(

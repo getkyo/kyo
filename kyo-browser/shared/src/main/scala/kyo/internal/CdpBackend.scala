@@ -329,6 +329,9 @@ private[kyo] object CdpBackend:
     private[kyo] def getFrameTree(backend: CdpBackend)(using Frame): GetFrameTreeResult < (Async & Abort[BrowserReadException]) =
         backend.send[CdpNoParams, GetFrameTreeResult]("Page.getFrameTree", CdpNoParams())
 
+    private[kyo] def getLayoutMetrics(backend: CdpBackend)(using Frame): LayoutMetrics < (Async & Abort[BrowserReadException]) =
+        backend.send[CdpNoParams, LayoutMetrics]("Page.getLayoutMetrics", CdpNoParams())
+
     private[kyo] def captureScreenshot(backend: CdpBackend, params: ScreenshotParams)(using
         Frame
     ): ScreenshotResult < (Async & Abort[BrowserReadException]) =

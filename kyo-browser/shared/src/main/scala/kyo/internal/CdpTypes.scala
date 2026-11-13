@@ -377,6 +377,8 @@ final private[kyo] case class ScreenshotParams(
     fromSurface: Maybe[Boolean] = Absent
 ) derives Schema
 final private[kyo] case class ScreenshotResult(data: String) derives Schema
+final private[kyo] case class LayoutMetrics(cssLayoutViewport: LayoutViewport) derives Schema
+final private[kyo] case class LayoutViewport(pageX: Double, pageY: Double) derives Schema
 
 /** `Page.printToPDF`. */
 final private[kyo] case class PrintToPdfResult(data: String) derives Schema
@@ -401,7 +403,7 @@ final private[kyo] case class InsertTextParams(text: String) derives Schema
 final private[kyo] case class GetDocumentParams(depth: Maybe[Int] = Absent) derives Schema
 final private[kyo] case class GetBoxModelParams(backendNodeId: Int) derives Schema
 final private[kyo] case class BoxModel(model: BoxModelContent) derives Schema
-final private[kyo] case class BoxModelContent(content: Seq[Double]) derives Schema
+final private[kyo] case class BoxModelContent(content: Seq[Double], border: Seq[Double]) derives Schema
 
 /** `Input.dispatchMouseEvent`. */
 final private[kyo] case class MouseEventParams(
@@ -552,17 +554,12 @@ final private[kyo] case class BoundingRectWire(x: Double, y: Double, width: Doub
   */
 final private[kyo] case class FullPageDimsWire(content: Int, viewport: Int, width: Int) derives Schema
 
-/** Wire shape for the box-stable check in `Browser.screenshotElement`. `found` is false when the element does not exist; `ok` is false when
-  * the element exists but its bounding rect is still moving. When both `found` and `ok` are true, the remaining fields hold the post-scroll
-  * rect in CSS px.
+/** Status of the post-scroll box-stable check in `Browser.screenshotElement`. Geometry is read through `DOM.getBoxModel` after this check,
+  * in the top-level viewport's coordinates, rather than taking a clip from the active frame's local coordinates.
   */
 final private[kyo] case class ElementClipWire(
     found: Boolean = true,
-    ok: Boolean,
-    x: Double = 0,
-    y: Double = 0,
-    width: Double = 0,
-    height: Double = 0
+    ok: Boolean
 ) derives Schema
 
 /** Wire envelope used by `Browser.mockFetchResponse` to pass the mock definition to the JS interceptor via `JSON.parse`.

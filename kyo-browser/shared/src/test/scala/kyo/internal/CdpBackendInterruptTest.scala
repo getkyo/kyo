@@ -30,7 +30,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         seenGates: Map[String, Latch],
         rejectFirst: Set[String]
     )(using Frame): Fiber[Unit, Any] < Sync =
-        def result(method: String): Structure.Value = method match
+        def result(req: JsonRpcRequest): Structure.Value = req.method match
             case "Browser.getVersion" =>
                 summon[Schema[BrowserVersionResult]].toStructureValue(BrowserVersionResult("1.3", "Chrome/1", "1", "ua", "v8"))
             case "Target.createBrowserContext" =>
@@ -39,8 +39,24 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                 summon[Schema[CreateTargetResult]].toStructureValue(CreateTargetResult("target-1"))
             case "Target.attachToTarget" =>
                 summon[Schema[AttachResult]].toStructureValue(AttachResult("session-1"))
+            case "Runtime.evaluate" if req.params.exists {
+                    case Structure.Value.Record(fields) => fields.contains(("returnByValue", Structure.Value.Bool(false)))
+                    case _                              => false
+                } =>
+                summon[Schema[EvaluateObjectResult]].toStructureValue(
+                    EvaluateObjectResult(RemoteObjectRef("object", Present("element-1")), Absent)
+                )
             case "Runtime.evaluate" =>
                 summon[Schema[EvalResult]].toStructureValue(EvalResult(RemoteObject.`string`(elementClipReplyJson), Absent))
+            case "DOM.requestNode" =>
+                summon[Schema[RequestNodeResult]].toStructureValue(RequestNodeResult(1))
+            case "DOM.describeNode" =>
+                summon[Schema[DescribeNodeResult]].toStructureValue(DescribeNodeResult(DescribedNode(1)))
+            case "DOM.getBoxModel" =>
+                val quad = Seq(0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0)
+                summon[Schema[BoxModel]].toStructureValue(BoxModel(BoxModelContent(quad, quad)))
+            case "Page.getLayoutMetrics" =>
+                summon[Schema[LayoutMetrics]].toStructureValue(LayoutMetrics(LayoutViewport(0.0, 0.0)))
             case _ =>
                 summon[Schema[CdpNoParams]].toStructureValue(CdpNoParams())
         Fiber.initUnscoped {
@@ -51,7 +67,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                             val reply =
                                 if rejectFirst.contains(req.method) && seen.count(_ == req.method) == 1 then
                                     JsonRpcResponse.failure(req.id, JsonRpcImplementationError(-32000, s"${req.method} rejected"))
-                                else JsonRpcResponse.success(req.id, result(req.method))
+                                else JsonRpcResponse.success(req.id, result(req))
                             (seenGates.get(req.method) match
                                 case Some(arrived) => arrived.release
                                 case None          => Kyo.unit
@@ -169,8 +185,8 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
     private def sawEventuallyCount(wire: Wire, method: String, n: Int)(using Frame, kyo.test.AssertScope): Boolean < Async =
         Abort.run[Timeout](Async.timeout(1.second)(assertEventually(wire.seen.get.map(_.count(_ == method) >= n)))).map(_.isSuccess)
 
-    /** Canned `Runtime.evaluate` reply for `screenshotElement`'s box-stable check: a resolved rect, found and stable on the
-      * first sample, so `Actionability.withRetry` never loops.
+    /** Canned `Runtime.evaluate` reply for `screenshotElement`'s box-stable check. Final geometry comes from the wire's box-model and
+      * layout-metrics replies.
       */
     private val elementClipReplyJson: String = """{"found":true,"ok":true,"x":0,"y":0,"width":10,"height":10}"""
 
