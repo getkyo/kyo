@@ -776,13 +776,14 @@ private[kyo] object HtmlRenderer:
                 ta.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
             case sel: Select =>
                 boolAttr(sb, "disabled", sel.disabled)
-                val selValue: Unit < Sync = sel.value match
-                    case Present(Bound.Const(s)) => w(sb, s""" value="${esc(s)}"""")
-                    case Present(Bound.Ref(ref)) =>
-                        for s <- ref.get
-                        yield w(sb, s""" value="${esc(s)}"""")
-                    case _ =>
-                        // Fall back to first Opt child with selected(true)
+                // The browser ignores a `value` attribute on <select> and shows the first option, so the attribute only mirrors the
+                // value for readers of the markup. What selects is the DOM property, set once the options are in place (applyJsProps
+                // runs on the whole inserted subtree), which also reaches options rendered from a signal. Without a value, an option's
+                // own `selected` attribute chooses.
+                sel.value match
+                    case Present(Bound.Const(s)) => w(sb, s""" value="${esc(s)}" data-kyo-prop-value="${esc(s)}"""")
+                    case Present(Bound.Ref(ref)) => ref.get.map(s => w(sb, s""" value="${esc(s)}" data-kyo-prop-value="${esc(s)}""""))
+                    case _                       =>
                         val selected = Maybe.fromOption(sel.children.toSeq.collectFirst {
                             case opt: Opt if opt.selected == Present(true) =>
                                 opt.value.getOrElse("")
@@ -790,7 +791,7 @@ private[kyo] object HtmlRenderer:
                         selected match
                             case Present(v) if v.nonEmpty => w(sb, s""" value="${esc(v)}"""")
                             case _                        => ()
-                selValue
+                end match
             case opt: Opt =>
                 opt.value.foreach(v => w(sb, s""" value="${esc(v)}""""))
                 boolAttr(sb, "selected", opt.selected)
@@ -1161,6 +1162,15 @@ private[kyo] object HtmlRenderer:
           |  while(a!==end&&b){if(!kyoRangeSameNode(a,b))return false;a=a.nextSibling;b=b.nextSibling;}
           |  return a===end&&b===null;
           |}
+          |function kyoSelectDefaultValue(select){for(var i=select.options.length-1;i>=0;i--)if(select.options[i].defaultSelected)return select.options[i].value;return null;}
+          |function kyoRangeSelects(roots){var result=[];for(var i=0;i<roots.length;i++){var root=roots[i],all=[root],desc=root.querySelectorAll("select");
+          |  for(var j=0;j<desc.length;j++)all.push(desc[j]);for(var j=0;j<all.length;j++)if(all[j].namespaceURI==="http://www.w3.org/1999/xhtml"&&all[j].tagName==="SELECT")result.push(all[j]);}return result;}
+          |function kyoRangeReplacedSelections(oldRoots,newRoots){var old=kyoRangeSelects(oldRoots),fresh=kyoRangeSelects(newRoots),result=[];
+          |  for(var i=0;i<old.length;i++){var before=old[i],path=before.getAttribute("data-kyo-path");if(path===null||before.selectedIndex<0)continue;
+          |    var oldMatches=old.filter(function(s){return s.getAttribute("data-kyo-path")===path;}),matches=fresh.filter(function(s){return s.getAttribute("data-kyo-path")===path;});
+          |    if(oldMatches.length!==1||matches.length!==1)continue;var after=matches[0];
+          |    if(after.id===before.id&&after.getAttribute("value")===before.getAttribute("value")){after.removeAttribute("data-kyo-prop-value");result.push([after,before.value,kyoSelectDefaultValue(before)]);}}
+          |  return result;}
           |function kyoRangeReplace(id,html){
           |  if(!kyoRangeId(id))kyoRangeFail("malformed replacement id: "+id);
           |  if(!__kyoRanges)kyoRangeFail("registry is closed");var endpoints=__kyoRanges.get(id);
@@ -1188,6 +1198,13 @@ private[kyo] object HtmlRenderer:
           |  var se=inside&&typeof active.selectionEnd==="number"?active.selectionEnd:null;
           |  var oldEnter=kyoEnterPathsRoots(oldRoots),ghosts=kyoLeavePrepareRoots(oldRoots,kyoLeavePathsRoots(newSemanticRoots));
           |  var oldFocus=kyoFocusPathsRoots(oldRoots);
+          |  // A <select>'s value is its own state: new option elements reset the selection to the first, so it is kept across the swap.
+          |  var keptSelect=parent.closest?parent.closest("select"):null;
+          |  if(keptSelect&&keptSelect.selectedIndex<0)keptSelect=null;
+          |  var keptValue=keptSelect?keptSelect.value:null;
+          |  var keptDefault=keptSelect?kyoSelectDefaultValue(keptSelect):null;
+          |  var selections=keptSelect?[[keptSelect,keptValue,keptDefault]]:[];
+          |  selections=selections.concat(kyoRangeReplacedSelections(oldRoots,newSemanticRoots));
           |  range.deleteContents();for(var i=0;i<removed.length;i++)__kyoRanges.delete(removed[i]);
           |  var finalRoots=newSemanticRoots;if(synthetic&&newRoots.length===1&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id){
           |    var incomingHost=newRoots[0];kyoRangeSyncHost(parent,incomingHost,id);while(incomingHost.firstChild)parent.insertBefore(incomingHost.firstChild,endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);
@@ -1197,6 +1214,12 @@ private[kyo] object HtmlRenderer:
           |    newRoots[0].insertBefore(endpoints.start,newRoots[0].firstChild);newRoots[0].appendChild(endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);}}
           |  incoming.forEach(function(pair,key){__kyoRanges.set(key,pair);});
           |  for(var i=0;i<finalRoots.length;i++){applyJsProps(finalRoots[i]);ba(finalRoots[i]);}
+          |  // Changed selected attributes take effect; otherwise retain the live choice when its value remains available.
+          |  // Reconcile a changed value with the binding, whether caused by an explicit choice or a removed option.
+          |  // selectedIndex distinguishes no selection from an option whose value is the empty string.
+          |  for(var s=0;s<selections.length;s++){var keptSelect=selections[s][0],keptValue=selections[s][1],keptDefault=selections[s][2];
+          |    if(keptDefault===kyoSelectDefaultValue(keptSelect))for(var i=0;i<keptSelect.options.length;i++)if(keptSelect.options[i].value===keptValue){keptSelect.value=keptValue;break;}
+          |    if(keptSelect.value!==keptValue)keptSelect.dispatchEvent(new CustomEvent("change",{bubbles:true,detail:{kyoSelectPreviousValue:keptValue}}));}
           |  var restored=kyoRangeResolveFocus(finalRoots,activeLocator);if(restored){restored.focus();if(ss!==null)kyoSetCaret(restored,ss,se);}
           |  kyoSeedEnterRoots(finalRoots,oldEnter);kyoSeedFocusRoots(finalRoots,oldFocus);kyoSpawnGhosts(ghosts);sweepFocusAuto();
           |}
@@ -1570,7 +1593,8 @@ private[kyo] object HtmlRenderer:
            |  else if(t==="input"&&he(el,"input"))post({Input:{path:p,value:e.target.value}});
            |  else if(t==="change"&&he(el,"change")){
            |    var tgt=e.target,typ=tgt.type;
-           |    if(typ==="checkbox"||typ==="radio")post({ChangeChecked:{path:p,checked:tgt.checked}});
+           |    if(typ==="select-one"&&e.detail&&typeof e.detail.kyoSelectPreviousValue==="string")post({SelectOptionsChange:{path:p,previousValue:e.detail.kyoSelectPreviousValue,value:tgt.value}});
+           |    else if(typ==="checkbox"||typ==="radio")post({ChangeChecked:{path:p,checked:tgt.checked}});
            |    else if(typ==="number"||typ==="range")post({ChangeNumeric:{path:p,value:parseFloat(tgt.value)}});
            |    else post({Change:{path:p,value:tgt.value}});
            |  }else if(t==="submit"){e.preventDefault();if(!window._kyoClickSubmit&&he(el,"submit")){var smid=e.target&&e.target.id?e.target.id:null;post({Submit:{path:p,mouse:mkMouse({ctrl:false,alt:false,shift:false,meta:false},smid)}});}}

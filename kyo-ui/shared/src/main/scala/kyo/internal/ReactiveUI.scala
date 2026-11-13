@@ -633,6 +633,19 @@ private[kyo] object ReactiveUI:
                             autoSet.andThen(invokeWith(pi.onChange, e.value)).andThen(true)
                         case fi: FileInput => invokeWith(fi.onChange, e.value).andThen(true)
                         case _             => true
+            case e: UIEvent.SelectOptionsChange =>
+                elem match
+                    case select: Select if isTarget =>
+                        val update = select.value match
+                            case Present(Bound.Ref(ref)) =>
+                                ref.getAndUpdate(current => if current == e.previousValue then e.value else current)
+                                    .map(_ == e.previousValue)
+                            case _ => Kyo.lift(true)
+                        update.map { applied =>
+                            if applied && !isDisabled(select) then invokeWith(select.onChange, e.value).andThen(false)
+                            else false
+                        }
+                    case _ => false
             case e: UIEvent.ChangeChecked =>
                 if isTarget && isDisabled(elem) then true
                 else
@@ -890,20 +903,21 @@ private[kyo] object ReactiveUI:
     )(using Frame): ValidatedHandler =
         (path, event) =>
             event match
-                case event: DragProtocol.ValidatedEvent.Click         => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.ClickSelf     => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.Input         => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.Change        => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.ChangeChecked => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.ChangeNumeric => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.Submit        => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.KeyDown       => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.KeyUp         => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.Focus         => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.Blur          => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.Scroll        => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.Hover         => safeDispatch(handle, path, event.wire)
-                case event: DragProtocol.ValidatedEvent.Unhover       => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Click               => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.ClickSelf           => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Input               => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Change              => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.SelectOptionsChange => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.ChangeChecked       => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.ChangeNumeric       => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Submit              => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.KeyDown             => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.KeyUp               => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Focus               => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Blur                => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Scroll              => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Hover               => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Unhover             => safeDispatch(handle, path, event.wire)
                 case _: DragProtocol.ValidatedEvent.Start | _: DragProtocol.ValidatedEvent.End |
                     _: DragProtocol.ValidatedEvent.Enter | _: DragProtocol.ValidatedEvent.Leave |
                     _: DragProtocol.ValidatedEvent.Over | _: DragProtocol.ValidatedEvent.Drop |
@@ -1013,6 +1027,7 @@ private[kyo] object ReactiveUI:
                 }
             case _: DragProtocol.ValidatedEvent.Click | _: DragProtocol.ValidatedEvent.ClickSelf |
                 _: DragProtocol.ValidatedEvent.Input | _: DragProtocol.ValidatedEvent.Change |
+                _: DragProtocol.ValidatedEvent.SelectOptionsChange |
                 _: DragProtocol.ValidatedEvent.ChangeChecked | _: DragProtocol.ValidatedEvent.ChangeNumeric |
                 _: DragProtocol.ValidatedEvent.Submit | _: DragProtocol.ValidatedEvent.KeyDown |
                 _: DragProtocol.ValidatedEvent.KeyUp | _: DragProtocol.ValidatedEvent.Focus |

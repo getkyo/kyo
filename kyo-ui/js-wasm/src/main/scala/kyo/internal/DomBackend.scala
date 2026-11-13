@@ -661,9 +661,15 @@ private[kyo] object DomBackend:
                     else if t == "input" && evTypes.contains("input") then
                         Present(UIEvent.Input(path, e.target.asInstanceOf[dom.html.Input].value))
                     else if t == "change" && evTypes.contains("change") then
-                        val tgt = e.target.asInstanceOf[dom.html.Input]
-                        val typ = tgt.`type`
-                        if typ == "checkbox" || typ == "radio" then
+                        val tgt    = e.target.asInstanceOf[dom.html.Input]
+                        val typ    = tgt.`type`
+                        val detail = e.asInstanceOf[scalajs.js.Dynamic].detail
+                        // DOM events have no detail; only this runtime's option-replacement CustomEvent carries the prior value.
+                        if typ == "select-one" && scalajs.js.typeOf(detail) == "object" && detail != null &&
+                            scalajs.js.typeOf(detail.kyoSelectPreviousValue) == "string"
+                        then
+                            Present(UIEvent.SelectOptionsChange(path, detail.kyoSelectPreviousValue.asInstanceOf[String], tgt.value))
+                        else if typ == "checkbox" || typ == "radio" then
                             Present(UIEvent.ChangeChecked(path, tgt.checked))
                         else if typ == "number" || typ == "range" then
                             Present(UIEvent.ChangeNumeric(path, tgt.value.toDouble))

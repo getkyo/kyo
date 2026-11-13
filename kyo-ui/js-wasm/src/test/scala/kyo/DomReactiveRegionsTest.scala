@@ -247,6 +247,113 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
         }
     }
 
+    "replacing a select's options keeps its value when an option still carries it" in {
+        val root = host(
+            s"<select><!--kyo-rs:$One--><option value='a'>A</option><option value='b'>B</option><!--kyo-re:$One--></select>"
+        )
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                _       <- Sync.defer(root.querySelector("select").asInstanceOf[dom.html.Select].value = "b")
+                _       <- regions.replace(One, "<option value='a'>A</option><option value='b'>B</option><option value='c'>C</option>")
+                kept    <- Sync.defer(root.querySelector("select").asInstanceOf[dom.html.Select].value)
+                _       <- regions.replace(One, "<option value='x'>X</option><option value='y'>Y</option>")
+                dropped <- Sync.defer(root.querySelector("select").asInstanceOf[dom.html.Select].value)
+            yield assert((kept, dropped) == ("b", "x"))
+        }
+    }
+
+    "changing an option's selected declaration takes effect in both directions" in {
+        val root = host(s"<select><option value='a'>A</option><!--kyo-rs:$One--><option value='b'>B</option><!--kyo-re:$One--></select>")
+        Scope.run {
+            for
+                regions  <- DomReactiveRegions.init(root)
+                _        <- regions.replace(One, "<option value='b' selected>B</option>")
+                selected <- Sync.defer(root.querySelector("select").asInstanceOf[dom.html.Select].value)
+                _        <- regions.replace(One, "<option value='b'>B</option>")
+                cleared  <- Sync.defer(root.querySelector("select").asInstanceOf[dom.html.Select].value)
+            yield assert((selected, cleared) == ("b", "a"))
+        }
+    }
+
+    "an unchanged selected declaration does not undo a live choice" in {
+        val options = "<option value='a' selected>A</option><option value='b'>B</option>"
+        val root    = host(s"<select><!--kyo-rs:$One-->$options<!--kyo-re:$One--></select>")
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                _       <- Sync.defer(root.querySelector("select").asInstanceOf[dom.html.Select].value = "b")
+                _       <- regions.replace(One, options + "<option value='c'>C</option>")
+                value   <- Sync.defer(root.querySelector("select").asInstanceOf[dom.html.Select].value)
+            yield assert(value == "b")
+        }
+    }
+
+    "replacing a select's options raises one change event when the value it showed is gone" in {
+        val root = host(
+            s"<select><!--kyo-rs:$One--><option value='a'>A</option><option value='b'>B</option><!--kyo-re:$One--></select>"
+        )
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                changes <- AtomicInt.init(0)
+                select = root.querySelector("select").asInstanceOf[dom.html.Select]
+                _ <- Sync.Unsafe.defer {
+                    // Unsafe: a DOM listener is a callback outside any effect; it only counts the events it sees.
+                    select.addEventListener("change", (_: dom.Event) => discard(changes.unsafe.incrementAndGet()))
+                    select.value = "b"
+                }
+                _    <- regions.replace(One, "<option value='a'>A</option><option value='b'>B</option><option value='c'>C</option>")
+                kept <- changes.get
+                _    <- regions.replace(One, "<option value='x'>X</option><option value='y'>Y</option>")
+                gone <- changes.get
+            yield assert((kept, gone) == (0, 1))
+        }
+    }
+
+    "removing an empty-valued selected option raises a change with its previous value" in {
+        val root = host(s"<select><optgroup><!--kyo-rs:$One--><option value=''>Empty</option><!--kyo-re:$One--></optgroup></select>")
+        Scope.run {
+            for
+                regions  <- DomReactiveRegions.init(root)
+                changes  <- AtomicInt.init(0)
+                previous <- AtomicRef.init("unobserved")
+                select = root.querySelector("select").asInstanceOf[dom.html.Select]
+                _ <- Sync.Unsafe.defer {
+                    // Unsafe: this synchronous DOM callback records the event delivered by the range operation.
+                    select.addEventListener(
+                        "change",
+                        (event: dom.Event) =>
+                            discard(changes.unsafe.incrementAndGet())
+                            previous.unsafe.set(event.asInstanceOf[dom.CustomEvent].detail.asInstanceOf[scala.scalajs.js.Dynamic]
+                                .kyoSelectPreviousValue.asInstanceOf[String])
+                    )
+                }
+                _     <- regions.replace(One, "<option value='x'>X</option><option value='y'>Y</option>")
+                count <- changes.get
+                old   <- previous.get
+                value <- Sync.defer(select.value)
+            yield assert((count, old, value) == (1, "", "x"))
+        }
+    }
+
+    "replacing the options of a select that had none raises no change event" in {
+        val root = host(s"<select><!--kyo-rs:$One--><!--kyo-re:$One--></select>")
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                changes <- AtomicInt.init(0)
+                select = root.querySelector("select").asInstanceOf[dom.html.Select]
+                _ <- Sync.Unsafe.defer {
+                    // Unsafe: a DOM listener is a callback outside any effect; it only counts the events it sees.
+                    select.addEventListener("change", (_: dom.Event) => discard(changes.unsafe.incrementAndGet()))
+                }
+                _     <- regions.replace(One, "<option value='a'>A</option><option value='b'>B</option>")
+                count <- changes.get
+            yield assert(count == 0)
+        }
+    }
+
     "outer replacement unregisters removed nested ranges and registers new nested ranges" in {
         val root = host(
             s"<!--kyo-rs:$Outer--><div><!--kyo-rs:$Old-->old<!--kyo-re:$Old--></div><!--kyo-re:$Outer-->"

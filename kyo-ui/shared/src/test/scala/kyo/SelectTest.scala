@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Browser.*
+import kyo.UI.foreach
 
 class SelectTest extends UITest:
 
@@ -131,6 +132,12 @@ class SelectTest extends UITest:
         }
     }
 
+    // What the page shows as selected: the select's value and the selected option's text.
+    private def selectedOption(using Frame) =
+        Browser.value(Selector.id("s")).map(value =>
+            Browser.eval("document.getElementById('s').selectedOptions[0].textContent").map(text => (value, text))
+        )
+
     "value initial assertValue" in {
         val app: UI < Async =
             for ref <- Signal.initRef("b")
@@ -141,8 +148,201 @@ class SelectTest extends UITest:
                 ).id("s").value(ref)
             )
         withUI(app) {
-            Browser.assertVisible(Selector.id("s")).unit
+            selectedOption.map(s => assert(s == ("b", "Beta")))
         }
+    }
+
+    "a constant value selects its option on the page" in {
+        withUI(UI.div(
+            UI.select(
+                UI.option("Alpha").value("a"),
+                UI.option("Beta").value("b"),
+                UI.option("Gamma").value("c")
+            ).id("s").value("c")
+        )) {
+            selectedOption.map(s => assert(s == ("c", "Gamma")))
+        }
+    }
+
+    "a bound value set after mount selects its option on the page" in {
+        val app: UI < Async =
+            for ref <- Signal.initRef("a")
+            yield UI.div(
+                UI.select(
+                    UI.option("Alpha").value("a"),
+                    UI.option("Beta").value("b"),
+                    UI.option("Gamma").value("c")
+                ).id("s").value(ref),
+                UI.button("Pick gamma").id("pick").onClick(ref.set("c"))
+            )
+        withUI(app) {
+            for
+                before <- selectedOption
+                _      <- Browser.click(Selector.id("pick"))
+                _      <- Browser.assertAttribute(Selector.id("s"), "value", "c")
+                after  <- selectedOption
+            yield assert((before, after) == (("a", "Alpha"), ("c", "Gamma")))
+        }
+    }
+
+    "a value selects its option among options rendered from a signal" in {
+        val app: UI < Async =
+            for
+                rows <- Signal.initRef(Chunk("a", "b", "c"))
+                ref  <- Signal.initRef("b")
+            yield UI.div(
+                UI.select(rows.foreach(v => UI.option(v.toUpperCase).value(v))).id("s").value(ref)
+            )
+        withUI(app) {
+            selectedOption.map(s => assert(s == ("b", "B")))
+        }
+    }
+
+    "reactive option selection changes override the previous choice" in {
+        val app: UI < Async =
+            for flag <- Signal.initRef(false)
+            yield UI.div(
+                UI.select(
+                    UI.option("Alpha").value("a"),
+                    UI.option("Beta").value("b").id("beta").selected(flag)
+                ).id("s"),
+                UI.button("Pick beta").id("pick").onClick(flag.set(true)),
+                UI.button("Clear beta").id("clear").onClick(flag.set(false))
+            )
+        withUI(app) {
+            for
+                _        <- Browser.click(Selector.id("pick"))
+                _        <- Browser.assertAttribute(Selector.id("beta"), "selected", "")
+                selected <- selectedOption
+                _        <- Browser.click(Selector.id("clear"))
+                _        <- Browser.assertNoAttribute(Selector.id("beta"), "selected")
+                cleared  <- selectedOption
+            yield assert((selected, cleared) == (("b", "Beta"), ("a", "Alpha")))
+        }
+    }
+
+    "the selection survives the options being re-rendered" in {
+        val app: UI < Async =
+            for
+                rows <- Signal.initRef(Chunk("a", "b", "c"))
+                ref  <- Signal.initRef("b")
+            yield UI.div(
+                UI.select(rows.foreach(v => UI.option(v.toUpperCase).value(v))).id("s").value(ref),
+                UI.button("Add").id("add").onClick(rows.set(Chunk("a", "b", "c", "d")))
+            )
+        withUI(app) {
+            for
+                _     <- Browser.click(Selector.id("add"))
+                _     <- Browser.waitForText(Selector.css("#s option:last-child"), "D")
+                after <- selectedOption
+            yield assert(after == ("b", "B"))
+        }
+    }
+
+    "a bound value follows the page when the re-rendered options no longer carry it" in {
+        val app: UI < Async =
+            for
+                rows     <- Signal.initRef(Chunk("a", "b", "c"))
+                ref      <- Signal.initRef("b")
+                snapshot <- Signal.initRef("waiting")
+            yield UI.div(
+                UI.select(rows.foreach(v => UI.option(v.toUpperCase).value(v))).id("s").value(ref),
+                ref.map(v => UI.span(s"bound:$v").id("bound")),
+                UI.button("Replace").id("replace").onClick(rows.set(Chunk("x", "y"))),
+                UI.button("Read binding").id("read").onClick(ref.get.map(v => snapshot.set(s"observed:$v"))),
+                snapshot.map(v => UI.span(v).id("snapshot"))
+            )
+        withUI(app) {
+            for
+                before  <- Browser.text(Selector.id("bound"))
+                _       <- Browser.click(Selector.id("replace"))
+                _       <- Browser.waitForText(Selector.css("#s option:last-child"), "Y")
+                _       <- Browser.click(Selector.id("read"))
+                _       <- Browser.waitForText(Selector.id("snapshot"), _.startsWith("observed:"))
+                binding <- Browser.text(Selector.id("snapshot"))
+                after   <- selectedOption
+            yield assert((before, binding, after) == ("bound:b", "observed:x", ("x", "X")))
+        }
+    }
+
+    Chunk(("empty-valued", "", false), ("disabled", "b", true), ("ordinary", "b", false)).foreach {
+        (label, initial, disabled) =>
+            s"a $label selection removed by a whole-select update synchronizes the bound value" in {
+                val app: UI < Async =
+                    for
+                        rows     <- Signal.initRef(Chunk("a", initial, "c"))
+                        value    <- Signal.initRef(initial)
+                        snapshot <- Signal.initRef("waiting")
+                        calls    <- Signal.initRef(0)
+                    yield UI.div(
+                        rows.map(options =>
+                            UI.select(options.map(v => UI.option(v.toUpperCase).value(v))*)
+                                .id("s").value(value).disabled(disabled).onChange(_ => calls.getAndUpdate(_ + 1).unit)
+                        ),
+                        UI.button("Retain").id("retain").onClick(rows.getAndUpdate(_ :+ "d").unit),
+                        UI.button("Replace").id("replace").onClick(snapshot.set("waiting").andThen(rows.set(Chunk("x", "y")))),
+                        UI.button("Set value").id("set-value").onClick(value.set("y")),
+                        UI.button("Read binding").id("read-binding").onClick(value.get.map(v => snapshot.set(s"observed:$v"))),
+                        snapshot.map(v => UI.span(v).id("snapshot")),
+                        calls.map(v => UI.span(v.toString).id("change-count"))
+                    )
+                withUI(app) {
+                    for
+                        _                 <- Browser.click(Selector.id("retain"))
+                        _                 <- Browser.waitForText(Selector.css("#s option:last-child"), "D")
+                        _                 <- Browser.click(Selector.id("read-binding"))
+                        _                 <- Browser.waitForText(Selector.id("snapshot"), s"observed:$initial")
+                        retainedPage      <- Browser.value(Selector.id("s"))
+                        retainedCount     <- Browser.text(Selector.id("change-count"))
+                        _                 <- Browser.click(Selector.id("replace"))
+                        _                 <- Browser.waitForText(Selector.css("#s option:last-child"), "Y")
+                        _                 <- Browser.click(Selector.id("read-binding"))
+                        _                 <- Browser.waitForText(Selector.id("snapshot"), _.startsWith("observed:"))
+                        binding           <- Browser.text(Selector.id("snapshot"))
+                        page              <- Browser.value(Selector.id("s"))
+                        count             <- Browser.text(Selector.id("change-count"))
+                        _                 <- Browser.click(Selector.id("set-value"))
+                        _                 <- Browser.waitFor("document.getElementById('s').value === 'y'")
+                        _                 <- Browser.click(Selector.id("read-binding"))
+                        _                 <- Browser.waitForText(Selector.id("snapshot"), "observed:y")
+                        programmaticCount <- Browser.text(Selector.id("change-count"))
+                    yield
+                        assert((retainedPage, retainedCount) == (initial, "0"))
+                        assert(
+                            (binding, page, count) == ("observed:x", "x", if disabled then "0" else "1"),
+                            s"binding=$binding page=$page count=$count"
+                        )
+                        assert(programmaticCount == count)
+                }
+            }
+    }
+
+    Chunk(("empty-valued", "", false), ("disabled", "b", true), ("ordinary", "b", false)).foreach {
+        (label, initial, disabled) =>
+            s"a $label selection removed by an option update synchronizes the bound value" in {
+                val app: UI < Async =
+                    for
+                        rows     <- Signal.initRef(Chunk("a", initial, "c"))
+                        value    <- Signal.initRef(initial)
+                        snapshot <- Signal.initRef("waiting")
+                    yield UI.div(
+                        UI.select(rows.foreach(v => UI.option(v.toUpperCase).value(v))).id("s").value(value).disabled(disabled),
+                        UI.button("Replace").id("replace").onClick(rows.set(Chunk("x", "y"))),
+                        UI.button("Read binding").id("read-binding").onClick(value.get.map(v => snapshot.set(s"observed:$v"))),
+                        snapshot.map(v => UI.span(v).id("snapshot"))
+                    )
+                withUI(app) {
+                    for
+                        _ <- Browser.click(Selector.id("replace"))
+                        _ <- Browser.waitForText(Selector.css("#s option:last-child"), "Y")
+                        // The session handles Change and Click in socket order. This click reads the binding after the patch's change.
+                        _       <- Browser.click(Selector.id("read-binding"))
+                        _       <- Browser.waitForText(Selector.id("snapshot"), _.startsWith("observed:"))
+                        binding <- Browser.text(Selector.id("snapshot"))
+                        page    <- Browser.value(Selector.id("s"))
+                    yield assert((binding, page) == ("observed:x", "x"))
+                }
+            }
     }
 
     "select each option in sequence" in {

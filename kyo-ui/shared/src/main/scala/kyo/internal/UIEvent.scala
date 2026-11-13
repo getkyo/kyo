@@ -26,6 +26,9 @@ private[kyo] enum UIEvent derives CanEqual, Schema:
     case ClickSelf(path: Seq[String], mouse: MouseEventData)
     case Input(path: Seq[String], value: String)
     case Change(path: Seq[String], value: String)
+
+    /** The browser's selection after replacing options, conditional on the binding still naming the old selection. */
+    case SelectOptionsChange(path: Seq[String], previousValue: String, value: String)
     case ChangeChecked(path: Seq[String], checked: Boolean)
     case ChangeNumeric(path: Seq[String], value: Double)
     case Submit(path: Seq[String], mouse: MouseEventData)

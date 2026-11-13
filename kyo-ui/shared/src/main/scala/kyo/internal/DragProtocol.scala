@@ -127,6 +127,7 @@ private[kyo] object DragProtocol:
         final case class ClickSelf private[DragProtocol] (wire: UIEvent.ClickSelf)                      extends ValidatedEvent
         final case class Input private[DragProtocol] (wire: UIEvent.Input)                              extends ValidatedEvent
         final case class Change private[DragProtocol] (wire: UIEvent.Change)                            extends ValidatedEvent
+        final case class SelectOptionsChange private[DragProtocol] (wire: UIEvent.SelectOptionsChange)  extends ValidatedEvent
         final case class ChangeChecked private[DragProtocol] (wire: UIEvent.ChangeChecked)              extends ValidatedEvent
         final case class ChangeNumeric private[DragProtocol] (wire: UIEvent.ChangeNumeric)              extends ValidatedEvent
         final case class Submit private[DragProtocol] (wire: UIEvent.Submit)                            extends ValidatedEvent
@@ -586,7 +587,11 @@ private[kyo] object DragProtocol:
                     case event: UIEvent.Change =>
                         validateText(event.value, "value", limits.maxTextLength, allowEmpty = true)
                             .map(_ => ValidatedEvent.Change(event))
-                    case event: UIEvent.ChangeChecked => Result.succeed(ValidatedEvent.ChangeChecked(event))
+                    case event: UIEvent.ChangeChecked       => Result.succeed(ValidatedEvent.ChangeChecked(event))
+                    case event: UIEvent.SelectOptionsChange =>
+                        validateText(event.previousValue, "previousValue", limits.maxTextLength, allowEmpty = true)
+                            .flatMap(_ => validateText(event.value, "value", limits.maxTextLength, allowEmpty = true))
+                            .map(_ => ValidatedEvent.SelectOptionsChange(event))
                     case event: UIEvent.ChangeNumeric =>
                         validateNumber(event.value, "value").map(_ => ValidatedEvent.ChangeNumeric(event))
                     case event: UIEvent.Submit  => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Submit(event))

@@ -85,6 +85,21 @@ class HtmlRendererReactiveRangesJsTest extends kyo.test.Test[Any]:
         }
     }
 
+    "embedded registry honors changed selected declarations and preserves unchanged live choices" in {
+        install("<select><option value='a'>A</option><!--kyo-rs:r--><option value='b'>B</option><!--kyo-re:r--></select>")
+        discard(scalajs.Dynamic.global.eval("kyoRangeReplace('r',\"<option value='b' selected>B</option>\")"))
+        assert(evalString("document.querySelector('select').value") == "b")
+        discard(scalajs.Dynamic.global.eval("kyoRangeReplace('r',\"<option value='b'>B</option>\")"))
+        assert(evalString("document.querySelector('select').value") == "a")
+
+        install("<select><!--kyo-rs:r--><option value='a' selected>A</option><option value='b'>B</option><!--kyo-re:r--></select>")
+        discard(scalajs.Dynamic.global.eval("document.querySelector('select').value='b'"))
+        discard(scalajs.Dynamic.global.eval(
+            "kyoRangeReplace('r',\"<option value='a' selected>A</option><option value='b'>B</option><option value='c'>C</option>\")"
+        ))
+        assert(evalString("document.querySelector('select').value") == "b")
+    }
+
     "embedded registry replaces table rows with contextual parsing and retains anchors" in {
         install("<table><tbody><!--kyo-rs:r--><tr id='old'><td>old</td></tr><!--kyo-re:r--></tbody></table>")
         discard(scalajs.Dynamic.global.eval("kyoRangeReplace('r',\"<tr id='new'><td>new</td></tr>\")"))
