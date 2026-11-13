@@ -474,6 +474,7 @@ lazy val kyoJVM: Project = project
         `kyo-whatsapp`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
+        `kyo-kafka`.jvm,
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
         `kyo-compiler`.jvm,
@@ -2211,6 +2212,19 @@ lazy val `kyo-logging-slf4j` =
             `kyo-settings`,
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.19",
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.6.3" % Test
+        )
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-kafka` =
+    crossProject(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-kafka"))
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-pod` % "test->compile")
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.apache.kafka" % "kafka-clients" % "3.9.1"
         )
         .jvmSettings(mimaCheck(false))
 
