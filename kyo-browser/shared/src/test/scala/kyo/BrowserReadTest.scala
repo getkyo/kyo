@@ -4,6 +4,118 @@ class BrowserReadTest extends BrowserTest:
 
     override def timeout = 90.seconds
 
+    "isTextEditable classifies every native input type and normalized type fallback" in {
+        val textTypes = Chunk(
+            "text",
+            "search",
+            "tel",
+            "url",
+            "email",
+            "password",
+            "number",
+            "date",
+            "time",
+            "datetime-local",
+            "month",
+            "week",
+            "future-type",
+            "TeXT"
+        )
+        val otherTypes = Chunk("button", "submit", "reset", "checkbox", "radio", "file", "image", "color", "range", "hidden")
+        val types      = textTypes.concat(otherTypes)
+        withBrowser {
+            onPage(types.map(kind => s"<input id='$kind' type='$kind'>").mkString) {
+                Kyo.foreach(types)(kind => Browser.isTextEditable(Browser.Selector.id(kind))).map { actual =>
+                    assert(actual == textTypes.map(_ => true).concat(otherTypes.map(_ => false)))
+                }
+            }
+        }
+    }
+
+    "isTextEditable distinguishes native editing inheritance from roles and ordinary elements" in {
+        val ids = Chunk("area", "default", "host", "inherited", "excluded", "plain", "role", "select", "button", "div")
+        withBrowser {
+            onPage("""<textarea id='area'></textarea><input id='default'>
+                <div id='host' contenteditable='true'><span id='inherited'>text</span><span id='excluded' contenteditable='false'>text</span></div>
+                <div id='plain' contenteditable='plaintext-only'>text</div><div id='role' role='textbox'></div>
+                <select id='select'><option>text</option></select><button id='button'>text</button><div id='div'>text</div>""") {
+                Kyo.foreach(ids)(id => Browser.isTextEditable(Browser.Selector.id(id))).map { actual =>
+                    assert(actual == Chunk(true, true, true, true, false, true, false, false, false, false))
+                }
+            }
+        }
+    }
+
+    "isTextEditable classifies disabled readonly hidden and inert fields without changing them" in {
+        val ids = Chunk("disabled", "readonly", "hidden", "inert", "area")
+        withBrowser {
+            onPage("""<input id='disabled' disabled value='a'><input id='readonly' readonly value='b'>
+                <input id='hidden' style='display:none' value='c'><div inert><input id='inert' value='d'></div>
+                <textarea id='area' readonly disabled>e</textarea>""") {
+                for
+                    actual <- Kyo.foreach(ids)(id => Browser.isTextEditable(Browser.Selector.id(id)))
+                    values <- Kyo.foreach(ids)(id => Browser.value(Browser.Selector.id(id)))
+                    active <- Browser.eval("document.activeElement.tagName")
+                yield
+                    assert(actual == Chunk(true, true, true, true, true))
+                    assert(values == Chunk("a", "b", "c", "d", "e"))
+                    assert(active == "BODY")
+            }
+        }
+    }
+
+    "isTextEditable returns a negative result from one probe without retry or settlement" in {
+        withBrowser {
+            onPage("""<div id='plain'></div><script>
+                window.reads = 0;
+                Object.defineProperty(document.getElementById('plain'), 'isContentEditable', {
+                    get() { window.reads++; return false; }
+                });
+                </script>""") {
+                Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour)).assertionStabilityWindow(1.hour)) {
+                    for
+                        actual <- Browser.isTextEditable(Browser.Selector.id("plain"))
+                        reads  <- Browser.eval("String(window.reads)")
+                    yield
+                        assert(!actual)
+                        assert(reads == "1")
+                }
+            }
+        }
+    }
+
+    "isTextEditable fails with its exact missing selector without retry" in {
+        withBrowser {
+            onPage("<div>text</div>") {
+                Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
+                    Abort.run[BrowserElementException](Browser.isTextEditable(Browser.Selector.id("missing"))).map {
+                        case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.selector == "id(\"missing\")")
+                        case other                                               => fail(s"expected missing-selector failure, got $other")
+                    }
+                }
+            }
+        }
+    }
+
+    "form-state native control normalizes input types and inherits content editability" in {
+        withBrowser {
+            onPage("""<input id='unknown' type='future-type'><input id='mixed' type='TeXT'>
+                <input id='readonly' readonly><input id='disabled' disabled>
+                <div contenteditable='true'><span id='inherited'>text</span><span id='excluded' contenteditable='false'>text</span></div>
+                <div id='plain' contenteditable='plaintext-only'>text</div>""") {
+                Browser.eval("""JSON.stringify([
+                    document.getElementById('unknown').type,
+                    document.getElementById('mixed').type,
+                    document.getElementById('readonly').readOnly,
+                    document.getElementById('disabled').disabled,
+                    document.getElementById('inherited').isContentEditable,
+                    document.getElementById('excluded').isContentEditable,
+                    document.getElementById('plain').isContentEditable
+                ])""").map(actual => assert(actual == "[\"text\",\"text\",true,true,true,false,true]"))
+            }
+        }
+    }
+
     // ---- text (retrying) ----
 
     "text reads heading content" in {

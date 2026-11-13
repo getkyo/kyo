@@ -310,6 +310,7 @@ The read surface:
 | `count(selector)` | `Int` | Matched-element count, retried on the active schedule |
 | `countNow(selector)` | `Int` | Point-in-time matched-element count (no retry, returns `0` when nothing matches) |
 | `selectionStart(selector)` | `Int` | Cursor position inside an `<input>` / `<textarea>` |
+| `focusedElement` | `Maybe[ElementInfo]` | Settled snapshot of the current document's active element; `Absent` for body or document focus |
 | `boundingBox(selector)` | `Maybe[BoundingBox]` | Page-relative geometry |
 | `element(selector)` / `elementAt(x, y)` | `Maybe[Browser.ElementInfo]` | Settled discovery snapshot, or `Absent` |
 | `elements(selector)` | `Chunk[Browser.ElementInfo]` | Settled discovery snapshots in document order |
@@ -334,9 +335,21 @@ Point-in-time `Boolean` reads for branching logic. Unlike the `assertX` family, 
 | `isEnabled(selector)` | `Boolean` | `true` if the form control is not disabled |
 | `isChecked(selector)` | `Boolean` | `true` if the checkbox / radio is checked |
 | `isFocused(selector)` | `Boolean` | `true` if the element is the active element |
+| `isTextEditable(selector)` | `Boolean` | Text-control category, independent of visibility, disabled and read-only state |
 | `hasAttribute(selector, name)` | `Boolean` | `true` if the attribute is present |
 | `hasNoVisibleText(selector)` | `Boolean` | `textContent.trim().isEmpty` |
 | `hasEmptyValue(selector)` | `Boolean` | `.value.isEmpty` for an `<input>` / `<textarea>` |
+
+`isTextEditable` recognizes text-bearing inputs, textareas and native content editing, including inherited and `plaintext-only` editing. Roles alone do not make an element editable. Both reads honor `withIFrame`; `focusedElement` returns the native document focus, so focus inside a child frame or shadow tree appears as its iframe element or host in the parent document.
+
+```scala
+import kyo.*
+
+Browser.focusedElement.map {
+    case Present(info) => Browser.isTextEditable(Browser.Selector.css(info.selector))
+    case Absent        => false
+}
+```
 
 ## Wait helpers
 

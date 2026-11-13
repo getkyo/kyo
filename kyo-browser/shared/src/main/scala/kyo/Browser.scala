@@ -1560,6 +1560,15 @@ object Browser:
     def isFocused(selector: Selector)(using Frame): Boolean < (Browser & Abort[BrowserReadException]) =
         BrowserEval.probeBoolean(selector, ProbesJs.focusExprJs(selector), "focused")
 
+    /** Returns whether the matched element is a text-bearing control: a `textarea`, a text-bearing `input`, or a native content-editable
+      * element. Button, submit, reset, checkbox, radio, file, image, color, range and hidden inputs return `false`.
+      *
+      * This classifies the element, independently of visibility, disabled and read-only state; it does not establish actionability.
+      * Point-in-time: no retry or stability window. Fails with [[BrowserElementNotFoundException]] when no element matches.
+      */
+    def isTextEditable(selector: Selector)(using Frame): Boolean < (Browser & Abort[BrowserReadException]) =
+        BrowserEval.probeBoolean(selector, ProbesJs.textEditableExprJs(selector), "text_editable")
+
     /** Returns `true` when at least one element matches `selector` on the page at the moment of the call. Returns `false` when no
       * element matches; does NOT fail with [[BrowserElementNotFoundException]] (the question this method asks is literally "is the
       * element here", so the negative answer is `false`, not an exception). Use [[assertExists]] when "absent" should be a typed
@@ -1751,6 +1760,18 @@ object Browser:
             SettleRead.settle("element", valueExpr)(decodeElementInfoMaybe("element"))
         }
     end element
+
+    /** Returns the DISCOVER snapshot of this document's native `activeElement`, or `Absent` when it is the body or document element.
+      * Settles the snapshot as [[element]] does. [[withIFrame]] selects the document whose focus is read; in the parent document, focus
+      * inside an iframe is represented by that iframe element. A shadow tree's internal focus is represented by its host.
+      */
+    def focusedElement(using Frame): Maybe[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
+        installDiscover.andThen {
+            val valueExpr =
+                """(() => { const el = document.activeElement; if (!el || el === document.body || el === document.documentElement) return '{"present":false}'; return JSON.stringify({present:true, info:window.__kyoDiscoverProbe(el)}); })()"""
+            SettleRead.settle("focusedElement", valueExpr)(decodeElementInfoMaybe("focusedElement"))
+        }
+    end focusedElement
 
     /** Returns DISCOVER snapshots for all elements matching `selector` in document order. Empty fast-path: when `BrowserEval.locateCount`
       * returns 0, returns `Chunk.empty` immediately without waiting for stability (twin: `textAll`). When elements are found, performs a

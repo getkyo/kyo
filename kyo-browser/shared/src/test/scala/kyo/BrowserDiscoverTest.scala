@@ -6,6 +6,125 @@ class BrowserDiscoverTest extends BrowserTest:
 
     override def timeout = 90.seconds
 
+    "focusedElement returns the complete element snapshot across focus blur and removal" in {
+        withBrowser {
+            onPage("<input id='field' class='entry' value='kept'><button id='button'>Go</button>") {
+                for
+                    before  <- Browser.focusedElement
+                    _       <- Browser.focus(Browser.Selector.id("field"))
+                    during  <- Browser.focusedElement
+                    direct  <- Browser.element(Browser.Selector.id("field"))
+                    _       <- Browser.focus(Browser.Selector.id("button"))
+                    button  <- Browser.focusedElement
+                    _       <- Browser.eval("document.activeElement.blur()")
+                    blur    <- Browser.focusedElement
+                    _       <- Browser.focus(Browser.Selector.id("field"))
+                    _       <- Browser.eval("document.activeElement.remove()")
+                    removed <- Browser.focusedElement
+                yield
+                    assert(before == Absent)
+                    assert(during == direct)
+                    during match
+                        case Present(info) =>
+                            assert(info.id == Present("field"))
+                            assert(info.classes == Chunk("entry"))
+                        case Absent => fail("expected field snapshot")
+                    end match
+                    assert(button.map(info => (info.tag, info.id, info.text)) == Present(("button", Present("button"), Present("Go"))))
+                    assert(blur == Absent)
+                    assert(removed == Absent)
+            }
+        }
+    }
+
+    "focusedElement reinstalls discovery after navigation" in {
+        withBrowser {
+            for
+                _      <- Browser.goto(page("<input id='first'>"))
+                _      <- Browser.focus(Browser.Selector.id("first"))
+                first  <- Browser.focusedElement
+                _      <- Browser.goto(page("<input id='second'>"))
+                before <- Browser.focusedElement
+                _      <- Browser.focus(Browser.Selector.id("second"))
+                second <- Browser.focusedElement
+            yield
+                assert(first.map(_.id) == Present(Present("first")))
+                assert(before == Absent)
+                assert(second.map(_.id) == Present(Present("second")))
+        }
+    }
+
+    "focusedElement follows native shadow-host focus and excludes explicit body focus" in {
+        withBrowser {
+            onPage("""<body tabindex='0'><div id='host'></div><script>
+                const root = document.getElementById('host').attachShadow({mode:'open'});
+                root.innerHTML = '<input id="inside">';
+                root.getElementById('inside').focus();
+                </script></body>""") {
+                for
+                    host <- Browser.focusedElement
+                    _    <- Browser.eval("document.body.focus()")
+                    body <- Browser.focusedElement
+                yield
+                    assert(host.map(info => (info.tag, info.id)) == Present(("div", Present("host"))))
+                    assert(body == Absent)
+            }
+        }
+    }
+
+    "focusedElement settles a focus change during sampling with controlled page time" in {
+        withBrowser {
+            onPage("<input id='first'><input id='second'>") {
+                for
+                    _ <- Browser.eval("""(() => {
+                        let now = 0;
+                        const timeout = window.setTimeout.bind(window);
+                        Object.defineProperty(performance, 'now', {value: () => now, configurable: true});
+                        window.setTimeout = callback => timeout(() => { now += 10; callback(); }, 0);
+                        const first = document.getElementById('first');
+                        first.focus();
+                        const active = Object.getOwnPropertyDescriptor(Document.prototype, 'activeElement').get;
+                        window.focusReads = 0;
+                        Object.defineProperty(document, 'activeElement', {get() {
+                            const element = active.call(document);
+                            if (++window.focusReads === 1) document.getElementById('second').focus();
+                            return element;
+                        }});
+                        return 'ready';
+                    })()""")
+                    actual <- Browser.withConfig(
+                        _.assertionStabilityWindow(20.millis).stabilitySampleInterval(10.millis).retrySchedule(Schedule.immediate.take(1))
+                    ) {
+                        Browser.focusedElement
+                    }
+                yield assert(actual.map(_.id) == Present(Present("second")))
+            }
+        }
+    }
+
+    "form-state native control composes focus and element reads without changing the field" in {
+        withBrowser {
+            onPage("<input id='first' value='first'><input id='second' value='second'>") {
+                for
+                    before <- Browser.eval("document.activeElement.tagName")
+                    _      <- Browser.focus(Browser.Selector.id("second"))
+                    active <- Browser.eval("document.activeElement.id")
+                    focus  <- Browser.isFocused(Browser.Selector.id("second"))
+                    info   <- Browser.element(Browser.Selector.id(active))
+                    value  <- Browser.value(Browser.Selector.id("second"))
+                    _      <- Browser.eval("document.activeElement.blur()")
+                    after  <- Browser.eval("document.activeElement.tagName")
+                yield
+                    assert(before == "BODY")
+                    assert(active == "second")
+                    assert(focus)
+                    assert(info.map(_.id) == Present(Present("second")))
+                    assert(value == "second")
+                    assert(after == "BODY")
+            }
+        }
+    }
+
     private val splitTextPage = s"""<body style="margin:0">
         <span id="sample" style="position:absolute;left:10px;top:10px;width:100px;height:30px">${"a" * 199}😀</span>
     </body>"""

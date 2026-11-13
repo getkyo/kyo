@@ -179,6 +179,18 @@ private[kyo] object ProbesJs:
         })()"""
     end focusExprJs
 
+    /** Passive text-control classification: `text_editable`, `not_text_editable`, or `not_attached`. */
+    private[kyo] def textEditableExprJs(selector: Selector): String =
+        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        s"""(() => {
+            const el = $jsExpr;
+            if (!el || !el.isConnected) return 'not_attached';
+            if (el.isContentEditable || el.tagName === 'TEXTAREA') return 'text_editable';
+            const buttons = ['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'color', 'range', 'hidden'];
+            return el.tagName === 'INPUT' && !buttons.includes(el.type) ? 'text_editable' : 'not_text_editable';
+        })()"""
+    end textEditableExprJs
+
     /** JS expression for the passive caret-position probe. Evaluates to the zero-based `selectionStart` of an `HTMLInputElement` /
       * `HTMLTextAreaElement` as a string, `"unsupported"` when the element is attached but its `selectionStart` is `null`/`undefined` or
       * throws (e.g. `type="number"`, `type="email"`, `type="date"`, where the input has no selection model), or `"not_attached"` when the
