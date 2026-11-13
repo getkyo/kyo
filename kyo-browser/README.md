@@ -233,6 +233,8 @@ The interaction surface:
 | `typeText(text)` | `Unit` | Send a character sequence to the page-level active element |
 | `focus(selector)` | `Unit` | Move keyboard focus to the target |
 
+`fill` on a contenteditable editor uses native input so the editor's own model sees the edit. It preserves line boundaries and verifies the resulting text. Empty replacements use the same input path; no Delete key or synthetic `change` is sent. Focus loss during `beforeinput` or `textInput` cancels the pending edit and reports `NotFocused`. Temporary guards are released in the original document, including when the call is interrupted or the tab navigates.
+
 ### Browser.Key
 
 `press`, `keyDown`, and `keyUp` accept a `Browser.Key` value. The named constants cover all common non-printable keys; `Key(char)` wraps a single character for printable input:

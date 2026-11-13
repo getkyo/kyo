@@ -2,6 +2,8 @@ package kyo
 
 import kyo.Browser.*
 import kyo.BrowserElementNotActionableException.Reason
+import kyo.internal.EditableInput
+import kyo.kernel.ArrowEffect
 import scala.language.implicitConversions
 
 class BrowserMutationTest extends BrowserTest:
@@ -935,6 +937,281 @@ class BrowserMutationTest extends BrowserTest:
                     Browser.eval("document.getElementById('color').value").map { v =>
                         assert(v == "blue", s"Expected 'blue' but got '$v'")
                     }
+                }
+            }
+        }
+    }
+
+    // ---- contenteditable fill ----
+
+    private val editingPage = """<div id='editor' contenteditable='true' style='width:300px;height:100px'><p>Draft</p></div>
+        <input id='other' value='untouched'><script>
+        window.editEvents = []; window.deleteKeys = 0;
+        const editor = document.getElementById('editor');
+        editor.addEventListener('beforeinput', e => editEvents.push([e.type, e.inputType, e.isTrusted]));
+        editor.addEventListener('input', e => editEvents.push([e.type, e.inputType, e.isTrusted]));
+        editor.addEventListener('change', () => editEvents.push(['change']));
+        editor.addEventListener('keydown', e => { if (e.key === 'Delete') { deleteKeys++; other.focus(); other.select(); } });
+        </script>"""
+
+    private val editingGuardTracker = """<script>
+        window.editorGuards = new Set();
+        const add = window.addEventListener;
+        const remove = window.removeEventListener;
+        const tracked = type => ['beforeinput', 'blur', 'textInput'].includes(type);
+        window.addEventListener = function(type, listener, capture) {
+            if (tracked(type) && capture === true) editorGuards.add(listener);
+            return add.call(this, type, listener, capture);
+        };
+        window.removeEventListener = function(type, listener, capture) {
+            if (tracked(type) && capture === true) editorGuards.delete(listener);
+            return remove.call(this, type, listener, capture);
+        };
+        </script>"""
+
+    private def pauseFirstWait[A, S](entered: Latch, resume: Latch)(body: => A < (Async & S))(using Frame): A < (Async & S) =
+        ArrowEffect.handleFirst(Tag[Async.Join], body)(
+            [C] =>
+                (input, continue) =>
+                    entered.release.andThen(resume.await).andThen {
+                        ArrowEffect.suspendWith(Tag[Async.Join], input)(result => continue(result))
+                    },
+            identity
+        )
+
+    "contenteditable fill replaces text through one trusted input transaction" in {
+        withBrowser {
+            onPage(editingPage) {
+                Browser.fill(Browser.Selector.id("editor"), "Please find the notes").andThen {
+                    Browser.eval("JSON.stringify([editor.textContent, editEvents, document.activeElement.id])").map { state =>
+                        assert(
+                            state ==
+                                """["Please find the notes",[["beforeinput","insertText",true],["input","insertText",true]],"editor"]""",
+                            state
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    "contenteditable fill retains line boundaries and repeated spaces" in {
+        withBrowser {
+            onPage(editingPage) {
+                Browser.fill(Browser.Selector.id("editor"), "Hi  there\nBye ").andThen {
+                    Browser.eval("JSON.stringify(Array.from(editor.children, p => p.textContent.replace(/\\u00a0/g, ' ')))").map {
+                        paragraphs =>
+                            assert(paragraphs == """["Hi  there","Bye "]""", paragraphs)
+                    }
+                }
+            }
+        }
+    }
+
+    "contenteditable fill clears without Delete handlers touching another field" in {
+        withBrowser {
+            onPage(editingPage) {
+                Browser.fill(Browser.Selector.id("editor"), "").andThen {
+                    Browser.eval(
+                        "JSON.stringify([editor.textContent, other.value, deleteKeys, editEvents.filter(e => e[0] === 'input').map(e => e[2])])"
+                    )
+                        .map(state => assert(state == """["","untouched",0,[true]]""", state))
+                }
+            }
+        }
+    }
+
+    "contenteditable fill rejects a formatter that erases line boundaries" in {
+        withBrowser {
+            onPage(editingPage + "<script>editor.addEventListener('input', () => { editor.textContent = editor.textContent; });</script>") {
+                for
+                    result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                        Abort.run[BrowserElementNotActionableException](Browser.fill(Browser.Selector.id("editor"), "a\nb"))
+                    }
+                    state <- Browser.eval("JSON.stringify([editor.textContent, editor.children.length])")
+                yield
+                    assert(state == """["ab",0]""", state)
+                    assert(result.failure.map(_.reason) == Present(Reason.FillDesync), s"result=$result, state=$state")
+            }
+        }
+    }
+
+    for text <- Chunk("new", "") do
+        s"contenteditable fill refuses redirected focus for '$text' without editing either field" in {
+            withBrowser {
+                onPage(editingPage + "<script>editor.addEventListener('focus', () => other.focus());</script>") {
+                    for
+                        result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                            Abort.run[BrowserElementNotActionableException](Browser.fill(Browser.Selector.id("editor"), text))
+                        }
+                        state <- Browser.eval("JSON.stringify([editor.textContent, other.value, editEvents, document.activeElement.id])")
+                    yield
+                        assert(state == """["Draft","untouched",[],"other"]""", s"state=$state, result=$result")
+                        assert(result.failure.map(_.reason) == Present(Reason.NotFocused))
+                }
+            }
+        }
+    end for
+
+    for (name, contents, mode) <- Chunk(
+            ("paragraphs", "<p>Draft</p>", "true"),
+            ("inline text", "Draft", "true"),
+            ("empty host", "", "true"),
+            ("plaintext host", "Draft", "plaintext-only")
+        )
+    do
+        s"contenteditable fill preserves blank lines and Unicode in $name" in {
+            val html =
+                s"""<div id='editor' contenteditable='$mode' onbeforeinput="window.nativeText=event.data"
+                    style='white-space:pre-wrap;width:300px;min-height:100px'>$contents</div>"""
+            withBrowser {
+                onPage(html) {
+                    Kyo.foreachDiscard(Chunk("\na\n\nb\n", "  \u00a0🧠cafe\u0301\t ", "\r\nline\rend", "\n", "")) { text =>
+                        for
+                            result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                                Abort.run[BrowserElementNotActionableException](Browser.fill(Browser.Selector.id("editor"), text))
+                            }
+                            html       <- Browser.eval("editor.innerHTML")
+                            chars      <- Browser.eval("editor.textContent.replace(/[\\r\\n]/g, '').replace(/\\u00a0/g, ' ')")
+                            nativeText <- Browser.eval("JSON.stringify(window.nativeText)")
+                        yield
+                            assert(result.isSuccess, s"text=${Json.encode(text)}, html=$html, result=$result")
+                            assert(chars == text.replace("\r", "").replace("\n", "").replace('\u00a0', ' '), chars)
+                            if text.nonEmpty then assert(nativeText == Json.encode(text), nativeText)
+                    }
+                }
+            }
+        }
+    end for
+
+    "contenteditable fill changes only the named nested editor contents" in {
+        withBrowser {
+            onPage("""<div id='host' contenteditable='true'><span id='editor'>Draft</span><span id='sibling'> untouched</span></div>""") {
+                Browser.fill(Browser.Selector.id("editor"), "new").andThen {
+                    Browser.eval("JSON.stringify([editor.textContent, sibling.textContent, document.activeElement.id])")
+                        .map(state => assert(state == """["new"," untouched","host"]""", state))
+                }
+            }
+        }
+    }
+
+    "contenteditable fill honors a cancelled beforeinput event" in {
+        withBrowser {
+            onPage(editingPage + "<script>editor.addEventListener('beforeinput', e => e.preventDefault());</script>") {
+                for
+                    result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                        Abort.run[BrowserElementNotActionableException](Browser.fill(Browser.Selector.id("editor"), "new"))
+                    }
+                    state <- Browser.eval("JSON.stringify([editor.textContent, editEvents])")
+                yield
+                    assert(result.failure.map(_.reason) == Present(Reason.FillDesync))
+                    assert(state == """["Draft",[["beforeinput","insertText",true]]]""", state)
+            }
+        }
+    }
+
+    for event <- Seq("beforeinput", "textInput"); text <- Seq("new", "") do
+        s"contenteditable fill never writes a field focused by $event with '$text'" in {
+            withBrowser {
+                onPage(editingPage +
+                    s"<script>editor.addEventListener('$event', e => { e.stopPropagation(); other.focus(); other.select(); });</script>") {
+                    for
+                        result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                            Abort.run[BrowserElementNotActionableException](Browser.fill(Browser.Selector.id("editor"), text))
+                        }
+                        state <- Browser.eval("JSON.stringify([editor.textContent, other.value])")
+                    yield
+                        assert(result.failure.map(_.reason) == Present(Reason.NotFocused))
+                        assert(state == """["Draft","untouched"]""", s"state=$state, result=$result")
+                }
+            }
+        }
+    end for
+
+    for rejected <- Chunk(false, true) do
+        s"contenteditable fill releases native input guards with rejected=$rejected" in {
+            withBrowser {
+                val redirect = if rejected then
+                    "<script>editor.addEventListener('beforeinput', () => other.focus());</script>"
+                else ""
+                onPage(editingPage + editingGuardTracker + redirect) {
+                    for
+                        result <- Browser.withConfig(_.retrySchedule(Schedule.done)) {
+                            Abort.run[BrowserElementNotActionableException](Browser.fill(Browser.Selector.id("editor"), "new"))
+                        }
+                        guards <- Browser.eval("editorGuards.size.toString()")
+                        _      <- Browser.eval("other.focus(); other.select(); 'selected'")
+                        _      <- Browser.typeText("later")
+                        value  <- Browser.eval("other.value")
+                    yield
+                        assert(result.isFailure == rejected)
+                        assert(guards == "0", guards)
+                        assert(value == "later", value)
+                }
+            }
+        }
+    end for
+
+    "contenteditable fill releases an editor acquired after its caller was interrupted" in {
+        withBrowser {
+            onPage(editingPage + editingGuardTracker) {
+                Browser.use { tab =>
+                    for
+                        entered <- Latch.init(1)
+                        resume  <- Latch.init(1)
+                        done    <- Latch.init(1)
+                        fiber   <- Fiber.initUnscoped {
+                            Sync.ensure(done.release) {
+                                Abort.run[BrowserReadException] {
+                                    Browser.runOn(tab) {
+                                        // Hold the acquisition's first reply join, while its detached producer can install the guard.
+                                        pauseFirstWait(entered, resume)(EditableInput.fill(Browser.Selector.id("editor"), "new"))
+                                    }
+                                }
+                            }
+                        }
+                        _     <- Scope.ensure(fiber.interrupt.andThen(done.await))
+                        _     <- entered.await
+                        _     <- assertEventually(Browser.eval("editorGuards.size.toString()").map(_ == "3"))
+                        _     <- fiber.interrupt
+                        _     <- done.await
+                        _     <- assertEventually(Browser.eval("editorGuards.size.toString()").map(_ == "0"))
+                        state <- Browser.eval("JSON.stringify([editor.textContent, editEvents])")
+                    yield assert(state == """["Draft",[]]""", state)
+                }
+            }
+        }
+    }
+
+    "contenteditable fill cleanup never removes listeners from a replacement document" in {
+        withBrowser {
+            onPage(editingPage + editingGuardTracker) {
+                Browser.use { tab =>
+                    for
+                        entered <- Latch.init(1)
+                        resume  <- Latch.init(1)
+                        done    <- Latch.init(1)
+                        fiber   <- Fiber.initUnscoped {
+                            Sync.ensure(done.release) {
+                                Abort.run[BrowserReadException] {
+                                    Browser.runOn(tab) {
+                                        pauseFirstWait(entered, resume)(EditableInput.fill(Browser.Selector.id("editor"), "new"))
+                                    }
+                                }
+                            }
+                        }
+                        _ <- Scope.ensure(fiber.interrupt.andThen(done.await))
+                        _ <- entered.await
+                        _ <- assertEventually(Browser.eval("editorGuards.size.toString()").map(_ == "3"))
+                        _ <- onPage(editingPage + editingGuardTracker +
+                            "<script>window.addEventListener('beforeinput', () => {}, true);</script>") {
+                            for
+                                _     <- fiber.interrupt
+                                _     <- done.await
+                                state <- Browser.eval("JSON.stringify([editor.textContent, editorGuards.size])")
+                            yield assert(state == """["Draft",1]""", state)
+                        }
+                    yield ()
                 }
             }
         }

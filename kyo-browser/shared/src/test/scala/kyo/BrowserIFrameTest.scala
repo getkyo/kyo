@@ -325,6 +325,27 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
+    "contenteditable fill targets only the active iframe editor" in {
+        withBrowser {
+            onSrcdoc(
+                """<body><div id='editor' contenteditable='true'>parent</div><iframe id='frame' data-testid='frame' srcdoc="{srcdoc}"></iframe></body>""",
+                """<body><div id='editor' contenteditable='true'><p>Draft</p></div></body>"""
+            ) {
+                discoverSingleFrame.map { frame =>
+                    for
+                        inner <- Browser.withIFrame(frame) {
+                            Browser.fill(Browser.Selector.id("editor"), "inner value")
+                                .andThen(Browser.text(Browser.Selector.id("editor")))
+                        }
+                        outer <- Browser.text(Browser.Selector.id("editor"))
+                    yield
+                        assert(inner == "inner value")
+                        assert(outer == "parent")
+                }
+            }
+        }
+    }
+
     "withIFrame(f) { Browser.fill(input, \"hi\") } populates the iframe's input, not main's" in {
         withBrowser {
             val inner = """<body><input id="x" type="text" /></body>"""

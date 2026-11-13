@@ -386,6 +386,12 @@ private[kyo] object CdpBackend:
             }(evaluate)
         }
 
+    /** The caller owns the object and decides whether its context disappearing is an expected lifecycle transition. */
+    private[kyo] def runtimeCallFunctionOn(backend: CdpBackend, params: CallFunctionOnParams)(using
+        Frame
+    ): EvalResult < (Async & Abort[BrowserReadException]) =
+        backend.send[CallFunctionOnParams, EvalResult]("Runtime.callFunctionOn", params)
+
     private[kyo] def getHeapUsage(backend: CdpBackend)(using
         Frame
     ): GetHeapUsageResult < (Async & Abort[BrowserReadException]) =
@@ -445,6 +451,12 @@ private[kyo] object CdpBackend:
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
         backend.sendUnit[MouseEventParams]("Input.dispatchMouseEvent", params)
+
+    /** Replaces the focused editor's selection through native text input, including when `text` is empty. */
+    private[kyo] def insertText(backend: CdpBackend, params: InsertTextParams)(using
+        Frame
+    ): Unit < (Async & Abort[BrowserReadException]) =
+        backend.sendUnit[InsertTextParams]("Input.insertText", params)
 
     private[kyo] def getProperties(backend: CdpBackend, params: GetPropertiesParams)(using
         Frame
