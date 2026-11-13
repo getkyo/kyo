@@ -104,7 +104,7 @@ Inside the body, four scopers carve smaller scopes out of the same tab or contex
 - `Browser.withNewTab` opens a sibling tab in the same browser context (cookies and storage shared, page state fresh).
 - `Browser.withFork` opens a child tab in a fresh context that has been snapshotted from the parent (URL, cookies, storage, form values, scroll, focus), runs the body, and discards every mutation when the body exits.
 - `Browser.withPopup(trigger)(handler)` arms a handler that runs against whichever popup tab the trigger opens.
-- `Browser.withIFrame(frame)` scopes every subsequent operation to a child document.
+- `Browser.withIFrame(frame)` scopes selector resolution and page JavaScript to a child document. Explicit mouse coordinates remain relative to the top-level viewport.
 
 To take full control of how Chrome is launched (custom binary, additional flags, non-headless mode for debugging), build a `Browser.LaunchConfig` and pass it to `Browser.run`:
 
@@ -194,7 +194,7 @@ Browser automation usually fails because the action fires before the page is rea
 
 **Navigation settlement** is the gate for `goto`, `back`, `forward`, `reload`, and `expectNavigation`. Each of those calls returns only once the page has reached the requested `Browser.Settle` mode. The default mode is `Browser.Settle.NetworkIdle`: the `load` event must fire AND in-flight fetch / XHR traffic must stay quiet for the configured window (500 ms by default). This hides flake from third-party telemetry at the cost of a few hundred milliseconds on chatty pages. To return earlier, pass `Browser.Settle.Load` or `Browser.Settle.DomContentLoaded`.
 
-**Mutation settlement** is the gate for `click`, `fill`, `press`, `check`, and `select`. The library first waits until the target element is actionable (attached, visible, geometrically stable, hittable at its centre point, not disabled), then dispatches the action, then waits for a quiet DOM window. The window is `mutationQuiescenceWindow` of no observed mutations (default 50 ms), bounded above by `mutationSettlementTimeout` (default 2 s). This eliminates the "I clicked but the handler hadn't run yet" class of failure. `hover` and `press` skip the disabled check by design; the rest of the actionability gate still runs. To shorten the windows, override them via `Browser.withConfig`; to bypass the gate entirely, drop to `Browser.eval` for raw JS.
+**Mutation settlement** is the gate for `click`, `fill`, `press`, `check`, and `select`. The library first waits until the target element is actionable (attached, visible, geometrically stable, hittable at its centre point, not disabled), then dispatches the action, then waits for a quiet DOM window. The window is `mutationQuiescenceWindow` of no observed mutations (default 50 ms), bounded above by `mutationSettlementTimeout` (default 2 s). This eliminates the "I clicked but the handler hadn't run yet" class of failure. `hover(selector)` and `press` skip the disabled check by design; the rest of the actionability gate still runs. To shorten the windows, override them via `Browser.withConfig`; to bypass the gate entirely, drop to `Browser.eval` for raw JS.
 
 **Assertion settlement** is the gate for `assertText`, `assertVisible`, `assertCount`, `waitForText`, and friends. Each of those re-evaluates its predicate against the active retry schedule (default `100 ms × maxDuration(8 s)`) until either the predicate accepts or the schedule exhausts. An exhausted schedule raises a typed `BrowserAssertion*` exception rather than returning `false`. For a point-in-time read use `Browser.text` / `attribute` / `count`; for arbitrary JS predicates use `Browser.waitFor(jsCondition)`. Every retrying method also accepts a `schedule: Maybe[Schedule]` argument for a one-off override of the active schedule.
 
@@ -227,6 +227,7 @@ The interaction surface:
 | `keyDown(key)` | `Unit` | Dispatch a raw keyDown CDP event for `key` (low-level; prefer `press` unless split down/up timing is required) |
 | `keyUp(key)` | `Unit` | Dispatch a raw keyUp CDP event for `key` |
 | `hover(selector)` | `Unit` | Move the mouse to the target's centre |
+| `hover(x, y)` | `Unit` | Move the mouse to a point in top-level viewport CSS pixels, without an element actionability check |
 | `dragAndDrop(source, target)` | `Unit` | Press at source, move to target, release |
 | `setFiles(selector, paths)` | `Unit` | Attach a `Seq[Path]` to an `<input type="file">` without opening a native picker |
 | `scrollTo(selector)` / `scrollToTop` / `scrollToBottom` | `Unit` | Scroll the element (or the page) into view |
@@ -234,6 +235,12 @@ The interaction surface:
 | `focus(selector)` | `Unit` | Move keyboard focus to the target |
 
 `fill` on a contenteditable editor uses native input so the editor's own model sees the edit. It preserves line boundaries and verifies the resulting text. Empty replacements use the same input path; no Delete key or synthetic `change` is sent. Focus loss during `beforeinput` or `textInput` cancels the pending edit and reports `NotFocused`. Temporary guards are released in the original document, including when the call is interrupted or the tab navigates.
+
+Use `hover(x, y)` to reveal a hover menu whose opacity prevents selector-based hover. Coordinates start at the viewport's top-left corner and retain that meaning inside `withIFrame`; negative coordinates fail with `BrowserInvalidArgumentException` before dispatch. This sends native mouse input, so the page's hit testing chooses the recipient.
+
+```scala
+Browser.hover(120, 40)
+```
 
 ### Browser.Key
 
@@ -529,7 +536,7 @@ Cookies:
 | `deleteCookie(name)` / `deleteCookie(name, domain)` | `Unit` |
 | `tryAcceptCookies` / `tryAcceptCookies(schedule)` | `Maybe[Selector]` (the dismissed selector, when a cookie banner was matched). The overload accepts a per-call retry `Schedule` for slow-loading banners |
 
-IFrames: resolve a handle to a child frame, then scope a body to it with `withIFrame`. Every `Browser` operation inside that body targets the frame:
+IFrames: resolve a handle to a child frame, then scope selectors and page JavaScript to it with `withIFrame`. Explicit mouse coordinates keep the top-level viewport coordinate system:
 
 ```scala
 Browser.iframe(Browser.Selector.css("iframe#payment")).map { frame =>
