@@ -303,6 +303,8 @@ The read surface:
 |---|---|---|
 | `text(selector)` | `String` | `innerText` of one element |
 | `textAll(selector)` | `Chunk[String]` | `innerText` of every match |
+| `textRegion(x, y, width, height)` | `String` | DOM text assigned to a document region by each text node's layout-box center |
+| `contentSize` | `ContentSize` | Settled document width and height in CSS pixels, at least the viewport size |
 | `value(selector)` | `String` | `.value` of an `<input>` / `<textarea>` / `<select>` |
 | `attribute(selector, name)` | `String` | DOM attribute value (`""` if absent) |
 | `attributeAll(selector, name)` | `Chunk[String]` | The attribute on every match |
@@ -321,7 +323,19 @@ The read surface:
 
 `onConsole` and `recordConsole` preserve primitive arguments in their message text, including booleans, `null`, `undefined`, special numbers and bigints. Thrown primitive values are retained in error messages too.
 
-`screenshot` and `screenshotElement` return a `Browser.Image`. The type exposes: `binary: Span[Byte]` (raw bytes), `base64: String` (Base64-encoded), `writeFileBinary(path)` / `writeFileBase64(path)` (write to disk), and `renderToConsole(charsWidth, charsHeight)` (terminal sixel/block rendering for debugging). `pdf` returns raw `Span[Byte]` PDF bytes directly (not a `Browser.Image`); it only works in headless Chrome. The capture methods take a format and quality: `screenshot(width, height, format, quality)` and `screenshotElement(selector, format, quality)`, where `format` is a `Browser.ScreenshotFormat` (`Png`, `Jpeg`, or `Webp`, default `Png`) and `quality` (0 to 100) applies only to the lossy formats (`Jpeg` and `Webp`) and is ignored for `Png`.
+`contentSize` and `textRegion` use document coordinates in CSS pixels, independent of device pixel ratio and the current scroll position. `textRegion` does not scroll. It returns one whitespace-collapsed line per text node, in document order. A multiline node stays together in the region containing its layout-box center; left/top edges are inclusive and right/bottom edges are exclusive. Nonpositive dimensions return an empty string. Metadata, zero-area text and text suppressed by CSS display, visibility, opacity or content visibility are excluded. Both reads honor `withIFrame`.
+
+```scala
+import kyo.*
+
+for
+    size <- Browser.contentSize
+    text <- Browser.textRegion(0, 0, size.width, size.height)
+yield (size, text)
+end for
+```
+
+`screenshot` and `screenshotElement` return a `Browser.Image`. The type exposes: `binary: Span[Byte]` (raw bytes), `base64: String` (Base64-encoded), `writeFileBinary(path)` / `writeFileBase64(path)` (write to disk), and `renderToConsole(charsWidth, charsHeight)` (terminal sixel/block rendering for debugging). `pdf` returns raw `Span[Byte]` PDF bytes directly (not a `Browser.Image`); it only works in headless Chrome. The capture methods take a format and quality: `screenshot(format, quality)` and `screenshotElement(selector, format, quality)`, where `format` is a `Browser.ScreenshotFormat` (`Png`, `Jpeg`, or `Webp`, default `Png`) and `quality` (0 to 100) applies only to the lossy formats (`Jpeg` and `Webp`) and is ignored for `Png`.
 
 ### Boolean predicates
 

@@ -6,6 +6,84 @@ class BrowserVerifyReadTest extends BrowserTest:
 
     override def timeout = 90.seconds
 
+    Chunk(("quirks", ""), ("standards", "<!doctype html>")).foreach { (name, doctype) =>
+        s"contentSize reads expanding and shrinking content in $name mode" in {
+            withBrowser {
+                Browser.withViewport(800, 600) {
+                    onPage(doctype +
+                        "<html><body style='margin:0'><div id='content' style='width:1300px;height:3000px'></div></body></html>") {
+                        for
+                            tall  <- Browser.contentSize
+                            _     <- Browser.eval("document.getElementById('content').style.cssText='width:10px;height:10px'")
+                            small <- Browser.contentSize
+                            _     <- Browser.eval("document.getElementById('content').style.cssText='width:1600px;height:2000px'")
+                            large <- Browser.contentSize
+                        yield
+                            assert(tall == Browser.ContentSize(1300, 3000))
+                            assert(small == Browser.ContentSize(800, 600))
+                            assert(large == Browser.ContentSize(1600, 2000))
+                    }
+                }
+            }
+        }
+    }
+
+    "contentSize remains in CSS pixels under a high device pixel ratio" in {
+        withBrowser {
+            Browser.withViewport(800, 600, deviceScaleFactor = 2.0) {
+                onPage("<!doctype html><body style='margin:0'><div style='width:1300px;height:2000px'></div></body>") {
+                    Browser.contentSize.map(actual => assert(actual == Browser.ContentSize(1300, 2000)))
+                }
+            }
+        }
+    }
+
+    "contentSize settles a layout change with controlled page time" in {
+        withBrowser {
+            Browser.withViewport(800, 600) {
+                onPage("<!doctype html><body style='margin:0'><div id='content' style='width:1300px;height:1000px'></div></body>") {
+                    for
+                        _ <- Browser.eval("""(() => {
+                            let now = 0;
+                            const timeout = window.setTimeout.bind(window);
+                            Object.defineProperty(performance, 'now', {value: () => now, configurable: true});
+                            window.setTimeout = callback => timeout(() => { now += 10; callback(); }, 0);
+                            const height = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight').get;
+                            let reads = 0;
+                            Object.defineProperty(document.documentElement, 'scrollHeight', {get() {
+                                const result = height.call(this);
+                                if (++reads === 1) document.getElementById('content').style.height = '2000px';
+                                return result;
+                            }});
+                            return 'ready';
+                        })()""")
+                        actual <- Browser.withConfig(_.assertionStabilityWindow(
+                            20.millis
+                        ).stabilitySampleInterval(10.millis).retrySchedule(Schedule.immediate.take(1))) {
+                            Browser.contentSize
+                        }
+                    yield assert(actual == Browser.ContentSize(1300, 2000))
+                }
+            }
+        }
+    }
+
+    "document-read native control observes the scrolling extent in both document modes" in {
+        withBrowser {
+            Browser.withViewport(800, 600) {
+                Kyo.foreach(Chunk("", "<!doctype html>")) { doctype =>
+                    onPage(doctype +
+                        "<html style='margin:0'><body style='margin:0'><div style='width:1300px;height:3000px'></div></body></html>") {
+                        Browser.eval("""JSON.stringify([
+                            window.innerWidth, window.innerHeight,
+                            document.scrollingElement.scrollWidth, document.scrollingElement.scrollHeight
+                        ])""").map(actual => assert(actual == "[800,600,1300,3000]"))
+                    }
+                }.unit
+            }
+        }
+    }
+
     // settle returns the stabilized value of a converging expression.
     // The page-side JS counter starts at 0, increments by 1 every 20ms, and stops at 42 after ~840ms.
     // With assertionStabilityWindow = 100ms (default), settle must wait until the counter holds at 42

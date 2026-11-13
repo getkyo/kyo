@@ -4,6 +4,186 @@ class BrowserReadTest extends BrowserTest:
 
     override def timeout = 90.seconds
 
+    private val textBands = """<!doctype html><body style='margin:0'>
+        <div style='height:100px'>First   block</div>
+        <div style='height:100px'><span>Second</span> <b>block</b></div>
+        <div style='display:none'>Hidden</div>
+        <div style='height:100px'>Third block</div>
+        <script>window.ignored = 'Script text'</script>
+        <style>body { color: black; }</style><template>Template text</template>
+        </body>"""
+
+    "textRegion assigns nodes to document bands and skips empty regions and metadata" in {
+        withBrowser {
+            onPage(textBands) {
+                for
+                    top    <- Browser.textRegion(0, 0, 800, 100)
+                    middle <- Browser.textRegion(0, 100, 800, 100)
+                    bottom <- Browser.textRegion(0, 200, 800, 100)
+                    empty  <- Browser.textRegion(0, 300, 800, 500)
+                    whole  <- Browser.textRegion(0, 0, 800, 800)
+                yield
+                    assert(top == "First block")
+                    assert(middle == "Second\nblock")
+                    assert(bottom == "Third block")
+                    assert(empty == "")
+                    assert(whole == "First block\nSecond\nblock\nThird block")
+            }
+        }
+    }
+
+    Chunk(
+        ("display none", "display:none"),
+        ("hidden visibility", "visibility:hidden"),
+        ("collapsed visibility", "visibility:collapse"),
+        ("zero opacity", "opacity:0"),
+        ("hidden content", "content-visibility:hidden")
+    ).foreach { (name, style) =>
+        s"textRegion omits $name text" in {
+            withBrowser {
+                onPage(s"<body><div style='$style'>Hidden</div><div>Visible</div></body>") {
+                    Browser.textRegion(0, 0, 1000, 1000).map(actual => assert(actual == "Visible"))
+                }
+            }
+        }
+    }
+
+    "textRegion omits transparent ancestor text even when the child has full opacity" in {
+        withBrowser {
+            onPage("<div style='opacity:0'><span style='opacity:1'>Hidden</span></div><div>Visible</div>") {
+                Browser.textRegion(0, 0, 1000, 1000).map(actual => assert(actual == "Visible"))
+            }
+        }
+    }
+
+    "textRegion preserves display contents text visible descendants and SVG text" in {
+        withBrowser {
+            onPage("""<body>
+                <span style='display:contents'>Contents</span>
+                <div style='visibility:hidden'>Hidden<span style='visibility:visible'>Restored</span></div>
+                <div style='display:contents'><span style='display:contents'>Nested contents</span></div>
+                <svg width='200' height='40'><text x='0' y='25'>Vector</text></svg>
+                </body>""") {
+                Browser.textRegion(0, 0, 1000, 1000).map(actual => assert(actual == "Contents\nRestored\nNested contents\nVector"))
+            }
+        }
+    }
+
+    "textRegion skips zero area text and preserves Unicode inside rendered nodes" in {
+        withBrowser {
+            onPage("<span>\u200b</span><span style='font-size:0'>Invisible</span><div> A\u00a0B\t🙂 漢字 </div>") {
+                Browser.textRegion(0, 0, 1000, 1000).map(actual => assert(actual == "A B 🙂 漢字"))
+            }
+        }
+    }
+
+    "textRegion preserves boxless text when box opacity and content visibility do not affect its pixels" in {
+        withBrowser {
+            onPage("""<!doctype html><body style='background:white;color:black'>
+                <div id='wrapper' style='display:contents;opacity:0;content-visibility:hidden'>Contents</div></body>""") {
+                for
+                    text   <- Browser.textRegion(0, 0, 1000, 1000)
+                    before <- Browser.screenshot()
+                    _      <- Browser.eval(
+                        "document.getElementById('wrapper').style.cssText='display:contents;opacity:1;content-visibility:visible'"
+                    )
+                    after <- Browser.screenshot()
+                    _     <- Browser.eval("document.getElementById('wrapper').textContent=''")
+                    empty <- Browser.screenshot()
+                yield
+                    assert(before == after)
+                    assert(after != empty)
+                    assert(text == "Contents")
+            }
+        }
+    }
+
+    "textRegion keeps document coordinates after horizontal and vertical scrolling without moving the page" in {
+        withBrowser {
+            Browser.withViewport(800, 600) {
+                onPage("""<body style='margin:0'><div style='width:3000px;height:4000px'></div>
+                    <span style='position:absolute;left:2200px;top:2500px'>Far text</span></body>""") {
+                    for
+                        _      <- Browser.scrollTo(2000, 2300)
+                        before <- Browser.scrollPosition
+                        far    <- Browser.textRegion(2100, 2400, 500, 300)
+                        near   <- Browser.textRegion(0, 0, 800, 600)
+                        after  <- Browser.scrollPosition
+                    yield
+                        assert(before == Browser.ScrollPosition(2000, 2300))
+                        assert(far == "Far text")
+                        assert(near == "")
+                        assert(after == before)
+                }
+            }
+        }
+    }
+
+    "textRegion assigns a multiline node once at an exact tiling boundary" in {
+        withBrowser {
+            onPage("<span id='text' style='position:absolute;white-space:pre;font:20px/20px monospace'>first\nsecond\nthird</span>") {
+                for
+                    center <- Browser.eval("""(() => {
+                        const el = document.getElementById('text');
+                        const range = document.createRange(); range.selectNodeContents(el.firstChild);
+                        const original = range.getBoundingClientRect();
+                        el.style.transform = `translate(${100-original.left-original.width/2}px,${100-original.top-original.height/2}px)`;
+                        const box = range.getBoundingClientRect();
+                        return JSON.stringify([box.left+box.width/2,box.top+box.height/2]);
+                    })()""")
+                    left   <- Browser.textRegion(0, 0, 100, 200)
+                    top    <- Browser.textRegion(100, 0, 100, 100)
+                    target <- Browser.textRegion(100, 100, 100, 100)
+                yield
+                    assert(center == "[100,100]")
+                    assert(left == "")
+                    assert(top == "")
+                    assert(target == "first second third")
+            }
+        }
+    }
+
+    "textRegion treats nonpositive dimensions as empty and supports negative and large coordinates" in {
+        withBrowser {
+            onPage("<span style='position:absolute;left:-100px;top:30px'>Negative</span>") {
+                for
+                    zero     <- Browser.textRegion(-150, 0, 0, 100)
+                    negative <- Browser.textRegion(-150, 0, 100, -1)
+                    located  <- Browser.textRegion(-150, 0, 100, 100)
+                    huge     <- Browser.textRegion(Int.MaxValue, Int.MaxValue, Int.MaxValue, Int.MaxValue)
+                yield
+                    assert(zero == "")
+                    assert(negative == "")
+                    assert(located == "Negative")
+                    assert(huge == "")
+            }
+        }
+    }
+
+    "document-read native control separates text boxes from CSS visibility" in {
+        withBrowser {
+            onPage("""<!doctype html><body>
+                <span id='visible'>Visible</span>
+                <span id='none' style='display:none'>None</span>
+                <span id='hidden' style='visibility:hidden'>Hidden</span>
+                <span id='transparent' style='opacity:0'>Transparent</span>
+                <span id='contents' style='display:contents'>Contents</span>
+                <div style='visibility:hidden'><span id='restored' style='visibility:visible'>Restored</span></div>
+                <svg width='200' height='40'><text id='svg' x='0' y='25'>Vector</text></svg>
+                </body>""") {
+                Browser.eval("""JSON.stringify(['visible','none','hidden','transparent','contents','restored','svg'].map(id => {
+                    const el = document.getElementById(id);
+                    const range = document.createRange();
+                    range.selectNodeContents(el.firstChild);
+                    const box = range.getBoundingClientRect();
+                    return [box.width > 0 && box.height > 0, el.checkVisibility({opacityProperty:true, visibilityProperty:true})];
+                }))""").map { actual =>
+                    assert(actual == "[[true,true],[false,false],[true,false],[true,false],[true,false],[true,true],[true,true]]")
+                }
+            }
+        }
+    }
+
     // ---- text (retrying) ----
 
     "text reads heading content" in {

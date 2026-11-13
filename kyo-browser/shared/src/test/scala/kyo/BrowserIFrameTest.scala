@@ -6,6 +6,29 @@ class BrowserIFrameTest extends BrowserTest:
 
     override def timeout = 60.seconds
 
+    "document reads use iframe text and content dimensions without reading the parent" in {
+        withBrowser {
+            Browser.withViewport(800, 600) {
+                val outer = """<body style='margin:0'>Parent<iframe id='frame' data-testid='frame' srcdoc="{srcdoc}"></iframe></body>"""
+                val inner = "<!doctype html><body style='margin:0'><div style='width:900px;height:1200px'>Child</div></body>"
+                onSrcdoc(outer, inner) {
+                    for
+                        frame <- discoverSingleFrame
+                        child <- Browser.withIFrame(frame) {
+                            for
+                                size <- Browser.contentSize
+                                text <- Browser.textRegion(0, 0, 900, 1200)
+                            yield (size, text)
+                        }
+                        parent <- Browser.textRegion(0, 0, 800, 600)
+                    yield
+                        assert(child == (Browser.ContentSize(900, 1200), "Child"))
+                        assert(parent == "Parent")
+                }
+            }
+        }
+    }
+
     // ─── Page templates ──────────────────────────────────────────────────────────
 
     /** Parent page hosting a single iframe whose body the test specifies. The `{srcdoc}` placeholder is filled in by [[srcdocPage]]. The
