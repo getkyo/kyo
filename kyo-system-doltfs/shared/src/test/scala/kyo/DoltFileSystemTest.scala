@@ -177,6 +177,58 @@ class DoltFileSystemTest extends Test:
         }
     }
 
+    "a write through a linked directory lands in the directory the link names" in {
+        withFiles { (_, files) =>
+            val real = Path("data", "real")
+            val link = Path("data", "current")
+            for
+                _       <- files.mkDir(real)
+                _       <- files.symlink(link, real)
+                _       <- files.write(link / "value.txt", "through the link", options)
+                direct  <- files.read(real / "value.txt")
+                through <- files.read(link / "value.txt")
+                entries <- files.list(Path("data"))
+            yield
+                assert(direct == "through the link", s"the write did not reach the linked directory: $direct")
+                assert(through == "through the link")
+                assert(entries.toSet == Set(real, link), s"the write created an entry beside the link: $entries")
+            end for
+        }
+    }
+
+    "a write to a link to a file writes the file and keeps the link" in {
+        withFiles { (_, files) =>
+            val file = Path("conf", "live.conf")
+            val link = Path("conf", "current.conf")
+            for
+                _      <- files.write(file, "before", options)
+                _      <- files.symlink(link, file)
+                _      <- files.write(link, "after", options)
+                _      <- files.append(link, "!", options)
+                _      <- files.truncate(link, 4L)
+                isLink <- files.isSymbolicLink(link)
+                value  <- files.read(file)
+            yield
+                assert(isLink, "the write replaced the link with a file")
+                assert(value == "afte", s"the writes did not reach the linked file: $value")
+            end for
+        }
+    }
+
+    "moving or copying an entry onto itself keeps it" in {
+        withFiles { (_, files) =>
+            val file    = Path("conf", "self.conf")
+            val replace = Path.MoveOptions(replace = Path.Replace.Existing)
+            for
+                _     <- files.write(file, "kept", options)
+                _     <- files.move(file, file, replace)
+                _     <- files.copy(file, file, Path.CopyOptions(replace = Path.Replace.Existing))
+                value <- files.read(file)
+            yield assert(value == "kept", s"the entry was lost: $value")
+            end for
+        }
+    }
+
     "the tree is queryable as ordinary SQL" in {
         withFiles { (dolt, files) =>
             for

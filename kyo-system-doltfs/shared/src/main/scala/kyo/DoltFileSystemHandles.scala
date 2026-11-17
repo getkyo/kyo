@@ -135,7 +135,10 @@ final private[kyo] class DoltChannel(
 
     def readAt(position: Long, length: Int)(using Frame): Span[Byte] < (Async & Abort[FileReadException]) =
         whileOpen[Span[Byte], FileReadException](Abort.fail(FileNotFoundException(path))) {
-            node.map(size => store.readRange(path, size, position, length))
+            store.readRange(path, position, length).map {
+                case Present(bytes) => bytes
+                case Absent         => Abort.fail(FileNotFoundException(path))
+            }
         }
 
     def size(using Frame): Long < (Async & Abort[FileReadException]) =
