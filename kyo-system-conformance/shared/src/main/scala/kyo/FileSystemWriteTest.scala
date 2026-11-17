@@ -13,6 +13,40 @@ trait FileSystemWriteTest[S >: Async] extends kyo.test.Test[Any]:
         use: (FileSystem.Write[S], Path) => A < (S & Async & Scope & Abort[FileSystemException])
     )(using Frame): A < (Async & Scope & Abort[FileSystemException])
 
+    /** How many times a raced law replaces its file. */
+    private val raceRounds = 40
+
+    /** The content a raced law places in `round`. Each round differs from the one before in both length and digit, so a
+      * read that pairs one round's length with the next round's bytes matches no content the law ever wrote.
+      */
+    private def racedContent(round: Int): String = (round % 10).toString * (round + 1)
+
+    /** Replaces `target` with a required atomic move in each of [[raceRounds]] rounds, while a fiber of its own runs
+      * `observe` again and again, and answers every value that fiber saw. `target` must hold `racedContent(0)` already.
+      */
+    private def observedWhileReplaced(fileSystem: FileSystem.Write[S], root: Path, target: Path)(
+        observe: => String < (S & Async & Abort[FileSystemException])
+    )(using Frame): Chunk[String] < (S & Async & Abort[FileSystemException]) =
+        val options = Path.MoveOptions(replace = Path.Replace.Existing, atomicity = Path.Atomicity.Required)
+        for
+            replaced <- AtomicBoolean.init(false)
+            observer <- Fiber.initUnscoped {
+                Loop(Chunk.empty[String]) { seen =>
+                    replaced.get.map { done =>
+                        observe.map(value => if done then Loop.done(seen.append(value)) else Loop.continue(seen.append(value)))
+                    }
+                }
+            }
+            _ <- Kyo.foreachDiscard(Chunk.from(1 to raceRounds)) { round =>
+                val source = root / s"replacement-$round.txt"
+                fileSystem.write(source, racedContent(round), Path.WriteOptions()).andThen(fileSystem.move(source, target, options))
+            }
+            _    <- replaced.set(true)
+            seen <- observer.get
+        yield seen
+        end for
+    end observedWhileReplaced
+
     "write" - {
 
         "write suite round-trips a concrete value" in {
@@ -138,11 +172,12 @@ trait FileSystemWriteTest[S >: Async] extends kyo.test.Test[Any]:
                 val target  = root / "atomic.txt"
                 val options = Path.MoveOptions(replace = Path.Replace.Existing, atomicity = Path.Atomicity.Required)
                 // A reader racing each move must see the old content or the new, never an absent target. Repeated, since a backend
-                // that clears the target and then places the source leaves a window only some interleavings reach.
-                fileSystem.write(target, "0", Path.WriteOptions()).andThen {
-                    Kyo.foreachDiscard(Chunk.from(1 to 20)) { round =>
+                // that clears the target and then places the source leaves a window only some interleavings reach. Each round
+                // changes the length too, so a read that takes the length and the bytes from two sides of a move fails here.
+                fileSystem.write(target, racedContent(0), Path.WriteOptions()).andThen {
+                    Kyo.foreachDiscard(Chunk.from(1 to raceRounds)) { round =>
                         val source = root / s"source-$round.txt"
-                        fileSystem.write(source, round.toString, Path.WriteOptions()).andThen {
+                        fileSystem.write(source, racedContent(round), Path.WriteOptions()).andThen {
                             for
                                 moved  <- AtomicBoolean.init(false)
                                 reader <- Fiber.initUnscoped {
@@ -158,12 +193,47 @@ trait FileSystemWriteTest[S >: Async] extends kyo.test.Test[Any]:
                                 _     <- moved.set(true)
                                 reads <- reader.get
                             yield
-                                val allowed = Set((round - 1).toString, round.toString)
+                                val allowed = Set(racedContent(round - 1), racedContent(round))
                                 assert(
                                     reads.forall(read => read.toMaybe.exists(allowed.contains)),
                                     s"round $round observed ${reads.filterNot(read => read.toMaybe.exists(allowed.contains))}"
                                 )
                             end for
+                        }
+                    }
+                }
+            }
+        }
+
+        "write suite never copies a source half replaced" in {
+            withFileSystem { (fileSystem, root) =>
+                val source = root / "source.txt"
+                val copied = root / "copied.txt"
+                // A copy racing a replacement of its source must take one whole version of the source, never the length of
+                // one and the bytes of another.
+                fileSystem.write(source, racedContent(0), Path.WriteOptions()).andThen {
+                    observedWhileReplaced(fileSystem, root, source) {
+                        fileSystem.copy(source, copied, Path.CopyOptions(replace = Path.Replace.Existing)).andThen(fileSystem.read(copied))
+                    }.map { seen =>
+                        val written = Set.from((0 to raceRounds).map(racedContent))
+                        assert(seen.forall(written.contains), s"copies observed ${seen.filterNot(written.contains)}")
+                    }
+                }
+            }
+        }
+
+        "write suite never reads a channel's file half replaced" in {
+            withFileSystem { (fileSystem, root) =>
+                val target = root / "channel.txt"
+                // Which version a channel reads after a replacement differs: a host channel keeps the file it opened, so it
+                // reads the first version throughout. Every read must still be one whole version.
+                fileSystem.write(target, racedContent(0), Path.WriteOptions()).andThen {
+                    fileSystem.openReadChannel(target).map { channel =>
+                        observedWhileReplaced(fileSystem, root, target) {
+                            channel.readAt(0L, 64).map(bytes => new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8))
+                        }.map { seen =>
+                            val written = Set.from((0 to raceRounds).map(racedContent))
+                            assert(seen.forall(written.contains), s"channel reads observed ${seen.filterNot(written.contains)}")
                         }
                     }
                 }

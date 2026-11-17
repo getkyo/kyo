@@ -66,9 +66,6 @@ final private[kyo] class DoltVfsStore(client: Dolt):
             t => Abort.error(Result.Panic(t))
         )(decode)
 
-    /** Copies a run of bytes out of a `Span` into an array. Through the backing array rather than `copyToArray`, which
-      * can only copy from a span's start, and `java.lang.System` in full because `kyo.System` shadows it here.
-      */
     /** The hex an engine's `unhex` reads back, for the one piece of a spliced write that is not already stored. */
     private def hexOf(bytes: Span[Byte]): String =
         val digits = "0123456789ABCDEF"
@@ -83,6 +80,9 @@ final private[kyo] class DoltVfsStore(client: Dolt):
         out.toString
     end hexOf
 
+    /** Copies a run of bytes out of a `Span` into an array. Through the backing array rather than `copyToArray`, which
+      * can only copy from a span's start, and `java.lang.System` in full because `kyo.System` shadows it here.
+      */
     private def copyBytes(src: Span[Byte], srcPos: Int, dst: Array[Byte], dstPos: Int, length: Int): Unit =
         if length > 0 then java.lang.System.arraycopy(src.toArrayUnsafe, srcPos, dst, dstPos, length)
 
@@ -205,62 +205,63 @@ final private[kyo] class DoltVfsStore(client: Dolt):
 
     // --- Content ---
 
-    /** Every byte of a file.
-      *
-      * Sized from the node's recorded length rather than from the stored value: [[truncate]] can extend a file
-      * without storing the zeros it grew by, so the tail of the array is the gap reading back as zeros.
+    /** `stored` at exactly `length` bytes. Short when [[truncate]] extended the file, since an extension records the new
+      * length and stores nothing, so the tail is the gap reading back as zeros.
       */
-    def readAll(path: Path, sizeBytes: Long)(using Frame): Span[Byte] < (Async & Abort[FileIOException]) =
-        if sizeBytes <= 0L then Span.empty[Byte]
+    private def sized(stored: Span[Byte], length: Long): Span[Byte] =
+        if stored.size.toLong == length then stored
         else
-            query(
-                path,
-                FileSystemOperation.Read,
-                "SELECT bytes FROM vfs_node WHERE path = ?",
-                Chunk(text(key(path)))
-            ).map { rows =>
-                if rows.isEmpty then Span.empty[Byte]
-                else
-                    lifted(path, FileSystemOperation.Read)(rows.head.decode[Span[Byte]]("bytes")).map { stored =>
-                        if stored.size.toLong == sizeBytes then stored
-                        else
-                            val out = new Array[Byte](sizeBytes.toInt)
-                            copyBytes(stored, 0, out, 0, math.min(stored.size.toLong, sizeBytes).toInt)
-                            Span.fromUnsafe(out)
-                    }
-            }
+            val out = new Array[Byte](math.max(0L, length).toInt)
+            copyBytes(stored, 0, out, 0, math.min(stored.size.toLong, out.length.toLong).toInt)
+            Span.fromUnsafe(out)
 
-    /** Reads up to `length` bytes at `position`, slicing in the engine so only the slice crosses the wire.
+    /** The node at `path` and every byte of its content, or Absent when no node is there.
+      *
+      * One statement over one row, so the length and the bytes are always of the same version: a length read first and
+      * bytes read after can straddle a concurrent replacement and answer the start of the new content at the old length.
+      */
+    def readAll(path: Path)(using Frame): Maybe[(DoltVfsNode, Span[Byte])] < (Async & Abort[FileIOException]) =
+        query(
+            path,
+            FileSystemOperation.Read,
+            "SELECT path, kind, target, size_bytes, modified_ms, bytes FROM vfs_node WHERE path = ?",
+            Chunk(text(key(path)))
+        ).map { rows =>
+            if rows.isEmpty then Absent
+            else
+                lifted(path, FileSystemOperation.Read) {
+                    readNode(rows.head).map { node =>
+                        rows.head.decode[Maybe[Span[Byte]]]("bytes").map { stored =>
+                            Present((node, sized(stored.getOrElse(Span.empty[Byte]), node.sizeBytes)))
+                        }
+                    }
+                }
+        }
+
+    /** Up to `length` bytes at `position`, or Absent when no node is at `path`. Sliced in the engine so only the slice
+      * crosses the wire, and bounded by the length read in the same statement, for the reason given on [[readAll]].
       *
       * The slice is taken over `hex(bytes)` rather than over the bytes, for the reason recorded on
       * [[DoltFileSystemSchema]]: this engine's byte-slicing functions either refuse a value that is not valid
       * UTF-8 or silently replace the offending bytes. Hex offsets are one-based and two characters per byte.
       */
-    def readRange(path: Path, sizeBytes: Long, position: Long, length: Int)(using
-        Frame
-    ): Span[Byte] < (Async & Abort[FileIOException]) =
-        val available = math.max(0L, math.min(length.toLong, sizeBytes - position))
-        if available <= 0L then Span.empty[Byte]
-        else
-            query(
-                path,
-                FileSystemOperation.Channel,
-                "SELECT unhex(substr(coalesce(hex(bytes), ''), ?, ?)) AS slice FROM vfs_node WHERE path = ?",
-                Chunk(number(position * 2L + 1L), number(available * 2L), text(key(path)))
-            ).map { rows =>
-                if rows.isEmpty then Span.empty[Byte]
-                else
-                    lifted(path, FileSystemOperation.Channel)(rows.head.decode[Span[Byte]]("slice")).map { got =>
-                        // Short when the read reaches past what is stored, which is the gap truncate left.
-                        if got.size.toLong == available then got
-                        else
-                            val out = new Array[Byte](available.toInt)
-                            copyBytes(got, 0, out, 0, math.min(got.size.toLong, available).toInt)
-                            Span.fromUnsafe(out)
+    def readRange(path: Path, position: Long, length: Int)(using Frame): Maybe[Span[Byte]] < (Async & Abort[FileIOException]) =
+        query(
+            path,
+            FileSystemOperation.Channel,
+            "SELECT size_bytes, unhex(substr(coalesce(hex(bytes), ''), ?, ?)) AS slice FROM vfs_node WHERE path = ?",
+            Chunk(number(position * 2L + 1L), number(length.toLong * 2L), text(key(path)))
+        ).map { rows =>
+            if rows.isEmpty then Absent
+            else
+                lifted(path, FileSystemOperation.Channel) {
+                    rows.head.decode[Long]("size_bytes").map { size =>
+                        rows.head.decode[Maybe[Span[Byte]]]("slice").map { got =>
+                            Present(sized(got.getOrElse(Span.empty[Byte]), math.min(length.toLong, size - position)))
+                        }
                     }
-            }
-        end if
-    end readRange
+                }
+        }
 
     /** Replaces the whole content of a file. */
     def writeAll(path: Path, bytes: Span[Byte], modifiedMs: Long)(using Frame): Unit < (Async & Abort[FileIOException]) =

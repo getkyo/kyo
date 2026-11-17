@@ -179,7 +179,13 @@ final class DoltFileSystem private (
 
     def readBytes(path: Path)(using Frame): Span[Byte] < (Async & Abort[FileReadException]) =
         resolved(path).map { target =>
-            requiredFile(target).map(node => store.readAll(target, node.sizeBytes))
+            drained(store.readAll(target)).map {
+                case Absent                                 => Abort.fail(FileNotFoundException(target))
+                case Present((node, _)) if node.isDirectory => Abort.fail(FileIsADirectoryException(path))
+                // A link put in place after the path resolved: resolve again, as a host's open would have followed it.
+                case Present((node, _)) if node.isSymlink && node.target.isDefined => readBytes(path)
+                case Present((_, bytes))                                           => bytes
+            }
         }
 
     def read(path: Path)(using Frame): String < (Async & Abort[FileReadException]) = read(path, Charset.forName("UTF-8"))
@@ -453,12 +459,22 @@ final class DoltFileSystem private (
                                     createDirectories(missing, at).andThen(store.removeNode(destination)).andThen {
                                         store.descendants(origin).map { nodes =>
                                             Kyo.foreachDiscard(nodes) { node =>
-                                                val copied = DoltVfsStore.rebase(node.path, origin, destination)
-                                                val stamp  = if options.copyAttributes then node.modifiedMs else at
-                                                store.putNode(node.copy(path = copied, modifiedMs = stamp)).andThen {
-                                                    if !node.isFile then ()
-                                                    else store.readAll(node.path, node.sizeBytes).map(store.writeAll(copied, _, stamp))
-                                                }
+                                                val copied                     = DoltVfsStore.rebase(node.path, origin, destination)
+                                                def place(source: DoltVfsNode) =
+                                                    val stamp = if options.copyAttributes then source.modifiedMs else at
+                                                    store.putNode(source.copy(path = copied, modifiedMs = stamp)).andThen(stamp)
+                                                if !node.isFile then place(node).unit
+                                                else
+                                                    // The file's node and content come from one read, so the copy is one whole version of
+                                                    // a file a concurrent writer replaces, never the length of one and the bytes of another.
+                                                    store.readAll(node.path).map {
+                                                        case Present((source, bytes)) =>
+                                                            place(source).map(stamp =>
+                                                                if source.isFile then store.writeAll(copied, bytes, stamp) else ()
+                                                            )
+                                                        case Absent => Abort.fail(FileNotFoundException(node.path))
+                                                    }
+                                                end if
                                             }
                                         }
                                     }
