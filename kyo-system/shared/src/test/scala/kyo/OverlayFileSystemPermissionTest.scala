@@ -209,7 +209,7 @@ class OverlayFileSystemPermissionTest extends kyo.test.Test[Any]:
                                 assert(loggedBytes.size == 1 && loggedBytes.headOption.exists(_.is(bytes)))
                             case other => fail(s"Expected the child's complete recovery log, got $other")
                         end match
-                        assert(beforeEntries == Chunk(target))
+                        assert(beforeEntries == Chunk(target), s"the host root held $beforeEntries before the parent committed")
                         assert(uncommitted.is(original))
                         assert(privateDir == 1, "The parent committed the child's private recovery directory with public access")
                         assert(after.is(before), "Recovering the child's replacement changed the original access ACL")
