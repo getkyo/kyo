@@ -4,7 +4,6 @@ import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
 import kyo.*
 import kyo.AllowUnsafe.embrace.danger
-import kyo.ffi.Test
 
 /** Resource-extraction concurrency.
   *
@@ -13,10 +12,10 @@ import kyo.ffi.Test
   *   - `resolveExtractDir`: `-Dkyo.ffi.extractDir=` overrides every other lookup knob.
   *   - `cleanupExtractedFiles`: the opt-in shutdown hook only removes this-JVM files newer than install time.
   *
-  * The multi-process fork-N-JVMs stress sits in `NativeLoaderForkStressSpec` so fast unit coverage stays on the mainline test pass; this
+  * The multi-process fork-N-JVMs stress sits in [[NativeLoaderForkStressTest]] so fast unit coverage stays on the mainline test pass; this
   * spec is pure FS helper plumbing and runs in milliseconds.
   */
-class NativeLoaderConcurrencyTest extends Test:
+class NativeLoaderConcurrencyTest extends kyo.test.Test[Any]:
 
     // Mutates process-global state (System.setErr and/or a system property) and restores it, so the leaves must run
     // alone: under the default parallel leaf execution a sibling leaf observes the mutated global.
@@ -55,7 +54,9 @@ class NativeLoaderConcurrencyTest extends Test:
                 val lck = dir / "libxyz-cafef00d.lck"
                 val ch  = FileChannel.open(j(lck), StandardOpenOption.CREATE, StandardOpenOption.WRITE).nn
                 try
-                    val lk = ch.lock().nn
+                    val acquired = ch.tryLock()
+                    assert(acquired != null, "the fresh lock file must be available to this test")
+                    val lk = acquired.nn
                     try
                         val removed = NativeLoader.tryCleanupStaleLock(j(lck))
                         // Another in-JVM lock holder → tryLock throws OverlappingFileLockException, caller must NOT delete.
@@ -162,8 +163,7 @@ class NativeLoaderConcurrencyTest extends Test:
                 set.add(j(old_)): Unit
                 try
                     // Install epoch is FAR in the future, every file is older → none deleted.
-                    val farFuture = java.lang.System.currentTimeMillis() + (1000L * 60 * 60 * 24 * 365)
-                    NativeLoader.cleanupExtractedFiles(farFuture)
+                    NativeLoader.cleanupExtractedFiles(Long.MaxValue)
                     assert(old_.unsafe.exists().getOrThrow == true)
                 finally
                     set.remove(j(old_)): Unit
