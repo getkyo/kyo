@@ -40,15 +40,16 @@ private[kyo] object HostFileSystem:
       * A probe that cannot run falls back to the platform inference, which is right for Windows and
       * the best available guess elsewhere.
       */
-    private def probeCaseSensitivity(fileSystem: FileSystem.Write[Sync])(using Frame): Glob.CaseSensitivity < Sync =
+    private[kyo] def probeCaseSensitivity(fileSystem: FileSystem.Write[Sync])(using Frame): Glob.CaseSensitivity < Sync =
         val inferred = if Platform.isWindows then Glob.CaseSensitivity.Insensitive else Glob.CaseSensitivity.Sensitive
         Abort.run[FileSystemException] {
             fileSystem.tempDir("kyo-case-probe").map { handle =>
-                val probe = handle.path / "KyoCaseProbe"
-                fileSystem.write(probe, "probe", Path.WriteOptions()).andThen {
-                    fileSystem.exists(handle.path / "kyocaseprobe").map { foundLowercased =>
-                        // Unsafe: removes the probe directory created just above
-                        Sync.Unsafe.defer(handle.remove()).andThen {
+                // Unsafe: removes the probe directory created just above. It runs when the probe fails too, since a probe that
+                // cannot write into its directory would otherwise leave that directory in the caller's root.
+                Sync.ensure(Sync.Unsafe.defer(handle.remove())) {
+                    val probe = handle.path / "KyoCaseProbe"
+                    fileSystem.write(probe, "probe", Path.WriteOptions()).andThen {
+                        fileSystem.exists(handle.path / "kyocaseprobe").map { foundLowercased =>
                             if foundLowercased then Glob.CaseSensitivity.Insensitive else Glob.CaseSensitivity.Sensitive
                         }
                     }
