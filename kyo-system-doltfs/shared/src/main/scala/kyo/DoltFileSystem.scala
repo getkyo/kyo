@@ -492,6 +492,15 @@ final class DoltFileSystem private (
             }
         }
 
+    /** Entries carry no access controls, so a replacement never needs a parent's default permissions. */
+    private[kyo] def replacementNeedsDefaultPermissions(path: Path)(using Frame): Boolean < (Async & Abort[FileReadException]) = false
+
+    /** The same transaction as [[durableReplace]]: there are no access controls to take from `permissionSource`. */
+    private[kyo] def durableReplacePreserving(target: Path, bytes: Span[Byte], permissionSource: Path)(using
+        Frame
+    ): Unit < (Async & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        durableReplace(target, bytes)
+
     /** The missing parents of `path`, outermost first, or the failure naming an existing parent that is not a directory. Only
       * reads, so a caller can decide before it writes anything.
       */
@@ -537,6 +546,14 @@ final class DoltFileSystem private (
         Frame
     ): Path.TempFileHandle < (Async & Abort[FileWriteException | FileStructureException]) =
         FileSystem.siblingTemporary[Async](this, target, onAcquire)
+
+    /** A temporary directory. Entries here carry no access controls, so it is private only as far as the tree is. */
+    private[kyo] def privateTempDir(prefix: String)(using Frame): Path.TempDirHandle < (Async & Abort[FileStructureException]) =
+        tempDir(prefix)
+
+    /** Creates a directory, or confirms an existing one without changing it. Entries here carry no access controls. */
+    private[kyo] def privateMkDir(path: Path)(using Frame): Unit < (Async & Abort[FileReadException | FileStructureException]) =
+        mkDir(path)
 
     /** A fresh temporary name under a fixed root. The counter is what keeps two calls with the same prefix distinct;
       * without it the first handle's removal destroys the second caller's directory.

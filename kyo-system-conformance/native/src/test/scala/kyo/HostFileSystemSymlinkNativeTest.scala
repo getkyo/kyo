@@ -36,3 +36,34 @@ class HostFileSystemSymlinkNativeTest extends FileSystemReadConformanceTest[Sync
         FileSystemConformanceFixtures.hostLockTarget.map(use.tupled)
 
 end HostFileSystemSymlinkNativeTest
+
+/** The same contract with a staged-write overlay installed over the host, on Native. This is the configuration
+  * that carried the original symlink-escape defect: an overlay whose own link answers shadowed the lower's.
+  */
+class OverlayFileSystemSymlinkNativeTest extends FileSystemReadConformanceTest[Sync]:
+
+    override protected def realPathRequiresExistence: Boolean = true
+    override protected def supportsSymbolicLinks: Boolean     = true
+
+    override protected def createSymbolicLink(fileSystem: FileSystem.Read[Sync], link: Path, target: Path)(using
+        Frame
+    ): Unit < (Sync & Abort[FileSystemException]) =
+        // Unsafe: the link is created in the lower, beneath the overlay under test
+        Sync.Unsafe.defer {
+            discard(JFiles.createSymbolicLink(
+                JPaths.get(link.parts.mkString("/")),
+                JPaths.get(target.parts.mkString("/"))
+            ))
+        }
+
+    protected def withFileSystem[A](
+        use: (FileSystem.Read[Sync], Path, String) => A < (Sync & Async & Scope & Abort[FileSystemException])
+    )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
+        OverlayFileSystemFixtures.overHostWithLowerFile("kyo-overlay-symlink-read-native")(use)
+
+    protected def withLockTarget(
+        use: (FileSystem.Read[Sync], Path) => Unit < (Sync & Async & Scope & Abort[FileSystemException])
+    )(using Frame): Unit < (Async & Scope & Abort[FileSystemException]) =
+        OverlayFileSystemFixtures.overHost("kyo-overlay-symlink-lock-native")((overlay, root) => use(overlay, root / "target.bin"))
+
+end OverlayFileSystemSymlinkNativeTest

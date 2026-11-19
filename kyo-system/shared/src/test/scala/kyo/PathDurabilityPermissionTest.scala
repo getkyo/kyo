@@ -5,6 +5,51 @@ import kyo.internal.Platform
 
 class PathDurabilityPermissionTest extends kyo.test.Test[Any]:
 
+    "private directory replay retains existing private contents" in {
+        directory.map { root =>
+            val staging = root / "private-staging"
+            val content = staging / "record"
+            val bytes   = Span(1.toByte, 2.toByte, 3.toByte)
+            for
+                _                <- FileSystem.host.privateMkDir(staging)
+                _                <- FileSystem.host.writeBytes(content, bytes, Path.WriteOptions())
+                before           <- snapshot(staging)
+                _                <- FileSystem.host.privateMkDir(staging)
+                after            <- snapshot(staging)
+                privateDirectory <- privateAccess(staging)
+                actual           <- FileSystem.host.readBytes(content)
+            yield
+                assert(privateDirectory == 1)
+                assert(after.is(before))
+                assert(actual.is(bytes))
+            end for
+        }
+    }
+
+    "private directory replay rejects public directories without modifying their contents" in {
+        directory.map { root =>
+            val staging = root / "public-staging"
+            val content = staging / "record"
+            val bytes   = Span(1.toByte, 2.toByte, 3.toByte)
+            for
+                _      <- FileSystem.host.mkDir(staging)
+                _      <- configure(staging, 2)
+                _      <- Sync.defer { if !Platform.isWindows then PathPermissionTestPlatform.setPermissions(staging, "rwxr-xr-x") }
+                _      <- FileSystem.host.writeBytes(content, bytes, Path.WriteOptions())
+                before <- snapshot(staging)
+                result <- Abort.run[FileSystemException](FileSystem.host.privateMkDir(staging))
+                after  <- snapshot(staging)
+                actual <- FileSystem.host.readBytes(content)
+            yield
+                result match
+                    case Result.Failure(_) => ()
+                    case other             => fail(s"Expected rejection of a public directory, got $other")
+                assert(after.is(before))
+                assert(actual.is(bytes))
+            end for
+        }
+    }
+
     private def replace(target: Path, bytes: Span[Byte])(using
         Frame,
         kyo.test.AssertScope
@@ -45,6 +90,30 @@ class PathDurabilityPermissionTest extends kyo.test.Test[Any]:
     end for
 
     if !Platform.isWindows then
+        "private directories retain owner traversal beneath an inherited default ACL" in {
+            directory.map { root =>
+                val staging = root / "private-staging"
+                val content = staging / "record"
+                val bytes   = Span(1.toByte, 2.toByte, 3.toByte)
+                for
+                    _                <- configure(root, 2)
+                    parentBefore     <- snapshot(root)
+                    _                <- FileSystem.host.privateMkDir(staging)
+                    permissions      <- Sync.defer(PathPermissionTestPlatform.permissions(staging))
+                    privateDirectory <- privateAccess(staging)
+                    _                <- FileSystem.host.writeBytes(content, bytes, Path.WriteOptions())
+                    _                <- FileSystem.host.privateMkDir(staging)
+                    actual           <- FileSystem.host.readBytes(content)
+                    parentAfter      <- snapshot(root)
+                yield
+                    assert(permissions == "rwx------")
+                    assert(privateDirectory == 1)
+                    assert(actual.is(bytes))
+                    assert(parentAfter.is(parentBefore))
+                end for
+            }
+        }
+
         "durable creation inherits the destination parent's default access controls" in {
             directory.map { root =>
                 val reference = root / "ordinary.bin"
