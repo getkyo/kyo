@@ -718,11 +718,12 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
             fiber <- Fiber.initUnscoped(fs.durableReplace(target, Span(1.toByte)))
             // An outer Sync.ensure can run before the resource finalizer on interruption.
             // Wait for removal itself before inspecting the directory and recorded events.
-            _       <- done.await
-            result  <- fiber.poll
+            _ <- done.await
+            // `done` is released while the fiber unwinds, before it publishes its result, so the result is awaited.
+            result  <- fiber.getResult
             entries <- base.list(root)
         yield
-            assert(result.contains(Result.Panic(primary)))
+            assert(result == Result.Panic(primary))
             assert(entries.isEmpty)
             assert(fs.events.count { case Event.Close(_) => true; case _ => false } == 1)
             assert(fs.events.count { case Event.Remove(_) => true; case _ => false } == 1)
@@ -739,11 +740,12 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
                     Scope.ensure(done.release).andThen(Path.runWith(fs)((root / "target.bin").siblingTemporary))
                 }
             }
-            _       <- done.await
-            result  <- fiber.poll
+            _ <- done.await
+            // `done` is released while the fiber unwinds, before it publishes its result, so the result is awaited.
+            result  <- fiber.getResult
             entries <- base.list(root)
         yield
-            assert(result.contains(Result.Panic(primary)))
+            assert(result == Result.Panic(primary))
             assert(entries.isEmpty)
             assert(fs.events.count { case Event.Remove(_) => true; case _ => false } == 1)
     }
@@ -919,7 +921,8 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
             _           <- ready.await
             interrupted <- fiber.interrupt(Result.Panic(primary))
             _           <- cleaned.await
-            result      <- fiber.poll.map(_.get)
+            // `cleaned` is released while the fiber unwinds, before it publishes its result, so the result is awaited.
+            result      <- fiber.getResult
             closeCount  <- closes.get
             removeCount <- removals.get
             temp        <- temporary.get.map(_.get)
