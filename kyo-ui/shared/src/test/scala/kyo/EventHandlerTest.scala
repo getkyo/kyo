@@ -1236,7 +1236,7 @@ class EventHandlerTest extends UITest:
         }
     }
 
-    // Per-level event consumption via stopPropagation(true); decided server-side in ReactiveUI.dispatchToElement.
+    // Per-level event consumption via stopPropagation(true); decided server-side in EventDispatch.dispatchToElement.
     "stopPropagation emits its marker attribute; absent by default" in {
         val app: UI < Async = UI.div(
             UI.div("stopper").id("s").stopPropagation(true).onKeyDown(_ => ()),

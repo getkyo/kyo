@@ -376,6 +376,24 @@ private[kyo] object HtmlRenderer:
                             }.andThen(closeInitialHost(sb, host))
                         end for
                 }
+
+            case m: Mounted =>
+                // A mount's live content belongs to the instance the renderer runs, so a static render shows its placeholder,
+                // inside a range of its own that the instance's updates then replace.
+                val region      = ReactiveRegion.from(context, namespace)
+                val placeholder = m.placeholderUI.getOrElse(UI.empty(using m.frame))
+                val host        = ReactiveRegion.renderHost(region, parentContext, ReactiveRegion.tableContent(placeholder))
+                openInitialHost(sb, host)
+                renderTo(
+                    sb,
+                    placeholder,
+                    path,
+                    context.transparent,
+                    ReactiveRegion.namespace(host),
+                    cssRules,
+                    ReactiveRegion.contentParent(host),
+                    ReactiveRegion.BoundaryMode.Emit
+                ).andThen(closeInitialHost(sb, host))
     end renderTo
 
     private def renderBoundElementBoundary(
@@ -615,7 +633,7 @@ private[kyo] object HtmlRenderer:
         attrs.dragSource match
             case Present(source) => w(sb, s""" data-kyo-drag-key="${esc(source.key)}"""")
             case Absent          => attrs.dropTarget.foreach(target => w(sb, s""" data-kyo-drag-key="${esc(target.key)}""""))
-        // Marker only: stop-propagation is decided server-side in ReactiveUI.dispatchToElement; the client never reads this.
+        // Marker only: stop-propagation is decided server-side in EventDispatch.dispatchToElement; the client never reads this.
         attrs.stopPropagation.foreach(v => if v then w(sb, """ data-kyo-stop="1""""))
         // enter/leave transition class lists (read client-side by the patch-application code).
         attrs.enterTransition.foreach(c => w(sb, s""" data-kyo-enter="${esc(c)}""""))
@@ -1636,7 +1654,7 @@ private[kyo] object HtmlRenderer:
            |      }
            |    }
            |    // Enter on a focused <select> would otherwise trigger the form's default submit;
-           |    // kyo-ui treats Enter on Select as a dropdown interaction (see ReactiveUI.dispatchToElement),
+           |    // kyo-ui treats Enter on Select as a dropdown interaction (see EventDispatch.dispatchToElement),
            |    // so we suppress the browser default to keep TUI/browser parity.
            |    if(e.key==="Enter"&&e.target&&e.target.tagName==="SELECT")e.preventDefault();
            |    // Enter on a focused <input type=checkbox|radio>: HTML spec only activates these via Space,

@@ -545,7 +545,7 @@ private[kyo] object DomBackend:
 
     /** True when `start` or any of its ancestors below `document.body` declares event type `t` in `data-kyo-ev`.
       *
-      * ReactiveUI.dispatchToElement bubbles an event to every ancestor that declared a handler for its type, so the
+      * EventDispatch.dispatchToElement bubbles an event to every ancestor that declared a handler for its type, so the
       * SPA forwarding gate must forward when ANY ancestor declared it, not just the target (checking only the
       * target's own data-kyo-ev would drop e.g. a keydown meant for an ancestor panel before bubble dispatch runs).
       */
